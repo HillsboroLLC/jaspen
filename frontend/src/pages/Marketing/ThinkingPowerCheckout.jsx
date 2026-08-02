@@ -153,22 +153,21 @@ function AccountStep({ returnPath }) {
   );
 }
 
-function PaymentForm({ onSuccess, clientSecret, onRepriced }) {
+function PaymentForm({ onSuccess, basePaymentIntentId, invoiceId, discount, onDiscount }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [priceLabel, setPriceLabel] = useState(`$${LIMITED_TIME_300K_PRICE}`);
-  const [appliedCoupon, setAppliedCoupon] = useState('');
-  const [couponInput, setCouponInput] = useState('');
+  const [couponInput, setCouponInput] = useState(discount.code);
   const [couponError, setCouponError] = useState('');
   const [applyingCoupon, setApplyingCoupon] = useState(false);
-  const [freeRedeemed, setFreeRedeemed] = useState(false);
-  const paymentIntentId = String(clientSecret || '').split('_secret_')[0];
+  const priceLabel = discount.priceLabel;
+  const appliedCoupon = discount.code;
+  const freeRedeemed = discount.free;
 
   const applyCoupon = async () => {
     const code = couponInput.trim();
-    if (applyingCoupon || code === appliedCoupon) return;
+    if (applyingCoupon || (code && code === appliedCoupon)) return;
     setApplyingCoupon(true);
     setCouponError('');
     try {
@@ -176,25 +175,28 @@ function PaymentForm({ onSuccess, clientSecret, onRepriced }) {
         method: 'POST',
         headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
         credentials: 'include',
-        body: JSON.stringify({ payment_intent_id: paymentIntentId, coupon_code: code }),
+        // Always the intent this checkout started with: applying a code moves
+        // the charge onto an invoice, and the invoice's own intent is not one
+        // this endpoint recognises.
+        body: JSON.stringify({ payment_intent_id: basePaymentIntentId, coupon_code: code }),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data?.msg || 'Could not apply that coupon.');
       if (data.free) {
         // Stripe settled the whole invoice with the discount, so there is
         // nothing left for the card form to charge.
-        setAppliedCoupon(code);
-        setPriceLabel('$0.00');
-        setFreeRedeemed(true);
+        onDiscount({ code, priceLabel: '$0.00', free: true, invoiceId: data.invoice_id || '', clientSecret: '' });
         return;
       }
-      setPriceLabel(data.price_label?.startsWith('$') ? data.price_label : `$${data.price_label}`);
-      setAppliedCoupon(code);
-      if (data.client_secret) {
-        // A partial discount moves the charge onto the invoice Stripe priced,
-        // so the card fields have to re-mount against that payment intent.
-        onRepriced?.(data.client_secret);
-      }
+      // A partial discount moves the charge onto the invoice Stripe priced,
+      // so the card fields re-mount against that payment intent.
+      onDiscount({
+        code,
+        priceLabel: data.price_label?.startsWith('$') ? data.price_label : `$${data.price_label}`,
+        free: false,
+        invoiceId: data.invoice_id || '',
+        clientSecret: data.client_secret || '',
+      });
     } catch (err) {
       setCouponError(err?.message || 'Could not apply that coupon.');
     } finally {
@@ -223,7 +225,9 @@ function PaymentForm({ onSuccess, clientSecret, onRepriced }) {
           method: 'POST',
           headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
           credentials: 'include',
-          body: JSON.stringify({ payment_intent_id: paymentIntent.id }),
+          // A discounted purchase settles through the invoice, whose payment
+          // intent carries none of the offer's metadata - so name the invoice.
+          body: JSON.stringify({ payment_intent_id: paymentIntent.id, invoice_id: invoiceId || '' }),
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data?.msg || 'Payment completed, but credits could not be finalized.');
@@ -322,7 +326,17 @@ function PurchaseStep({ campaignId, returnPath, onSuccess }) {
   const [finalSaleAccepted, setFinalSaleAccepted] = useState(false);
   const [clientSecret, setClientSecret] = useState('');
   const [stripePromise, setStripePromise] = useState(null);
+  // Held here rather than in PaymentForm: a partial discount re-mounts the
+  // card fields against a new client secret, which would otherwise reset the
+  // applied code and show the full price on a payment that Stripe discounted.
+  const [basePaymentIntentId, setBasePaymentIntentId] = useState('');
+  const [discount, setDiscount] = useState({ code: '', priceLabel: `$${LIMITED_TIME_300K_PRICE}`, free: false, invoiceId: '' });
   const acknowledgementsComplete = termsAccepted && finalSaleAccepted;
+
+  const handleDiscount = ({ clientSecret: repricedSecret, ...applied }) => {
+    setDiscount(applied);
+    if (repricedSecret) setClientSecret(repricedSecret);
+  };
 
   const startCheckout = async () => {
     if (submitting) return;
@@ -349,6 +363,7 @@ function PurchaseStep({ campaignId, returnPath, onSuccess }) {
       if (!data.publishable_key) throw new Error('Payments are not configured yet.');
       setStripePromise((prev) => prev || loadStripe(data.publishable_key));
       setClientSecret(data.client_secret);
+      setBasePaymentIntentId(String(data.client_secret).split('_secret_')[0]);
     } catch (err) {
       setError(err?.message || 'Could not start secure checkout.');
     } finally {
@@ -363,7 +378,13 @@ function PurchaseStep({ campaignId, returnPath, onSuccess }) {
         stripe={stripePromise}
         options={{ clientSecret, appearance: STRIPE_APPEARANCE }}
       >
-        <PaymentForm onSuccess={onSuccess} clientSecret={clientSecret} onRepriced={setClientSecret} />
+        <PaymentForm
+          onSuccess={onSuccess}
+          basePaymentIntentId={basePaymentIntentId}
+          invoiceId={discount.invoiceId}
+          discount={discount}
+          onDiscount={handleDiscount}
+        />
       </Elements>
     );
   }

@@ -128,8 +128,41 @@ values, Anthropic model routing/prices, and real usage before campaign claims.
 
 - `PRICE_ID_300K_LIMITED_TIME`: one-time $999 Stripe Price. The product must not be recurring.
 - Webhook secret and delivery for Checkout completion, refund, and dispute events.
+- `invoice.paid` must be among the delivered webhook events. A discounted purchase settles
+  as an invoice, not as the checkout's own payment intent, and that event is the backstop
+  if the buyer closes the tab before the browser confirms.
 - Redis-backed `RATELIMIT_STORAGE_URI` in production.
 - Apply the database migration and run the scorecard backfill before traffic.
+
+## Testing the offer in production with a promo code
+
+The point is to walk the real live-mode purchase without moving real money. A
+100%-off promotion code does that: Stripe settles the whole $999 on an invoice,
+records the redemption, and the credits are granted with no card charged.
+
+In Stripe (live mode):
+
+1. Create a coupon at **100% off**, duration **once**.
+2. Leave it applying to **all products**, or explicitly add the 300K product to it.
+   A coupon restricted to the subscription prices is the single most common reason a
+   code "works" but discounts nothing — Stripe attaches it and takes nothing off.
+3. Create a **promotion code** on that coupon (the customer-facing code — a coupon
+   alone cannot be typed at checkout), with **max redemptions** set low, e.g. 3.
+4. Confirm it before touching checkout:
+   `PYTHONPATH=. ./venv/bin/python scripts/check_300k_promo_code.py YOURCODE`
+
+Then buy the offer as a normal buyer would: open the campaign page, create or sign
+into an account, accept both acknowledgements, continue to payment, enter the code,
+and press Apply. A fully covering code replaces the card form with a confirmation
+and grants the credits immediately. A partial code re-prices the payment through the
+invoice Stripe priced, and the card fields re-mount against it.
+
+Afterwards, in Stripe: the promotion code shows a redemption, and the invoice shows
+`checkout_type=300k_limited_time` with the code in its metadata. In Jaspen: the
+account holds the 300K entitlement and the credit grant.
+
+Archive the promo code once testing is done — an active 100%-off code is a live
+$999 giveaway to anyone who guesses it.
 
 Remaining decisions: whether a partial refund should reverse credits pro rata instead of reversing the unused lot, and whether
 the provisional per-plan portfolio-view ladder should change after scale tests.

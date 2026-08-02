@@ -257,8 +257,14 @@ def _limited_time_intent(test_user, billing, **overrides):
     return intent
 
 
-def _stub_limited_time_coupon_stripe(monkeypatch, billing, test_user, invoice, **overrides):
+def _stub_limited_time_coupon_stripe(monkeypatch, billing, test_user, invoice, open_invoices=(), **overrides):
     """Wire up the Stripe calls the coupon endpoint makes.
+
+    These fakes deliberately enforce the shape of the Stripe API version this
+    app actually talks to, because permissive fakes hid two production
+    failures: an invoice item created with a top-level `price` (removed - the
+    price now goes under `pricing`), and a confirmation_secret read off an
+    invoice that was finalized without expanding it.
 
     The discount must ride on a real invoice so Stripe records the redemption,
     so PromotionCode.list() deliberately returns an EMPTY nested coupon here -
@@ -275,19 +281,48 @@ def _stub_limited_time_coupon_stripe(monkeypatch, billing, test_user, invoice, *
         lambda code, active, limit: {'data': [{'id': 'promo_300ktest', 'coupon': {}}]},
     )
     monkeypatch.setattr(billing, '_ensure_customer_for_user', lambda _user: 'cus_limited_time_300k')
-    monkeypatch.setattr(
-        billing.stripe.InvoiceItem, 'create',
-        lambda **kwargs: calls.setdefault('invoice_item', kwargs),
-    )
+
+    def fake_invoice_item_create(**kwargs):
+        if 'price' in kwargs:
+            raise billing.stripe.error.InvalidRequestError(
+                'Received unknown parameter: price', 'price',
+            )
+        if not kwargs.get('pricing', {}).get('price'):
+            raise billing.stripe.error.InvalidRequestError('Missing required param: pricing.', 'pricing')
+        if not kwargs.get('invoice'):
+            # Stripe leaves an unattached item pending on the customer, and a
+            # standalone invoice does not pick it up - so the invoice would
+            # finalize empty and look fully discounted.
+            raise AssertionError('invoice item must be attached to the invoice it belongs to')
+        calls['invoice_item'] = kwargs
+        return dict(kwargs, id='ii_limited_time_300k')
+
+    monkeypatch.setattr(billing.stripe.InvoiceItem, 'create', fake_invoice_item_create)
 
     def fake_invoice_create(**kwargs):
         calls['invoice'] = kwargs
-        return {'id': 'in_limited_time_300k'}
+        return {'id': 'in_limited_time_300k', 'status': 'draft'}
+
+    def fake_finalize(invoice_id, **kwargs):
+        calls['finalize'] = kwargs
+        finalized = dict(invoice, id=invoice_id)
+        if 'confirmation_secret' not in (kwargs.get('expand') or []):
+            finalized.pop('confirmation_secret', None)
+        return finalized
 
     monkeypatch.setattr(billing.stripe.Invoice, 'create', fake_invoice_create)
+    monkeypatch.setattr(billing.stripe.Invoice, 'finalize_invoice', fake_finalize)
     monkeypatch.setattr(
-        billing.stripe.Invoice, 'finalize_invoice',
-        lambda invoice_id: dict(invoice, id=invoice_id),
+        billing.stripe.Invoice, 'list',
+        lambda **kwargs: {'data': list(open_invoices)},
+    )
+    monkeypatch.setattr(
+        billing.stripe.Invoice, 'void_invoice',
+        lambda invoice_id: calls.setdefault('voided', []).append(invoice_id),
+    )
+    monkeypatch.setattr(
+        billing.stripe.Invoice, 'delete',
+        lambda invoice_id: calls.setdefault('deleted', []).append(invoice_id),
     )
     monkeypatch.setattr(
         billing.stripe.PaymentIntent, 'cancel',
@@ -314,6 +349,8 @@ def test_apply_300k_limited_time_coupon_settles_a_full_discount_through_stripe(
             'id': 'in_limited_time_300k',
             'status': 'paid',
             'amount_due': 0,
+            'subtotal': 99900,
+            'total': 0,
             'customer': 'cus_limited_time_300k',
             'metadata': {
                 'user_id': str(test_user.id),
@@ -340,7 +377,8 @@ def test_apply_300k_limited_time_coupon_settles_a_full_discount_through_stripe(
 
     # Stripe applied the discount and therefore records the redemption.
     assert calls['invoice']['discounts'] == [{'promotion_code': 'promo_300ktest'}]
-    assert calls['invoice_item']['price'] == 'price_limited_time_300k_999'
+    assert calls['invoice_item']['pricing'] == {'price': 'price_limited_time_300k_999'}
+    assert calls['invoice_item']['invoice'] == 'in_limited_time_300k'
     assert calls['invoice']['metadata']['checkout_type'] == billing.LIMITED_TIME_300K_CHECKOUT_TYPE
 
     entitlement = AccountEntitlement.query.filter_by(
@@ -364,6 +402,8 @@ def test_apply_300k_limited_time_coupon_will_not_grant_an_unpaid_invoice(
             'id': 'in_limited_time_300k',
             'status': 'open',
             'amount_due': 0,
+            'subtotal': 99900,
+            'total': 0,
             'customer': 'cus_limited_time_300k',
             'metadata': {
                 'user_id': str(test_user.id),
@@ -395,6 +435,8 @@ def test_apply_300k_limited_time_coupon_sends_a_partial_discount_to_the_invoice_
             'id': 'in_limited_time_300k',
             'status': 'open',
             'amount_due': 79920,
+            'subtotal': 99900,
+            'total': 79920,
             'customer': 'cus_limited_time_300k',
             'confirmation_secret': {'client_secret': 'pi_invoice_secret_xyz'},
             'metadata': {
@@ -418,6 +460,171 @@ def test_apply_300k_limited_time_coupon_sends_a_partial_discount_to_the_invoice_
     assert body.get('free') is not True
     # Nothing is granted until Stripe reports the invoice paid.
     assert AccountEntitlement.query.filter_by(user_id=test_user.id).count() == 0
+
+
+def test_apply_300k_limited_time_coupon_rejects_a_code_that_does_not_touch_this_offer(
+    client, app, auth_headers, test_user, monkeypatch
+):
+    """A coupon restricted to the subscription prices must be reported, not accepted.
+
+    Stripe happily attaches such a code and discounts nothing, which would
+    otherwise show the buyer a "discount applied" message at full price.
+    """
+    from app.routes import billing
+
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    calls = _stub_limited_time_coupon_stripe(
+        monkeypatch, billing, test_user,
+        invoice={
+            'id': 'in_limited_time_300k',
+            'status': 'open',
+            'amount_due': 99900,
+            'subtotal': 99900,
+            'total': 99900,
+            'customer': 'cus_limited_time_300k',
+            'metadata': {
+                'user_id': str(test_user.id),
+                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+                'tokens': '300000000',
+            },
+        },
+    )
+
+    response = client.post(
+        '/api/v1/billing/apply-300k-limited-time-coupon',
+        headers=auth_headers,
+        json={'payment_intent_id': 'pi_limited_time_300k_abc', 'coupon_code': 'SUBSONLY'},
+    )
+
+    assert response.status_code == 400
+    assert 'does not reduce the price' in response.get_json()['msg']
+    # The buyer's original full-price payment must still be usable.
+    assert 'canceled' not in calls
+    assert calls['voided'] == ['in_limited_time_300k']
+
+
+def test_apply_300k_limited_time_coupon_never_grants_on_an_empty_invoice(
+    client, app, auth_headers, test_user, monkeypatch
+):
+    """A $0 invoice with no offer line is a bug, not a fully covered purchase."""
+    from app.routes import billing
+
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    _stub_limited_time_coupon_stripe(
+        monkeypatch, billing, test_user,
+        invoice={
+            'id': 'in_limited_time_300k',
+            'status': 'paid',
+            'amount_due': 0,
+            'subtotal': 0,
+            'total': 0,
+            'customer': 'cus_limited_time_300k',
+            'metadata': {
+                'user_id': str(test_user.id),
+                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+                'tokens': '300000000',
+            },
+        },
+    )
+
+    response = client.post(
+        '/api/v1/billing/apply-300k-limited-time-coupon',
+        headers=auth_headers,
+        json={'payment_intent_id': 'pi_limited_time_300k_abc', 'coupon_code': '300KTest'},
+    )
+
+    assert response.status_code == 400
+    assert AccountEntitlement.query.filter_by(user_id=test_user.id).count() == 0
+
+
+def test_apply_300k_limited_time_coupon_allows_a_second_code_after_the_first(
+    client, app, auth_headers, test_user, monkeypatch
+):
+    """Trying another code must work, and must not leave the first invoice payable.
+
+    The first code moves the charge onto an invoice and cancels the original
+    intent, so the second attempt arrives with that intent already canceled.
+    """
+    from app.routes import billing
+
+    app.config['STRIPE_LIMITED_TIME_300K_PRICE_ID'] = 'price_limited_time_300k_999'
+    calls = _stub_limited_time_coupon_stripe(
+        monkeypatch, billing, test_user,
+        status='canceled',
+        open_invoices=[{
+            'id': 'in_limited_time_300k_first_try',
+            'status': 'open',
+            'metadata': {'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE},
+        }, {
+            'id': 'in_someone_elses_subscription',
+            'status': 'open',
+            'metadata': {},
+        }],
+        invoice={
+            'id': 'in_limited_time_300k',
+            'status': 'paid',
+            'amount_due': 0,
+            'subtotal': 99900,
+            'total': 0,
+            'customer': 'cus_limited_time_300k',
+            'metadata': {
+                'user_id': str(test_user.id),
+                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+                'tokens': '300000000',
+            },
+        },
+    )
+
+    response = client.post(
+        '/api/v1/billing/apply-300k-limited-time-coupon',
+        headers=auth_headers,
+        json={'payment_intent_id': 'pi_limited_time_300k_abc', 'coupon_code': '300KTest'},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['free'] is True
+    # The abandoned first attempt is voided; unrelated invoices are untouched.
+    assert calls['voided'] == ['in_limited_time_300k_first_try']
+
+
+def test_confirm_300k_limited_time_payment_fulfills_a_discounted_invoice(
+    client, app, auth_headers, test_user, monkeypatch
+):
+    """A partially discounted purchase is paid through the invoice's own intent.
+
+    That intent carries none of the offer metadata, so the frontend names the
+    invoice and fulfilment reads it from there.
+    """
+    from app.routes import billing
+
+    app.config['LIMITED_TIME_300K_CREDIT_TOKENS'] = 300_000_000
+    monkeypatch.setattr(
+        billing.stripe.Invoice, 'retrieve',
+        lambda invoice_id, **kwargs: {
+            'id': invoice_id,
+            'status': 'paid',
+            'amount_due': 0,
+            'customer': 'cus_limited_time_300k',
+            'metadata': {
+                'user_id': str(test_user.id),
+                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+                'tokens': '300000000',
+                'promotion_code': 'LAUNCH20',
+            },
+        },
+    )
+
+    response = client.post(
+        '/api/v1/billing/confirm-300k-limited-time-payment',
+        headers=auth_headers,
+        json={'payment_intent_id': 'pi_from_the_invoice', 'invoice_id': 'in_limited_time_300k_partial'},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['granted'] is True
+    assert AccountEntitlement.query.filter_by(
+        user_id=test_user.id, entitlement_key='300k_limited_time'
+    ).first() is not None
 
 
 def test_apply_300k_limited_time_coupon_rejects_unknown_code(

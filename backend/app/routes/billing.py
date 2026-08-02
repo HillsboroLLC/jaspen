@@ -553,7 +553,22 @@ def _invoice_payment_client_secret(invoice):
             payment_intent = stripe.PaymentIntent.retrieve(payment_intent)
         except stripe.error.StripeError:
             return ''
-    return _stripe_field(payment_intent, 'client_secret', '') or ''
+    nested = _stripe_field(payment_intent, 'client_secret', '') or ''
+    if nested:
+        return nested
+    # Current API versions drop payment_intent from the invoice and only return
+    # confirmation_secret on request, so ask for it explicitly before giving up.
+    invoice_id = _stripe_field(invoice, 'id')
+    if not invoice_id:
+        return ''
+    try:
+        expanded = stripe.Invoice.retrieve(invoice_id, expand=['confirmation_secret'])
+    except stripe.error.StripeError:
+        return ''
+    secret = _stripe_field(expanded, 'confirmation_secret')
+    if isinstance(secret, str):
+        return secret
+    return _stripe_field(secret, 'client_secret', '') or ''
 
 
 def _fulfill_limited_time_300k_invoice(invoice, expected_user=None):
@@ -1099,6 +1114,74 @@ def _log_coupon_outcome(outcome, **fields):
         pass
 
 
+def _create_invoice_item_for_price(customer_id, price_id, invoice_id=None):
+    """Put a one-time price onto a specific draft invoice.
+
+    Two things here are version-sensitive and were getting this wrong in
+    production. Stripe's current API takes the price nested under `pricing`;
+    the top-level `price` form these calls used was removed, so every attempt
+    failed with an unknown-parameter error before any discount was applied.
+    And a standalone invoice does not pick up pending invoice items unless it
+    asks for them, so the item is attached to the invoice by id rather than
+    left floating on the customer - a floating item would otherwise land on
+    whatever the customer is invoiced for next.
+    """
+    params = {'customer': customer_id}
+    if invoice_id:
+        params['invoice'] = invoice_id
+    try:
+        return stripe.InvoiceItem.create(pricing={'price': price_id}, **params)
+    except stripe.error.InvalidRequestError as exc:
+        # Older API versions took the price at the top level. Fall back rather
+        # than break if this app is ever pinned back to one of them.
+        if 'pricing' not in str(exc):
+            raise
+        return stripe.InvoiceItem.create(price=price_id, **params)
+
+
+def _discard_limited_time_300k_invoice(invoice):
+    """Throw away an offer invoice we are not going to collect.
+
+    Used when a code turns out not to discount this offer, and when a buyer
+    applies a second code - otherwise each attempt leaves an open invoice on
+    the customer that Stripe will keep chasing.
+    """
+    invoice_id = _stripe_field(invoice, 'id')
+    if not invoice_id:
+        return
+    status = str(_stripe_field(invoice, 'status') or '').strip().lower()
+    try:
+        if status == 'draft':
+            stripe.Invoice.delete(invoice_id)
+        elif status in {'open', 'uncollectible'}:
+            stripe.Invoice.void_invoice(invoice_id)
+    except stripe.error.StripeError as exc:
+        current_app.logger.warning('300k-limited-time: could not discard invoice %s: %s', invoice_id, exc)
+
+
+def _discard_open_limited_time_300k_invoices(customer_id):
+    """Clear this customer's unpaid offer invoices before starting another.
+
+    Applying a promo code, then trying a different one, used to leave the first
+    invoice open and payable. Only invoices carrying this checkout type are
+    touched, so a buyer's subscription invoices are never affected.
+    """
+    if not customer_id:
+        return
+    try:
+        invoices = stripe.Invoice.list(customer=customer_id, limit=20)
+    except stripe.error.StripeError as exc:
+        current_app.logger.warning('300k-limited-time: could not list invoices to clean up: %s', exc)
+        return
+    for invoice in _stripe_field(invoices, 'data') or []:
+        metadata = _stripe_field(invoice, 'metadata') or {}
+        if _stripe_field(metadata, 'checkout_type') != LIMITED_TIME_300K_CHECKOUT_TYPE:
+            continue
+        if str(_stripe_field(invoice, 'status') or '').strip().lower() not in {'draft', 'open'}:
+            continue
+        _discard_limited_time_300k_invoice(invoice)
+
+
 def _resolve_300k_limited_time_amount(price_id, coupon_code, customer_id=None):
     """Returns (amount, currency, promotion_code_id, error_response).
 
@@ -1251,12 +1334,16 @@ def apply_300k_limited_time_coupon():
     except stripe.error.StripeError as exc:
         return jsonify({'msg': str(exc)}), 400
 
-    intent_metadata = intent.get('metadata') or {}
-    if intent_metadata.get('checkout_type') != LIMITED_TIME_300K_CHECKOUT_TYPE:
+    intent_metadata = _stripe_field(intent, 'metadata') or {}
+    if _stripe_field(intent_metadata, 'checkout_type') != LIMITED_TIME_300K_CHECKOUT_TYPE:
         return jsonify({'msg': 'Payment not found'}), 404
-    if intent_metadata.get('user_id') != str(user.id):
+    if _stripe_field(intent_metadata, 'user_id') != str(user.id):
         return jsonify({'msg': 'Payment does not belong to this user'}), 403
-    if intent.get('status') not in {'requires_payment_method', 'requires_confirmation'}:
+    intent_status = str(_stripe_field(intent, 'status') or '')
+    # 'canceled' is expected on a second attempt: applying a code moves the
+    # charge onto an invoice and cancels this intent, and the buyer must still
+    # be able to try a different code after that.
+    if intent_status not in {'requires_payment_method', 'requires_confirmation', 'canceled'}:
         return jsonify({'msg': 'This payment can no longer be modified.'}), 409
 
     price_id = current_app.config.get('STRIPE_LIMITED_TIME_300K_PRICE_ID')
@@ -1278,7 +1365,7 @@ def apply_300k_limited_time_coupon():
         # here, so Stripe records the redemption and owns the money movement -
         # the same way create_subscription attaches discounts to the
         # subscription instead of computing a reduced amount itself.
-        stripe.InvoiceItem.create(customer=customer_id, price=price_id)
+        _discard_open_limited_time_300k_invoices(customer_id)
         invoice = stripe.Invoice.create(
             customer=customer_id,
             discounts=[{'promotion_code': promotion_code_id}],
@@ -1288,12 +1375,17 @@ def apply_300k_limited_time_coupon():
             metadata={
                 'user_id': str(user.id),
                 'checkout_type': LIMITED_TIME_300K_CHECKOUT_TYPE,
-                'tokens': str(intent_metadata.get('tokens') or ''),
-                'campaign_id': str(intent_metadata.get('campaign_id') or ''),
+                'tokens': str(_stripe_field(intent_metadata, 'tokens') or ''),
+                'campaign_id': str(_stripe_field(intent_metadata, 'campaign_id') or ''),
                 'promotion_code': coupon_code,
             },
         )
-        invoice = stripe.Invoice.finalize_invoice(_stripe_field(invoice, 'id'))
+        _create_invoice_item_for_price(customer_id, price_id, _stripe_field(invoice, 'id'))
+        # confirmation_secret is only returned when asked for, and without it
+        # there is no client secret to hand a partially discounted payment.
+        invoice = stripe.Invoice.finalize_invoice(
+            _stripe_field(invoice, 'id'), expand=['confirmation_secret'],
+        )
     except stripe.error.StripeError as exc:
         current_app.logger.exception('apply-300k-limited-time-coupon: invoice failed')
         return jsonify({
@@ -1302,7 +1394,26 @@ def apply_300k_limited_time_coupon():
 
     invoice_id = _stripe_field(invoice, 'id')
     amount_due = int(_stripe_field(invoice, 'amount_due', 0) or 0)
+    subtotal = int(_stripe_field(invoice, 'subtotal', 0) or 0)
+    total = _stripe_field(invoice, 'total')
+    total = subtotal if total is None else int(total)
     _log_coupon_diagnostics(coupon_code, promotion_code_id, invoice, 'usd', 99900)
+
+    # An invoice that never picked up the offer line must not be mistaken for a
+    # fully discounted one - that would hand out the credits for nothing.
+    if subtotal <= 0:
+        _discard_limited_time_300k_invoice(invoice)
+        _log_coupon_outcome('empty_invoice', invoice=invoice_id, subtotal=subtotal)
+        return jsonify({'msg': 'Could not price this offer. Please try again.'}), 400
+
+    if total >= subtotal:
+        # Stripe accepted the code but it does not apply to this product,
+        # usually because the coupon is restricted to the subscription prices.
+        _discard_limited_time_300k_invoice(invoice)
+        _log_coupon_outcome('no_discount', invoice=invoice_id, subtotal=subtotal, total=total)
+        return jsonify({
+            'msg': 'That code was found but does not reduce the price of this offer.',
+        }), 400
 
     if amount_due <= 0:
         # Stripe finalizes a fully-discounted invoice straight to paid, so the
@@ -1350,8 +1461,25 @@ def confirm_300k_limited_time_payment():
 
     data = request.get_json() or {}
     payment_intent_id = str(data.get('payment_intent_id') or '').strip()
-    if not payment_intent_id:
+    invoice_id = str(data.get('invoice_id') or '').strip()
+    if not payment_intent_id and not invoice_id:
         return jsonify({'msg': 'Missing payment_intent_id'}), 400
+
+    # A discounted purchase is paid through an invoice, and that invoice's own
+    # payment intent carries none of our metadata - so fulfil from the invoice
+    # when the frontend tells us the payment went through one.
+    if invoice_id:
+        try:
+            invoice = stripe.Invoice.retrieve(invoice_id)
+        except stripe.error.StripeError as exc:
+            return jsonify({'msg': str(exc)}), 400
+        result = _fulfill_limited_time_300k_invoice(invoice, expected_user=user)
+        if result.get('reason') == 'wrong_user':
+            return jsonify({'msg': 'Payment does not belong to this user'}), 403
+        if result.get('reason') not in {None, 'already_processed'} and not result.get('granted'):
+            return jsonify({'msg': 'Payment is not ready yet', **result}), 409
+        db.session.commit()
+        return jsonify({'success': True, **result}), 200
 
     try:
         intent = stripe.PaymentIntent.retrieve(payment_intent_id)
