@@ -1692,11 +1692,13 @@ export default function JaspenWorkspace() {
               />
             )}
             {(isScorecard || isTradeoff || isExecution) && (() => {
-              // One "Export" menu everywhere: a single working PDF/file method
-              // (the client print pipeline for scorecards — the only path that
-              // renders the real DOM, see printScorecard() above — or Excel for
-              // execution plans) plus Email, which opens the same dialog the
-              // old standalone "Email this to me" button used.
+              // One "Export" menu everywhere: Email (opens the same dialog the
+              // old standalone "Email this to me" button used, and now also
+              // attaches the PowerPoint) plus whichever file download is
+              // actually reliable for this view. The client print/PDF path
+              // for scorecards still doesn't reliably save, even after fixing
+              // the ScoreDashboard.css conflict, so PowerPoint is the
+              // supported scorecard download for now instead.
               const exporting = isExecution ? executionExporting : Boolean(scorecardExporting);
               const items = isExecution
                 ? [
@@ -1709,8 +1711,8 @@ export default function JaspenWorkspace() {
                     { label: 'Email', act: () => { emailResultsRef.current?.open(); } },
                   ]
                   : [
-                    { label: 'PDF', act: () => printScorecard() },
                     { label: 'Email', act: () => { emailResultsRef.current?.open(); } },
+                    { label: 'PowerPoint', act: () => downloadExport('pptx', 'pptx', 'PowerPoint') },
                   ];
               return (
                 <div style={{ position:'relative' }}>

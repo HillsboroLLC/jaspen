@@ -350,9 +350,14 @@ def _build_scorecard_detail_summary(scorecard):
     dimensions = []
     for row in _scorecard_component_rows(scorecard):
         try:
-            value = float(row.get("value"))
+            raw_value = float(row.get("value"))
         except (TypeError, ValueError):
             continue
+        # Some scorecards store a dimension score as "75" meaning 7.5/10
+        # rather than 7.5 directly (see the identical normalization in
+        # _scorecard_pdf_bytes's ScoreBar) - without this, a value already
+        # >10 makes the bar fill (and overflow) past 100%.
+        value = raw_value / 10 if raw_value > 10 else raw_value
         dimensions.append({"label": row["label"], "value": value})
     risks = _items(scorecard.get("top_risks") or scorecard.get("risks"), limit=8)
     recommended = _text(scorecard.get("recommended_scenario"))
@@ -530,10 +535,23 @@ def _build_attachments(context, output_types):
     base = _safe_filename_base(scorecard.get("project_name"))
 
     # scorecard_detail deliveries use the HTML-body-matches-the-workspace email
-    # (see render_scorecard_detail_email) instead of file attachments - the
-    # server-rendered PDF/PPTX are a separately hand-built template that can't
-    # reflect the on-screen block layout, so they're not attached here.
+    # (see render_scorecard_detail_email) plus a PowerPoint attachment so the
+    # recipient has something presentation-ready. The server-rendered PDF is a
+    # separately hand-built template that doesn't reflect the on-screen block
+    # layout (and the client print/PDF path isn't reliable either), so no PDF
+    # is attached here.
     if "scorecard_detail" in output_types:
+        try:
+            pptx = _pptx_bytes(scorecard, org=org)
+        except Exception as exc:
+            raise DeliveryError("artifact_generation_failed") from exc
+        if not pptx:
+            raise DeliveryError("artifact_generation_failed")
+        attachments.append(EmailAttachment(
+            f"{base}-scorecard.pptx",
+            PPTX_MIMETYPE,
+            pptx,
+        ))
         return attachments
 
     if {"scorecards", "ranked_ideas", "tradeoff"}.intersection(output_types):
