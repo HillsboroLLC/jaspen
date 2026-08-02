@@ -169,6 +169,8 @@ describe('Limited-time offer checkout acknowledgements', () => {
     await user.click(screen.getByRole('button', { name: 'Apply' }));
 
     expect(await screen.findByText('Promo code applied — no payment required')).toBeInTheDocument();
+    // The whole point: a fully-covering code must never ask for card details.
+    expect(screen.queryByTestId('payment-element')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Pay / })).not.toBeInTheDocument();
     expect(onSuccess).not.toHaveBeenCalled();
 
