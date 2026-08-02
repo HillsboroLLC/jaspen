@@ -168,7 +168,12 @@ describe('Limited-time offer checkout acknowledgements', () => {
     await user.type(couponInput, '300KTest');
     await user.click(screen.getByRole('button', { name: 'Apply' }));
 
-    await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Promo code applied — no payment required')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Pay / })).not.toBeInTheDocument();
+    expect(onSuccess).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Start using my credits' }));
+    expect(onSuccess).toHaveBeenCalledTimes(1);
   });
 
   it('links to all policies from the acknowledgement', () => {

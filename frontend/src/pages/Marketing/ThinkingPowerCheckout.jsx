@@ -163,6 +163,7 @@ function PaymentForm({ onSuccess, clientSecret }) {
   const [couponInput, setCouponInput] = useState('');
   const [couponError, setCouponError] = useState('');
   const [applyingCoupon, setApplyingCoupon] = useState(false);
+  const [freeRedeemed, setFreeRedeemed] = useState(false);
   const paymentIntentId = String(clientSecret || '').split('_secret_')[0];
 
   const applyCoupon = async () => {
@@ -184,7 +185,7 @@ function PaymentForm({ onSuccess, clientSecret }) {
         // charge, so there's nothing left for the card form to do.
         setAppliedCoupon(code);
         setPriceLabel('$0.00');
-        onSuccess?.();
+        setFreeRedeemed(true);
         return;
       }
       setPriceLabel(data.price_label?.startsWith('$') ? data.price_label : `$${data.price_label}`);
@@ -235,6 +236,22 @@ function PaymentForm({ onSuccess, clientSecret }) {
 
   const fullPriceLabel = `$${LIMITED_TIME_300K_PRICE}`;
   const discounted = appliedCoupon && priceLabel !== fullPriceLabel;
+
+  if (freeRedeemed) {
+    return (
+      <div>
+        <div style={{ padding: '16px 18px', borderRadius: 10, background: '#e9f9ee', border: '1px solid #0d7a3e', color: '#0d7a3e' }}>
+          <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 6 }}>Promo code applied — no payment required</div>
+          <div style={{ fontSize: 14, color: '#14532d' }}>
+            <strong>{appliedCoupon}</strong> covers the full {fullPriceLabel}. Your {LIMITED_TIME_300K_CREDITS} usage credits are ready now — your card was not charged.
+          </div>
+        </div>
+        <button type="button" className="fc-checkout-primary" onClick={() => onSuccess?.()} style={{ marginTop: 16 }}>
+          Start using my credits
+        </button>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit}>
