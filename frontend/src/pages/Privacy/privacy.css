@@ -2,6 +2,9 @@
   max-width: 800px;
   margin: 0 auto;
   padding: 20px;
+  /* The site header is position: fixed and 86px tall, so the page has to
+     start below it - without this the heading sits under the nav bar. */
+  padding-top: 110px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
   line-height: 1.6;
   color: #333;
@@ -122,6 +125,7 @@
 @media (max-width: 768px) {
   .privacy-container {
     padding: 10px;
+    padding-top: 100px;
   }
   
   .privacy-content {
