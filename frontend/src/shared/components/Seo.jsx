@@ -1,7 +1,10 @@
 import { useEffect } from 'react';
 
 const SITE_NAME = 'Jaspen';
-const SITE_URL = 'https://jaspen.ai';
+// The apex host 307s to www, and some crawlers will not follow a redirect
+// for og:image or treat a redirecting canonical as authoritative. Point at
+// where the content actually lives.
+const SITE_URL = 'https://www.jaspen.ai';
 const DEFAULT_IMAGE = `${SITE_URL}/android-chrome-512x512.png`;
 
 // Tracks how many Seo instances are mounted so the app shell can yield
