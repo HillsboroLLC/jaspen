@@ -386,24 +386,76 @@ def _credit_pack_tokens_from_metadata(metadata):
     return credits * 1000 if credits > 0 else 0
 
 
+def _send_limited_time_300k_welcome_email(user, *, amount_label='$999', reference=''):
+    """Receipt and welcome note, sent once when the credits are granted.
+
+    Never lets a mail failure undo a paid purchase: the credits are already on
+    the account by the time this runs, so a bounced send is logged and dropped
+    rather than raised.
+    """
+    email = str(getattr(user, 'email', '') or '').strip()
+    if not email:
+        return False
+    try:
+        from flask_mail import Message
+
+        from app import mail
+        from app.email_templates.limited_time_300k_welcome import (
+            render_limited_time_300k_welcome_email,
+        )
+
+        rendered = render_limited_time_300k_welcome_email(
+            amount_label=amount_label,
+            workspace_url=_frontend_url('/'),
+            receipt_reference=reference,
+        )
+        message = Message(
+            subject=rendered['subject'],
+            recipients=[email],
+            sender='Jaspen <hello@jaspen.ai>',
+            reply_to='hello@jaspen.ai',
+        )
+        message.body = rendered['body']
+        message.html = rendered['html']
+        mail.send(message)
+        return True
+    except Exception:
+        current_app.logger.exception(
+            '300K Limited-Time: welcome email failed for user=%s', getattr(user, 'id', None),
+        )
+        return False
+
+
 def _is_limited_time_300k_charge(user, charge):
     if user is None:
         return False
     metadata = charge.get('metadata') if isinstance(charge.get('metadata'), dict) else {}
     if str(metadata.get('checkout_type') or '').strip() == LIMITED_TIME_300K_CHECKOUT_TYPE:
         return True
+    # A discounted purchase settles through an invoice, so its grant records an
+    # invoice id and its charge carries none of our metadata. Matching only on
+    # the payment intent let a refunded or disputed promo-code purchase keep all
+    # 300,000 credits.
     payment_intent_id = str(charge.get('payment_intent') or '').strip()
-    if not payment_intent_id:
+    invoice_id = str(charge.get('invoice') or '').strip()
+    if not payment_intent_id and not invoice_id:
         return False
     grants = PersistentCreditGrant.query.filter_by(
         user_id=str(user.id),
         source=LIMITED_TIME_300K_CREDIT_SOURCE,
     ).all()
-    return any(
-        str((grant.grant_metadata or {}).get('stripe_payment_intent_id') or '').strip()
-        == payment_intent_id
-        for grant in grants
-    )
+    for grant in grants:
+        grant_metadata = grant.grant_metadata or {}
+        if payment_intent_id and str(
+            grant_metadata.get('stripe_payment_intent_id') or ''
+        ).strip() == payment_intent_id:
+            return True
+        if invoice_id and (
+            str(grant_metadata.get('stripe_invoice_id') or '').strip() == invoice_id
+            or str(grant.stripe_invoice_id or '').strip() == invoice_id
+        ):
+            return True
+    return False
 
 
 def _fulfill_credit_pack_purchase(
@@ -571,6 +623,8 @@ def _fulfill_limited_time_300k_payment_intent(intent, expected_user=None):
     if intent.get('customer'):
         user.stripe_customer_id = intent.get('customer')
     get_usage_meter_state(user, current_app.config)
+    if created:
+        _send_limited_time_300k_welcome_email(user, reference=payment_intent_id)
     event_row.processed = True
     event_row.processed_at = datetime.utcnow()
     current_app.logger.info(
@@ -685,6 +739,12 @@ def _fulfill_limited_time_300k_invoice(invoice, expected_user=None):
     if customer_id:
         user.stripe_customer_id = customer_id
     get_usage_meter_state(user, current_app.config)
+    if created:
+        _send_limited_time_300k_welcome_email(
+            user,
+            amount_label=_price_label(int(_stripe_field(invoice, 'amount_paid', 0) or 0)),
+            reference=invoice_id,
+        )
     event_row.processed = True
     event_row.processed_at = datetime.utcnow()
     current_app.logger.info(
