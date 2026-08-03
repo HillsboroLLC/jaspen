@@ -11,6 +11,12 @@ export const THINKING_POWER_PROJECT_ESTIMATES = Object.freeze({
   limited_time_300k: '~750–1,200 typical project evaluations over the life of the credit balance',
 });
 
+// Short form for places where the estimate sits inline next to the credit
+// count and the longer phrasing would not fit — same numbers as
+// THINKING_POWER_PROJECT_ESTIMATES.limited_time_300k, which stays the full
+// statement. Change both together.
+export const LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT = '~750–1,200 project evaluations';
+
 export const FOUNDER_THINKING_POWER_SUMMARY =
   '300,000 persistent credits, available until used · ~750–1,200 typical project evaluations over the life of the gift';
 

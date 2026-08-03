@@ -3,6 +3,7 @@ import { createAnalytics } from '../../tools/shared/createAnalytics';
 import EnterpriseInvestmentCalculator from './EnterpriseInvestmentCalculator';
 import ExecutivePartnershipRequest from './ExecutivePartnershipRequest';
 import {
+  LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT,
   THINKING_POWER_PROJECT_ESTIMATES,
   THINKING_POWER_VARIABILITY_NOTE,
 } from '../../shared/billing/thinkingPowerEstimates';
@@ -130,7 +131,7 @@ const ADVISORY_OFFERINGS = [
     qualifier: 'Flat fee',
     description: 'For an executive or leadership team working through one consequential strategic decision.',
     included: [
-      '300,000 AI-powered usage credits',
+      `300,000 AI-powered usage credits (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})`,
       'One 90-minute virtual Executive Decision Intensive',
       'Session facilitated by Jaspen’s Founder or a designated Customer Success Partner',
       'Tailored preparation guidance before the session',
@@ -150,7 +151,7 @@ const ADVISORY_OFFERINGS = [
     qualifier: 'Flat fee',
     description: 'For organizations evaluating multiple high-value decisions and seeking greater clarity on where leadership attention, capital, and organizational capacity may create the greatest estimated financial impact.',
     included: [
-      '300,000 AI-powered usage credits',
+      `300,000 AI-powered usage credits (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})`,
       'Five 90-minute virtual Executive Decision Intensives',
       'Sessions facilitated by Jaspen’s Founder or a designated Customer Success Partner',
       'Tailored preparation guidance before each session',
@@ -173,7 +174,7 @@ const ADVISORY_COMPARISON = [
   { label: 'Executive Decision Intensives',   intensive: '1',                                                             partnership: '5' },
   { label: 'Session duration',                intensive: '90 minutes',                                                    partnership: '90 minutes each' },
   { label: 'Delivery',                        intensive: 'Virtual',                                                       partnership: 'Virtual' },
-  { label: 'AI-powered usage credits',        intensive: '300,000',                                                       partnership: '300,000' },
+  { label: 'AI-powered usage credits',        intensive: `300,000 (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})`,        partnership: `300,000 (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})` },
   { label: 'Tailored preparation guidance',   intensive: 'Included',                                                      partnership: 'Included before each intensive' },
   { label: 'Decision framing',                intensive: 'Included',                                                      partnership: 'Included' },
   { label: 'Prompt development',              intensive: 'Included',                                                      partnership: 'Included' },
@@ -335,6 +336,14 @@ export default function PricingVariantB({ onOpenModal }) {
               </div>
             ))}
           </div>
+
+          {/* The credit estimate above is a planning figure. Every other
+              surface that shows these numbers carries this qualifier, and an
+              estimate presented without it would read as a commitment. */}
+          <p className="pvb-advisory-estimate-note">
+            Project evaluation counts are approximate planning estimates, not guaranteed
+            quantities. {THINKING_POWER_VARIABILITY_NOTE}
+          </p>
 
           <p className="pvb-advisory-travel-note">
             Virtual delivery is standard. In-person facilitation may be considered when appropriate.

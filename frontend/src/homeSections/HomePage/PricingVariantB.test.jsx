@@ -133,6 +133,19 @@ describe('Advisory Partnerships tab', () => {
     expect(panel.textContent).not.toMatch(/guarantee[ds]?\s+(revenue|savings|EBITDA)/i);
   });
 
+  it('shows the project estimate beside the credits, with its qualifier', async () => {
+    const user = userEvent.setup();
+    render(<PricingVariantB onOpenModal={jest.fn()} />);
+    await openAdvisory(user);
+
+    const credits = screen.getAllByText(/300,000 AI-powered usage credits \(~750–1,200 project evaluations\)/);
+    expect(credits).toHaveLength(2);
+
+    // An estimate shown without this reads as a commitment.
+    expect(screen.getByText(/approximate planning estimates, not guaranteed quantities/i)).toBeInTheDocument();
+    expect(screen.getByText(/Actual usage varies based on model selection/i)).toBeInTheDocument();
+  });
+
   it('hides the billing toggle and the enterprise calculator on advisory', async () => {
     const user = userEvent.setup();
     render(<PricingVariantB onOpenModal={jest.fn()} />);
