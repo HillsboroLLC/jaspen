@@ -27,8 +27,9 @@
 
 .pvb-audience-tabs {
   width: fit-content;
+  max-width: 100%;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   margin: 0 auto 24px;
   padding: 4px;
@@ -37,13 +38,16 @@
   border-radius: 14px;
 }
 .pvb-audience-tab {
-  min-width: 190px;
+  /* Sized from the longest label ("Business & Enterprise") so all three keep
+     equal width and none wraps. */
+  min-width: 186px;
   padding: 11px 18px;
   border: 0;
   border-radius: 10px;
   background: transparent;
   color: #5f687a;
   font: 700 0.88rem/1.2 inherit;
+  white-space: nowrap;
   cursor: pointer;
   transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
 }
@@ -101,17 +105,19 @@
 .pvb-plan-layout.is-business {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* stretch lets the taller card set the row height and the shorter one match,
+     rather than either card being given a fixed height. */
   align-items: stretch;
   gap: 18px;
   max-width: 1180px;
-  margin: 0 auto 18px;
+  margin: 0 auto 28px;
 }
 .pvb-cards-row {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
   max-width: 1180px;
-  margin: 0 auto 60px;
+  margin: 0 auto 28px;
 }
 .pvb-cards-row.is-individuals { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .pvb-cards-row.is-business {
@@ -171,9 +177,12 @@
   margin-top: auto;
   text-align: center;
 }
+/* Clear separation from the disclaimer above, so the calculator reads as its
+   own step rather than crowding the cards. */
 .pvb-enterprise-calculator-section {
   max-width: 1180px;
   margin: 0 auto 18px;
+  padding-top: 8px;
 }
 .pvb-enterprise-eyebrow {
   margin: 0 0 10px;
@@ -289,13 +298,156 @@
   }
 }
 
+/* Spacing below the cards is owned by the card row itself, not clawed back
+   with a negative margin on this note. The old `margin-top: -36px` was tuned
+   against `.pvb-cards-row`'s 60px bottom margin, but the business layout
+   zeroes that margin — so on that tab the note was pulled 36px into an 18px
+   gap and disappeared under the cards, which set `position: relative` for the
+   "Most popular" badge and therefore paint above it. */
 .pvb-plan-note {
   max-width: 820px;
-  margin: -36px auto 54px;
+  margin: 0 auto 54px;
   text-align: center;
   font-size: 0.95rem;
   line-height: 1.65;
   color: #4f5d75;
+}
+
+/* ── Advisory Partnerships ── */
+.pvb-advisory-intro {
+  max-width: 820px;
+  margin: 0 auto 40px;
+  text-align: center;
+}
+.pvb-advisory-eyebrow {
+  margin: 0 0 10px;
+  color: #a0036c;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.pvb-advisory-intro h3 {
+  margin: 0 0 14px;
+  font-size: clamp(1.35rem, 2.2vw, 1.85rem);
+  font-weight: 800;
+  line-height: 1.25;
+  color: #161f3b;
+}
+.pvb-advisory-lead {
+  margin: 0 0 16px;
+  font-size: 0.98rem;
+  line-height: 1.65;
+  color: #4f5d75;
+}
+.pvb-advisory-disclosure {
+  margin: 0;
+  padding: 12px 18px;
+  border-left: 3px solid #e1ddd5;
+  background: #f3f1ed;
+  border-radius: 0 10px 10px 0;
+  text-align: left;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: #5f687a;
+}
+
+.pvb-advisory-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 18px;
+  max-width: 1180px;
+  margin: 0 auto 28px;
+}
+.pvb-advisory-card {
+  /* Height comes from content; the grid's stretch aligns the pair. */
+  padding: 30px 26px;
+  gap: 12px;
+}
+.pvb-advisory-card .pvb-card-name { font-size: 1.15rem; }
+.pvb-advisory-price {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 0;
+}
+.pvb-advisory-price strong {
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: #161f3b;
+  line-height: 1.1;
+}
+.pvb-advisory-qualifier {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #a0036c;
+}
+.pvb-advisory-desc {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: #4f5d75;
+}
+.pvb-advisory-included-label {
+  margin: 8px 0 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #9ca3af;
+}
+.pvb-advisory-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  /* Takes the slack so the CTA blocks align across both cards. */
+  flex: 1;
+}
+.pvb-advisory-list li {
+  position: relative;
+  padding-left: 22px;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: #374151;
+}
+.pvb-advisory-list li::before {
+  content: '\f00c';
+  font-family: 'Font Awesome 6 Free';
+  font-weight: 900;
+  position: absolute;
+  left: 0;
+  top: 1px;
+  font-size: 0.72rem;
+  color: #a0036c;
+}
+.pvb-advisory-delivery {
+  margin: 4px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid #eee9e1;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: #6b7280;
+}
+.pvb-advisory-cta-note {
+  margin: 8px 0 0;
+  text-align: center;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: #9ca3af;
+}
+.pvb-advisory-travel-note {
+  max-width: 820px;
+  margin: 0 auto 40px;
+  text-align: center;
+  font-size: 0.85rem;
+  line-height: 1.65;
+  color: #6b7280;
 }
 
 /* ── Compare section ── */
@@ -368,6 +520,10 @@
   border-collapse: collapse;
   background: #fff;
 }
+/* Three columns instead of five, so it fits far narrower before scrolling. */
+.pvb-table.is-advisory { min-width: 520px; }
+.pvb-table.is-advisory .pvb-th-plan { width: 34%; }
+.pvb-table.is-advisory .pvb-cell { font-size: 0.82rem; }
 
 .pvb-th-label {
   width: 32%;
@@ -452,15 +608,28 @@
 }
 .pvb-addons-note a { color: #a0036c; }
 
+/* Three labels no longer fit one row well below ~640px of tab track. Stack
+   them at full width rather than shrinking the text to squeeze them in — a
+   stacked tab is still a comfortable tap target and stays legible. */
+@media (max-width: 720px) {
+  .pvb-audience-tabs {
+    width: 100%;
+    max-width: 420px;
+    grid-template-columns: 1fr;
+  }
+  .pvb-audience-tab { min-width: 0; width: 100%; }
+}
+
 @media (max-width: 760px) {
   .pvb-cards-row { grid-template-columns: 1fr 1fr; }
   .pvb-cards-row.is-business { grid-template-columns: 1fr; }
   .pvb-plan-layout.is-business { grid-template-columns: 1fr; }
+  .pvb-advisory-cards { grid-template-columns: 1fr; }
   .pvb-enterprise-intro { align-items: flex-start; flex-direction: column; }
   .pvb-compare-header { flex-direction: column; align-items: flex-start; }
 }
 @media (max-width: 480px) {
   .pvb-cards-row { grid-template-columns: 1fr; }
-  .pvb-audience-tabs { width: 100%; }
-  .pvb-audience-tab { min-width: 0; padding: 10px 8px; font-size: 0.78rem; }
+  .pvb-advisory-card { padding: 24px 20px; }
+  .pvb-advisory-disclosure { padding: 12px 14px; }
 }

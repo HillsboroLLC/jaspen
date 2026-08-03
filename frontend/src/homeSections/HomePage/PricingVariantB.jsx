@@ -114,6 +114,83 @@ const FEATURES = [
   },
 ];
 
+// Advisory engagements are quoted at a flat fee and never sold through
+// checkout — every CTA here routes to the consultation flow.
+const ADVISORY_CONSULTATION_MAILTO = 'mailto:hello@jaspen.ai';
+
+const ADVISORY_CTA_NOTE = 'Engagements are accepted based on fit, capacity, and decision readiness.';
+
+const ADVISORY_OFFERINGS = [
+  {
+    key: 'executive_decision_intensive',
+    title: 'Executive Decision Intensive',
+    price: '$25,000',
+    qualifier: 'Flat fee',
+    description: 'For an executive or leadership team working through one consequential strategic decision.',
+    included: [
+      '300,000 AI-powered usage credits',
+      'One 90-minute virtual Executive Decision Intensive',
+      'Session facilitated by Jaspen’s Founder or a designated Customer Success Partner',
+      'Tailored preparation guidance before the session',
+      'Decision framing and prompt development',
+      'Assumption and evidence challenge',
+      'Decision criteria and tradeoff guidance',
+      'Interpretation of Jaspen outputs',
+      'Executive-ready artifacts generated through Jaspen',
+    ],
+    delivery: 'The client provides a concise description of the decision before the session. Jaspen responds with tailored guidance on what information the client should have available. During the session, the client executes in Jaspen while the advisor guides the work.',
+    subject: 'Executive Decision Intensive — consultation request',
+  },
+  {
+    key: 'strategic_advisor_partnership',
+    title: 'Strategic Advisor Partnership',
+    price: '$100,000',
+    qualifier: 'Flat fee',
+    description: 'For organizations evaluating multiple high-value decisions and seeking greater clarity on where leadership attention, capital, and organizational capacity may create the greatest estimated financial impact.',
+    included: [
+      '300,000 AI-powered usage credits',
+      'Five 90-minute virtual Executive Decision Intensives',
+      'Sessions facilitated by Jaspen’s Founder or a designated Customer Success Partner',
+      'Tailored preparation guidance before each session',
+      'Decision framing and prompt development',
+      'Assumption, evidence, risk, and tradeoff challenge',
+      'Financial opportunity prioritization',
+      'Portfolio and initiative prioritization',
+      'Interpretation of Jaspen outputs',
+      'Executive-ready artifacts generated through Jaspen',
+    ],
+    delivery: 'Before each intensive, the client provides a concise description of the decision, opportunity, or portfolio to be evaluated. Jaspen responds with tailored guidance on what information the client should have available. The client remains responsible for its inputs and executes within Jaspen during each working session.',
+    subject: 'Strategic Advisor Partnership — consultation request',
+    featured: true,
+  },
+];
+
+const ADVISORY_COMPARISON = [
+  { label: 'Investment',                      intensive: '$25,000 flat fee',                                              partnership: '$100,000 flat fee' },
+  { label: 'Best for',                        intensive: 'One consequential strategic decision',                          partnership: 'Multiple high-value decisions or priority areas' },
+  { label: 'Executive Decision Intensives',   intensive: '1',                                                             partnership: '5' },
+  { label: 'Session duration',                intensive: '90 minutes',                                                    partnership: '90 minutes each' },
+  { label: 'Delivery',                        intensive: 'Virtual',                                                       partnership: 'Virtual' },
+  { label: 'AI-powered usage credits',        intensive: '300,000',                                                       partnership: '300,000' },
+  { label: 'Tailored preparation guidance',   intensive: 'Included',                                                      partnership: 'Included before each intensive' },
+  { label: 'Decision framing',                intensive: 'Included',                                                      partnership: 'Included' },
+  { label: 'Prompt development',              intensive: 'Included',                                                      partnership: 'Included' },
+  { label: 'Assumption challenge',            intensive: 'Included',                                                      partnership: 'Included' },
+  { label: 'Evidence and tradeoff guidance',  intensive: 'Included',                                                      partnership: 'Included' },
+  { label: 'Financial opportunity prioritization', intensive: 'Applied to the defined decision when relevant',            partnership: 'Included across the agreed decisions or priorities' },
+  { label: 'Portfolio prioritization',        intensive: 'Not included unless the defined decision is a portfolio decision', partnership: 'Included' },
+  { label: 'Executive-ready Jaspen artifacts', intensive: 'Included',                                                     partnership: 'Included' },
+  { label: 'Facilitator',                     intensive: 'Founder or designated Customer Success Partner',                partnership: 'Founder or designated Customer Success Partner' },
+  { label: 'Direct checkout',                 intensive: 'No',                                                            partnership: 'No' },
+  { label: 'Next step',                       intensive: 'Request a Consultation',                                        partnership: 'Request a Consultation' },
+];
+
+const AUDIENCE_TABS = [
+  { key: 'individuals', label: 'Individuals & Teams' },
+  { key: 'business',    label: 'Business & Enterprise' },
+  { key: 'advisory',    label: 'Advisory Partnerships' },
+];
+
 function Cell({ value }) {
   if (value === true)  return <i className="fa-solid fa-check pvb-check" aria-label="Included" />;
   if (value === false) return <span className="pvb-dash" aria-label="Not included">—</span>;
@@ -123,8 +200,10 @@ function Cell({ value }) {
 export default function PricingVariantB({ onOpenModal }) {
   const [isAnnual, setIsAnnual] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [advisoryCompareOpen, setAdvisoryCompareOpen] = useState(false);
   const [activeAudience, setActiveAudience] = useState('individuals');
   const isBusinessAudience = activeAudience === 'business';
+  const isAdvisoryAudience = activeAudience === 'advisory';
   const individualPlans = PLANS.filter(plan => plan.key !== 'business');
   const visiblePlans = isBusinessAudience ? PLANS.filter(plan => plan.key === 'business') : individualPlans;
 
@@ -134,11 +213,25 @@ export default function PricingVariantB({ onOpenModal }) {
   };
 
   const handleTabKeyDown = (event, audience) => {
-    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    const nextAudience = audience === 'individuals' ? 'business' : 'individuals';
+    const index = AUDIENCE_TABS.findIndex(tab => tab.key === audience);
+    let nextIndex;
+    if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = AUDIENCE_TABS.length - 1;
+    else {
+      const step = event.key === 'ArrowRight' ? 1 : -1;
+      // Wraps in both directions, so the roving focus never dead-ends.
+      nextIndex = (index + step + AUDIENCE_TABS.length) % AUDIENCE_TABS.length;
+    }
+    const nextAudience = AUDIENCE_TABS[nextIndex].key;
     selectAudience(nextAudience);
     document.getElementById(`pricing-tab-${nextAudience}`)?.focus();
+  };
+
+  const requestConsultation = (offering) => {
+    analytics.track('advisory_consultation_requested', { offering: offering.key });
+    window.location.href = `${ADVISORY_CONSULTATION_MAILTO}?subject=${encodeURIComponent(offering.subject)}`;
   };
 
   return (
@@ -149,34 +242,29 @@ export default function PricingVariantB({ onOpenModal }) {
         <h2>Plans for every stage</h2>
         <p className="pvb-subhead">All models available on every plan. You move up when you need more capacity.</p>
         <div className="pvb-audience-tabs" role="tablist" aria-label="Pricing audiences">
-          <button
-            id="pricing-tab-individuals"
-            type="button"
-            role="tab"
-            aria-selected={!isBusinessAudience}
-            aria-controls="pricing-panel-individuals"
-            tabIndex={!isBusinessAudience ? 0 : -1}
-            className={`pvb-audience-tab${!isBusinessAudience ? ' is-active' : ''}`}
-            onClick={() => selectAudience('individuals')}
-            onKeyDown={(event) => handleTabKeyDown(event, 'individuals')}
-          >
-            Individuals &amp; Teams
-          </button>
-          <button
-            id="pricing-tab-business"
-            type="button"
-            role="tab"
-            aria-selected={isBusinessAudience}
-            aria-controls="pricing-panel-business"
-            tabIndex={isBusinessAudience ? 0 : -1}
-            className={`pvb-audience-tab${isBusinessAudience ? ' is-active' : ''}`}
-            onClick={() => selectAudience('business')}
-            onKeyDown={(event) => handleTabKeyDown(event, 'business')}
-          >
-            Business &amp; Enterprise
-          </button>
+          {AUDIENCE_TABS.map(tab => {
+            const isSelected = activeAudience === tab.key;
+            return (
+              <button
+                key={tab.key}
+                id={`pricing-tab-${tab.key}`}
+                type="button"
+                role="tab"
+                aria-selected={isSelected}
+                aria-controls={`pricing-panel-${tab.key}`}
+                tabIndex={isSelected ? 0 : -1}
+                className={`pvb-audience-tab${isSelected ? ' is-active' : ''}`}
+                onClick={() => selectAudience(tab.key)}
+                onKeyDown={(event) => handleTabKeyDown(event, tab.key)}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
-        <div className="pvb-billing-toggle">
+        {/* Advisory engagements are a flat fee, so a monthly/annual switch
+            would be meaningless next to them. */}
+        {!isAdvisoryAudience && <div className="pvb-billing-toggle">
           <span className={!isAnnual ? 'pvb-toggle-label is-active' : 'pvb-toggle-label'}>Monthly</span>
           <button
             type="button"
@@ -190,9 +278,107 @@ export default function PricingVariantB({ onOpenModal }) {
           <span className={isAnnual ? 'pvb-toggle-label is-active' : 'pvb-toggle-label'}>
             Annual <em className="pvb-save-chip">Save 17%</em>
           </span>
-        </div>
+        </div>}
       </div>
 
+      {isAdvisoryAudience ? (
+        <div
+          id="pricing-panel-advisory"
+          role="tabpanel"
+          aria-labelledby="pricing-tab-advisory"
+          className="pvb-advisory-panel"
+        >
+          <div className="pvb-advisory-intro">
+            <p className="pvb-advisory-eyebrow">Jaspen Advisory</p>
+            <h3>Strategic decisions deserve more than software alone.</h3>
+            <p className="pvb-advisory-lead">
+              Work virtually with Jaspen’s Founder or a designated Customer Success Partner to frame
+              high-impact decisions, strengthen the inputs and prompts used in Jaspen, challenge
+              assumptions, and identify where the greatest estimated financial value may be available.
+            </p>
+            <p className="pvb-advisory-disclosure">
+              Advisory engagements are delivered through structured virtual working sessions. Clients
+              execute within Jaspen while the Jaspen advisor guides the decision process.
+            </p>
+          </div>
+
+          <div className="pvb-advisory-cards">
+            {ADVISORY_OFFERINGS.map(offering => (
+              <div
+                key={offering.key}
+                className={`pvb-card pvb-advisory-card${offering.featured ? ' is-featured' : ''}`}
+              >
+                <p className="pvb-card-name">{offering.title}</p>
+                <p className="pvb-advisory-price">
+                  <strong>{offering.price}</strong>
+                  <span className="pvb-advisory-qualifier">{offering.qualifier}</span>
+                </p>
+                <p className="pvb-advisory-desc">{offering.description}</p>
+                <p className="pvb-advisory-included-label">Included</p>
+                <ul className="pvb-advisory-list">
+                  {offering.included.map(item => <li key={item}>{item}</li>)}
+                </ul>
+                <p className="pvb-advisory-delivery">{offering.delivery}</p>
+                <button
+                  type="button"
+                  className={`pvb-card-cta jaspen-btn ${offering.featured ? 'jaspen-btn-primary' : 'jaspen-btn-outline'}`}
+                  onClick={() => requestConsultation(offering)}
+                >
+                  Request a Consultation
+                </button>
+                <p className="pvb-advisory-cta-note">{ADVISORY_CTA_NOTE}</p>
+              </div>
+            ))}
+          </div>
+
+          <p className="pvb-advisory-travel-note">
+            Virtual delivery is standard. In-person facilitation may be considered when appropriate.
+            Approved travel, lodging, transportation, meals, and related expenses are billed
+            separately and are not included in the flat fee.
+          </p>
+
+          <div className="pvb-compare-accordion">
+            <button
+              type="button"
+              className="pvb-compare-toggle"
+              onClick={() => setAdvisoryCompareOpen(v => !v)}
+              aria-expanded={advisoryCompareOpen}
+              aria-controls="pvb-advisory-compare-panel"
+            >
+              <span>Compare advisory engagements</span>
+              <i className={`fa-solid fa-chevron-down pvb-compare-chevron${advisoryCompareOpen ? ' is-open' : ''}`} aria-hidden="true" />
+            </button>
+
+            {advisoryCompareOpen && (
+              <div className="pvb-table-wrap" id="pvb-advisory-compare-panel">
+                <table className="pvb-table is-advisory">
+                  <thead>
+                    <tr>
+                      <th className="pvb-th-label">Engagement</th>
+                      <th className="pvb-th-plan">
+                        <span className="pvb-compare-plan-name">Executive Decision Intensive</span>
+                      </th>
+                      <th className="pvb-th-plan">
+                        <span className="pvb-compare-plan-name">Jaspen Strategic Advisor Partnership</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ADVISORY_COMPARISON.map(row => (
+                      <tr key={row.label} className="pvb-feature-row">
+                        <td className="pvb-feature-label">{row.label}</td>
+                        <td className="pvb-cell"><Cell value={row.intensive} /></td>
+                        <td className="pvb-cell"><Cell value={row.partnership} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+      <>
       {/* ── Plan cards ── */}
       <div className={`pvb-plan-layout${isBusinessAudience ? ' is-business' : ''}`}>
       <div
@@ -281,13 +467,14 @@ export default function PricingVariantB({ onOpenModal }) {
           className="pvb-compare-toggle"
           onClick={() => setCompareOpen(v => !v)}
           aria-expanded={compareOpen}
+          aria-controls="pvb-plans-compare-panel"
         >
           <span>Compare plans</span>
           <i className={`fa-solid fa-chevron-down pvb-compare-chevron${compareOpen ? ' is-open' : ''}`} aria-hidden="true" />
         </button>
 
         {compareOpen && (
-          <div className="pvb-table-wrap">
+          <div className="pvb-table-wrap" id="pvb-plans-compare-panel">
             <table className="pvb-table">
               <thead>
                 <tr>
@@ -331,6 +518,8 @@ export default function PricingVariantB({ onOpenModal }) {
       {!isBusinessAudience && <p className="pvb-addons-note">
         Mid-cycle top-ups: <a href="#pricing-variant-b">3,000 credits for $10 · 8,000 for $25 · 18,000 for $50</a>
       </p>}
+      </>
+      )}
 
     </section>
   );
