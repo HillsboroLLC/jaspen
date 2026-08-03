@@ -263,3 +263,84 @@ def test_the_receipt_omits_the_reference_line_entirely_when_absent():
 
     assert 'Reference:' not in rendered['html']
     assert 'Reference:' not in rendered['body']
+
+
+# —— Declined cards ————————————————————————————————
+
+
+def test_a_declined_card_is_recorded_and_grants_nothing(client, app, db, buyer, monkeypatch, caplog):
+    """A failed payment must be visible without ever touching the balance.
+
+    Otherwise a campaign reports a flat conversion number, and "nobody tried"
+    looks identical to "every card is declining".
+    """
+    import logging
+
+    from app.routes import billing
+
+    app.config['STRIPE_WEBHOOK_SECRET'] = 'whsec_failed_test'
+    event = {
+        'id': 'evt_payment_intent_failed',
+        'type': 'payment_intent.payment_failed',
+        'data': {'object': {
+            'id': 'pi_declined',
+            'amount': 99900,
+            'customer': 'cus_limited_time_300k',
+            'last_payment_error': {
+                'code': 'card_declined',
+                'decline_code': 'insufficient_funds',
+                'message': 'Your card has insufficient funds.',
+            },
+            'metadata': {
+                'user_id': str(buyer.id),
+                'checkout_type': billing.LIMITED_TIME_300K_CHECKOUT_TYPE,
+                'campaign_id': 'limited_time_300k_pmo',
+            },
+        }},
+    }
+    monkeypatch.setattr(billing.stripe.Webhook, 'construct_event', lambda *_args: event)
+
+    with caplog.at_level(logging.WARNING):
+        response = client.post(
+            '/api/v1/billing/webhook', data=b'{}', headers={'Stripe-Signature': 'test'},
+        )
+
+    assert response.status_code == 200
+    logged = '\n'.join(record.getMessage() for record in caplog.records)
+    assert 'insufficient_funds' in logged
+    assert 'limited_time_300k_pmo' in logged
+    assert str(buyer.id) in logged
+    # Nothing was granted, and the buyer has no entitlement from a failure.
+    assert limited_time_300k_credit_balance(buyer) == 0
+    assert has_limited_time_300k_entitlement(buyer) is False
+
+
+def test_a_declined_card_on_an_unknown_customer_still_records(client, app, db, monkeypatch, caplog):
+    """Stripe can report a failure before we can resolve who it belongs to."""
+    import logging
+
+    from app.routes import billing
+
+    app.config['STRIPE_WEBHOOK_SECRET'] = 'whsec_failed_test'
+    event = {
+        'id': 'evt_payment_intent_failed_anon',
+        'type': 'payment_intent.payment_failed',
+        'data': {'object': {
+            'id': 'pi_declined_anon',
+            'amount': 99900,
+            'customer': 'cus_never_seen',
+            'last_payment_error': {'code': 'card_declined'},
+            'metadata': {},
+        }},
+    }
+    monkeypatch.setattr(billing.stripe.Webhook, 'construct_event', lambda *_args: event)
+
+    with caplog.at_level(logging.WARNING):
+        response = client.post(
+            '/api/v1/billing/webhook', data=b'{}', headers={'Stripe-Signature': 'test'},
+        )
+
+    assert response.status_code == 200
+    assert 'pi_declined_anon' in '\n'.join(
+        record.getMessage() for record in caplog.records
+    )

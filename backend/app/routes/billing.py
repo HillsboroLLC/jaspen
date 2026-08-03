@@ -2326,6 +2326,33 @@ def stripe_webhook():
 
             user.subscription_status = 'active'
 
+    elif event_type == 'payment_intent.payment_failed':
+        # Nothing to reverse - credits are only granted on success. This exists
+        # so a declined card is visible: without it a campaign shows a flat
+        # conversion number with no way to tell "nobody tried" from "cards are
+        # failing", which are opposite problems with opposite fixes.
+        intent = event['data']['object']
+        intent_metadata = intent.get('metadata') or {}
+        last_error = intent.get('last_payment_error') or {}
+        checkout_type = str(intent_metadata.get('checkout_type') or '').strip() or 'unknown'
+        user = None
+        if intent_metadata.get('user_id'):
+            user = User.query.get(intent_metadata.get('user_id'))
+        if not user:
+            user = _find_user_for_billing_event(customer_id=intent.get('customer'))
+        current_app.logger.warning(
+            'payment_intent.payment_failed: checkout_type=%s campaign=%s user=%s '
+            'amount=%s decline_code=%s code=%s message=%s intent=%s',
+            checkout_type,
+            str(intent_metadata.get('campaign_id') or '') or None,
+            getattr(user, 'id', None),
+            intent.get('amount'),
+            last_error.get('decline_code'),
+            last_error.get('code'),
+            last_error.get('message'),
+            intent.get('id'),
+        )
+
     elif event_type == 'invoice.payment_failed':
         inv = event['data']['object']
         user = _find_user_for_billing_event(
