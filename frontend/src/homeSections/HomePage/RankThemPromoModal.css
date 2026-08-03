@@ -65,6 +65,16 @@
   color: #475569;
 }
 
+.rank-them-body-detail {
+  color: #334155 !important;
+}
+
+.rank-them-terms {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+}
+
 .rank-them-price {
   padding: 12px 14px;
   border: 1px solid #e6eaf2;

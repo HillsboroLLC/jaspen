@@ -161,15 +161,18 @@ export default function RankThemPromoModal() {
         <p className="rank-them-eyebrow">Limited-time offer</p>
         <h2 id="rank-them-title">{promo.headline}</h2>
         <p id="rank-them-body">
-          Too many projects and not enough room to do them all. Rank them against criteria you
-          can defend, see the tradeoffs, and keep the reasoning when someone asks why.
+          Limited time. Limited resources. Too many priorities.
+        </p>
+        <p className="rank-them-body-detail">
+          Rank your initiatives so you know what to focus on first, what can wait, and why.
         </p>
         <p className="rank-them-price">
-          <strong>300,000 usage credits for $999</strong> once. No subscription. Credits do not expire.
+          <strong>300,000 AI-powered usage credits for $999.</strong>
+          <span className="rank-them-terms">One payment. No subscription. Credits never expire.</span>
         </p>
         <div className="rank-them-actions">
           <button type="button" className="rank-them-primary" onClick={goToOffer}>
-            See the offer
+            {'Let\u2019s rank my priorities'}
           </button>
           <button type="button" className="rank-them-secondary" onClick={() => close({ permanently: true })}>
             Not now
