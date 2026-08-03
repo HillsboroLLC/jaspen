@@ -44,6 +44,7 @@ from app.models import (
     LeadDecisionProfile,
     LeadEmailDelivery,
     EnterpriseInquiry,
+    Payment,
     User,
     UserAuthSession,
     UserSession,
@@ -668,23 +669,9 @@ def master_analytics():
         if first_scorecard_minutes else None
     )
 
-    active_paid_statuses = {"active", "trialing"}
-    paid_plans = {"starter", "essential", "team", "business"}
-    plan_mrr = {
-        "starter": 7,
-        "essential": 39,
-        "team": 0,
-        "business": 0,
-    }
-    paid_users = User.query.filter(func.lower(User.subscription_plan).in_(paid_plans)).all()
-    completed_purchases = sum(
-        1 for user in paid_users
-        if str(user.subscription_status or "").lower() in active_paid_statuses
-        or str(user.subscription_plan or "").lower() in {"starter", "essential"}
-    )
+    revenue = _revenue_metrics(now)
     failed_payment_statuses = {"past_due", "unpaid", "incomplete", "incomplete_expired"}
     failed_payments = User.query.filter(func.lower(User.subscription_status).in_(failed_payment_statuses)).count()
-    mrr = sum(plan_mrr.get(str(user.subscription_plan or "").lower(), 0) for user in paid_users)
 
     conversions = len(leads_today)
     activation_percent = round((len(scorecard_sessions) / max(User.query.filter(User.created_at >= week_start).count(), 1)) * 100, 1)
@@ -700,13 +687,15 @@ def master_analytics():
             "emails_captured": Lead.query.count(),
             "scorecards_generated": len(scorecard_sessions),
             "upgrades_started": 0,
-            "completed_purchases": completed_purchases,
+            "completed_purchases_30d": revenue["completed_purchases_30d"],
+            "coupon_redemptions_30d": revenue["coupon_redemptions_30d"],
+            "gross_revenue_30d": revenue["gross_revenue_30d"],
             "failed_payments": failed_payments,
             "errors": AdminAuditEvent.query.filter(AdminAuditEvent.timestamp >= today_start, AdminAuditEvent.action.ilike("%error%")).count(),
             "average_time_to_first_scorecard": avg_first_scorecard,
             "activation_percent": activation_percent,
             "conversion_percent": conversion_percent,
-            "mrr": mrr,
+            "mrr": revenue["mrr"],
         },
         "traffic_sources": traffic_sources,
         "recent_signups": [
@@ -722,7 +711,10 @@ def master_analytics():
         "notes": {
             "todays_visitors": "Uses authenticated visitor sessions when present, otherwise today's signups.",
             "upgrades_started": "Reserved for checkout-intent instrumentation.",
-            "mrr": "Self-serve MRR estimate; team and enterprise contract revenue are not inferred.",
+            "completed_purchases_30d": "Settled Stripe payments of more than $0 in the last 30 days. Plan membership alone is not a purchase.",
+            "coupon_redemptions_30d": "Fully-discounted invoices. These are redemptions, not revenue, and are excluded from gross revenue and MRR.",
+            "gross_revenue_30d": "Dollars collected in the last 30 days across subscriptions, 300K Limited-Time purchases, and credit packs.",
+            "mrr": "Recurring run-rate from settled Stripe invoices for active subscriptions, annual normalized to monthly. Excludes one-time purchases and any contract invoiced outside Stripe.",
         },
     }), 200
 
@@ -1050,6 +1042,89 @@ def delete_master_lead(lead_id):
         "email": canonical_email,
         "records_deleted": len(record_ids),
     }), 200
+
+
+REVENUE_WINDOW_DAYS = 30
+MRR_ACTIVE_STATUSES = ("active", "trialing")
+
+
+def _revenue_metrics(now):
+    """Revenue read from money received, never from plan membership.
+
+    The metrics this replaced counted accounts sitting on a paid plan and
+    multiplied by hardcoded prices, so a $0 coupon redemption was revenue and
+    a $999 one-time purchase was invisible. Everything here comes from
+    `payments` rows written when Stripe confirms settlement.
+
+    MRR is deliberately not a sum of payments: one-time purchases and credit
+    packs are revenue but not recurring. It is the run-rate of the most recent
+    paying invoice per currently-active subscription, with annual normalized
+    to monthly.
+    """
+    window_start = now - timedelta(days=REVENUE_WINDOW_DAYS)
+    in_window = Payment.paid_at >= window_start
+
+    completed_purchases_30d = Payment.query.filter(
+        in_window, Payment.amount_paid_cents > 0
+    ).count()
+    coupon_redemptions_30d = Payment.query.filter(
+        in_window, Payment.is_comped.is_(True)
+    ).count()
+    gross_revenue_cents = db.session.query(
+        func.coalesce(func.sum(Payment.amount_paid_cents), 0)
+    ).filter(in_window, Payment.amount_paid_cents > 0).scalar() or 0
+
+    return {
+        "completed_purchases_30d": int(completed_purchases_30d),
+        "coupon_redemptions_30d": int(coupon_redemptions_30d),
+        "gross_revenue_30d": round(int(gross_revenue_cents) / 100, 2),
+        "mrr": _monthly_recurring_revenue(),
+    }
+
+
+def _monthly_recurring_revenue():
+    """Run-rate of currently-active subscriptions, in dollars.
+
+    One contribution per subscription — the most recent invoice that actually
+    collected money. A canceled or past_due subscription contributes nothing
+    because its user no longer holds an active status, and a fully-comped
+    renewal contributes nothing because it collected nothing.
+    """
+    active_user_ids = {
+        str(row[0]) for row in db.session.query(User.id).filter(
+            func.lower(User.subscription_status).in_(MRR_ACTIVE_STATUSES)
+        ).all()
+    }
+    if not active_user_ids:
+        return 0.0
+
+    rows = (
+        Payment.query
+        .filter(
+            Payment.source == "subscription_invoice",
+            Payment.amount_paid_cents > 0,
+            Payment.user_id.in_(active_user_ids),
+        )
+        .order_by(Payment.paid_at.desc(), Payment.id.desc())
+        .all()
+    )
+
+    latest_per_subscription = {}
+    for payment in rows:
+        # Fall back to the user when a row predates subscription-id capture,
+        # so an older backfilled invoice still counts exactly once.
+        key = payment.stripe_subscription_id or f"user:{payment.user_id}"
+        if key in latest_per_subscription:
+            continue
+        latest_per_subscription[key] = payment
+
+    total_cents = 0
+    for payment in latest_per_subscription.values():
+        amount = int(payment.amount_paid_cents or 0)
+        if str(payment.billing_interval or "").lower() == "year":
+            amount = amount / 12
+        total_cents += amount
+    return round(total_cents / 100, 2)
 
 
 @admin_bp.route("/master/errors", methods=["GET"])

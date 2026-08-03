@@ -15,7 +15,9 @@ const METRIC_LABELS = [
   ['emails_captured', 'Emails Captured'],
   ['scorecards_generated', 'Scorecards Generated'],
   ['upgrades_started', 'Upgrades Started'],
-  ['completed_purchases', 'Completed Purchases'],
+  ['completed_purchases_30d', 'Completed Purchases (30d)'],
+  ['coupon_redemptions_30d', 'Coupon Redemptions, $0 (30d)'],
+  ['gross_revenue_30d', 'Gross Revenue (30d)'],
   ['failed_payments', 'Failed Payments'],
   ['errors', 'Errors'],
   ['average_time_to_first_scorecard', 'Average Time to First Scorecard'],
@@ -30,7 +32,7 @@ function authHeaders(method = 'GET') {
 
 function formatMetric(key, value) {
   if (value == null || value === '') return 'Pending';
-  if (key === 'mrr') return `$${Number(value || 0).toLocaleString()}`;
+  if (key === 'mrr' || key === 'gross_revenue_30d') return `$${Number(value || 0).toLocaleString()}`;
   if (key.endsWith('_percent')) return `${Number(value || 0).toLocaleString()}%`;
   if (key === 'average_time_to_first_scorecard') return `${Number(value || 0).toLocaleString()} min`;
   return Number.isFinite(Number(value)) ? Number(value).toLocaleString() : String(value);

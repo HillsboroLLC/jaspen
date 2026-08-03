@@ -22,6 +22,9 @@ jest.mock('./HowScoreWorks', () => function MockHowScoreWorks() { return <sectio
 jest.mock('./DecisionStyleAssessment/DecisionStyleAssessment', () => function MockDecisionStyleAssessment() { return <section>Assessment</section>; });
 jest.mock('./DecisionPlanningToolkitLeadCapture', () => function MockDecisionPlanningToolkitLeadCapture() { return <section>Toolkit</section>; });
 jest.mock('../FAQSection/FAQSection', () => function MockFAQSection() { return <section>FAQ</section>; });
+// Reads auth and billing on mount; its own behaviour is covered in
+// RankThemPromoModal.test.jsx.
+jest.mock('./RankThemPromoModal', () => function MockRankThemPromoModal() { return null; });
 
 describe('HomePage final CTA', () => {
   beforeEach(() => {

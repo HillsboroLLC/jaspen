@@ -1139,6 +1139,75 @@ class StripeWebhookEvent(db.Model):
     processed_at = db.Column(db.DateTime, nullable=True, index=True)
 
 
+class Payment(db.Model):
+    """Money actually received, as reported by Stripe.
+
+    One row per settled Stripe object. This table exists because plan
+    membership is not evidence of payment: a plan set by coupon, by hand, or
+    by an internal grant is indistinguishable from a paid one on the User
+    row, which is how comped test accounts were once reported as revenue.
+
+    Amounts are integer cents, mirroring Stripe exactly. Never floats.
+    """
+
+    __tablename__ = 'payments'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    organization_id = db.Column(db.String(36), nullable=True, index=True)
+
+    # The Stripe object id (in_… or pi_…). Unique, so a webhook retry or a
+    # replayed event cannot double-count revenue.
+    external_reference = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    # 'subscription_invoice' | 'limited_time_300k' | 'credit_pack'
+    source = db.Column(db.String(40), nullable=False, index=True)
+
+    # Net of discount — 0 for a fully-comped invoice.
+    amount_paid_cents = db.Column(db.Integer, nullable=False, default=0)
+    # List price before discount.
+    amount_due_cents = db.Column(db.Integer, nullable=False, default=0)
+    discount_cents = db.Column(db.Integer, nullable=False, default=0)
+    currency = db.Column(db.String(8), nullable=False, default='usd')
+
+    # True when the payment was fully discounted, so $0 redemptions can be
+    # counted as redemptions instead of disappearing into a revenue average.
+    is_comped = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    promotion_code = db.Column(db.String(120), nullable=True)
+
+    plan_key = db.Column(db.String(40), nullable=True, index=True)
+    # 'month' | 'year' | None for a one-time purchase.
+    billing_interval = db.Column(db.String(10), nullable=True)
+    stripe_subscription_id = db.Column(db.String(255), nullable=True, index=True)
+    paid_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.Index('ix_payments_paid_at_amount', 'paid_at', 'amount_paid_cents'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'external_reference': self.external_reference,
+            'source': self.source,
+            'amount_paid_cents': int(self.amount_paid_cents or 0),
+            'amount_due_cents': int(self.amount_due_cents or 0),
+            'discount_cents': int(self.discount_cents or 0),
+            'currency': self.currency,
+            'is_comped': bool(self.is_comped),
+            'promotion_code': self.promotion_code,
+            'plan_key': self.plan_key,
+            'billing_interval': self.billing_interval,
+            'paid_at': self.paid_at.isoformat() if self.paid_at else None,
+        }
+
+
 class AccountEntitlement(db.Model):
     """Permanent, auditable capabilities that are independent of plan state."""
 

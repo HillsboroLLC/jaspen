@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from app import db
 from app.admin_policy import is_global_admin
 from app.homepage_promotion import public_promotion_state
-from app.models import PersistentCreditGrant, StripeWebhookEvent, User
+from app.models import Payment, PersistentCreditGrant, StripeWebhookEvent, User
 from app.orgs import build_seat_usage, can_manage_org, resolve_active_org_for_user
 from app.billing_config import (
     apply_plan_to_user,
@@ -463,6 +463,7 @@ def _is_limited_time_300k_charge(user, charge):
 
 def _fulfill_credit_pack_purchase(
     reference, metadata, *, event_type, customer_id=None, expected_user=None,
+    amount_paid=None, amount_due=None, currency='usd',
 ):
     """Add credit-pack tokens once per purchase, whatever event carries it.
 
@@ -522,6 +523,16 @@ def _fulfill_credit_pack_purchase(
     add_credits(user, tokens)
     if customer_id:
         user.stripe_customer_id = customer_id
+    if amount_paid is not None or amount_due is not None:
+        _record_payment(
+            external_reference=reference,
+            source='credit_pack',
+            user=user,
+            amount_paid=amount_paid if amount_paid is not None else amount_due,
+            amount_due=amount_due if amount_due is not None else amount_paid,
+            currency=currency,
+            plan_key=str(_stripe_field(metadata, 'pack_key') or '').strip() or None,
+        )
     event_row.processed = True
     event_row.processed_at = datetime.utcnow()
     current_app.logger.info(
@@ -544,6 +555,9 @@ def _fulfill_credit_pack_payment_intent(intent, expected_user=None):
         event_type='payment_intent.succeeded',
         customer_id=intent.get('customer'),
         expected_user=expected_user,
+        amount_paid=intent.get('amount_received'),
+        amount_due=intent.get('amount'),
+        currency=intent.get('currency') or 'usd',
     )
 
 
@@ -561,6 +575,9 @@ def _fulfill_credit_pack_checkout_session(session, expected_user=None):
         event_type='checkout.session.completed',
         customer_id=session.get('customer'),
         expected_user=expected_user,
+        amount_paid=session.get('amount_total'),
+        amount_due=session.get('amount_subtotal') or session.get('amount_total'),
+        currency=session.get('currency') or 'usd',
     )
 
 
@@ -626,6 +643,16 @@ def _fulfill_limited_time_300k_payment_intent(intent, expected_user=None):
     if intent.get('customer'):
         user.stripe_customer_id = intent.get('customer')
     get_usage_meter_state(user, current_app.config)
+    _record_payment(
+        external_reference=payment_intent_id,
+        source='limited_time_300k',
+        user=user,
+        amount_paid=intent.get('amount_received') or 0,
+        amount_due=intent.get('amount') or 0,
+        currency=intent.get('currency') or 'usd',
+        plan_key='300k_limited_time',
+        promotion_code=metadata.get('promotion_code'),
+    )
     if created:
         _send_limited_time_300k_welcome_email(user, reference=payment_intent_id)
     event_row.processed = True
@@ -668,6 +695,99 @@ def _invoice_payment_client_secret(invoice):
     if isinstance(secret, str):
         return secret
     return _stripe_field(secret, 'client_secret', '') or ''
+
+
+def _invoice_interval(invoice):
+    """The recurring interval from the invoice's first line item.
+
+    Taken at record time because `billing_interval` is not stored on User —
+    the status endpoint re-derives it from Stripe on every call. Reading it
+    from the invoice we already hold avoids a second round-trip later, and is
+    what lets an annual subscriber be normalized to a monthly run-rate.
+    """
+    lines = _stripe_field(invoice, 'lines') or {}
+    data = _stripe_field(lines, 'data') or []
+    if not data:
+        return None
+    price = _stripe_field(data[0], 'price') or {}
+    recurring = _stripe_field(price, 'recurring') or {}
+    interval = _stripe_field(recurring, 'interval')
+    return str(interval).strip().lower() if interval else None
+
+
+def _invoice_promotion_code(invoice):
+    """The promotion code applied to an invoice, when Stripe reports one."""
+    discount = _stripe_field(invoice, 'discount') or {}
+    code = _stripe_field(discount, 'promotion_code')
+    if isinstance(code, str) and code.strip():
+        return code.strip()[:120]
+    coupon = _stripe_field(discount, 'coupon') or {}
+    name = _stripe_field(coupon, 'id') or _stripe_field(coupon, 'name')
+    return str(name).strip()[:120] if name else None
+
+
+def _record_payment(
+    *,
+    external_reference,
+    source,
+    user,
+    amount_paid,
+    amount_due,
+    currency='usd',
+    plan_key=None,
+    billing_interval=None,
+    subscription_id=None,
+    promotion_code=None,
+    paid_at=None,
+):
+    """Record money received, idempotently by `external_reference`.
+
+    A webhook retry, a replayed event, or the backfill script running over
+    live data must all be no-ops rather than duplicate revenue. A fully
+    discounted invoice reports `amount_paid == 0`; it is still recorded, with
+    `is_comped=True`, because that row is the evidence a coupon was redeemed —
+    the thing the old plan-membership metrics could not see.
+
+    Returns (payment, created).
+    """
+    external_reference = str(external_reference or '').strip()
+    if not external_reference:
+        return None, False
+
+    existing = Payment.query.filter_by(external_reference=external_reference).first()
+    if existing is not None:
+        return existing, False
+
+    amount_paid_cents = max(0, int(amount_paid or 0))
+    amount_due_cents = max(0, int(amount_due or 0))
+    # A comped payment is one that was owed something and settled at zero. An
+    # invoice that was genuinely for $0 is not a redemption.
+    is_comped = amount_paid_cents == 0 and amount_due_cents > 0
+
+    payment = Payment(
+        user_id=str(user.id) if user is not None else None,
+        organization_id=getattr(user, 'active_organization_id', None) if user is not None else None,
+        external_reference=external_reference,
+        source=str(source),
+        amount_paid_cents=amount_paid_cents,
+        amount_due_cents=amount_due_cents,
+        discount_cents=max(0, amount_due_cents - amount_paid_cents),
+        currency=str(currency or 'usd').lower()[:8],
+        is_comped=is_comped,
+        promotion_code=promotion_code,
+        plan_key=plan_key,
+        billing_interval=billing_interval,
+        stripe_subscription_id=subscription_id,
+        paid_at=paid_at or datetime.utcnow(),
+    )
+    db.session.add(payment)
+    try:
+        db.session.flush()
+    except IntegrityError:
+        # Concurrent delivery of the same event won the race — theirs stands.
+        db.session.rollback()
+        return Payment.query.filter_by(external_reference=external_reference).first(), False
+    return payment, True
 
 
 def _fulfill_limited_time_300k_invoice(invoice, expected_user=None):
@@ -742,6 +862,21 @@ def _fulfill_limited_time_300k_invoice(invoice, expected_user=None):
     if customer_id:
         user.stripe_customer_id = customer_id
     get_usage_meter_state(user, current_app.config)
+    # Recorded here rather than in the dispatcher so the payment row and the
+    # credit grant land in the same transaction — a granted 300K offer with no
+    # payment row would reproduce exactly the blind spot this table exists for.
+    _record_payment(
+        external_reference=invoice_id,
+        source='limited_time_300k',
+        user=user,
+        amount_paid=_stripe_field(invoice, 'amount_paid', 0) or 0,
+        amount_due=_stripe_field(invoice, 'amount_due', 0) or 0,
+        currency=_stripe_field(invoice, 'currency') or 'usd',
+        plan_key='300k_limited_time',
+        promotion_code=(
+            _stripe_field(metadata, 'promotion_code') or _invoice_promotion_code(invoice)
+        ),
+    )
     if created:
         _send_limited_time_300k_welcome_email(
             user,
@@ -2327,6 +2462,23 @@ def stripe_webhook():
                 )
 
             user.subscription_status = 'active'
+
+            # The subscription's own money record. A fully-discounted renewal
+            # settles at amount_paid=0 and is recorded as a redemption rather
+            # than dropped, which is what stops a comped account from reading
+            # as revenue on the dashboard.
+            _record_payment(
+                external_reference=inv.get('id'),
+                source='subscription_invoice',
+                user=user,
+                amount_paid=inv.get('amount_paid') or 0,
+                amount_due=inv.get('amount_due') or 0,
+                currency=inv.get('currency') or 'usd',
+                plan_key=scheduled_plan_key or sub_plan_key,
+                billing_interval=_invoice_interval(inv),
+                subscription_id=subscription_id,
+                promotion_code=_invoice_promotion_code(inv),
+            )
 
     elif event_type == 'payment_intent.payment_failed':
         # Nothing to reverse - credits are only granted on success. This exists
