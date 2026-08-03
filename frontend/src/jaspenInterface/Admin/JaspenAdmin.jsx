@@ -185,6 +185,9 @@ export default function JaspenAdmin() {
   // switch semantics in app/public_intake_controls.py — kept as-is here
   // rather than inverted, so this state always mirrors exactly what GET
   // returns with no local re-derivation to get out of sync.
+  const [promotion, setPromotion] = useState(null);
+  const [promotionLoading, setPromotionLoading] = useState(false);
+  const [promotionPending, setPromotionPending] = useState(false);
   const [publicIntakeAi, setPublicIntakeAi] = useState(null);
   const [publicIntakeAiLoading, setPublicIntakeAiLoading] = useState(false);
   const [publicIntakeAiPending, setPublicIntakeAiPending] = useState(false);
@@ -344,6 +347,44 @@ export default function JaspenAdmin() {
     }
   };
 
+  const loadPromotion = async () => {
+    setPromotionLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/admin/homepage-promotion`, {
+        headers: authHeaders(),
+        credentials: 'include',
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to load the homepage promotion.');
+      setPromotion(data?.promotion || null);
+    } catch (error) {
+      setMessage(error.message || 'Unable to load the homepage promotion.');
+    } finally {
+      setPromotionLoading(false);
+    }
+  };
+
+  const togglePromotion = async () => {
+    if (!promotion) return;
+    setPromotionPending(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/admin/homepage-promotion`, {
+        method: 'PATCH',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ active: !promotion?.config?.active }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || 'Unable to change the promotion.');
+      setPromotion(data?.promotion || null);
+      setMessage(promotion?.config?.active ? 'Promotion ended.' : 'Promotion started.');
+    } catch (error) {
+      setMessage(error.message || 'Unable to change the promotion.');
+    } finally {
+      setPromotionPending(false);
+    }
+  };
+
   const loadPublicIntakeAi = async () => {
     setPublicIntakeAiLoading(true);
     try {
@@ -407,6 +448,7 @@ export default function JaspenAdmin() {
           await loadFeedback({ userId: '', q: '', value: '' });
           await loadAccessControls();
           await loadPublicIntakeAi();
+          await loadPromotion();
           await loadModelAccess();
         }
       } catch (error) {
@@ -1000,6 +1042,61 @@ export default function JaspenAdmin() {
                 </div>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section className="jas-admin-subsection">
+          <div className="jas-admin-section-head">
+            <div>
+              <h3>Homepage Promotion</h3>
+              <p className="jas-admin-empty">
+                The RANK THEM modal for the 300K Limited-Time offer. Ending it hides the modal for
+                every visitor within about a minute; it never stops the campaign pages or checkout.
+                The promotion also stops itself once the sales cap is reached.
+              </p>
+            </div>
+            <div className="jas-admin-actions">
+              <button
+                type="button"
+                className="jas-admin-secondary int-btn int-btn-ghost"
+                onClick={loadPromotion}
+                disabled={promotionLoading || promotionPending}
+                aria-disabled={promotionLoading || promotionPending}
+              >
+                {promotionLoading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+
+          <div className="jas-admin-review-row">
+            <div className="jas-admin-review-meta">
+              <strong>RANK THEM modal</strong>
+              <span>
+                {promotion
+                  ? `${promotion.sales_count ?? 0} of ${promotion.config?.sales_cap ?? 0} sales${
+                      promotion.live ? '' : ' — not showing to visitors'
+                    }`
+                  : 'Not loaded yet.'}
+              </span>
+            </div>
+            <span
+              className={`jas-admin-status-badge int-badge ${badgeClassForStatus(promotion?.live ? 'enabled' : 'disabled')} is-${promotion?.live ? 'enabled' : 'disabled'}`}
+            >
+              {promotion?.live ? 'Showing' : 'Off'}
+            </span>
+            <div className="jas-admin-actions">
+              <button
+                type="button"
+                className={promotion?.config?.active ? 'jas-admin-secondary jas-admin-danger int-btn int-btn-ghost int-btn-danger' : 'jas-admin-primary int-btn int-btn-primary'}
+                onClick={togglePromotion}
+                disabled={!promotion || promotionLoading || promotionPending}
+                aria-disabled={!promotion || promotionLoading || promotionPending}
+              >
+                {promotionPending
+                  ? 'Saving...'
+                  : promotion?.config?.active ? 'End promotion' : 'Start promotion'}
+              </button>
+            </div>
           </div>
         </section>
 
