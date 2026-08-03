@@ -270,6 +270,17 @@ def create_app():
     # 300,000 non-expiring usage credits, stored in internal units
     # (TOKENS_PER_CREDIT = 1000). Granted only after Stripe confirms payment.
     app.config['LIMITED_TIME_300K_CREDIT_TOKENS'] = 300_000_000
+    # Homepage promotion switch. Off unless explicitly turned on, so the modal
+    # can be started, paused, or ended by configuration rather than a deploy.
+    app.config['LIMITED_TIME_PROMO_ACTIVE'] = _as_bool(
+        os.getenv('LIMITED_TIME_PROMO_ACTIVE'), default=False
+    )
+    app.config['LIMITED_TIME_PROMO_HEADLINE'] = os.getenv('LIMITED_TIME_PROMO_HEADLINE') or 'RANK THEM'
+    app.config['LIMITED_TIME_PROMO_PATH'] = (
+        os.getenv('LIMITED_TIME_PROMO_PATH') or '/limited-time/project-prioritization'
+    )
+    # Optional, and unset today: the offer soft stops on sales, not a date.
+    app.config['LIMITED_TIME_PROMO_ENDS_AT'] = os.getenv('LIMITED_TIME_PROMO_ENDS_AT') or ''
 
     required_stripe_values = {
         'PRICE_ID_ESSENTIAL': app.config['STRIPE_PRICE_IDS'].get('essential'),
@@ -533,6 +544,7 @@ def create_app():
     from .routes.studio import studio_bp
     from .routes.public_intake import public_intake_bp
     from .routes.leads import leads_bp
+    from .routes.promotions import promotions_bp
     from .routes.decision_records import decision_records_bp
     from .routes.decision_profile import decision_profile_bp
     from .routes.tools import tools_bp
@@ -559,6 +571,7 @@ def create_app():
     app.register_blueprint(studio_bp, url_prefix='/api/v1/studio')
     app.register_blueprint(public_intake_bp, url_prefix='/api/v1/public/intake')
     app.register_blueprint(leads_bp, url_prefix='/api/v1/public')
+    app.register_blueprint(promotions_bp, url_prefix='/api/v1/public/promotions')
     app.register_blueprint(decision_records_bp, url_prefix='/api/v1/decision-records')
     app.register_blueprint(decision_profile_bp, url_prefix='/api/v1/decision-profile')
     app.register_blueprint(tools_bp, url_prefix='/api/v1/tools')

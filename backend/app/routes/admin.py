@@ -49,6 +49,14 @@ from app.models import (
     UserSession,
     UsageEvent,
 )
+from app.homepage_promotion import (
+    ALLOWED_CAMPAIGN_PATHS,
+    get_promotion_config,
+    limited_time_300k_sales_count,
+    promotion_is_live,
+    reset_promotion_cache,
+    save_promotion_config,
+)
 from app.public_intake_controls import (
     get_kill_switch_state,
     reset_kill_switch_cache,
@@ -1058,6 +1066,7 @@ def master_errors():
     recent_audit = list_admin_audit_events(limit=25)
     provider_health = _collect_provider_health(limit=10)
     public_intake_state = get_kill_switch_state()
+    promotion_state = _promotion_view()
 
     sections = [
         {"key": "admin", "label": "Admin", "status": "online", "count": AdminAuditEvent.query.filter(AdminAuditEvent.timestamp >= today_start).count()},
@@ -1067,7 +1076,7 @@ def master_errors():
         {"key": "subscriptions", "label": "Subscriptions", "status": "attention" if User.query.filter(func.lower(User.subscription_status).in_(failed_payment_statuses)).count() else "online", "count": User.query.filter(func.lower(User.subscription_status).in_(failed_payment_statuses)).count()},
         {"key": "errors", "label": "Errors", "status": "watching", "count": AdminAuditEvent.query.filter(AdminAuditEvent.timestamp >= week_start, AdminAuditEvent.action.ilike("%error%")).count()},
         {"key": "decision_records", "label": "Decision Records", "status": "online", "count": UserSession.query.count()},
-        {"key": "feature_flags", "label": "Feature Flags", "status": "online", "count": 1},
+        {"key": "feature_flags", "label": "Feature Flags", "status": "online", "count": 2},
         {"key": "email_queue", "label": "Email Queue", "status": "not_instrumented", "count": 0},
         {"key": "system_health", "label": "System Health", "status": "attention" if provider_health.get("summary", {}).get("failover_events") else "online", "count": provider_health.get("summary", {}).get("failover_events") or 0},
         {"key": "logs", "label": "Logs", "status": "online", "count": len(recent_audit)},
@@ -1081,6 +1090,11 @@ def master_errors():
                 "key": "PUBLIC_INTAKE_AI_ENABLED",
                 "enabled": not bool(public_intake_state.get("disabled")),
                 "source": "admin_kill_switch",
+            },
+            {
+                "key": "HOMEPAGE_PROMOTION_LIVE",
+                "enabled": bool(promotion_state.get("live")),
+                "source": "admin_homepage_promotion",
             },
         ],
         "recent_logs": recent_audit,
@@ -1188,6 +1202,55 @@ def patch_public_intake_ai():
         details={"before": before, "after": {"disabled": disabled}},
     )
     return jsonify({"success": True, "kill_switch": get_kill_switch_state()}), 200
+
+
+def _promotion_view():
+    config = get_promotion_config()
+    sales_count = limited_time_300k_sales_count()
+    return {
+        "config": config,
+        "sales_count": sales_count,
+        "sales_remaining": max(0, int(config.get("sales_cap") or 0) - sales_count),
+        "live": promotion_is_live(config, sales_count),
+        "allowed_campaign_paths": list(ALLOWED_CAMPAIGN_PATHS),
+    }
+
+
+@admin_bp.route("/homepage-promotion", methods=["GET"])
+@jwt_required()
+def get_homepage_promotion_view():
+    """Operator view of the 300K homepage promotion. `live` is the same
+    calculation the public endpoint uses, so this page shows what visitors
+    actually get — including a promotion that stopped itself at the cap."""
+    _, err = _require_admin()
+    if err:
+        return err
+    return jsonify({"promotion": _promotion_view()}), 200
+
+
+@admin_bp.route("/homepage-promotion", methods=["PATCH"])
+@jwt_required()
+@limiter.limit("20 per minute")
+def patch_homepage_promotion():
+    """Activate, extend, or end the promotion. Accepts a partial config —
+    {"active": false} ends it, {"ends_at": "..."} extends or schedules an end,
+    and the modal disappears for every visitor within one cache TTL."""
+    admin_user, err = _require_admin()
+    if err:
+        return err
+
+    data = request.get_json(silent=True) or {}
+    before = get_promotion_config()
+    after = save_promotion_config(data)
+    db.session.commit()
+    reset_promotion_cache()
+
+    _audit(
+        admin_user,
+        "homepage_promotion.patch",
+        details={"before": before, "after": after},
+    )
+    return jsonify({"success": True, "promotion": _promotion_view()}), 200
 
 
 @admin_bp.route("/preview/workspace", methods=["GET"])

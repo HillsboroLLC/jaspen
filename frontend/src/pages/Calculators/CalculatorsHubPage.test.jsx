@@ -8,26 +8,28 @@ jest.mock('../Marketing/MarketingPageLayout', () => function MockLayout({ childr
 jest.mock('../../shared/components/Seo', () => function MockSeo() { return null; });
 
 describe('CalculatorsHubPage', () => {
-  it('uses the three published canonical calculator routes', () => {
+  it('uses the four published canonical calculator routes', () => {
     expect(CALCULATORS.map((calculator) => calculator.route)).toEqual([
       '/tools/mortgage-calculator',
       '/tools/cost-of-turnover',
       '/tools/rent-calculator',
+      '/tools/rework-cost-calculator',
     ]);
-    expect(calculatorsJsonLd().numberOfItems).toBe(3);
+    expect(calculatorsJsonLd().numberOfItems).toBe(4);
   });
 
   it('filters by audience and search, then clears an empty state', () => {
     render(<MemoryRouter><CalculatorsHubPage /></MemoryRouter>);
-    expect(screen.getByText('3 calculators')).toBeInTheDocument();
+    expect(screen.getByText('4 calculators')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Work' }));
-    expect(screen.getByText('1 calculator')).toBeInTheDocument();
+    expect(screen.getByText('2 calculators')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Cost of Employee Turnover Calculator/ })).toHaveAttribute('href', '/tools/cost-of-turnover');
+    expect(screen.getByRole('link', { name: /Rework Cost Calculator/ })).toHaveAttribute('href', '/tools/rework-cost-calculator');
 
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search calculators' }), { target: { value: 'mortgage' } });
     expect(screen.getByText('No calculators match that search.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
-    expect(screen.getByText('3 calculators')).toBeInTheDocument();
+    expect(screen.getByText('4 calculators')).toBeInTheDocument();
   });
 });

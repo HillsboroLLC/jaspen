@@ -12,6 +12,7 @@ import DecisionStyleAssessment from './DecisionStyleAssessment/DecisionStyleAsse
 import DecisionPlanningToolkitLeadCapture from './DecisionPlanningToolkitLeadCapture';
 import FAQSection from '../FAQSection/FAQSection';
 import usePublicAuthModal from './usePublicAuthModal';
+import RankThemPromoModal from './RankThemPromoModal';
 import { SCENARIOS } from './scenarioData';
 import './HomePage.css';
 
@@ -480,6 +481,7 @@ export default function HomePage() {
       </footer>
 
       {AuthModalPortal}
+      <RankThemPromoModal />
     </div>
   );
 }
