@@ -134,6 +134,31 @@ values, Anthropic model routing/prices, and real usage before campaign claims.
 - Redis-backed `RATELIMIT_STORAGE_URI` in production.
 - Apply the database migration and run the scorecard backfill before traffic.
 
+## Refund policy
+
+We resolve the issue, or we refund it. There is no third outcome.
+
+A refund is owed when a Covered Technical Failure is reported inside the
+30-day window and we do not correct it within ten business days of having what
+we need to investigate. Anything else — dissatisfaction, a disagreement with a
+score, a changed situation, simply not using the credits — is not refundable,
+and the offer is sold on that basis.
+
+**Partial use does not change the answer.** A buyer who has spent part of the
+300,000 credits is still owed a refund if we fail to fix a qualifying failure;
+having spent them is never on its own a reason to refund. Refund the full
+amount paid to the original payment method, then reverse the entitlement with
+`reverse_limited_time_300k_credits`, which reverses the unused lot and drops
+the standalone access that came with the offer.
+
+Because this is settled through Stripe, refund the invoice or payment intent
+recorded on the grant (`stripe_invoice_id` / `stripe_payment_intent_id` in the
+grant metadata), so Stripe and our records agree.
+
+Stated for buyers in the Technical Assurance section of
+`/limited-time/terms-and-conditions` and, in short form, under Refunds in
+`/pages/terms`. Keep all three in agreement if any of them changes.
+
 ## Testing the offer in production with a promo code
 
 The point is to walk the real live-mode purchase without moving real money. A

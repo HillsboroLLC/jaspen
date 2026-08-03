@@ -18,7 +18,7 @@ const Terms = () => {
 
         <div className="terms-meta">
           <p><strong>Effective Date:</strong> September 15, 2025<br />
-          <strong>Last Updated:</strong> March 9, 2026</p>
+          <strong>Last Updated:</strong> August 2, 2026</p>
         </div>
 
         <section className="terms-section">
@@ -49,6 +49,14 @@ const Terms = () => {
             <li>You are responsible for applicable taxes and payment method validity</li>
             <li>Sales-led plans may require signed order forms or separate commercial terms</li>
           </ul>
+        </section>
+
+        <section className="terms-section">
+          <h2>Refunds</h2>
+          <p>Jaspen sells immediate access to digital services that consume computing resources as they are used. Purchases are final, except as described here or where a refund is required by applicable law.</p>
+          <p>Jaspen stands behind the operation of its paid Service. If you report a reproducible technical defect attributable to Jaspen that materially prevents you from using a paid core feature of what you purchased, Jaspen will make commercially reasonable efforts to correct it. If it is not corrected within ten business days after Jaspen receives the information reasonably needed to investigate, you are eligible for a refund of the amount paid for the affected purchase. In short: we resolve the issue, or we refund it.</p>
+          <p>Having already used part of a credit balance does not disqualify you from that refund. Usage alone is never itself a basis for one. Jaspen does not refund based on satisfaction, usage levels, changed circumstances, or whether any particular outcome was achieved.</p>
+          <p>One-time offers may carry additional terms specific to that purchase. For the limited-time credit offer, see the <a href="/limited-time/terms-and-conditions">Limited-Time Offer Terms and Conditions</a>, which govern in the event of a conflict with this section.</p>
         </section>
 
         <section className="terms-section">

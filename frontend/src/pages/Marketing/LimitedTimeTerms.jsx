@@ -72,6 +72,7 @@ function LimitedTimeTerms() {
               <li>Failure to use the Service; or</li>
               <li>A change in the customer’s needs, expectations, business circumstances, or purchasing decision.</li>
             </ul>
+            <p>Credits already used do not disqualify a refund under this Technical Assurance. If a Covered Technical Failure is reported and Jaspen does not correct it within the period described above, the customer is eligible for a refund whether or not part of the credit balance has been consumed. Conversely, having used part or all of the credit balance is never itself a basis for a refund.</p>
             <p>If a refund is issued, it will be returned to the original payment method. The associated purchase, access rights, and unused credits may be canceled or deactivated. Except for the Technical Assurance and refunds required by applicable law, all purchases are final and nonrefundable.</p>
           </section>
 
