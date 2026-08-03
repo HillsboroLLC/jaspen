@@ -105,10 +105,14 @@ describe('Advisory Partnerships tab', () => {
     const ctas = screen.getAllByRole('button', { name: /request a consultation/i });
     expect(ctas).toHaveLength(2);
 
+    // Advisory has its own mailbox, separate from the general hello@ inbox.
     await user.click(ctas[0]);
-    expect(window.location.href).toContain('mailto:hello@jaspen.ai');
+    expect(window.location.href).toContain('mailto:partnerships@jaspen.ai');
+    expect(window.location.href).toContain('Executive%20Decision%20Intensive');
+
     await user.click(ctas[1]);
-    expect(window.location.href).toContain('mailto:hello@jaspen.ai');
+    expect(window.location.href).toContain('mailto:partnerships@jaspen.ai');
+    expect(window.location.href).toContain('Strategic%20Advisor%20Partnership');
 
     // Advisory must never open the signup/checkout modal.
     expect(onOpenModal).not.toHaveBeenCalled();

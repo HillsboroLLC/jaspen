@@ -115,8 +115,10 @@ const FEATURES = [
 ];
 
 // Advisory engagements are quoted at a flat fee and never sold through
-// checkout — every CTA here routes to the consultation flow.
-const ADVISORY_CONSULTATION_MAILTO = 'mailto:hello@jaspen.ai';
+// checkout — every CTA here routes to the consultation flow. Advisory goes to
+// its own mailbox rather than the general hello@ inbox, so a $25k–$100k
+// enquiry is not triaged alongside general contact mail.
+const ADVISORY_CONSULTATION_MAILTO = 'mailto:partnerships@jaspen.ai';
 
 const ADVISORY_CTA_NOTE = 'Engagements are accepted based on fit, capacity, and decision readiness.';
 
