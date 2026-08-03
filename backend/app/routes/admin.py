@@ -36,7 +36,9 @@ from app.connector_store import (
     save_connector_state,
     update_connector_settings,
 )
+from app.founder_entitlements import LIMITED_TIME_300K_ENTITLEMENT
 from app.models import (
+    AccountEntitlement,
     AdminAuditEvent,
     EmailSuppression,
     Lead,
@@ -643,6 +645,7 @@ def master_analytics():
         .limit(12)
         .all()
     )
+    holders_300k = _limited_time_300k_holders([user.id for user in recent_users])
 
     visitor_query = UserAuthSession.query.filter(UserAuthSession.issued_at >= today_start)
     todays_visitors = visitor_query.with_entities(UserAuthSession.user_id).distinct().count()
@@ -703,7 +706,7 @@ def master_analytics():
                 "id": user.id,
                 "email": user.email,
                 "name": user.name,
-                "plan": to_public_plan(user.subscription_plan),
+                "plan": _signup_plan_label(user, holders_300k),
                 "created_at": _iso(user.created_at),
             }
             for user in recent_users
@@ -1046,6 +1049,45 @@ def delete_master_lead(lead_id):
 
 REVENUE_WINDOW_DAYS = 30
 MRR_ACTIVE_STATUSES = ("active", "trialing")
+LIMITED_TIME_300K_LABEL = "300K"
+
+
+def _limited_time_300k_holders(user_ids):
+    """User ids holding a live 300K Limited-Time entitlement, as one query.
+
+    Buying the 300K offer grants an entitlement and a credit lot; it never
+    touches `subscription_plan`. So a buyer sits on whatever plan they already
+    had — usually free — and the signups table showed them as "free",
+    indistinguishable from someone who bought nothing.
+    """
+    ids = [str(user_id) for user_id in user_ids if user_id]
+    if not ids:
+        return set()
+    rows = (
+        db.session.query(AccountEntitlement.user_id)
+        .filter(
+            AccountEntitlement.user_id.in_(ids),
+            AccountEntitlement.entitlement_key == LIMITED_TIME_300K_ENTITLEMENT,
+            AccountEntitlement.revoked_at.is_(None),
+        )
+        .all()
+    )
+    return {str(row[0]) for row in rows}
+
+
+def _signup_plan_label(user, holders_300k):
+    """What plan to show for a signup row.
+
+    A 300K buyer is not on a subscription, so showing the raw plan hides the
+    purchase. When they also carry a paid plan, both are shown rather than one
+    masking the other.
+    """
+    plan = to_public_plan(user.subscription_plan)
+    if str(user.id) not in holders_300k:
+        return plan
+    if not plan or str(plan).strip().lower() == "free":
+        return LIMITED_TIME_300K_LABEL
+    return f"{plan} + {LIMITED_TIME_300K_LABEL}"
 
 
 def _revenue_metrics(now):

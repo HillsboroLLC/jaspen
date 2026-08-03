@@ -194,6 +194,60 @@ def test_the_renamed_key_replaces_the_old_one(client, db, admin_auth_headers):
     assert "completed_purchases" not in metrics
 
 
+def _signup_row(client, admin_auth_headers, email):
+    response = client.get(ANALYTICS_URL, headers=admin_auth_headers)
+    rows = response.get_json()["recent_signups"]
+    return next(row for row in rows if row["email"] == email)
+
+
+def test_a_300k_buyer_is_labelled_300k_not_free(client, db, admin_auth_headers):
+    """Buying the 300K offer never touches subscription_plan, so a buyer used
+    to appear as 'free' — indistinguishable from someone who bought nothing."""
+    from app.founder_entitlements import grant_limited_time_300k_offer
+
+    buyer = _user(db, "buyer300k@example.com", plan="free")
+    assert _signup_row(client, admin_auth_headers, buyer.email)["plan"] == "free"
+
+    grant_limited_time_300k_offer(buyer, 300000, payment_reference="in_label_1")
+    db.session.commit()
+
+    assert _signup_row(client, admin_auth_headers, buyer.email)["plan"] == "300K"
+
+
+def test_a_300k_buyer_on_a_paid_plan_shows_both(client, db, admin_auth_headers):
+    from app.founder_entitlements import grant_limited_time_300k_offer
+
+    buyer = _user(db, "both@example.com", plan="essential", status="active")
+    grant_limited_time_300k_offer(buyer, 300000, payment_reference="in_label_2")
+    db.session.commit()
+
+    # Neither fact should mask the other.
+    assert _signup_row(client, admin_auth_headers, buyer.email)["plan"] == "essential + 300K"
+
+
+def test_a_revoked_300k_entitlement_stops_being_labelled(client, db, admin_auth_headers):
+    from app.founder_entitlements import (
+        grant_limited_time_300k_offer,
+        reverse_limited_time_300k_credits,
+    )
+
+    buyer = _user(db, "refunded@example.com", plan="free")
+    grant_limited_time_300k_offer(buyer, 300000, payment_reference="in_label_3")
+    db.session.commit()
+    assert _signup_row(client, admin_auth_headers, buyer.email)["plan"] == "300K"
+
+    reverse_limited_time_300k_credits(buyer, reason="refund", external_reference="re_1")
+    db.session.commit()
+
+    assert _signup_row(client, admin_auth_headers, buyer.email)["plan"] == "free"
+
+
+def test_a_plain_free_signup_is_untouched(client, db, admin_auth_headers):
+    user = _user(db, "plainfree@example.com", plan="free")
+
+    assert _signup_row(client, admin_auth_headers, user.email)["plan"] == "free"
+
+
 def test_the_notes_say_where_each_number_comes_from(client, db, admin_auth_headers):
     response = client.get(ANALYTICS_URL, headers=admin_auth_headers)
     notes = response.get_json()["notes"]
