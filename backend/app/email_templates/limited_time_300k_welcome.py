@@ -108,13 +108,17 @@ Lydia
             <tr>
               <td style="padding:34px 28px 26px; background:#161f3b;">
                 <p style="margin:0 0 10px; font-size:13px; line-height:1.4; letter-spacing:.08em; text-transform:uppercase; color:#f0a6d4; font-weight:700;">Purchase confirmed</p>
-                <h1 style="margin:0 0 14px; font-size:28px; line-height:1.18; color:#ffffff;">Your {credits_label} credits are ready</h1>
-                <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#d9deec;">{greeting}</p>
-                <p style="margin:0; font-size:16px; line-height:1.65; color:#d9deec;">{_p(INTRO_COPY)}</p>
+                <h1 style="margin:0; font-size:28px; line-height:1.18; color:#ffffff;">Your {credits_label} credits are ready</h1>
               </td>
             </tr>
             <tr>
-              <td style="padding:24px 28px 6px;">
+              <td style="padding:28px 28px 2px;">
+                <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#172033;">{greeting}</p>
+                <p style="margin:0; font-size:16px; line-height:1.65; color:#4f5d75;">{_p(INTRO_COPY)}</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px 28px 6px;">
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eff9fc; border:1px solid #cde7f0; border-radius:14px;">
                   <tr>
                     <td style="padding:20px;">

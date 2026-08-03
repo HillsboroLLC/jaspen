@@ -233,3 +233,33 @@ def test_the_buyers_name_reaches_the_email(app, db, buyer, monkeypatch):
     billing._send_limited_time_300k_welcome_email(buyer, reference='pi_named')
 
     assert captured['recipient_name'] == 'Lydia Bailey'
+
+
+def test_no_preview_placeholder_can_reach_a_buyer():
+    """The preview reference must never be reachable from the app itself.
+
+    Real sends pass the Stripe id - the invoice for a discounted purchase, the
+    payment intent for a full-price one - which is what a buyer quotes back to
+    support. The preview script's stand-in lives only in scripts/.
+    """
+    from pathlib import Path
+
+    app_dir = Path(__file__).resolve().parent.parent / 'app'
+    offenders = [
+        str(path.relative_to(app_dir))
+        for path in app_dir.rglob('*.py')
+        if 'in_preview_example' in path.read_text()
+    ]
+
+    assert offenders == []
+
+
+def test_the_receipt_omits_the_reference_line_entirely_when_absent():
+    from app.email_templates.limited_time_300k_welcome import (
+        render_limited_time_300k_welcome_email,
+    )
+
+    rendered = render_limited_time_300k_welcome_email(recipient_name='Lydia')
+
+    assert 'Reference:' not in rendered['html']
+    assert 'Reference:' not in rendered['body']
