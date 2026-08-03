@@ -160,6 +160,15 @@ describe('Advisory Partnerships tab', () => {
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
 
+    // The comparison columns must name the engagements exactly as the cards
+    // do. Readers are already on jaspen.ai, so nothing here is brand-prefixed.
+    const headers = [...screen.getByRole('table').querySelectorAll('thead th')].map(th => th.textContent);
+    expect(headers).toEqual([
+      'Engagement',
+      'Executive Decision Intensive',
+      'Strategic Advisor Partnership',
+    ]);
+
     const investmentRow = screen.getByText('Investment').closest('tr');
     expect(investmentRow).toHaveTextContent('$25,000 flat fee');
     expect(investmentRow).toHaveTextContent('$100,000 flat fee');

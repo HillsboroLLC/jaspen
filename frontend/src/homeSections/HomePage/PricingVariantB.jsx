@@ -359,7 +359,7 @@ export default function PricingVariantB({ onOpenModal }) {
                         <span className="pvb-compare-plan-name">Executive Decision Intensive</span>
                       </th>
                       <th className="pvb-th-plan">
-                        <span className="pvb-compare-plan-name">Jaspen Strategic Advisor Partnership</span>
+                        <span className="pvb-compare-plan-name">Strategic Advisor Partnership</span>
                       </th>
                     </tr>
                   </thead>
