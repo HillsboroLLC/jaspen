@@ -5,7 +5,9 @@ const SITE_NAME = 'Jaspen';
 // for og:image or treat a redirecting canonical as authoritative. Point at
 // where the content actually lives.
 const SITE_URL = 'https://www.jaspen.ai';
-const DEFAULT_IMAGE = `${SITE_URL}/android-chrome-512x512.png`;
+// 1200x630: the size link previews are built for. The app icon that used to
+// sit here is square, so it cropped or shrank in every card.
+const DEFAULT_IMAGE = `${SITE_URL}/jaspen-social-card.png`;
 
 // Tracks how many Seo instances are mounted so the app shell can yield
 // document.title control to the page-level Seo component instead of
