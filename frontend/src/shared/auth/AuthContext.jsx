@@ -603,16 +603,34 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const login = async (email, password) => {
+  const login = async (email, password, options = {}) => {
     try {
       setLoading(true);
       const res = await authFetch('/api/v1/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({
+          email,
+          password,
+          // Set only when the user has been told another device holds the
+          // account and has chosen to take it over.
+          ...(options.endOtherSessions ? { end_other_sessions: true } : {}),
+        })
       });
 
       const data = await res.json().catch(() => ({}));
+
+      // Accounts with personal, non-shareable credits are limited to one
+      // device. Hand the UI what it needs to offer the takeover.
+      if (res.status === 409 && data?.code === 'other_device_active') {
+        return {
+          success: false,
+          otherDeviceActive: true,
+          canEndOtherSessions: Boolean(data?.can_end_other_sessions),
+          otherDevice: data?.other_device || null,
+          error: data?.message || 'This account is signed in on another device.',
+        };
+      }
 
       // MFA required — return special result so the UI can show the challenge/setup form
       if (data?.mfa_required) {

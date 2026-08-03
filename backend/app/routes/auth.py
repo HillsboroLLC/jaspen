@@ -36,6 +36,7 @@ from app.access_controls import (
 from app.admin_audit import append_user_audit_event
 from app.admin_policy import is_global_admin
 from app.decision_profile_service import link_latest_public_decision_profile_for_user
+from app.founder_entitlements import has_limited_time_300k_entitlement
 from app.models import Organization, User, UserAuthSession
 from app.billing_config import (
     apply_plan_to_user,
@@ -296,6 +297,97 @@ def _revoke_all_auth_sessions(user_id):
         row.revoked_at = now
         changed = True
     return changed
+
+
+def _single_device_account(user):
+    """Accounts whose credits are personal and non-shareable get one device.
+
+    The 300K Limited-Time credits are sold as individual and non-transferable,
+    so one account signed in from two places at once is the route by which they
+    would be shared. Setting max_concurrent_sessions to 1 opts any other
+    account into the same rule.
+    """
+    try:
+        if int(user.max_concurrent_sessions or 0) == 1:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return bool(has_limited_time_300k_entitlement(user))
+
+
+def _active_auth_sessions(user, *, exclude_jti=None):
+    """Unrevoked, unexpired sessions for this account, newest first."""
+    now = _utc_now().replace(tzinfo=None)
+    rows = (
+        UserAuthSession.query
+        .filter(
+            UserAuthSession.user_id == str(user.id),
+            UserAuthSession.revoked_at.is_(None),
+        )
+        .order_by(UserAuthSession.issued_at.desc(), UserAuthSession.id.desc())
+        .all()
+    )
+    return [
+        row for row in rows
+        if (row.expires_at is None or _normalize_dt(row.expires_at) > now)
+        and (not exclude_jti or str(row.token_jti) != str(exclude_jti))
+    ]
+
+
+def _describe_device(user_agent):
+    """A short, recognisable name for the device holding the other session."""
+    agent = str(user_agent or '')
+    browser = next(
+        (name for token, name in (
+            ('Edg/', 'Edge'), ('OPR/', 'Opera'), ('Chrome/', 'Chrome'),
+            ('Safari/', 'Safari'), ('Firefox/', 'Firefox'),
+        ) if token in agent),
+        '',
+    )
+    platform = next(
+        (name for token, name in (
+            ('iPhone', 'iPhone'), ('iPad', 'iPad'), ('Android', 'Android'),
+            ('Mac OS X', 'Mac'), ('Windows', 'Windows'), ('Linux', 'Linux'),
+        ) if token in agent),
+        '',
+    )
+    if browser and platform:
+        return f'{browser} on {platform}'
+    return browser or platform or 'another device'
+
+
+def _other_device_signed_in(user, *, end_other_sessions=False):
+    """Refuse a second simultaneous sign-in, or hand the account over.
+
+    Returns a 409 response when another device holds the account and the caller
+    has not asked to take it over, and None when sign-in may proceed. The
+    takeover is only reachable by someone who has just presented valid
+    credentials, so it cannot be used to evict a stranger.
+    """
+    if not _single_device_account(user):
+        return None
+    active = _active_auth_sessions(user)
+    if not active:
+        return None
+    if end_other_sessions:
+        if _revoke_all_auth_sessions(user.id):
+            db.session.commit()
+        return None
+
+    newest = active[0]
+    last_active = _normalize_dt(newest.issued_at)
+    return jsonify({
+        'message': (
+            "You're already signed in on another device. Your Jaspen credits are personal to "
+            "your account, so it can only be signed in one place at a time."
+        ),
+        'code': 'other_device_active',
+        'can_end_other_sessions': True,
+        'other_device': {
+            'description': _describe_device(newest.user_agent),
+            'last_active': last_active.isoformat() + 'Z' if last_active else None,
+        },
+    }), 409
 
 
 def _enforce_login_session_limit(user, *, current_jti=None):
@@ -1049,6 +1141,15 @@ def login():
             "pending_token": pending_token,
         }), 200
 
+    blocked = _other_device_signed_in(
+        user, end_other_sessions=bool(data.get('end_other_sessions')),
+    )
+    if blocked:
+        _audit_auth_event(
+            'auth.login.blocked', target_user=user, details={'reason': 'other_device_active'},
+        )
+        return blocked
+
     token = _create_user_access_token(user)
     session_changed = _register_auth_session(user, token, active_org=active_org)
     try:
@@ -1293,6 +1394,11 @@ def mfa_challenge():
     secret = _decrypt_mfa_secret(user.mfa_secret)
     totp = pyotp.TOTP(secret or '')
     if secret and totp.verify(code, valid_window=1):
+        blocked = _other_device_signed_in(
+            user, end_other_sessions=bool(data.get('end_other_sessions')),
+        )
+        if blocked:
+            return blocked
         if not user.mfa_enabled:
             user.mfa_enabled = True
             user.mfa_secret = _encrypt_mfa_secret(secret)
@@ -1313,6 +1419,11 @@ def mfa_challenge():
 
     if user.mfa_backup_codes:
         if _verify_mfa_code(user, code):
+            blocked = _other_device_signed_in(
+                user, end_other_sessions=bool(data.get('end_other_sessions')),
+            )
+            if blocked:
+                return blocked
             if not user.mfa_enabled:
                 user.mfa_enabled = True
                 user.mfa_secret = _encrypt_mfa_secret(secret)
@@ -1607,6 +1718,20 @@ def google_callback():
     if _access_controls().get('require_admin_approval') and approval_status == APPROVAL_PENDING:
         return redirect(_frontend_login_error_url('access_pending'), code=302)
 
+    # Google returns here as a browser redirect, so there is no JSON response
+    # to carry a "sign out your other device" prompt and no password to re-post
+    # for the takeover. Completing Google's consent screen is itself the
+    # deliberate act, so the other session ends here and the frontend says so.
+    signed_out_other_device = False
+    if _single_device_account(user) and _active_auth_sessions(user):
+        if _revoke_all_auth_sessions(user.id):
+            signed_out_other_device = True
+            db.session.commit()
+        _audit_auth_event(
+            'auth.login.other_device_signed_out',
+            actor=user, target_user=user, details={'method': 'google'},
+        )
+
     token = _create_user_access_token(user)
     session_changed = _register_auth_session(user, token)
     try:
@@ -1617,7 +1742,11 @@ def google_callback():
         session_changed = True
     if session_changed:
         db.session.commit()
-    resp = redirect(_frontend_callback_url(next_path), code=302)
+    callback_url = _frontend_callback_url(next_path)
+    if signed_out_other_device:
+        separator = '&' if '?' in callback_url else '?'
+        callback_url = f'{callback_url}{separator}signed_out_other_device=1'
+    resp = redirect(callback_url, code=302)
     return _attach_auth_cookie(resp, token)
 
 
@@ -1735,8 +1864,16 @@ def update_current_user():
 
 
 @auth_bp.route('/logout', methods=['POST'])
+@jwt_required(optional=True)
 def logout():
-    """Clear auth cookies for logout."""
+    """Clear auth cookies and end this session server-side.
+
+    Without verifying the token first, get_jwt() below raises and the session
+    row is never revoked - the cookie goes but the session stays open. That is
+    invisible on a multi-device account and locks out a single-device one,
+    which cannot sign in anywhere else until the abandoned session expires.
+    Optional, so signing out without a valid token still succeeds.
+    """
     user = None
     jti = ''
     try:

@@ -12,6 +12,9 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const [errorDetail, setErrorDetail] = useState('');
+  // Set when this account is already signed in elsewhere; holds the
+  // details needed to offer a takeover instead of a dead end.
+  const [otherDevice, setOtherDevice] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
 
   // MFA state
@@ -136,6 +139,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
 
     setStatus('sending');
     setError('');
+    setOtherDevice(null);
     try {
       const loginAttempt = await login(normalizedEmail, password);
 
@@ -151,6 +155,19 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         // User has MFA enabled — show code input
         setMfaPendingToken(loginAttempt.pendingToken || '');
         setMfaStep('challenge');
+        setStatus('idle');
+        return;
+      }
+
+      // Already signed in somewhere else. Stop here: falling through to the
+      // signup attempt below would report "already registered" and bury the
+      // real reason.
+      if (loginAttempt?.otherDeviceActive) {
+        setOtherDevice({
+          message: loginAttempt.error,
+          canEndOtherSessions: loginAttempt.canEndOtherSessions,
+          description: loginAttempt.otherDevice?.description || '',
+        });
         setStatus('idle');
         return;
       }
@@ -523,6 +540,49 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     </>
   );
 
+  const handleTakeOverSession = async () => {
+    setStatus('sending');
+    setError('');
+    try {
+      const takeover = await login(
+        String(email || '').trim().toLowerCase(), password, { endOtherSessions: true },
+      );
+      if (takeover?.success) {
+        setStatus('sent');
+        window.location.href = getPostAuthRedirect();
+        return;
+      }
+      setOtherDevice(null);
+      setError(takeover?.error || 'Could not sign you in on this device.');
+      setStatus('idle');
+    } catch (takeoverError) {
+      setError(takeoverError?.message || 'Could not sign you in on this device.');
+      setStatus('idle');
+    }
+  };
+
+  const renderOtherDeviceNotice = () => (
+    <div className="auth-modal-alert is-error" role="alert">
+      <strong>{otherDevice.message}</strong>
+      <p>
+        {otherDevice.description
+          ? `The other session is on ${otherDevice.description}.`
+          : 'Sign out there, or continue here to end that session.'}
+      </p>
+      {otherDevice.canEndOtherSessions && (
+        <button
+          type="button"
+          className="auth-modal-submit"
+          onClick={handleTakeOverSession}
+          disabled={status === 'sending'}
+          style={{ marginTop: 12 }}
+        >
+          {status === 'sending' ? 'Signing you in…' : 'Sign out the other device and continue here'}
+        </button>
+      )}
+    </div>
+  );
+
   const renderLoginForm = () => (
     <>
       <div className="auth-modal-header">
@@ -537,7 +597,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
         </p>
       </div>
 
-      {(error || authNotice) && (
+      {otherDevice ? renderOtherDeviceNotice() : (error || authNotice) && (
         <div className={`auth-modal-alert is-${error ? 'error' : authNotice?.tone || 'info'}`}>
           <strong>{error || authNotice?.message}</strong>
           {(errorDetail || authNotice?.detail) && <p>{errorDetail || authNotice?.detail}</p>}

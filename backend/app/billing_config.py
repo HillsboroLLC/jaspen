@@ -779,6 +779,16 @@ def consume_credits(user, amount):
 
         meter["remaining"] = next_monthly_remaining
         meter["tokens_used_this_month"] = max(0, int(meter.get("cycle_limit", 0)) - next_monthly_remaining)
+        # _resolve_org_pool hands back the meter it read but stores a deepcopy
+        # on the organization, so mutating the meter alone updates a dict that
+        # is no longer attached to anything - the shared pool would report the
+        # spend to this request and then come back full. Write it through, the
+        # same way add_credits does.
+        org = pool["organization"]
+        settings = pool["settings"]
+        settings["thinking_power"] = meter
+        org.settings = deepcopy(settings)
+        _flag_modified(org, "settings")
         user.credits_remaining = next_monthly_remaining + persistent_credit_balance(user)
         user.credits_reset_at = now
         return True, user.credits_remaining
@@ -851,6 +861,13 @@ def release_consumed_credits(user, amount):
                     0,
                     int(meter.get('cycle_limit', 0)) - meter['remaining'],
                 )
+                # Same detached-meter trap as consume_credits: write it through
+                # or the refund is dropped and the reservation stays spent.
+                org = pool['organization']
+                settings = pool['settings']
+                settings['thinking_power'] = meter
+                org.settings = deepcopy(settings)
+                _flag_modified(org, 'settings')
                 user.credits_remaining = meter['remaining'] + persistent_credit_balance(user)
         else:
             prefs = user.ui_preferences if isinstance(user.ui_preferences, dict) else {}
