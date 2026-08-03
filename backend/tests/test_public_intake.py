@@ -526,9 +526,14 @@ class TestUnavailableMatrix:
         assert _deltas_text(events) == ""
         assert _unavailable_event(events)
 
-    def test_reports_unavailable_when_no_api_key(self, app, client, _ai_enabled):
-        # Test environment has no ANTHROPIC_API_KEY configured — the natural
-        # default case, no monkeypatching needed.
+    def test_reports_unavailable_when_no_api_key(self, app, client, monkeypatch, _ai_enabled):
+        # Stated outright rather than assumed. load_dotenv() runs at import, so
+        # a developer with a real key in .env used to fail this test while CI
+        # passed - the test was reading the machine, not the behaviour.
+        monkeypatch.setitem(app.config, 'ANTHROPIC_API_KEY', None)
+        monkeypatch.setitem(app.config, 'CLAUDE_API_KEY', None)
+        monkeypatch.delenv('ANTHROPIC_API_KEY', raising=False)
+        monkeypatch.delenv('CLAUDE_API_KEY', raising=False)
         history = _single_turn(VAGUE_INPUT)
         events = _parse_sse(_chat(client, history))
         assert _deltas_text(events) == ""
