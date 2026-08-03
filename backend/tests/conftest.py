@@ -9,6 +9,7 @@ from app import connector_store
 from app import create_app, db as _db
 from app.models import (
     AdminAuditEvent,
+    AdvisoryInquiry,
     AppSetting,
     AccountEntitlement,
     ConnectorSyncLog,
@@ -148,6 +149,7 @@ def db(app):
             LeadEmailDelivery,
             LeadAttributionEvent,
             EmailSuppression,
+            AdvisoryInquiry,
             EnterpriseInquiry,
             Lead,
             OrganizationInvitation,

@@ -93,11 +93,9 @@ describe('Advisory Partnerships tab', () => {
     expect(screen.queryByText(/^Contact Sales$/i)).not.toBeInTheDocument();
   });
 
-  it('routes both advisory CTAs to the consultation flow and never to checkout', async () => {
+  it('opens the request form with the clicked engagement pre-selected, never checkout', async () => {
     const user = userEvent.setup();
     const onOpenModal = jest.fn();
-    delete window.location;
-    window.location = { href: '' };
 
     render(<PricingVariantB onOpenModal={onOpenModal} />);
     await openAdvisory(user);
@@ -105,14 +103,15 @@ describe('Advisory Partnerships tab', () => {
     const ctas = screen.getAllByRole('button', { name: /request a consultation/i });
     expect(ctas).toHaveLength(2);
 
-    // Advisory has its own mailbox, separate from the general hello@ inbox.
     await user.click(ctas[0]);
-    expect(window.location.href).toContain('mailto:partnerships@jaspen.ai');
-    expect(window.location.href).toContain('Executive%20Decision%20Intensive');
+    const dialog = screen.getByRole('dialog', { name: /executive partnership request/i });
+    expect(within(dialog).getByRole('radio', { name: /Executive Decision Intensive \(\$25,000\)/ })).toBeChecked();
 
-    await user.click(ctas[1]);
-    expect(window.location.href).toContain('mailto:partnerships@jaspen.ai');
-    expect(window.location.href).toContain('Strategic%20Advisor%20Partnership');
+    await user.click(within(dialog).getByRole('button', { name: /close request form/i }));
+
+    await user.click(screen.getAllByRole('button', { name: /request a consultation/i })[1]);
+    const secondDialog = screen.getByRole('dialog', { name: /executive partnership request/i });
+    expect(within(secondDialog).getByRole('radio', { name: /Strategic Advisor Partnership \(\$100,000\)/ })).toBeChecked();
 
     // Advisory must never open the signup/checkout modal.
     expect(onOpenModal).not.toHaveBeenCalled();

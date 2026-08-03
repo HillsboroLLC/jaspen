@@ -18,7 +18,7 @@ from app.decision_profile import derive_decision_style, validate_answers
 from app.email_templates.decision_profile_results import (
     render_decision_profile_email,
 )
-from app.models import EmailSuppression, EnterpriseInquiry, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery, User
+from app.models import AdvisoryInquiry, EmailSuppression, EnterpriseInquiry, Lead, LeadAttributionEvent, LeadDecisionProfile, LeadEmailDelivery, User
 
 
 leads_bp = Blueprint("leads", __name__)
@@ -40,6 +40,26 @@ DECISION_PROFILE_REPLY_TO = "hello@jaspen.ai"
 LEAD_EMAIL_SENDER = "Jaspen <hello@jaspen.ai>"
 LEAD_EMAIL_REPLY_TO = "hello@jaspen.ai"
 ENTERPRISE_INQUIRY_SENDER = "Enterprise Sales Inquiry <hello@jaspen.ai>"
+ADVISORY_EMAIL = "partnerships@jaspen.ai"
+ADVISORY_INQUIRY_SENDER = f"Jaspen Advisory <{ADVISORY_EMAIL}>"
+
+# Accepted values for the Executive Partnership Request. Anything outside
+# these sets is rejected rather than coerced, so a stored inquiry always means
+# what the form offered.
+ADVISORY_ENGAGEMENTS = {
+    "executive_decision_intensive",
+    "strategic_advisor_partnership",
+    "undecided",
+}
+ADVISORY_TIMELINES = {"within_30_days", "1_3_months", "3_6_months", "6_months_plus"}
+ADVISORY_IMPACT_BANDS = {
+    "under_250k", "250k_1m", "1m_5m", "5m_25m", "25m_plus", "unsure",
+}
+ADVISORY_AUTHORITIES = {"primary", "shared", "influencer"}
+ADVISORY_PARTICIPANT_ROLES = {
+    "ceo", "founder", "coo", "cfo", "cio",
+    "business_unit_leader", "pmo", "strategy_team", "other",
+}
 ENTERPRISE_COPY_SENDER = "Jaspen Sales <sales@jaspen.ai>"
 SUBSCRIPTION_SCOPES = {
     "marketing": "Marketing",
@@ -774,6 +794,168 @@ def capture_lead():
         db.session.rollback()
         current_app.logger.exception("Lead capture unexpected error")
         return jsonify({"error": "Internal server error"}), 500
+
+
+@leads_bp.route("/leads/advisory-inquiry", methods=["POST"])
+@limiter.limit("3 per minute")
+@limiter.limit("12 per hour")
+def capture_advisory_inquiry():
+    """Executive Partnership Request from the Advisory Partnerships tab.
+
+    Stores the inquiry, notifies the advisory mailbox, and acknowledges to the
+    requester. The inquiry is committed before either email is attempted: a
+    mail outage must never lose a $25k–$100k enquiry, so both sends are
+    best-effort and reported back separately.
+    """
+    payload, error_response = _parse_payload()
+    if error_response is not None:
+        return error_response
+
+    data = request.get_json(silent=True) or {}
+    if not _is_business_email(payload.get("email")):
+        return _bad_request(
+            "business_email_required",
+            "Please use your work email address. Personal email providers are not accepted for advisory requests.",
+        )
+
+    try:
+        engagement = str(data.get("engagement") or "undecided").strip().lower()
+        if engagement not in ADVISORY_ENGAGEMENTS:
+            raise ValueError("invalid_engagement")
+
+        # Sized so the whole request stays under MAX_LEAD_PAYLOAD_BYTES (8KB).
+        # These three free-text fields are the only ones that can grow, and
+        # together they must not push a genuine, thorough answer into a
+        # "payload too large" rejection. The form enforces the same maxima.
+        decision_description = str(data.get("decision_description") or "").strip()[:2000]
+        desired_outcome = str(data.get("desired_outcome") or "").strip()[:1000]
+        if not decision_description or not desired_outcome:
+            raise ValueError("missing_decision_context")
+
+        decision_timeline = str(data.get("decision_timeline") or "").strip().lower()
+        if decision_timeline not in ADVISORY_TIMELINES:
+            raise ValueError("invalid_timeline")
+
+        decision_authority = str(data.get("decision_authority") or "").strip().lower()
+        if decision_authority not in ADVISORY_AUTHORITIES:
+            raise ValueError("invalid_authority")
+
+        # Optional — the band exists to show how the decision is being sized,
+        # so declining to answer is acceptable.
+        financial_impact_band = str(data.get("financial_impact_band") or "").strip().lower() or None
+        if financial_impact_band is not None and financial_impact_band not in ADVISORY_IMPACT_BANDS:
+            raise ValueError("invalid_impact_band")
+
+        participants = data.get("participants") or []
+        if not isinstance(participants, list) or not participants or len(participants) > 20:
+            raise ValueError("invalid_participants")
+        participants = [str(item).strip().lower() for item in participants if str(item).strip()]
+        if any(role not in ADVISORY_PARTICIPANT_ROLES for role in participants):
+            raise ValueError("invalid_participants")
+
+        phone = str(data.get("phone") or "").strip()[:40] or None
+        additional_notes = str(data.get("additional_notes") or "").strip()[:2000] or None
+        source_url = str(data.get("source_url") or "").strip()[:1024] or None
+    except (TypeError, ValueError, OverflowError) as exc:
+        return _bad_request(str(exc) or "invalid_request", "Some answers are missing or invalid.")
+
+    try:
+        lead, _created = _get_or_create_lead(payload)
+        db.session.flush()
+        event = _create_attribution_event(lead, payload)
+        db.session.flush()
+        inquiry = AdvisoryInquiry(
+            lead_id=lead.id,
+            attribution_event_id=event.id,
+            engagement=engagement,
+            phone=phone,
+            decision_description=decision_description,
+            desired_outcome=desired_outcome,
+            financial_impact_band=financial_impact_band,
+            decision_timeline=decision_timeline,
+            participants_json=json.dumps(participants),
+            decision_authority=decision_authority,
+            additional_notes=additional_notes,
+            source_url=source_url,
+        )
+        db.session.add(inquiry)
+        db.session.commit()
+    except (IntegrityError, SQLAlchemyError):
+        db.session.rollback()
+        current_app.logger.exception("Advisory inquiry could not be stored")
+        return jsonify({"error": "We could not submit your request.", "code": "storage_failed"}), 500
+
+    advisory_recipient = current_app.config.get("ADVISORY_NOTIFICATION_EMAIL") or ADVISORY_EMAIL
+    full_name = " ".join(
+        part for part in (payload.get("first_name"), payload.get("last_name")) if part
+    ).strip()
+
+    notified = False
+    try:
+        message = Message(
+            subject=f"Executive Partnership Request: {payload.get('company') or payload['email']}",
+            recipients=[advisory_recipient],
+            sender=ADVISORY_INQUIRY_SENDER,
+            reply_to=payload["email"],
+        )
+        message.body = (
+            "New Executive Partnership Request\n\n"
+            f"Engagement: {engagement}\n"
+            f"Name: {full_name or '(not given)'}\n"
+            f"Email: {payload['email']}\n"
+            f"Company: {payload.get('company') or ''}\n"
+            f"Title: {payload.get('title') or ''}\n"
+            f"Phone: {phone or '(not given)'}\n\n"
+            f"Decision timing: {decision_timeline}\n"
+            f"Financial impact band: {financial_impact_band or '(not answered)'}\n"
+            f"Decision authority: {decision_authority}\n"
+            f"Participants: {', '.join(participants) or 'None'}\n\n"
+            f"The decision:\n{decision_description}\n\n"
+            f"Desired outcome:\n{desired_outcome}\n\n"
+            f"Anything else:\n{additional_notes or '(nothing added)'}\n\n"
+            f"Source: {source_url or ''}\n"
+        )
+        mail.send(message)
+        notified = True
+    except Exception:
+        current_app.logger.exception(
+            "Advisory notification email failed; inquiry %s remains stored", inquiry.id
+        )
+
+    acknowledged = False
+    try:
+        from app.email_templates.advisory_request_received import (
+            render_advisory_request_received_email,
+        )
+
+        rendered = render_advisory_request_received_email(
+            recipient_name=full_name,
+            engagement=engagement,
+            decision_timeline=decision_timeline,
+            participants=participants,
+            advisory_email=advisory_recipient,
+        )
+        ack = Message(
+            subject=rendered["subject"],
+            recipients=[payload["email"]],
+            sender=ADVISORY_INQUIRY_SENDER,
+            reply_to=advisory_recipient,
+        )
+        ack.body = rendered["body"]
+        ack.html = rendered["html"]
+        mail.send(ack)
+        acknowledged = True
+    except Exception:
+        current_app.logger.exception(
+            "Advisory acknowledgement email failed; inquiry %s remains stored", inquiry.id
+        )
+
+    return jsonify({
+        "ok": True,
+        "inquiry_id": inquiry.id,
+        "notified": notified,
+        "acknowledged": acknowledged,
+    }), 201
 
 
 @leads_bp.route("/leads/enterprise-inquiry", methods=["POST"])

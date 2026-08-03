@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { createAnalytics } from '../../tools/shared/createAnalytics';
 import EnterpriseInvestmentCalculator from './EnterpriseInvestmentCalculator';
+import ExecutivePartnershipRequest from './ExecutivePartnershipRequest';
 import {
   THINKING_POWER_PROJECT_ESTIMATES,
   THINKING_POWER_VARIABILITY_NOTE,
@@ -115,10 +116,9 @@ const FEATURES = [
 ];
 
 // Advisory engagements are quoted at a flat fee and never sold through
-// checkout — every CTA here routes to the consultation flow. Advisory goes to
-// its own mailbox rather than the general hello@ inbox, so a $25k–$100k
-// enquiry is not triaged alongside general contact mail.
-const ADVISORY_CONSULTATION_MAILTO = 'mailto:partnerships@jaspen.ai';
+// checkout — every CTA opens the Executive Partnership Request, which reaches
+// partnerships@jaspen.ai. A form rather than a mailto, so a request is
+// captured even when the visitor has no mail client registered.
 
 const ADVISORY_CTA_NOTE = 'Engagements are accepted based on fit, capacity, and decision readiness.';
 
@@ -141,7 +141,7 @@ const ADVISORY_OFFERINGS = [
       'Executive-ready artifacts generated through Jaspen',
     ],
     delivery: 'The client provides a concise description of the decision before the session. Jaspen responds with tailored guidance on what information the client should have available. During the session, the client executes in Jaspen while the advisor guides the work.',
-    subject: 'Executive Decision Intensive — consultation request',
+    engagement: 'executive_decision_intensive',
   },
   {
     key: 'strategic_advisor_partnership',
@@ -162,7 +162,7 @@ const ADVISORY_OFFERINGS = [
       'Executive-ready artifacts generated through Jaspen',
     ],
     delivery: 'Before each intensive, the client provides a concise description of the decision, opportunity, or portfolio to be evaluated. Jaspen responds with tailored guidance on what information the client should have available. The client remains responsible for its inputs and executes within Jaspen during each working session.',
-    subject: 'Strategic Advisor Partnership — consultation request',
+    engagement: 'strategic_advisor_partnership',
     featured: true,
   },
 ];
@@ -203,6 +203,7 @@ export default function PricingVariantB({ onOpenModal }) {
   const [isAnnual, setIsAnnual] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
   const [advisoryCompareOpen, setAdvisoryCompareOpen] = useState(false);
+  const [requestEngagement, setRequestEngagement] = useState(null);
   const [activeAudience, setActiveAudience] = useState('individuals');
   const isBusinessAudience = activeAudience === 'business';
   const isAdvisoryAudience = activeAudience === 'advisory';
@@ -233,7 +234,9 @@ export default function PricingVariantB({ onOpenModal }) {
 
   const requestConsultation = (offering) => {
     analytics.track('advisory_consultation_requested', { offering: offering.key });
-    window.location.href = `${ADVISORY_CONSULTATION_MAILTO}?subject=${encodeURIComponent(offering.subject)}`;
+    // Pre-select whichever engagement they clicked; the form still lets them
+    // change it or say they are not sure yet.
+    setRequestEngagement(offering.engagement);
   };
 
   return (
@@ -521,6 +524,13 @@ export default function PricingVariantB({ onOpenModal }) {
         Mid-cycle top-ups: <a href="#pricing-variant-b">3,000 credits for $10 · 8,000 for $25 · 18,000 for $50</a>
       </p>}
       </>
+      )}
+
+      {requestEngagement && (
+        <ExecutivePartnershipRequest
+          initialEngagement={requestEngagement}
+          onClose={() => setRequestEngagement(null)}
+        />
       )}
 
     </section>

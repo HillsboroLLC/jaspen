@@ -1139,6 +1139,68 @@ class StripeWebhookEvent(db.Model):
     processed_at = db.Column(db.DateTime, nullable=True, index=True)
 
 
+class AdvisoryInquiry(db.Model):
+    """An Executive Partnership Request from the Advisory Partnerships tab.
+
+    Deliberately separate from EnterpriseInquiry: that model exists to capture
+    a calculator estimate and requires participants, teams, usage, and a
+    recommendation, none of which mean anything for a flat-fee advisory
+    engagement. Nothing here is a commitment — engagements are still accepted
+    on fit, capacity, timing, sponsorship, and decision readiness.
+    """
+
+    __tablename__ = 'advisory_inquiries'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    lead_id = db.Column(db.String(36), db.ForeignKey('leads.id', ondelete='CASCADE'), nullable=False, index=True)
+    attribution_event_id = db.Column(
+        db.Integer,
+        db.ForeignKey('lead_attribution_events.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+
+    # Which engagement they clicked; 'undecided' is a first-class answer.
+    engagement = db.Column(db.String(40), nullable=False, index=True)
+    phone = db.Column(db.String(40), nullable=True)
+
+    decision_description = db.Column(db.Text, nullable=False)
+    desired_outcome = db.Column(db.Text, nullable=False)
+    # A band, never an exact figure — the question is meant to reveal how the
+    # decision is being sized without asking for confidential financials.
+    financial_impact_band = db.Column(db.String(40), nullable=True, index=True)
+    decision_timeline = db.Column(db.String(40), nullable=False, index=True)
+    participants_json = db.Column(db.Text, nullable=False, default='[]')
+    decision_authority = db.Column(db.String(40), nullable=False)
+    additional_notes = db.Column(db.Text, nullable=True)
+
+    source_url = db.Column(db.String(1024), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    @property
+    def participants(self):
+        try:
+            return json.loads(self.participants_json or '[]')
+        except (TypeError, ValueError):
+            return []
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'lead_id': self.lead_id,
+            'engagement': self.engagement,
+            'phone': self.phone,
+            'decision_description': self.decision_description,
+            'desired_outcome': self.desired_outcome,
+            'financial_impact_band': self.financial_impact_band,
+            'decision_timeline': self.decision_timeline,
+            'participants': self.participants,
+            'decision_authority': self.decision_authority,
+            'additional_notes': self.additional_notes,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class Payment(db.Model):
     """Money actually received, as reported by Stripe.
 
