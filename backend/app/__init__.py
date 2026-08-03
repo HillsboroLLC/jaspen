@@ -270,18 +270,6 @@ def create_app():
     # 300,000 non-expiring usage credits, stored in internal units
     # (TOKENS_PER_CREDIT = 1000). Granted only after Stripe confirms payment.
     app.config['LIMITED_TIME_300K_CREDIT_TOKENS'] = 300_000_000
-    # Homepage promotion switch. Off unless explicitly turned on, so the modal
-    # can be started, paused, or ended by configuration rather than a deploy.
-    app.config['LIMITED_TIME_PROMO_ACTIVE'] = _as_bool(
-        os.getenv('LIMITED_TIME_PROMO_ACTIVE'), default=False
-    )
-    app.config['LIMITED_TIME_PROMO_HEADLINE'] = os.getenv('LIMITED_TIME_PROMO_HEADLINE') or 'RANK THEM'
-    app.config['LIMITED_TIME_PROMO_PATH'] = (
-        os.getenv('LIMITED_TIME_PROMO_PATH') or '/limited-time/project-prioritization'
-    )
-    # Optional, and unset today: the offer soft stops on sales, not a date.
-    app.config['LIMITED_TIME_PROMO_ENDS_AT'] = os.getenv('LIMITED_TIME_PROMO_ENDS_AT') or ''
-
     required_stripe_values = {
         'PRICE_ID_ESSENTIAL': app.config['STRIPE_PRICE_IDS'].get('essential'),
         'PRICE_ID_CREDITS_3000': app.config['STRIPE_CREDIT_PACK_PRICE_IDS'].get('credits_3000'),

@@ -10,8 +10,10 @@ const DISMISSED_KEY = 'jaspen.promo.rankThem.dismissed';
 // Once a week is enough to be noticed and not enough to be resented. A visitor
 // who closes it deliberately is not asked again at all.
 const REAPPEAR_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
-// Long enough that the modal never lands on someone still reading the page.
+// Fallbacks only. The server sends a frequency block, and it wins when present
+// so pacing can be retuned without a deploy.
 const APPEAR_AFTER_MS = 12000;
+const HEADLINE = 'RANK THEM';
 
 function readTimestamp(key) {
   try {
@@ -49,17 +51,24 @@ export default function RankThemPromoModal() {
   // flag is not on the session user, so a signed-in visitor is checked against
   // billing; a signed-out one cannot have bought it on this device anyway.
   const [alreadyPurchased, setAlreadyPurchased] = useState(false);
+  // Nothing opens until this settles. Otherwise a buyer whose billing check
+  // answers after the catalog sees the modal flash before it is suppressed.
+  const [purchaseChecked, setPurchaseChecked] = useState(false);
 
   useEffect(() => {
-    if (!user) { setAlreadyPurchased(false); return undefined; }
+    if (!user) { setAlreadyPurchased(false); setPurchaseChecked(true); return undefined; }
+    setPurchaseChecked(false);
     let cancelled = false;
     authFetch(`${API_BASE}/api/v1/billing/status`, { credentials: 'include' })
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
-        if (!cancelled && data?.has_300k_limited_time) setAlreadyPurchased(true);
+        if (cancelled) return;
+        if (data?.has_300k_limited_time) setAlreadyPurchased(true);
+        setPurchaseChecked(true);
       })
       .catch(() => {
-        /* leave the promotion visible rather than hiding it on a network blip */
+        // Leave the promotion visible rather than hiding it on a network blip.
+        if (!cancelled) setPurchaseChecked(true);
       });
     return () => { cancelled = true; };
   }, [user]);
@@ -81,14 +90,17 @@ export default function RankThemPromoModal() {
   }, [alreadyPurchased]);
 
   useEffect(() => {
-    if (!promo) return undefined;
+    if (!promo || !purchaseChecked || alreadyPurchased) return undefined;
+    const delayMs = Number(promo.frequency?.delay_seconds) > 0
+      ? Number(promo.frequency.delay_seconds) * 1000
+      : APPEAR_AFTER_MS;
     const timer = window.setTimeout(() => {
       returnFocusRef.current = document.activeElement;
       setOpen(true);
       writeTimestamp(SEEN_KEY);
-    }, APPEAR_AFTER_MS);
+    }, delayMs);
     return () => window.clearTimeout(timer);
-  }, [promo]);
+  }, [promo, purchaseChecked, alreadyPurchased]);
 
   const close = useCallback(({ permanently = false } = {}) => {
     if (permanently) writeTimestamp(DISMISSED_KEY);
@@ -159,7 +171,7 @@ export default function RankThemPromoModal() {
           ×
         </button>
         <p className="rank-them-eyebrow">Limited-time offer</p>
-        <h2 id="rank-them-title">{promo.headline}</h2>
+        <h2 id="rank-them-title">{HEADLINE}</h2>
         <p id="rank-them-body">
           Limited time. Limited resources. Too many priorities.
         </p>

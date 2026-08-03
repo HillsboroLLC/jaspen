@@ -104,6 +104,19 @@ def _to_iso_datetime(value):
     return parsed.astimezone(timezone.utc).isoformat()
 
 
+def _resolve_ends_at(incoming, current):
+    """An explicit null clears the end date; an unparseable one keeps whatever
+    was already set, so a typo can never silently un-schedule the end of a
+    promotion."""
+    stored = _to_iso_datetime(current.get("ends_at"))
+    if "ends_at" not in incoming:
+        return stored
+    raw = incoming.get("ends_at")
+    if raw in (None, "", False):
+        return None
+    return _to_iso_datetime(raw) or stored
+
+
 def default_promotion_config():
     return {
         "active": False,
@@ -123,9 +136,19 @@ def normalize_promotion_config(values, base=None):
     current = base if isinstance(base, dict) else default_promotion_config()
     incoming = values if isinstance(values, dict) else {}
 
-    campaign_path = str(incoming.get("campaign_path") or current.get("campaign_path") or "").strip()
+    current_path = str(current.get("campaign_path") or "").strip()
+    if current_path not in ALLOWED_CAMPAIGN_PATHS:
+        current_path = DEFAULT_CAMPAIGN_PATH
+    campaign_path = str(incoming.get("campaign_path") or current_path).strip()
     if campaign_path not in ALLOWED_CAMPAIGN_PATHS:
-        campaign_path = DEFAULT_CAMPAIGN_PATH
+        campaign_path = current_path
+
+    current_cap = _to_int(current.get("sales_cap"), DEFAULT_SALES_CAP, minimum=0, maximum=1_000_000)
+    sales_cap = (
+        _to_int(incoming.get("sales_cap"), current_cap, minimum=0, maximum=1_000_000)
+        if "sales_cap" in incoming
+        else current_cap
+    )
 
     current_frequency = current.get("frequency") if isinstance(current.get("frequency"), dict) else {}
     incoming_frequency = incoming.get("frequency") if isinstance(incoming.get("frequency"), dict) else {}
@@ -147,15 +170,8 @@ def normalize_promotion_config(values, base=None):
             default=False,
         ),
         "campaign_path": campaign_path,
-        "sales_cap": _to_int(
-            incoming.get("sales_cap") if "sales_cap" in incoming else current.get("sales_cap"),
-            DEFAULT_SALES_CAP,
-            minimum=0,
-            maximum=1_000_000,
-        ),
-        "ends_at": _to_iso_datetime(
-            incoming.get("ends_at") if "ends_at" in incoming else current.get("ends_at")
-        ),
+        "sales_cap": sales_cap,
+        "ends_at": _resolve_ends_at(incoming, current),
         "show_deadline": _to_bool(
             incoming.get("show_deadline") if "show_deadline" in incoming else current.get("show_deadline"),
             default=False,

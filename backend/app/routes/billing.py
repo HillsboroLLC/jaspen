@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import db
 from app.admin_policy import is_global_admin
+from app.homepage_promotion import public_promotion_state
 from app.models import PersistentCreditGrant, StripeWebhookEvent, User
 from app.orgs import build_seat_usage, can_manage_org, resolve_active_org_for_user
 from app.billing_config import (
@@ -193,26 +194,6 @@ def list_plans():
     return jsonify(current_app.config.get('STRIPE_PRICE_IDS', {})), 200
 
 
-def _limited_time_promotion_state():
-    """Whether the homepage promotion is running, and what it should say.
-
-    The switch is configuration, so the promotion can be started, paused, or
-    ended without a deploy. There is deliberately no end date: the offer soft
-    stops at a sale count rather than a deadline, and a countdown to a date we
-    have not committed to would be a promise. ends_at is carried anyway so a
-    date can be shown later without touching the frontend.
-    """
-    config = current_app.config
-    return {
-        'active': bool(config.get('LIMITED_TIME_PROMO_ACTIVE')),
-        'headline': str(config.get('LIMITED_TIME_PROMO_HEADLINE') or 'RANK THEM'),
-        'campaign_path': str(
-            config.get('LIMITED_TIME_PROMO_PATH') or '/limited-time/project-prioritization'
-        ),
-        'ends_at': str(config.get('LIMITED_TIME_PROMO_ENDS_AT') or '') or None,
-    }
-
-
 @billing_bp.route('/catalog', methods=['GET'])
 def get_billing_catalog():
     raw_plan_catalog = get_plan_catalog(current_app.config)
@@ -239,7 +220,7 @@ def get_billing_catalog():
         # Backward-compatible alias for older clients.
         'overage_packs': pack_catalog,
         'model_types': model_catalog,
-        'promotion': _limited_time_promotion_state(),
+        'promotion': public_promotion_state(),
     }), 200
 
 

@@ -14,6 +14,7 @@ from app.models import (
     ConnectorSyncLog,
     DecisionAssetEmail,
     EmailSuppression,
+    EnterpriseInquiry,
     Lead,
     LeadAttributionEvent,
     LeadDecisionProfile,
@@ -97,6 +98,37 @@ def app(tmp_path_factory):
             os.environ[key] = value
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rate_limit_counters(app):
+    """Give every test its own rate-limit budget.
+
+    The app fixture sets RATELIMIT_ENABLED=False, but Flask-Limiter reads
+    `enabled` during init_app() — which create_app() already called — so
+    enforcement has always stayed on. Rather than turn it off (a few tests
+    assert real 429s), clear the shared memory:// counters between tests so
+    one test's requests can no longer exhaust the per-IP budget of a test
+    that runs later in the session.
+    """
+    from app import limiter
+
+    try:
+        limiter.reset()
+    except (NotImplementedError, AttributeError):
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _fresh_promotion_cache(app):
+    """The homepage promotion caches its config in-process for 30s. Clear it
+    around every test so seeding an AppSetting row is immediately visible."""
+    from app.homepage_promotion import reset_promotion_cache
+
+    reset_promotion_cache()
+    yield
+    reset_promotion_cache()
+
+
 @pytest.fixture
 def client(app):
     return app.test_client()
@@ -115,6 +147,7 @@ def db(app):
             LeadEmailDelivery,
             LeadAttributionEvent,
             EmailSuppression,
+            EnterpriseInquiry,
             Lead,
             OrganizationInvitation,
             OrganizationMember,
