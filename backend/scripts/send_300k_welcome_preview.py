@@ -52,7 +52,9 @@ def send(recipient):
 
     rendered = _render()
     message = Message(
-        subject=f'[preview] {rendered["subject"]}',
+        # Deliberately identical to the real receipt, subject included: the
+        # point is to see exactly what a buyer sees, not an approximation.
+        subject=rendered['subject'],
         recipients=[recipient],
         sender='Jaspen <hello@jaspen.ai>',
         reply_to='hello@jaspen.ai',
@@ -60,8 +62,8 @@ def send(recipient):
     message.body = rendered['body']
     message.html = rendered['html']
     mail.send(message)
-    print(f'Sent to {recipient} via {server}.')
-    print('Subject is prefixed [preview] so it cannot be mistaken for a real receipt.')
+    print(f'Sent to {recipient} via {server}, from hello@jaspen.ai.')
+    print('This is byte-for-byte the email a buyer receives.')
     return 0
 
 
