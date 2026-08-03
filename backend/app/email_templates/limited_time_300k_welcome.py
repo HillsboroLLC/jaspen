@@ -37,14 +37,22 @@ def _p(text):
     return escape(text or "")
 
 
+def _greeting(recipient_name):
+    """First name only - a receipt that says "Hi Dr. Jane Smith," reads like a form."""
+    first = str(recipient_name or "").strip().split(" ")[0].strip()
+    return f"Hi {escape(first)}," if first else "Hi there,"
+
+
 def render_limited_time_300k_welcome_email(
     *,
+    recipient_name="",
     credits_label="300,000",
     amount_label="$999",
     workspace_url="https://www.jaspen.ai",
     receipt_reference="",
 ):
     """Returns {subject, preview_text, body, html} for the purchase email."""
+    greeting = _greeting(recipient_name)
     credits_label = _p(str(credits_label))
     amount_label = _p(str(amount_label))
     reference_line = (
@@ -57,6 +65,8 @@ def render_limited_time_300k_welcome_email(
     )
 
     text = f"""Your {credits_label} Jaspen credits are ready
+
+{greeting}
 
 {INTRO_COPY}
 
@@ -99,6 +109,7 @@ Lydia
               <td style="padding:34px 28px 26px; background:#161f3b;">
                 <p style="margin:0 0 10px; font-size:13px; line-height:1.4; letter-spacing:.08em; text-transform:uppercase; color:#f0a6d4; font-weight:700;">Purchase confirmed</p>
                 <h1 style="margin:0 0 14px; font-size:28px; line-height:1.18; color:#ffffff;">Your {credits_label} credits are ready</h1>
+                <p style="margin:0 0 14px; font-size:16px; line-height:1.65; color:#d9deec;">{greeting}</p>
                 <p style="margin:0; font-size:16px; line-height:1.65; color:#d9deec;">{_p(INTRO_COPY)}</p>
               </td>
             </tr>

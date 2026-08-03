@@ -185,7 +185,7 @@ def test_the_receipt_states_what_was_bought():
     )
 
     rendered = render_limited_time_300k_welcome_email(
-        amount_label='$999', receipt_reference='in_abc123',
+        recipient_name='Lydia Bailey', amount_label='$999', receipt_reference='in_abc123',
     )
 
     assert '300,000' in rendered['subject']
@@ -196,3 +196,40 @@ def test_the_receipt_states_what_was_bought():
         assert 'do not expire' in part
     # The offer never starts a subscription, and the receipt has to say so.
     assert 'No subscription was started' in rendered['html']
+
+
+def test_the_receipt_greets_the_buyer_by_first_name():
+    from app.email_templates.limited_time_300k_welcome import (
+        render_limited_time_300k_welcome_email,
+    )
+
+    named = render_limited_time_300k_welcome_email(recipient_name='Lydia Bailey')
+    assert 'Hi Lydia,' in named['html']
+    assert 'Hi Lydia,' in named['body']
+    # Surname dropped: a $999 receipt should not read like a form letter.
+    assert 'Hi Lydia Bailey,' not in named['html']
+
+    # An account with no name still gets a greeting rather than a blank line.
+    anonymous = render_limited_time_300k_welcome_email(recipient_name='')
+    assert 'Hi there,' in anonymous['html']
+
+
+def test_the_buyers_name_reaches_the_email(app, db, buyer, monkeypatch):
+    from app.routes import billing
+
+    buyer.name = 'Lydia Bailey'
+    db.session.commit()
+    captured = {}
+    monkeypatch.setattr(
+        'app.routes.billing.render_limited_time_300k_welcome_email'
+        if hasattr(billing, 'render_limited_time_300k_welcome_email') else
+        'app.email_templates.limited_time_300k_welcome.render_limited_time_300k_welcome_email',
+        lambda **kwargs: captured.update(kwargs) or {
+            'subject': 's', 'preview_text': 'p', 'body': 'b', 'html': 'h',
+        },
+    )
+    monkeypatch.setattr('flask_mail.Mail.send', lambda *_a, **_k: None)
+
+    billing._send_limited_time_300k_welcome_email(buyer, reference='pi_named')
+
+    assert captured['recipient_name'] == 'Lydia Bailey'

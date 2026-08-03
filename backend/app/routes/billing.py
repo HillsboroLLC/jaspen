@@ -405,6 +405,7 @@ def _send_limited_time_300k_welcome_email(user, *, amount_label='$999', referenc
         )
 
         rendered = render_limited_time_300k_welcome_email(
+            recipient_name=getattr(user, 'name', '') or '',
             amount_label=amount_label,
             workspace_url=_frontend_url('/'),
             receipt_reference=reference,

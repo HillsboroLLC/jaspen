@@ -8,7 +8,7 @@ Sending needs real mail credentials, which live in the server's environment:
 
     cd ~/sekki-platform/backend
     eval export $(systemctl show gunicorn-sekki.service -p Environment --value)
-    PYTHONPATH=. ./venv/bin/python scripts/send_300k_welcome_preview.py ldbailey303@gmail.com
+    PYTHONPATH=. ./venv/bin/python scripts/send_300k_welcome_preview.py ldbailey303@gmail.com "Lydia"
 
 Nothing is charged and no credits are granted - this only renders the template.
 """
@@ -22,16 +22,17 @@ from app.email_templates.limited_time_300k_welcome import (
 )
 
 
-def _render():
+def _render(recipient_name=''):
     return render_limited_time_300k_welcome_email(
+        recipient_name=recipient_name,
         amount_label='$999',
         workspace_url=(current_app.config.get('FRONTEND_BASE_URL') or 'https://www.jaspen.ai'),
         receipt_reference='in_preview_example',
     )
 
 
-def write(path):
-    rendered = _render()
+def write(path, recipient_name=''):
+    rendered = _render(recipient_name)
     with open(path, 'w') as handle:
         handle.write(rendered['html'])
     print(f'Wrote {path}')
@@ -41,7 +42,7 @@ def write(path):
     return 0
 
 
-def send(recipient):
+def send(recipient, recipient_name=''):
     from flask_mail import Message
 
     server = current_app.config.get('MAIL_SERVER')
@@ -50,7 +51,7 @@ def send(recipient):
         print('      Run this on the server, or use --write to preview the file instead.')
         return 1
 
-    rendered = _render()
+    rendered = _render(recipient_name)
     message = Message(
         # Deliberately identical to the real receipt, subject included: the
         # point is to see exactly what a buyer sees, not an approximation.
@@ -75,8 +76,11 @@ def main():
     app = create_app()
     with app.app_context():
         if args[0] == '--write':
-            return write(args[1] if len(args) > 1 else 'limited-time-receipt.html')
-        return send(args[0])
+            return write(
+                args[1] if len(args) > 1 else 'limited-time-receipt.html',
+                args[2] if len(args) > 2 else 'Lydia',
+            )
+        return send(args[0], args[1] if len(args) > 1 else 'Lydia')
 
 
 if __name__ == '__main__':
