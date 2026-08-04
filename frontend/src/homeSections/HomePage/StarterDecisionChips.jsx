@@ -3,80 +3,298 @@ import './StarterDecisionChips.css';
 
 export const STARTER_DECISIONS = [
   {
-    id: 'job-offer',
-    label: 'Accept a Job Offer',
+    id: 'growth-investments',
+    label: 'Prioritize Growth Investments',
     prompt: `Fictional example. Edit anything.
 
-Decision: I need to decide whether to accept a new job offer or remain in my current role.
+Decision:
+Our executive leadership team needs to decide which growth opportunities should receive investment over the next 18 months.
 
-Current role:
-- Title: Operations Program Manager
-- Base salary: $120,000
-- Annual bonus target: 10%
-- Office requirement: one office day per week
-- Commute: approximately 20 minutes each way
-- The role feels stable, but advancement has become limited.
-
-New offer:
-- Title: Senior Operations Program Manager
-- Base salary: $145,000
-- Annual bonus target: 15%
-- Office requirement: three office days per week
-- Commute: approximately 50 minutes each way
-- The role offers greater leadership exposure and stronger promotion potential.
-- The new company recently completed a reorganization, so there may be some uncertainty around priorities and team stability.
-
-Values and trade-offs:
-- Compensation matters, but I do not want to optimize only for salary.
-- I value flexibility, career growth, stability, manager quality, commute burden, and long-term optionality.
-- I want to understand whether the career upside and compensation justify the added commute, reduced flexibility, and reorganization risk.
-
-People and evidence:
-- I would want to understand the likely manager quality, the stability of the reorganized team, and whether promotion paths are real or just implied.
-- The strongest evidence I have right now is the written offer, current compensation, office requirements, commute estimates, and what I know about each company's stability.
-- Stakeholders and domain experts whose input could matter include my current manager, the recruiter, the potential new manager, and people who have worked through similar reorganizations.
-- The decision process has a clear sequence: compare the written offer and current role, confirm manager expectations, understand the reorganization risk, then decide before the offer deadline next week.
-- The main dependency is whether the new manager and leadership team can explain the promotion path and how settled the reorganized team really is.
-
-Decision options:
-- Accept the new offer
-- Remain in the current role
-
-Help me prepare this decision. Use the information provided, label assumptions, and ask the single highest-value missing question if more context is needed.`,
-  },
-  {
-    id: 'start-business',
-    label: 'Grow My Business',
-    prompt: `Fictional example. Edit anything.
-
-Decision: I run an independent operations consulting business and need to decide which growth move to prioritize next.
-
-Business context:
-- Business: independent operations consultant
-- Current annual revenue: approximately $180,000
-- Current average monthly capacity: about 90% utilized
-- Current pricing: $4,500 per project
-- Strongest clients have indicated they would likely accept higher pricing.
-- The referral pipeline is healthy but inconsistent.
-- I currently handle delivery, sales, and administration myself.
-
-Goal:
-- Increase profit without materially reducing quality or creating an unsustainable workload.
+Constraints:
+- Available growth capital: $8 million
+- Commercial leadership can support no more than two major growth initiatives at the same time
+- The company expects each approved initiative to contribute measurable revenue within 18 months
+- Leadership prefers opportunities with a credible path to at least a 15% return on invested capital
 
 Options:
-1. Raise project pricing from $4,500 to $5,500
-2. Hire a part-time contractor for $3,000 per month
-3. Invest $2,500 per month in customer acquisition
+
+1. Expand into the Canadian market
+   - Required investment: $3.2 million
+   - Expected first-year revenue: $5.5 million
+   - Expected first-year EBITDA contribution: $900,000
+   - Estimated time to launch: nine months
+   - Requires regulatory approvals, a local sales team, and two distribution partners
+   - Revenue forecast confidence: moderate
+
+2. Launch a premium product line
+   - Required investment: $2.4 million
+   - Expected first-year revenue: $4.2 million
+   - Expected first-year EBITDA contribution: $1.1 million
+   - Estimated time to launch: six months
+   - Uses the existing customer base and distribution network
+   - Consumer demand has only been tested through a limited pilot
+   - Revenue forecast confidence: moderate to low
+
+3. Acquire a regional competitor
+   - Purchase price: $6.5 million
+   - Expected acquired annual revenue: $9 million
+   - Expected annual EBITDA: $1.4 million
+   - Estimated integration cost: $1 million
+   - Estimated synergy opportunity: $700,000 annually
+   - Customer concentration risk: the top three customers represent 48% of revenue
+   - Due-diligence confidence: moderate
+
+4. Build a direct-to-consumer channel
+   - Required investment: $1.8 million
+   - Expected first-year revenue: $2.8 million
+   - Expected first-year EBITDA loss: $300,000
+   - Expected break-even point: month 22
+   - Creates access to first-party customer data
+   - Requires new fulfillment, digital marketing, and customer-service capabilities
+   - Revenue forecast confidence: low
 
 People and evidence:
-- The strongest evidence I have right now is current revenue, current utilization, project pricing, client feedback on pricing tolerance, and the quality of the referral pipeline.
-- The main operating constraint is founder capacity because I currently handle delivery, sales, and administration.
-- If I choose a growth move, I need a practical sequence that protects delivery quality while testing impact quickly.
-- Stakeholders and domain experts whose input could matter include my strongest clients, a trusted contractor, and an advisor who understands consulting pricing.
-- The workflow today runs from referral lead to sales call to project delivery to admin follow-up, with every handoff currently owned by me.
-- A reasonable timeline would be to choose one move this month, run it for one quarter, and review profit, capacity, and client experience before expanding the approach.
+- Stakeholders include Strategy, Finance, Sales, Marketing, Operations, Legal, Technology, and the executive leadership team.
+- Available evidence includes investment requirements, revenue and EBITDA estimates, launch timelines, market research, integration assumptions, customer concentration, and current organizational capacity.
+- The company has strong domestic brand awareness but limited international operating experience.
+- Sales and marketing leadership can support only one major market-entry initiative while also maintaining the core business.
+- The acquisition and Canadian expansion would compete for the same executive sponsor and finance resources.
 
-Help me prepare this decision. Use the information provided, label assumptions, and ask the single highest-value missing question if more context is needed.`,
+Desired outcome:
+Recommend which opportunities should be pursued, deferred, or rejected. Provide a clear sequence for the next 18 months, explain the most important tradeoffs, identify assumptions that materially affect the recommendation, and highlight what evidence should be validated before final approval.
+
+Help me prepare this decision. Use the information provided, label assumptions clearly, and ask the single highest-value missing question if more context is needed.`,
+  },
+  {
+    id: 'transformation-portfolio',
+    label: 'Sequence Transformation Initiatives',
+    prompt: `Fictional example. Edit anything.
+
+Decision:
+Our transformation office needs to determine which enterprise initiatives should begin this year and how they should be sequenced.
+
+Constraints:
+- Available transformation budget: $12 million
+- The organization can support no more than three major implementations this year
+- The enterprise technology team has capacity for approximately 18,000 project hours
+- The finance, supply-chain, and HR teams cannot each support more than one major transformation at a time
+- Leadership expects at least $6 million in annualized benefits from the approved portfolio
+
+Options:
+
+1. ERP modernization
+   - Estimated cost: $7.5 million
+   - Expected annual savings: $2.2 million
+   - Implementation timeline: 18 months
+   - Technology effort: approximately 11,000 hours
+   - Requires significant finance, procurement, and operations participation
+   - Current ERP has increasing support and reliability risk
+   - Benefits confidence: high
+
+2. Supply-chain planning transformation
+   - Estimated cost: $3.8 million
+   - Expected annual savings: $3.1 million
+   - Implementation timeline: 12 months
+   - Technology effort: approximately 5,500 hours
+   - Expected inventory reduction: $8 million
+   - Depends on improved product and customer data
+   - Benefits confidence: moderate
+
+3. Enterprise data platform
+   - Estimated cost: $4.6 million
+   - Expected direct annual savings: $900,000
+   - Estimated decision-quality and productivity benefit: $2 million annually
+   - Implementation timeline: 14 months
+   - Technology effort: approximately 8,000 hours
+   - Creates a foundation for advanced analytics and AI use cases
+   - Benefits confidence: moderate to low
+
+4. Customer-service automation
+   - Estimated cost: $2.1 million
+   - Expected annual savings: $2.6 million
+   - Implementation timeline: seven months
+   - Technology effort: approximately 3,500 hours
+   - Expected reduction in average handling time: 22%
+   - Moderate employee adoption and customer-experience risk
+   - Benefits confidence: high
+
+5. HR operating-model redesign
+   - Estimated cost: $1.4 million
+   - Expected annual savings: $1.7 million
+   - Implementation timeline: nine months
+   - Technology effort: approximately 1,500 hours
+   - Requires role consolidation and changes to shared services
+   - High change-management sensitivity
+   - Benefits confidence: moderate
+
+People and evidence:
+- Stakeholders include the Transformation Office, Finance, Technology, Supply Chain, Customer Service, HR, Procurement, and business-unit leaders.
+- Available evidence includes estimated costs, annualized benefits, resource requirements, implementation timelines, technology capacity, organizational dependencies, and confidence in the business cases.
+- The ERP modernization and supply-chain transformation both require heavy finance and operations participation.
+- The enterprise data platform would improve the long-term value of the supply-chain and customer-service initiatives but produces fewer immediate direct savings.
+- Leadership wants a portfolio that balances near-term EBITDA improvement with long-term capability building.
+
+Desired outcome:
+Recommend which initiatives should start this year, which should be sequenced later, and which should be deferred. Build a realistic implementation sequence that respects budget, technology capacity, and functional bandwidth. Explain the tradeoffs between immediate financial value, strategic enablement, and execution risk.
+
+Help me prepare this decision. Use the information provided, distinguish evidence from assumptions, and ask the single highest-value missing question if more context is needed.`,
+  },
+  {
+    id: 'acquisition-target',
+    label: 'Choose an Acquisition Target',
+    prompt: `Fictional example. Edit anything.
+
+Decision:
+Our corporate development team needs to recommend which acquisition target should advance to final due diligence and negotiation.
+
+Constraints:
+- Maximum available purchase consideration: $40 million
+- The company can complete and integrate only one acquisition during the next 12 months
+- Leadership requires a credible path to at least $5 million in annual EBITDA contribution within three years
+- The transaction should not increase total leverage above 4.0 times EBITDA
+- Integration resources are limited because the company is already completing an ERP implementation
+
+Options:
+
+1. Target Alpha: regional services provider
+   - Indicative purchase price: $28 million
+   - Annual revenue: $34 million
+   - Current EBITDA: $4.2 million
+   - Expected annual cost synergies: $1.3 million
+   - Expected annual revenue synergies: $900,000 by year three
+   - Customer retention rate: 91%
+   - Top five customers represent 44% of revenue
+   - Integration complexity: moderate
+   - Management team is willing to remain for two years
+
+2. Target Beta: technology-enabled competitor
+   - Indicative purchase price: $39 million
+   - Annual revenue: $22 million
+   - Current EBITDA: $2.6 million
+   - Revenue growth: 24% annually
+   - Expected annual cost synergies: $600,000
+   - Proprietary technology could reduce internal development costs by approximately $3 million
+   - Top five customers represent 27% of revenue
+   - Integration complexity: high
+   - Two key founders are expected to leave after the transaction
+
+3. Target Gamma: adjacent-market distributor
+   - Indicative purchase price: $24 million
+   - Annual revenue: $41 million
+   - Current EBITDA: $3.8 million
+   - Expected annual cost synergies: $1.8 million
+   - Cross-selling opportunity estimated at $6 million in annual revenue by year three
+   - Gross margins are eight percentage points below our current business
+   - Integration complexity: low to moderate
+   - Requires entry into two unfamiliar state regulatory environments
+
+4. Target Delta: specialized consulting firm
+   - Indicative purchase price: $18 million
+   - Annual revenue: $16 million
+   - Current EBITDA: $3.1 million
+   - Recurring revenue: 38%
+   - Expected annual cost synergies: $400,000
+   - Could accelerate the company's advisory-services strategy by approximately two years
+   - Revenue depends heavily on 12 senior partners
+   - Integration complexity: moderate
+   - Employee retention risk is high without a significant earnout
+
+People and evidence:
+- Stakeholders include Corporate Development, Strategy, Finance, Legal, Operations, Technology, HR, and the executive leadership team.
+- Available evidence includes indicative valuations, historical financials, customer concentration, projected synergies, management-retention expectations, integration complexity, and preliminary legal and commercial due diligence.
+- Target Beta provides the strongest technology capability but would use nearly all available capital.
+- Target Gamma offers the strongest immediate synergy potential but introduces lower margins and regulatory complexity.
+- The existing ERP implementation limits the organization's ability to absorb a highly complex integration.
+- The final recommendation must consider both standalone economics and strategic fit.
+
+Desired outcome:
+Recommend which target should advance, which should remain as a backup, and which should be removed from consideration. Explain valuation, strategic fit, integration risk, synergy credibility, and the assumptions that most influence the recommendation. Identify the highest-priority diligence questions before a binding offer is made.
+
+Help me prepare this decision. Use the information provided, label assumptions clearly, and ask the single highest-value missing question if more context is needed.`,
+  },
+  {
+    id: 'midyear-reallocation',
+    label: 'Reallocate Midyear Funding',
+    prompt: `Fictional example. Edit anything.
+
+Decision:
+Midyear performance is below plan, and the executive team needs to reallocate funding across the enterprise portfolio while protecting the company's most important strategic commitments.
+
+Constraints:
+- Forecasted annual EBITDA is now $9 million below plan
+- Leadership must identify at least $6 million in cash savings or deferred spending this year
+- The company has already spent $11.5 million across the current portfolio
+- Canceling or pausing initiatives may create termination costs, stranded investment, or delayed benefits
+- Technology and operations teams are operating above planned capacity
+
+Current portfolio:
+
+1. Pricing optimization program
+   - Full-year budget: $3.4 million
+   - Spend to date: $1.8 million
+   - Expected annual EBITDA benefit: $7 million
+   - Current delivery status: on schedule
+   - Expected benefit start: next quarter
+   - Remaining implementation risk: moderate
+   - Estimated pause cost: $500,000
+
+2. New distribution center
+   - Full-year budget: $12 million
+   - Spend to date: $5.5 million
+   - Expected annual logistics savings: $4.2 million
+   - Current delivery status: three months behind schedule
+   - Expected benefit start: 15 months from now
+   - Estimated cancellation and contractual cost: $2.1 million
+   - Operational dependency risk: high
+
+3. Customer loyalty platform
+   - Full-year budget: $4.8 million
+   - Spend to date: $2 million
+   - Expected annual incremental gross profit: $3 million
+   - Current delivery status: on schedule
+   - Customer adoption assumptions are not yet validated
+   - Estimated pause cost: $300,000
+   - Benefit confidence: low to moderate
+
+4. Cybersecurity remediation
+   - Full-year budget: $2.7 million
+   - Spend to date: $1.2 million
+   - Limited direct financial return
+   - Addresses three high-severity audit findings
+   - Two findings must be resolved within six months
+   - Estimated pause cost: minimal
+   - Operational and regulatory risk of delay: high
+
+5. Sales-force expansion
+   - Full-year budget: $5.2 million
+   - Spend to date: $1 million
+   - Expected annual revenue contribution: $11 million
+   - Expected annual EBITDA contribution: $2.4 million
+   - New-hire productivity is currently 20% below plan
+   - Hiring can be slowed with minimal contractual cost
+   - Benefit confidence: moderate to low
+
+6. Finance-process automation
+   - Full-year budget: $1.9 million
+   - Spend to date: $600,000
+   - Expected annual savings: $1.5 million
+   - Implementation timeline remaining: five months
+   - Depends on technology resources currently supporting the distribution-center program
+   - Estimated pause cost: $150,000
+   - Benefit confidence: high
+
+People and evidence:
+- Stakeholders include the CEO, CFO, Strategy, Finance, Operations, Technology, Sales, Customer Experience, Security, and initiative owners.
+- Available evidence includes approved budgets, spend to date, expected financial benefits, current delivery status, termination costs, timing of benefits, risk exposure, and confidence in each business case.
+- The pricing program and finance automation have the strongest near-term EBITDA potential.
+- The distribution-center program has the highest sunk cost and contractual exposure but will not generate benefits this year.
+- Cybersecurity remediation is tied to known audit findings and cannot be evaluated solely on direct financial return.
+- Leadership needs to identify what to continue, reduce, pause, or stop while maintaining a credible long-term strategy.
+
+Desired outcome:
+Recommend a revised portfolio that releases at least $6 million in current-year cash. Specify which initiatives should continue as planned, receive reduced funding, be paused, or be stopped. Quantify the expected financial impact where possible, explain the major tradeoffs, and identify any consequences that leadership must explicitly accept.
+
+Help me prepare this decision. Use the information provided, separate evidence from assumptions, and ask the single highest-value missing question if more context is needed.`,
   },
   {
     id: 'quarterly-investments',
