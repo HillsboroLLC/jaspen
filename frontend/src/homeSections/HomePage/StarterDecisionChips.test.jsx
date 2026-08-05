@@ -20,11 +20,14 @@ describe('Starter decision chips', () => {
     ]);
   });
 
-  it('tells the visitor the example is theirs to change', () => {
-    // The prompt lands in the composer, so this line is what a first-time
-    // visitor reads before sending anything.
+  it('never tells the model the scenario is fictional', () => {
+    // The composer shows a "Fictional example" badge above the text, so the
+    // prompt itself must not repeat it. Otherwise a visitor who edits the
+    // example into their own real decision still sends Jaspen a sentence
+    // saying the whole thing is made up.
     STARTER_DECISIONS.forEach(decision => {
-      expect(decision.prompt.startsWith('Fictional example. Edit anything.')).toBe(true);
+      expect(decision.prompt).not.toMatch(/fictional/i);
+      expect(decision.prompt.startsWith('Decision:')).toBe(true);
     });
   });
 

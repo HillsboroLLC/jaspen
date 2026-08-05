@@ -5,9 +5,7 @@ export const STARTER_DECISIONS = [
   {
     id: 'growth-investments',
     label: 'Prioritize Growth Investments',
-    prompt: `Fictional example. Edit anything.
-
-Decision:
+    prompt: `Decision:
 Our executive leadership team needs to decide which growth opportunities should receive investment over the next 18 months.
 
 Constraints:
@@ -68,9 +66,7 @@ Help me prepare this decision. Use the information provided, label assumptions c
   {
     id: 'transformation-portfolio',
     label: 'Sequence Transformation Initiatives',
-    prompt: `Fictional example. Edit anything.
-
-Decision:
+    prompt: `Decision:
 Our transformation office needs to determine which enterprise initiatives should begin this year and how they should be sequenced.
 
 Constraints:
@@ -142,9 +138,7 @@ Help me prepare this decision. Use the information provided, distinguish evidenc
   {
     id: 'acquisition-target',
     label: 'Compare Acquisition Targets',
-    prompt: `Fictional example. Edit anything.
-
-Decision:
+    prompt: `Decision:
 Our corporate development team needs to recommend which acquisition target should advance to final due diligence and negotiation.
 
 Constraints:
@@ -215,9 +209,7 @@ Help me prepare this decision. Use the information provided, label assumptions c
   {
     id: 'capital-allocation',
     label: 'Allocate Capital Across Business Units',
-    prompt: `Fictional example. Edit anything.
-
-Decision:
+    prompt: `Decision:
 Executive leadership must allocate next year's capital budget across multiple business units competing for limited investment funding.
 
 Constraints:
@@ -276,9 +268,7 @@ Help me prepare this decision. Use the information provided, clearly distinguish
   {
     id: 'midyear-reallocation',
     label: 'Reallocate Midyear Funding',
-    prompt: `Fictional example. Edit anything.
-
-Decision:
+    prompt: `Decision:
 Midyear performance is below plan, and the executive team needs to reallocate funding across the enterprise portfolio while protecting the company's most important strategic commitments.
 
 Constraints:
@@ -360,9 +350,7 @@ Help me prepare this decision. Use the information provided, separate evidence f
   {
     id: 'quarterly-investments',
     label: "Prioritize Next Quarter's Investments",
-    prompt: `Fictional example. Edit anything.
-
-Decision: Our leadership team needs to prioritize next quarter's major investments.
+    prompt: `Decision: Our leadership team needs to prioritize next quarter's major investments.
 
 Constraint:
 - Available budget: $1.2 million
@@ -406,9 +394,7 @@ Help me prepare this decision. Use the information provided, label assumptions, 
   {
     id: 'strategic-initiatives',
     label: 'Compare Strategic Initiatives',
-    prompt: `Fictional example. Edit anything.
-
-Decision:
+    prompt: `Decision:
 The executive leadership team needs to determine which strategic initiatives should be approved during the upcoming annual planning cycle.
 
 Constraints:
@@ -467,9 +453,7 @@ Help me prepare this decision. Use the information provided, distinguish assumpt
   {
     id: 'technology-investments',
     label: 'Prioritize Technology Investments',
-    prompt: `Fictional example. Edit anything.
-
-Decision:
+    prompt: `Decision:
 Technology leadership must determine which technology investments should be funded during the upcoming fiscal year.
 
 Constraints:
