@@ -4,15 +4,19 @@ import userEvent from '@testing-library/user-event';
 import StarterDecisionChips, { STARTER_DECISIONS } from './StarterDecisionChips';
 
 describe('Starter decision chips', () => {
-  it('offers the five leadership decisions', () => {
+  it('offers the eight leadership decisions', () => {
     render(<StarterDecisionChips onSelect={jest.fn()} />);
 
+    // Order is deliberate: it splits the row of chips evenly at desktop width.
     expect(screen.getAllByRole('button').map(b => b.textContent)).toEqual([
       'Prioritize Growth Investments',
       'Sequence Transformation Initiatives',
-      'Choose an Acquisition Target',
+      'Compare Acquisition Targets',
+      'Allocate Capital Across Business Units',
       'Reallocate Midyear Funding',
       "Prioritize Next Quarter's Investments",
+      'Compare Strategic Initiatives',
+      'Prioritize Technology Investments',
     ]);
   });
 
@@ -38,11 +42,11 @@ describe('Starter decision chips', () => {
   });
 
   it('asks for an ordered answer and stated assumptions, not just a ranking', () => {
-    // What separates Jaspen's output from a sorted list. The portfolio
-    // examples ask for a sequence; the acquisition example picks a single
+    // What separates Jaspen's output from a sorted list. Most examples ask
+    // for a sequence or roadmap; the acquisition example picks a single
     // target, so it asks for a primary and a backup instead.
     STARTER_DECISIONS.forEach(decision => {
-      expect(decision.prompt).toMatch(/sequence|backup/i);
+      expect(decision.prompt).toMatch(/sequence|roadmap|backup/i);
       expect(decision.prompt).toMatch(/reasoning|rationale|assumptions/i);
       expect(decision.prompt).toMatch(/highest-value/i);
     });

@@ -141,7 +141,7 @@ Help me prepare this decision. Use the information provided, distinguish evidenc
   },
   {
     id: 'acquisition-target',
-    label: 'Choose an Acquisition Target',
+    label: 'Compare Acquisition Targets',
     prompt: `Fictional example. Edit anything.
 
 Decision:
@@ -211,6 +211,67 @@ Desired outcome:
 Recommend which target should advance, which should remain as a backup, and which should be removed from consideration. Explain valuation, strategic fit, integration risk, synergy credibility, and the assumptions that most influence the recommendation. Identify the highest-priority diligence questions before a binding offer is made.
 
 Help me prepare this decision. Use the information provided, label assumptions clearly, and ask the single highest-value missing question if more context is needed.`,
+  },
+  {
+    id: 'capital-allocation',
+    label: 'Allocate Capital Across Business Units',
+    prompt: `Fictional example. Edit anything.
+
+Decision:
+Executive leadership must allocate next year's capital budget across multiple business units competing for limited investment funding.
+
+Constraints:
+- Total available capital budget: $25 million
+- Total requested funding exceeds $41 million.
+- Leadership wants to maximize long-term enterprise value while maintaining financial discipline.
+- Capital allocation should balance growth, operational efficiency, customer experience, and enterprise risk reduction.
+
+Business unit requests:
+
+1. Manufacturing
+   - Requested investment: $9.5 million
+   - New production equipment
+   - Expected annual savings: $4.8 million
+   - Expected throughput increase: 16%
+   - Implementation timeline: 14 months
+
+2. Sales & Marketing
+   - Requested investment: $6.2 million
+   - New digital customer acquisition platform
+   - Expected annual revenue increase: $11.2 million
+   - Expected customer acquisition cost reduction: 18%
+   - Moderate forecasting uncertainty
+
+3. Information Technology
+   - Requested investment: $8.4 million
+   - Enterprise technology modernization
+   - Expected annual productivity improvements: $3.5 million
+   - Improves cybersecurity posture and long-term scalability
+   - Benefits realized over multiple years
+
+4. Supply Chain
+   - Requested investment: $7.1 million
+   - Warehouse automation and logistics optimization
+   - Expected annual savings: $5.3 million
+   - Expected inventory reduction: $9 million
+   - Requires ERP integration
+
+5. Human Resources
+   - Requested investment: $3.8 million
+   - Workforce development and leadership capability program
+   - Limited direct financial return
+   - Expected employee retention improvement: 9%
+   - Supports multiple enterprise transformation initiatives
+
+People and evidence:
+- Stakeholders include Finance, Strategy, Operations, Technology, Commercial Leadership, Human Resources, Supply Chain, and the Executive Leadership Team.
+- Available evidence includes requested funding, projected financial impact, strategic alignment, implementation timelines, execution risk, organizational dependencies, expected business outcomes, and confidence in supporting business cases.
+- Several business units compete for the same implementation resources and executive sponsorship.
+
+Desired outcome:
+Recommend how capital should be allocated across business units, identify which requests should receive full funding, partial funding, or be deferred, explain the tradeoffs, preserve the reasoning behind each allocation decision, and recommend an implementation sequence that maximizes enterprise value.
+
+Help me prepare this decision. Use the information provided, clearly distinguish evidence from assumptions, and ask only the single highest-value missing question if additional information would materially improve the recommendation.`,
   },
   {
     id: 'midyear-reallocation',
@@ -341,6 +402,128 @@ People and evidence:
 - Key dependencies include manufacturing downtime windows, security risk timing, sales readiness for new-market expansion, and change-management capacity.
 
 Help me prepare this decision. Use the information provided, label assumptions, and ask the single highest-value missing question if more context is needed.`,
+  },
+  {
+    id: 'strategic-initiatives',
+    label: 'Compare Strategic Initiatives',
+    prompt: `Fictional example. Edit anything.
+
+Decision:
+The executive leadership team needs to determine which strategic initiatives should be approved during the upcoming annual planning cycle.
+
+Constraints:
+- Available strategic investment budget: $18 million
+- Leadership can actively sponsor only four enterprise initiatives at one time.
+- Technology and operations teams are already committed at approximately 75% capacity.
+- Every approved initiative must demonstrate measurable business value within 24 months.
+
+Strategic initiatives:
+
+1. Enterprise AI Enablement
+   - Estimated investment: $4.2 million
+   - Expected annual productivity savings: $5.8 million
+   - Implementation timeline: 15 months
+   - Requires enterprise data modernization
+   - Moderate employee adoption risk
+
+2. Customer Experience Transformation
+   - Estimated investment: $5.6 million
+   - Expected annual revenue increase: $9.4 million
+   - Expected customer retention improvement: 6%
+   - Implementation timeline: 18 months
+   - Depends on CRM modernization and marketing automation
+
+3. Supply Chain Optimization
+   - Estimated investment: $3.8 million
+   - Expected annual savings: $6.1 million
+   - Expected inventory reduction: $11 million
+   - Implementation timeline: 12 months
+   - Moderate implementation complexity
+
+4. Manufacturing Automation
+   - Estimated investment: $6.8 million
+   - Expected annual labor savings: $4.7 million
+   - Expected throughput increase: 18%
+   - Implementation timeline: 20 months
+   - High operational dependency during installation
+
+5. Cybersecurity Resilience Program
+   - Estimated investment: $2.7 million
+   - Limited direct financial return
+   - Eliminates several high-risk audit findings
+   - Implementation timeline: 10 months
+   - Regulatory compliance deadline within 12 months
+
+People and evidence:
+- Stakeholders include Strategy, Finance, Operations, Technology, Commercial Leadership, HR, Security, and the Executive Leadership Team.
+- Available evidence includes investment estimates, projected financial benefits, implementation timelines, strategic alignment, execution risk, organizational readiness, resource requirements, dependencies, and confidence in available forecasts.
+- Multiple initiatives compete for the same executive sponsors, technology resources, and implementation teams.
+
+Desired outcome:
+Recommend which initiatives should move forward this planning cycle, which should be deferred, explain the major tradeoffs, preserve the reasoning behind each recommendation, and recommend a realistic execution sequence.
+
+Help me prepare this decision. Use the information provided, distinguish assumptions from evidence, and ask the single highest-value missing question if additional information would materially improve the recommendation.`,
+  },
+  {
+    id: 'technology-investments',
+    label: 'Prioritize Technology Investments',
+    prompt: `Fictional example. Edit anything.
+
+Decision:
+Technology leadership must determine which technology investments should be funded during the upcoming fiscal year.
+
+Constraints:
+- Available technology investment budget: $9.5 million
+- Internal technology teams can support only three major implementations simultaneously.
+- Critical production systems cannot experience more than eight hours of planned downtime per quarter.
+- Leadership expects technology investments to balance operational resilience, cybersecurity, efficiency, and long-term business growth.
+
+Technology investments:
+
+1. ERP Modernization
+   - Estimated investment: $5.8 million
+   - Expected annual operating savings: $3.1 million
+   - Implementation timeline: 18 months
+   - High organizational impact
+   - Requires extensive finance and supply chain participation
+
+2. Enterprise Data Platform
+   - Estimated investment: $3.6 million
+   - Enables AI initiatives and advanced analytics
+   - Expected productivity improvements: $2.4 million annually
+   - Implementation timeline: 14 months
+   - Moderate implementation complexity
+
+3. Cybersecurity Modernization
+   - Estimated investment: $2.4 million
+   - Eliminates multiple critical security findings
+   - Improves cyber insurance eligibility
+   - Limited direct financial return
+   - Regulatory deadline within nine months
+
+4. Customer Self-Service Platform
+   - Estimated investment: $2.8 million
+   - Expected annual call-center savings: $2.1 million
+   - Expected customer satisfaction improvement: 11%
+   - Implementation timeline: eight months
+   - Moderate change-management effort
+
+5. Infrastructure Cloud Migration
+   - Estimated investment: $4.1 million
+   - Expected annual infrastructure savings: $1.9 million
+   - Improves scalability and disaster recovery
+   - Implementation timeline: 16 months
+   - Moderate operational risk during migration
+
+People and evidence:
+- Stakeholders include Technology, Finance, Operations, Security, Customer Experience, Enterprise Architecture, Procurement, and Executive Leadership.
+- Available evidence includes projected costs, financial benefits, implementation timelines, cybersecurity exposure, operational dependencies, resource availability, strategic alignment, and confidence in supporting estimates.
+- Several initiatives compete for the same technology architects, implementation partners, and executive sponsors.
+
+Desired outcome:
+Recommend which technology investments should be approved, deferred, or phased over multiple years. Explain important tradeoffs, identify implementation dependencies, preserve the reasoning behind each recommendation, and recommend an achievable implementation roadmap.
+
+Help me prepare this decision. Use the available information, separate assumptions from evidence, and ask only the single highest-value missing question if additional context would improve the recommendation.`,
   },
 ];
 
