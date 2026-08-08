@@ -629,7 +629,10 @@
 }
 
 @media (max-width: 760px) {
-  .pvb-cards-row { grid-template-columns: 1fr 1fr; }
+  /* Match the specificity of the desktop audience modifier. Without the
+     modifier here, `.pvb-cards-row.is-individuals` keeps its four desktop
+     columns and squeezes every card beyond readability on narrow screens. */
+  .pvb-cards-row.is-individuals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pvb-cards-row.is-business { grid-template-columns: 1fr; }
   .pvb-plan-layout.is-business { grid-template-columns: 1fr; }
   .pvb-advisory-cards { grid-template-columns: 1fr; }
@@ -637,7 +640,10 @@
   .pvb-compare-header { flex-direction: column; align-items: flex-start; }
 }
 @media (max-width: 480px) {
-  .pvb-cards-row { grid-template-columns: 1fr; }
+  .pvb-section { padding: 72px 16px 64px; }
+  .pvb-header { margin-bottom: 40px; }
+  .pvb-cards-row.is-individuals { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .pvb-card { min-width: 0; padding: 24px 20px; }
   .pvb-advisory-card { padding: 24px 20px; }
   .pvb-advisory-disclosure { padding: 12px 14px; }
 }
