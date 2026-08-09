@@ -29,7 +29,7 @@
         },
         {
           "key": "Content-Security-Policy-Report-Only",
-          "value": "default-src 'self'; script-src 'self' 'sha256-490BwswsqZAZzDBQlLyBAByQUAUV3/9Vw3v0zx9TcAo=' https://js.stripe.com https://pagead2.googlesyndication.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://api.jaspen.ai https://*.stripe.com https://*.ingest.sentry.io https://*.google-analytics.com https://www.googletagmanager.com; frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://*.stripe.com; object-src 'none'; base-uri 'self'; frame-ancestors 'self';"
+          "value": "default-src 'self'; script-src 'self' 'sha256-4hLdJmMNwKz65fSOgZ16yzaoYGLhjwvTth9NjJ47d/I=' https://js.stripe.com https://pagead2.googlesyndication.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://api.jaspen.ai https://*.stripe.com https://*.ingest.sentry.io https://*.google-analytics.com https://www.googletagmanager.com; frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://*.stripe.com; object-src 'none'; base-uri 'self'; frame-ancestors 'self';"
         }
       ]
     }
