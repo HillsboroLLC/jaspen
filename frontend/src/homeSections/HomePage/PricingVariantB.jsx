@@ -134,14 +134,14 @@ const ADVISORY_OFFERINGS = [
       `300,000 AI-powered usage credits (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})`,
       'One 90-minute virtual Executive Decision Intensive',
       'Session facilitated by Jaspen’s Founder or a designated Customer Success Partner',
-      'Tailored preparation guidance before the session',
+      'Tailored preparation and information guidance before the session',
       'Decision framing and prompt development',
       'Assumption and evidence challenge',
-      'Decision criteria and tradeoff guidance',
-      'Interpretation of Jaspen outputs',
-      'Executive-ready artifacts generated through Jaspen',
+      'Risk, decision criteria, and tradeoff guidance',
+      'Interpretation of Jaspen analysis and recommendations',
+      'Executive-ready decision artifacts generated through Jaspen',
     ],
-    delivery: 'The client provides a concise description of the decision before the session. Jaspen responds with tailored guidance on what information the client should have available. During the session, the client executes in Jaspen while the advisor guides the work.',
+    delivery: 'This is a complete, structured decision engagement. Preparation, decision framing, evidence and assumption challenge, guided analysis, and executive-ready outputs are brought together to evaluate one consequential decision end-to-end.',
     engagement: 'executive_decision_intensive',
   },
   {
@@ -149,20 +149,20 @@ const ADVISORY_OFFERINGS = [
     title: 'Strategic Advisor Partnership',
     price: '$100,000',
     qualifier: 'Flat fee',
-    description: 'For organizations evaluating multiple high-value decisions and seeking greater clarity on where leadership attention, capital, and organizational capacity may create the greatest estimated financial impact.',
+    description: 'For organizations evaluating multiple high-value opportunities and deciding where leadership attention, capital, and organizational capacity can create the greatest value.',
+    includedIntro: 'Everything included in the Executive Decision Intensive, applied across up to five consequential decisions, plus:',
     included: [
-      `300,000 AI-powered usage credits (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})`,
       'Five 90-minute virtual Executive Decision Intensives',
-      'Sessions facilitated by Jaspen’s Founder or a designated Customer Success Partner',
-      'Tailored preparation guidance before each session',
-      'Decision framing and prompt development',
-      'Assumption, evidence, risk, and tradeoff challenge',
+      'Ongoing strategic context carried across engagements',
+      'Cross-decision dependency and tradeoff analysis',
       'Financial opportunity prioritization',
       'Portfolio and initiative prioritization',
-      'Interpretation of Jaspen outputs',
-      'Executive-ready artifacts generated through Jaspen',
+      'Comparison of competing uses of capital and organizational capacity',
+      'Identification of where leadership attention may create the greatest value',
+      'Portfolio-level executive synthesis',
+      'Final executive portfolio review',
     ],
-    delivery: 'Before each intensive, the client provides a concise description of the decision, opportunity, or portfolio to be evaluated. Jaspen responds with tailored guidance on what information the client should have available. The client remains responsible for its inputs and executes within Jaspen during each working session.',
+    delivery: `The existing 300,000 AI-powered usage credits (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT}) allocation supports the work across the partnership. Sessions are facilitated by Jaspen’s Founder or a designated Customer Success Partner, with strategic context carried forward to help leadership compare consequential decisions and determine where to place its bets across the portfolio.`,
     engagement: 'strategic_advisor_partnership',
     featured: true,
   },
@@ -321,6 +321,7 @@ export default function PricingVariantB({ onOpenModal }) {
                 </p>
                 <p className="pvb-advisory-desc">{offering.description}</p>
                 <p className="pvb-advisory-included-label">Included</p>
+                {offering.includedIntro && <p className="pvb-advisory-desc">{offering.includedIntro}</p>}
                 <ul className="pvb-advisory-list">
                   {offering.included.map(item => <li key={item}>{item}</li>)}
                 </ul>
