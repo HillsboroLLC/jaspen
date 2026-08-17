@@ -133,15 +133,15 @@ describe('Advisory Partnerships tab', () => {
     expect(panel.textContent).not.toMatch(/guarantee[ds]?\s+(revenue|savings|EBITDA)/i);
   });
 
-  it('shows the project estimate beside the credits, with its qualifier', async () => {
+  it('describes included Jaspen access and AI capacity without fixed credits on advisory cards', async () => {
     const user = userEvent.setup();
     render(<PricingVariantB onOpenModal={jest.fn()} />);
     await openAdvisory(user);
 
-    const credits = screen.getAllByText(/300,000 AI-powered usage credits \(~750–1,200 project evaluations\)/);
-    expect(credits).toHaveLength(2);
+    expect(screen.getByText('Jaspen access and AI capacity included during the engagement')).toBeInTheDocument();
+    expect(screen.getByText('Includes Jaspen access and AI capacity for the engagement, plus five Executive Decision Intensives with the full decision advisory process applied to each, along with:')).toBeInTheDocument();
 
-    // An estimate shown without this reads as a commitment.
+    // The comparison table still carries the existing planning context.
     expect(screen.getByText(/approximate planning estimates, not guaranteed quantities/i)).toBeInTheDocument();
     expect(screen.getByText(/Actual usage varies based on model selection/i)).toBeInTheDocument();
   });

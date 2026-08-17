@@ -131,7 +131,7 @@ const ADVISORY_OFFERINGS = [
     qualifier: 'Flat fee',
     description: 'For an executive or leadership team working through one consequential strategic decision.',
     included: [
-      `300,000 AI-powered usage credits (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})`,
+      'Jaspen access and AI capacity included during the engagement',
       'One 90-minute virtual Executive Decision Intensive',
       'Session facilitated by Jaspen’s Founder or a designated Customer Success Partner',
       'Tailored preparation and information guidance before the session',
@@ -150,7 +150,7 @@ const ADVISORY_OFFERINGS = [
     price: '$100,000',
     qualifier: 'Flat fee',
     description: 'For organizations evaluating multiple high-value opportunities and deciding where leadership attention, capital, and organizational capacity can create the greatest value.',
-    includedIntro: `Includes 300,000 AI-powered usage credits (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT}) and five Executive Decision Intensives, with the full decision advisory process applied to each, plus:`,
+    includedIntro: 'Includes Jaspen access and AI capacity for the engagement, plus five Executive Decision Intensives with the full decision advisory process applied to each, along with:',
     included: [
       'Ongoing strategic context carried across engagements',
       'Cross-decision dependency and tradeoff analysis',
