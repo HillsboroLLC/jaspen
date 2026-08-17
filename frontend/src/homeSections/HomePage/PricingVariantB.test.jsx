@@ -139,7 +139,7 @@ describe('Advisory Partnerships tab', () => {
     await openAdvisory(user);
 
     expect(screen.getByText('Jaspen access and AI capacity included during the engagement')).toBeInTheDocument();
-    expect(screen.getByText('Includes Jaspen access and AI capacity for the engagement, plus five Executive Decision Intensives with the full decision advisory process applied to each, along with:')).toBeInTheDocument();
+    expect(screen.getByText('Includes Jaspen access and AI capacity during the engagement, plus five Executive Decision Intensives with the full decision advisory process applied to each, along with:')).toBeInTheDocument();
 
     // The comparison table still carries the existing planning context.
     expect(screen.getByText(/approximate planning estimates, not guaranteed quantities/i)).toBeInTheDocument();

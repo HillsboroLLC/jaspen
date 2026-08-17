@@ -150,7 +150,7 @@ const ADVISORY_OFFERINGS = [
     price: '$100,000',
     qualifier: 'Flat fee',
     description: 'For organizations evaluating multiple high-value opportunities and deciding where leadership attention, capital, and organizational capacity can create the greatest value.',
-    includedIntro: 'Includes Jaspen access and AI capacity for the engagement, plus five Executive Decision Intensives with the full decision advisory process applied to each, along with:',
+    includedIntro: 'Includes Jaspen access and AI capacity during the engagement, plus five Executive Decision Intensives with the full decision advisory process applied to each, along with:',
     included: [
       'Ongoing strategic context carried across engagements',
       'Cross-decision dependency and tradeoff analysis',
