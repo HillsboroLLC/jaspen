@@ -11,8 +11,13 @@ from app import db, mail
 from app.billing_config import get_plan_catalog, normalize_plan_key, to_public_plan
 from app.models import Organization, OrganizationInvitation, OrganizationMember, User
 from app.orgs import (
+    COLLABORATION_MIN_PLAN,
+    collaboration_denied_message,
     mfa_policy_for_org,
     normalize_mfa_policy,
+    org_collaboration_state,
+    pending_invitation_counts,
+    user_collaboration_state,
 )
 
 
@@ -156,6 +161,11 @@ def _seat_usage(org):
         .all()
     )
     counts = {str(role or "").lower(): int(count or 0) for role, count in rows}
+    # An outstanding invitation holds its seat until it is accepted, revoked or
+    # expires. Capacity is therefore measured against `reserved`, not `used`;
+    # otherwise an org can invite far past its seat count and the overflow
+    # invitees only find out when their accept fails.
+    pending = pending_invitation_counts(org)
 
     owner_used = int(counts.get(ROLE_OWNER, 0))
     admin_used = int(counts.get(ROLE_ADMIN, 0)) + owner_used
@@ -163,15 +173,36 @@ def _seat_usage(org):
     collaborator_used = int(counts.get(ROLE_COLLABORATOR, 0))
     viewer_used = int(counts.get(ROLE_VIEWER, 0))
 
+    admin_pending = int(pending.get(ROLE_ADMIN, 0))
+    creator_pending = int(pending.get(ROLE_CREATOR, 0))
+    collaborator_pending = int(pending.get(ROLE_COLLABORATOR, 0))
+    viewer_pending = int(pending.get(ROLE_VIEWER, 0))
+
     caps = _plan_caps_for_org(org)
     total_paid_used = admin_used + creator_used + collaborator_used
+    total_paid_reserved = (
+        admin_used + admin_pending
+        + creator_used + creator_pending
+        + collaborator_used + collaborator_pending
+    )
+
+    def _entry(used, pending_count, cap):
+        return {
+            "used": used,
+            "pending": pending_count,
+            "reserved": used + pending_count,
+            "max": cap,
+        }
+
     return {
-        ROLE_ADMIN: {"used": admin_used, "max": caps.get(ROLE_ADMIN)},
-        ROLE_CREATOR: {"used": creator_used, "max": caps.get(ROLE_CREATOR)},
-        ROLE_COLLABORATOR: {"used": collaborator_used, "max": caps.get(ROLE_COLLABORATOR)},
-        ROLE_VIEWER: {"used": viewer_used, "max": caps.get(ROLE_VIEWER)},
-        ROLE_OWNER: {"used": owner_used, "max": 1},
+        ROLE_ADMIN: _entry(admin_used, admin_pending, caps.get(ROLE_ADMIN)),
+        ROLE_CREATOR: _entry(creator_used, creator_pending, caps.get(ROLE_CREATOR)),
+        ROLE_COLLABORATOR: _entry(collaborator_used, collaborator_pending, caps.get(ROLE_COLLABORATOR)),
+        ROLE_VIEWER: _entry(viewer_used, viewer_pending, caps.get(ROLE_VIEWER)),
+        ROLE_OWNER: {"used": owner_used, "pending": 0, "reserved": owner_used, "max": 1},
         "total_paid_used": total_paid_used,
+        "total_paid_pending": total_paid_reserved - total_paid_used,
+        "total_paid_reserved": total_paid_reserved,
         "total_paid_limit": caps.get("total_paid"),
     }
 
@@ -187,7 +218,7 @@ def _role_has_capacity(org, role, exclude_member=None):
 
     if plan_key in {"team", "business"}:
         if role == ROLE_ADMIN:
-            admin_used = int((usage.get(ROLE_ADMIN) or {}).get("used") or 0)
+            admin_used = int((usage.get(ROLE_ADMIN) or {}).get("reserved") or 0)
             if ex_role in {ROLE_OWNER, ROLE_ADMIN}:
                 admin_used = max(0, admin_used - 1)
             admin_cap = (usage.get(ROLE_ADMIN) or {}).get("max")
@@ -195,7 +226,7 @@ def _role_has_capacity(org, role, exclude_member=None):
                 return False
 
         if role in {ROLE_ADMIN, ROLE_CREATOR, ROLE_COLLABORATOR}:
-            total_paid_used = int(usage.get("total_paid_used") or 0)
+            total_paid_used = int(usage.get("total_paid_reserved") or 0)
             if ex_role in {ROLE_OWNER, ROLE_ADMIN, ROLE_CREATOR, ROLE_COLLABORATOR}:
                 total_paid_used = max(0, total_paid_used - 1)
             total_paid_limit = usage.get("total_paid_limit")
@@ -203,8 +234,8 @@ def _role_has_capacity(org, role, exclude_member=None):
                 return False
         return True
 
-    target = usage.get(role) or {"used": 0, "max": None}
-    used = int(target.get("used") or 0)
+    target = usage.get(role) or {"reserved": 0, "max": None}
+    used = int(target.get("reserved") or 0)
     max_allowed = target.get("max")
 
     if role == ROLE_ADMIN and ex_role in {ROLE_OWNER, ROLE_ADMIN}:
@@ -290,6 +321,19 @@ def _send_invitation_email(invite, org):
     return accept_link
 
 
+def _collaboration_gate(org):
+    """403 payload when this org may not add members right now, else None."""
+    state = org_collaboration_state(org, current_app.config)
+    if state["can_invite"]:
+        return None
+    return jsonify({
+        "error": collaboration_denied_message(state),
+        "reason": state["reason"],
+        "plan_key": state["public_plan_key"],
+        "required_plan": COLLABORATION_MIN_PLAN,
+    }), 403
+
+
 @teams_bp.route("", methods=["POST"])
 @jwt_required()
 def create_team_org():
@@ -301,6 +345,18 @@ def create_team_org():
     name = str(data.get("name") or "").strip()
     if not name:
         return jsonify({"error": "name is required"}), 400
+
+    # An org is the vehicle for collaboration, so creating one needs the same
+    # entitlement as inviting into one. Without this check a sub-Team user
+    # could mint a Team-plan org here and invite through it.
+    state = user_collaboration_state(user, current_app.config)
+    if not state["can_invite"]:
+        return jsonify({
+            "error": collaboration_denied_message(state),
+            "reason": state["reason"],
+            "plan_key": state["public_plan_key"],
+            "required_plan": COLLABORATION_MIN_PLAN,
+        }), 403
 
     plan_key = to_public_plan(normalize_plan_key(user.subscription_plan))
     if plan_key not in {"team", "business"}:
@@ -487,6 +543,10 @@ def invite_member(org_id):
     if _normalize_role(membership.role) not in MANAGE_ROLES:
         return jsonify({"error": "Only owner/admin can invite members"}), 403
 
+    denied = _collaboration_gate(org)
+    if denied:
+        return denied
+
     data = request.get_json() or {}
     email = str(data.get("email") or "").strip().lower()
     role = _normalize_role(data.get("role"), default=ROLE_COLLABORATOR)
@@ -578,6 +638,12 @@ def accept_team_invitation(token):
     org = Organization.query.filter_by(id=invite.organization_id).first()
     if not org:
         return jsonify({"error": "Organization not found"}), 404
+
+    # Re-checked at accept: the org may have downgraded below Team, or gone
+    # past due, between the invitation being sent and this link being clicked.
+    denied = _collaboration_gate(org)
+    if denied:
+        return denied
 
     role = _normalize_role(invite.role, default=ROLE_COLLABORATOR)
     existing = _active_membership(org.id, user.id)

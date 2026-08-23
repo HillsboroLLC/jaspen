@@ -1,24 +1,27 @@
 import secrets
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import func
 
 from app import db
 from app.orgs import (
+    COLLABORATION_MIN_PLAN,
     ORG_ROLE_OWNER,
     ORG_ROLES,
     active_membership_for_user,
     build_seat_usage,
     can_edit_projects,
     can_manage_org,
+    collaboration_denied_message,
     ensure_default_organization_for_user,
     invitation_is_expired,
     invitation_payload,
     new_invitation_expiry,
     normalize_seat_limit_value,
     normalize_org_role,
+    org_collaboration_state,
     org_payload,
     resolve_active_org_for_user,
     role_has_capacity,
@@ -183,6 +186,19 @@ def _append_activity(row, actor, action, details=None):
     })
     payload["activity_feed"] = feed[:250]
     row.payload = payload
+
+
+def _collaboration_gate(org):
+    """403 payload when this org may not add members right now, else None."""
+    state = org_collaboration_state(org, current_app.config)
+    if state["can_invite"]:
+        return None
+    return jsonify({
+        "error": collaboration_denied_message(state),
+        "reason": state["reason"],
+        "plan_key": state["public_plan_key"],
+        "required_plan": COLLABORATION_MIN_PLAN,
+    }), 403
 
 
 @team_bp.route("/summary", methods=["GET"])
@@ -461,6 +477,10 @@ def create_invitation():
     if not can_manage_org(membership.role):
         return jsonify({"error": "Only org owners/admins can send invites"}), 403
 
+    denied = _collaboration_gate(org)
+    if denied:
+        return denied
+
     data = request.get_json() or {}
     email = str(data.get("email") or "").strip().lower()
     role = normalize_org_role(data.get("role"), default="collaborator")
@@ -563,6 +583,12 @@ def accept_invitation():
     org = Organization.query.get(invite.organization_id)
     if not org:
         return jsonify({"error": "Organization not found"}), 404
+
+    # Re-checked at accept: the org may have downgraded below Team, or gone
+    # past due, between the invitation being sent and this link being clicked.
+    denied = _collaboration_gate(org)
+    if denied:
+        return denied
 
     next_role = normalize_org_role(invite.role, default="collaborator")
     existing = active_membership_for_user(org.id, user.id)

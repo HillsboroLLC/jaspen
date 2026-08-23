@@ -2,10 +2,16 @@ import secrets
 import re
 from datetime import datetime, timedelta
 
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 
 from app import db
-from app.billing_config import normalize_plan_key, to_public_plan
+from app.billing_config import (
+    PLAN_RANK,
+    is_sales_only_plan,
+    normalize_plan_key,
+    subscription_in_good_standing,
+    to_public_plan,
+)
 from app.models import Organization, OrganizationInvitation, OrganizationMember, User
 
 
@@ -50,26 +56,30 @@ DEFAULT_SEAT_POLICIES = {
         ORG_ROLE_VIEWER: None,
     },
     # Baseline for self-serve accounts that still need a valid org policy.
+    # Collaboration is a Team-or-higher entitlement, so every sub-Team plan
+    # seats the owner and nobody else. These zeros are defence in depth: the
+    # authoritative check is plan_allows_collaboration(), because per-org
+    # seat_policy_overrides can raise these numbers back up.
     "essential": {
         ORG_ROLE_OWNER: 1,
         ORG_ROLE_ADMIN: 1,
-        ORG_ROLE_CREATOR: 2,
-        ORG_ROLE_COLLABORATOR: 3,
-        ORG_ROLE_VIEWER: None,
+        ORG_ROLE_CREATOR: 0,
+        ORG_ROLE_COLLABORATOR: 0,
+        ORG_ROLE_VIEWER: 0,
     },
     "starter": {
         ORG_ROLE_OWNER: 1,
         ORG_ROLE_ADMIN: 1,
-        ORG_ROLE_CREATOR: 1,
-        ORG_ROLE_COLLABORATOR: 2,
-        ORG_ROLE_VIEWER: None,
+        ORG_ROLE_CREATOR: 0,
+        ORG_ROLE_COLLABORATOR: 0,
+        ORG_ROLE_VIEWER: 0,
     },
     "free": {
         ORG_ROLE_OWNER: 1,
         ORG_ROLE_ADMIN: 1,
-        ORG_ROLE_CREATOR: 1,
-        ORG_ROLE_COLLABORATOR: 2,
-        ORG_ROLE_VIEWER: None,
+        ORG_ROLE_CREATOR: 0,
+        ORG_ROLE_COLLABORATOR: 0,
+        ORG_ROLE_VIEWER: 0,
     },
 }
 
@@ -122,6 +132,135 @@ def can_edit_projects(role):
 def seat_policy_for_plan(plan_key):
     canonical = normalize_plan_key(plan_key)
     return DEFAULT_SEAT_POLICIES.get(canonical, DEFAULT_SEAT_POLICIES["essential"])
+
+
+# --- Collaboration entitlement -------------------------------------------
+#
+# Collaboration (inviting anyone else into an organization, in any role) is a
+# Team-or-higher *subscription* entitlement.
+#
+# This is deliberately keyed on subscription plan rank and nothing else. The
+# 300K limited-time offer, the founder offer, advisory packages and persistent
+# credit grants all confer Thinking Power and individual output capabilities,
+# but never collaboration. Note in particular that effective_plan_key() lifts a
+# 300K holder to Essential-equivalent access for entitlement checks -- that lift
+# stops below Team, and org.plan_key is synced from the raw subscription_plan,
+# so neither path can reach collaboration. Do not re-key this on entitlements,
+# credit balances or "has ever paid us" without changing that rule on purpose.
+
+COLLABORATION_MIN_PLAN = "team"
+
+COLLABORATION_DENIED_PLAN = "plan_not_eligible"
+COLLABORATION_DENIED_BILLING = "subscription_not_current"
+
+
+def plan_allows_collaboration(plan_key):
+    """True when a plan key carries the collaboration entitlement (Team+)."""
+    canonical = normalize_plan_key(plan_key)
+    return PLAN_RANK.get(canonical, 0) >= PLAN_RANK[COLLABORATION_MIN_PLAN]
+
+
+def org_collaboration_state(org, app_config=None):
+    """Resolve whether an org may collaborate, and whether it may invite now.
+
+    Two independent gates, kept separate on purpose:
+
+    * ``entitled``        -- the plan carries collaboration at all (Team+).
+    * ``billing_current`` -- the owner's subscription is in good standing.
+
+    A past-due Team org stays ``entitled`` but loses ``can_invite``: new invites
+    are blocked immediately while Stripe retries, and existing members are left
+    alone for the dunning grace period. Nothing here removes a member; that is
+    intentional and callers must not infer removal from ``can_invite``.
+    """
+    plan_key = normalize_plan_key(getattr(org, "plan_key", None))
+    owner_id = getattr(org, "owner_user_id", None)
+    owner = User.query.filter_by(id=owner_id).first() if owner_id else None
+    status = getattr(owner, "subscription_status", None) if owner is not None else None
+    return _collaboration_state(plan_key, status, app_config)
+
+
+def user_collaboration_state(user, app_config=None):
+    """org_collaboration_state() for a user who has no organization yet.
+
+    Used when creating an organization, so a plan that cannot collaborate
+    cannot mint a Team-plan org and collaborate through it instead.
+    """
+    plan_key = normalize_plan_key(getattr(user, "subscription_plan", None))
+    return _collaboration_state(
+        plan_key, getattr(user, "subscription_status", None), app_config
+    )
+
+
+def _collaboration_state(plan_key, subscription_status, app_config=None):
+    entitled = plan_allows_collaboration(plan_key)
+
+    billing_current = True
+    if entitled and subscription_status is not None:
+        if subscription_in_good_standing(subscription_status):
+            billing_current = True
+        elif app_config is not None and is_sales_only_plan(plan_key, app_config):
+            # Sales-led plans are provisioned outside Stripe consumer billing,
+            # so a stale consumer status must not lock them out.
+            billing_current = True
+        else:
+            billing_current = False
+
+    if not entitled:
+        reason = COLLABORATION_DENIED_PLAN
+    elif not billing_current:
+        reason = COLLABORATION_DENIED_BILLING
+    else:
+        reason = None
+
+    return {
+        "plan_key": plan_key,
+        "public_plan_key": to_public_plan(plan_key),
+        "entitled": entitled,
+        "billing_current": billing_current,
+        "can_invite": bool(entitled and billing_current),
+        "reason": reason,
+    }
+
+
+def collaboration_denied_message(state):
+    """Human-readable refusal matching an org_collaboration_state() reason."""
+    if (state or {}).get("reason") == COLLABORATION_DENIED_BILLING:
+        return (
+            "Collaborator invitations are paused while this subscription's "
+            "payment is being retried. Existing members keep their access."
+        )
+    return (
+        "Collaborator invitations require an active Team plan or higher. "
+        "Upgrade to Team to invite people into this workspace."
+    )
+
+
+def pending_invitation_counts(org, now=None):
+    """Count unexpired pending invitations per role.
+
+    A pending invitation holds a seat. Without this an org can over-invite far
+    past its seat count and the overflow invitees only discover it when they
+    click their link and the accept fails.
+    """
+    if not isinstance(org, Organization):
+        return {}
+
+    moment = now or utcnow()
+    rows = (
+        db.session.query(OrganizationInvitation.role, func.count(OrganizationInvitation.id))
+        .filter(
+            OrganizationInvitation.organization_id == org.id,
+            OrganizationInvitation.status == "pending",
+            or_(
+                OrganizationInvitation.expires_at.is_(None),
+                OrganizationInvitation.expires_at >= moment,
+            ),
+        )
+        .group_by(OrganizationInvitation.role)
+        .all()
+    )
+    return {normalize_org_role(role): int(count or 0) for role, count in rows}
 
 
 def default_mfa_policy_for_plan(plan_key):
@@ -371,30 +510,43 @@ def build_seat_usage(org):
         .all()
     )
     role_counts = {normalize_org_role(role): int(count or 0) for role, count in counts_query}
+    pending_counts = pending_invitation_counts(org)
 
     policy = seat_policy_for_org(org)
     usage = {}
     owner_used = int(role_counts.get(ORG_ROLE_OWNER, 0))
     total_paid_used = 0
+    total_paid_reserved = 0
     for role in ORG_ROLES:
         used = int(role_counts.get(role, 0))
         if role == ORG_ROLE_ADMIN:
             # Owner counts against admin seat capacity.
             used += owner_used
+        pending = int(pending_counts.get(role, 0))
+        # An outstanding invitation holds its seat until it is accepted,
+        # revoked or expires, so capacity is measured against `reserved`.
+        reserved = used + pending
         limit = policy.get(role)
         usage[role] = {
             "label": role_label(role),
             "used": used,
+            "pending": pending,
+            "reserved": reserved,
             "limit": limit,
-            "available": None if limit is None else max(int(limit) - used, 0),
+            "available": None if limit is None else max(int(limit) - reserved, 0),
             "is_unlimited": limit is None,
         }
         if role in {ORG_ROLE_ADMIN, ORG_ROLE_CREATOR, ORG_ROLE_COLLABORATOR}:
             total_paid_used += used
+            total_paid_reserved += reserved
     total_paid_limit = getattr(org, "max_total_paid_seats", None)
     usage["total_paid_used"] = total_paid_used
+    usage["total_paid_pending"] = total_paid_reserved - total_paid_used
+    usage["total_paid_reserved"] = total_paid_reserved
     usage["total_paid_limit"] = total_paid_limit
-    usage["total_paid_available"] = None if total_paid_limit is None else max(int(total_paid_limit) - total_paid_used, 0)
+    usage["total_paid_available"] = (
+        None if total_paid_limit is None else max(int(total_paid_limit) - total_paid_reserved, 0)
+    )
     return usage
 
 
@@ -415,14 +567,15 @@ def role_has_capacity(org, role, exclude_member_id=None):
     if public_plan in {"team", "business"}:
         usage = build_seat_usage(org)
         if role == ORG_ROLE_ADMIN:
-            admin_used = int((usage.get(ORG_ROLE_ADMIN) or {}).get("used") or 0)
+            # `reserved` counts active members plus outstanding invitations.
+            admin_used = int((usage.get(ORG_ROLE_ADMIN) or {}).get("reserved") or 0)
             if excluded and normalize_org_role(excluded.role) in {ORG_ROLE_OWNER, ORG_ROLE_ADMIN}:
                 admin_used = max(0, admin_used - 1)
             if limit is not None and admin_used >= int(limit):
                 return False
 
         if role in {ORG_ROLE_ADMIN, ORG_ROLE_CREATOR, ORG_ROLE_COLLABORATOR}:
-            paid_used = int(usage.get("total_paid_used") or 0)
+            paid_used = int(usage.get("total_paid_reserved") or 0)
             if excluded and normalize_org_role(excluded.role) in {ORG_ROLE_OWNER, ORG_ROLE_ADMIN, ORG_ROLE_CREATOR, ORG_ROLE_COLLABORATOR}:
                 paid_used = max(0, paid_used - 1)
             total_paid_limit = getattr(org, "max_total_paid_seats", None)
@@ -452,6 +605,9 @@ def role_has_capacity(org, role, exclude_member_id=None):
         if exclude_member_id is not None:
             query = query.filter(OrganizationMember.id != int(exclude_member_id))
         used = query.count()
+
+    # Outstanding invitations hold their seat until accepted, revoked or expired.
+    used += int(pending_invitation_counts(org).get(role, 0))
 
     return used < int(limit)
 
