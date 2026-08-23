@@ -1,3 +1,15 @@
+"""Active-organization team routes, mounted at /api/v1/team.
+
+Resolves the caller's active organization implicitly and owns the team
+summary, seat policy, organization switching and the shared-project surface
+(sharing, activity, comments).
+
+Its sibling, app.routes.teams (plural, /api/v1/teams), addresses an
+organization explicitly by id and owns invitation and member management.
+
+Roles, seat accounting, capacity and the collaboration entitlement all live in
+app.orgs and must stay there -- see the note in app.routes.teams.
+"""
 import secrets
 from datetime import datetime
 

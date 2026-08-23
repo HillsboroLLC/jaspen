@@ -1,3 +1,22 @@
+"""Organization-scoped team routes, mounted at /api/v1/teams.
+
+Addresses an organization explicitly by id (/api/v1/teams/<org_id>/...) and
+owns invitation send/resend/cancel/accept and member role changes.
+
+Its sibling, app.routes.team (singular, /api/v1/team), addresses the caller's
+*active* organization implicitly and owns the summary, seat policy, org
+switching and shared-project surface. The frontend currently reads through the
+singular prefix and writes through this one.
+
+Roles, seat accounting, capacity and the collaboration entitlement all live in
+app.orgs and must stay there. Both blueprints previously carried their own
+copies which drifted apart, so the same organization could get two different
+answers depending on which prefix was called. Do not reintroduce a local copy;
+extend app.orgs instead.
+
+Collapsing the two route surfaces into one, and pointing the frontend at it,
+is still outstanding.
+"""
 import re
 import uuid
 from datetime import datetime, timedelta
@@ -12,25 +31,37 @@ from app.billing_config import get_plan_catalog, normalize_plan_key, to_public_p
 from app.models import Organization, OrganizationInvitation, OrganizationMember, User
 from app.orgs import (
     COLLABORATION_MIN_PLAN,
+    ORG_MANAGE_ROLES,
+    ORG_ROLE_ADMIN,
+    ORG_ROLE_COLLABORATOR,
+    ORG_ROLE_CREATOR,
+    ORG_ROLE_OWNER,
+    ORG_ROLE_VIEWER,
+    build_seat_usage,
     collaboration_denied_message,
     mfa_policy_for_org,
     normalize_mfa_policy,
+    normalize_org_role,
     org_collaboration_state,
-    pending_invitation_counts,
+    role_has_capacity,
     user_collaboration_state,
 )
 
 
 teams_bp = Blueprint("teams", __name__)
 
-ROLE_OWNER = "owner"
-ROLE_ADMIN = "admin"
-ROLE_CREATOR = "creator"
-ROLE_COLLABORATOR = "collaborator"
-ROLE_VIEWER = "viewer"
+# Roles, seat accounting and capacity all live in app.orgs. This blueprint
+# used to carry its own copies, which drifted: its caps came from the plan
+# catalog and the per-role Organization columns, while app.orgs used
+# DEFAULT_SEAT_POLICIES plus seat_policy_overrides. The two disagreed about
+# how many seats an org had. These are aliases now, not a second source.
+ROLE_OWNER = ORG_ROLE_OWNER
+ROLE_ADMIN = ORG_ROLE_ADMIN
+ROLE_CREATOR = ORG_ROLE_CREATOR
+ROLE_COLLABORATOR = ORG_ROLE_COLLABORATOR
+ROLE_VIEWER = ORG_ROLE_VIEWER
 
-ROLE_SET = {ROLE_OWNER, ROLE_ADMIN, ROLE_CREATOR, ROLE_COLLABORATOR, ROLE_VIEWER}
-MANAGE_ROLES = {ROLE_OWNER, ROLE_ADMIN}
+MANAGE_ROLES = ORG_MANAGE_ROLES
 
 
 def _pagination_params():
@@ -71,11 +102,6 @@ def _normalize_org_mfa_settings(org, incoming_settings):
     next_settings = dict(incoming_settings)
     next_settings["mfa_policy"] = policy
     return next_settings, None
-
-
-def _normalize_role(value, default=ROLE_COLLABORATOR):
-    role = str(value or "").strip().lower()
-    return role if role in ROLE_SET else default
 
 
 def _slugify(name):
@@ -125,129 +151,6 @@ def _require_org_access(org_id):
     return user, org, membership, None
 
 
-def _plan_caps_for_org(org):
-    plan_key = to_public_plan(org.plan_key)
-    catalog = get_plan_catalog(current_app.config)
-    plan = catalog.get(plan_key) or {}
-
-    default_admin = plan.get("max_admin_seats")
-    default_viewer = plan.get("max_viewer_seats")
-
-    admin_cap = org.max_admin_seats if getattr(org, "max_admin_seats", None) is not None else default_admin
-    creator_cap = None if plan_key in {"team", "business"} else (
-        org.max_creator_seats if getattr(org, "max_creator_seats", None) is not None else plan.get("max_creator_seats")
-    )
-    collaborator_cap = None if plan_key in {"team", "business"} else (
-        org.max_collaborator_seats if getattr(org, "max_collaborator_seats", None) is not None else plan.get("max_collaborator_seats")
-    )
-    total_paid_cap = getattr(org, "max_total_paid_seats", None)
-    if total_paid_cap is None:
-        total_paid_cap = plan.get("max_total_paid_seats")
-
-    return {
-        ROLE_ADMIN: admin_cap,
-        ROLE_CREATOR: creator_cap,
-        ROLE_COLLABORATOR: collaborator_cap,
-        ROLE_VIEWER: default_viewer,
-        "total_paid": total_paid_cap,
-    }
-
-
-def _seat_usage(org):
-    rows = (
-        db.session.query(OrganizationMember.role, func.count(OrganizationMember.id))
-        .filter(OrganizationMember.organization_id == org.id, OrganizationMember.status == "active")
-        .group_by(OrganizationMember.role)
-        .all()
-    )
-    counts = {str(role or "").lower(): int(count or 0) for role, count in rows}
-    # An outstanding invitation holds its seat until it is accepted, revoked or
-    # expires. Capacity is therefore measured against `reserved`, not `used`;
-    # otherwise an org can invite far past its seat count and the overflow
-    # invitees only find out when their accept fails.
-    pending = pending_invitation_counts(org)
-
-    owner_used = int(counts.get(ROLE_OWNER, 0))
-    admin_used = int(counts.get(ROLE_ADMIN, 0)) + owner_used
-    creator_used = int(counts.get(ROLE_CREATOR, 0))
-    collaborator_used = int(counts.get(ROLE_COLLABORATOR, 0))
-    viewer_used = int(counts.get(ROLE_VIEWER, 0))
-
-    admin_pending = int(pending.get(ROLE_ADMIN, 0))
-    creator_pending = int(pending.get(ROLE_CREATOR, 0))
-    collaborator_pending = int(pending.get(ROLE_COLLABORATOR, 0))
-    viewer_pending = int(pending.get(ROLE_VIEWER, 0))
-
-    caps = _plan_caps_for_org(org)
-    total_paid_used = admin_used + creator_used + collaborator_used
-    total_paid_reserved = (
-        admin_used + admin_pending
-        + creator_used + creator_pending
-        + collaborator_used + collaborator_pending
-    )
-
-    def _entry(used, pending_count, cap):
-        return {
-            "used": used,
-            "pending": pending_count,
-            "reserved": used + pending_count,
-            "max": cap,
-        }
-
-    return {
-        ROLE_ADMIN: _entry(admin_used, admin_pending, caps.get(ROLE_ADMIN)),
-        ROLE_CREATOR: _entry(creator_used, creator_pending, caps.get(ROLE_CREATOR)),
-        ROLE_COLLABORATOR: _entry(collaborator_used, collaborator_pending, caps.get(ROLE_COLLABORATOR)),
-        ROLE_VIEWER: _entry(viewer_used, viewer_pending, caps.get(ROLE_VIEWER)),
-        ROLE_OWNER: {"used": owner_used, "pending": 0, "reserved": owner_used, "max": 1},
-        "total_paid_used": total_paid_used,
-        "total_paid_pending": total_paid_reserved - total_paid_used,
-        "total_paid_reserved": total_paid_reserved,
-        "total_paid_limit": caps.get("total_paid"),
-    }
-
-
-def _role_has_capacity(org, role, exclude_member=None):
-    role = _normalize_role(role, default="")
-    if role == ROLE_OWNER:
-        return False
-
-    usage = _seat_usage(org)
-    plan_key = to_public_plan(org.plan_key)
-    ex_role = _normalize_role(getattr(exclude_member, "role", ""), default="") if exclude_member is not None else ""
-
-    if plan_key in {"team", "business"}:
-        if role == ROLE_ADMIN:
-            admin_used = int((usage.get(ROLE_ADMIN) or {}).get("reserved") or 0)
-            if ex_role in {ROLE_OWNER, ROLE_ADMIN}:
-                admin_used = max(0, admin_used - 1)
-            admin_cap = (usage.get(ROLE_ADMIN) or {}).get("max")
-            if admin_cap is not None and admin_used >= int(admin_cap):
-                return False
-
-        if role in {ROLE_ADMIN, ROLE_CREATOR, ROLE_COLLABORATOR}:
-            total_paid_used = int(usage.get("total_paid_reserved") or 0)
-            if ex_role in {ROLE_OWNER, ROLE_ADMIN, ROLE_CREATOR, ROLE_COLLABORATOR}:
-                total_paid_used = max(0, total_paid_used - 1)
-            total_paid_limit = usage.get("total_paid_limit")
-            if total_paid_limit is not None and total_paid_used >= int(total_paid_limit):
-                return False
-        return True
-
-    target = usage.get(role) or {"reserved": 0, "max": None}
-    used = int(target.get("reserved") or 0)
-    max_allowed = target.get("max")
-
-    if role == ROLE_ADMIN and ex_role in {ROLE_OWNER, ROLE_ADMIN}:
-        used = max(0, used - 1)
-    elif role == ex_role:
-        used = max(0, used - 1)
-
-    if max_allowed is None:
-        return True
-    return used < int(max_allowed)
-
-
 def _org_payload(org, membership_role=None):
     return {
         "id": org.id,
@@ -263,7 +166,7 @@ def _org_payload(org, membership_role=None):
         "mfa_policy": mfa_policy_for_org(org),
         "created_at": org.created_at.isoformat() if org.created_at else None,
         "updated_at": org.updated_at.isoformat() if org.updated_at else None,
-        "user_role": _normalize_role(membership_role, default=ROLE_VIEWER),
+        "user_role": normalize_org_role(membership_role, default=ROLE_VIEWER),
     }
 
 
@@ -275,7 +178,7 @@ def _member_payload(member):
         "user_id": member.user_id,
         "name": (user.name if user else "Unknown"),
         "email": (user.email if user else None),
-        "role": _normalize_role(member.role, default=ROLE_VIEWER),
+        "role": normalize_org_role(member.role, default=ROLE_VIEWER),
         "status": member.status or "active",
         "last_active": member.last_active_at.isoformat() if member.last_active_at else None,
         "joined_at": member.joined_at.isoformat() if member.joined_at else None,
@@ -289,7 +192,7 @@ def _invitation_payload(invite):
         "id": invite.id,
         "organization_id": invite.organization_id,
         "email": invite.email,
-        "role": _normalize_role(invite.role, default=ROLE_COLLABORATOR),
+        "role": normalize_org_role(invite.role, default=ROLE_COLLABORATOR),
         "invited_by": invite.invited_by_user_id,
         "invited_by_name": inviter.name if inviter else None,
         "status": invite.status,
@@ -452,7 +355,7 @@ def get_team_org(org_id):
 
     return jsonify({
         "organization": _org_payload(org, membership_role=membership.role),
-        "seat_usage": _seat_usage(org),
+        "seat_usage": build_seat_usage(org),
         "items": member_items,
         "members": member_items,
         "total": member_pagination.total,
@@ -469,7 +372,7 @@ def update_team_org(org_id):
     _, org, membership, err = _require_org_access(org_id)
     if err:
         return err
-    if _normalize_role(membership.role) not in MANAGE_ROLES:
+    if normalize_org_role(membership.role) not in MANAGE_ROLES:
         return jsonify({"error": "Only owner/admin can update organization"}), 403
 
     data = request.get_json() or {}
@@ -502,7 +405,7 @@ def update_team_org(org_id):
 
     return jsonify({
         "organization": _org_payload(org, membership_role=membership.role),
-        "seat_usage": _seat_usage(org),
+        "seat_usage": build_seat_usage(org),
     }), 200
 
 
@@ -512,7 +415,7 @@ def update_team_org_settings(org_id):
     _, org, membership, err = _require_org_access(org_id)
     if err:
         return err
-    if _normalize_role(membership.role) not in MANAGE_ROLES:
+    if normalize_org_role(membership.role) not in MANAGE_ROLES:
         return jsonify({"error": "Only owner/admin can update organization settings"}), 403
 
     data = request.get_json() or {}
@@ -540,7 +443,7 @@ def invite_member(org_id):
     user, org, membership, err = _require_org_access(org_id)
     if err:
         return err
-    if _normalize_role(membership.role) not in MANAGE_ROLES:
+    if normalize_org_role(membership.role) not in MANAGE_ROLES:
         return jsonify({"error": "Only owner/admin can invite members"}), 403
 
     denied = _collaboration_gate(org)
@@ -549,7 +452,7 @@ def invite_member(org_id):
 
     data = request.get_json() or {}
     email = str(data.get("email") or "").strip().lower()
-    role = _normalize_role(data.get("role"), default=ROLE_COLLABORATOR)
+    role = normalize_org_role(data.get("role"), default=ROLE_COLLABORATOR)
 
     if not email or "@" not in email:
         return jsonify({"error": "Valid email is required"}), 400
@@ -564,7 +467,7 @@ def invite_member(org_id):
         if existing_membership:
             return jsonify({"error": "User is already a member"}), 409
 
-    if not _role_has_capacity(org, role):
+    if not role_has_capacity(org, role):
         return jsonify({"error": f"No available seats for role '{role}'"}), 409
 
     invite = (
@@ -645,18 +548,18 @@ def accept_team_invitation(token):
     if denied:
         return denied
 
-    role = _normalize_role(invite.role, default=ROLE_COLLABORATOR)
+    role = normalize_org_role(invite.role, default=ROLE_COLLABORATOR)
     existing = _active_membership(org.id, user.id)
 
     if existing:
         if role != existing.role:
-            if not _role_has_capacity(org, role, exclude_member=existing):
+            if not role_has_capacity(org, role, exclude_member_id=existing.id):
                 return jsonify({"error": f"No available seats for role '{role}'"}), 409
             existing.role = role
             existing.updated_at = _now()
         member = existing
     else:
-        if not _role_has_capacity(org, role):
+        if not role_has_capacity(org, role):
             return jsonify({"error": f"No available seats for role '{role}'"}), 409
         member = OrganizationMember(
             organization_id=org.id,
@@ -681,7 +584,7 @@ def accept_team_invitation(token):
     return jsonify({
         "organization": _org_payload(org, membership_role=member.role),
         "member": _member_payload(member),
-        "seat_usage": _seat_usage(org),
+        "seat_usage": build_seat_usage(org),
     }), 200
 
 
@@ -691,7 +594,7 @@ def update_team_member_role(org_id, member_id):
     _, org, membership, err = _require_org_access(org_id)
     if err:
         return err
-    if _normalize_role(membership.role) not in MANAGE_ROLES:
+    if normalize_org_role(membership.role) not in MANAGE_ROLES:
         return jsonify({"error": "Only owner/admin can change roles"}), 403
 
     try:
@@ -711,11 +614,11 @@ def update_team_member_role(org_id, member_id):
         return jsonify({"error": "Cannot change owner role"}), 400
 
     data = request.get_json() or {}
-    next_role = _normalize_role(data.get("role"), default="")
+    next_role = normalize_org_role(data.get("role"), default="")
     if next_role not in {ROLE_ADMIN, ROLE_CREATOR, ROLE_COLLABORATOR, ROLE_VIEWER}:
         return jsonify({"error": "Invalid role"}), 400
 
-    if not _role_has_capacity(org, next_role, exclude_member=target):
+    if not role_has_capacity(org, next_role, exclude_member_id=target.id):
         return jsonify({"error": f"No available seats for role '{next_role}'"}), 409
 
     target.role = next_role
@@ -731,7 +634,7 @@ def remove_team_member(org_id, member_id):
     user, org, membership, err = _require_org_access(org_id)
     if err:
         return err
-    if _normalize_role(membership.role) not in MANAGE_ROLES:
+    if normalize_org_role(membership.role) not in MANAGE_ROLES:
         return jsonify({"error": "Only owner/admin can remove members"}), 403
 
     try:
@@ -765,13 +668,9 @@ def team_seat_usage(org_id):
     if err:
         return err
 
-    usage = _seat_usage(org)
-    return jsonify({
-        ROLE_ADMIN: usage.get(ROLE_ADMIN),
-        ROLE_CREATOR: usage.get(ROLE_CREATOR),
-        ROLE_COLLABORATOR: usage.get(ROLE_COLLABORATOR),
-        ROLE_VIEWER: usage.get(ROLE_VIEWER),
-    }), 200
+    # The shared engine already returns every role plus the paid-seat totals,
+    # so return it whole rather than re-projecting a subset of it here.
+    return jsonify(build_seat_usage(org)), 200
 
 
 # Additional helpers used by Team UI for pending-invitation workflows.
@@ -798,7 +697,7 @@ def resend_team_invitation(org_id, invitation_id):
     _, org, membership, err = _require_org_access(org_id)
     if err:
         return err
-    if _normalize_role(membership.role) not in MANAGE_ROLES:
+    if normalize_org_role(membership.role) not in MANAGE_ROLES:
         return jsonify({"error": "Only owner/admin can resend invitations"}), 403
 
     invite = (
@@ -837,7 +736,7 @@ def cancel_team_invitation(org_id, invitation_id):
     _, org, membership, err = _require_org_access(org_id)
     if err:
         return err
-    if _normalize_role(membership.role) not in MANAGE_ROLES:
+    if normalize_org_role(membership.role) not in MANAGE_ROLES:
         return jsonify({"error": "Only owner/admin can cancel invitations"}), 403
 
     invite = (
