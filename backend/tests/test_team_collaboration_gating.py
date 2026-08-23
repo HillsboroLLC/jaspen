@@ -277,6 +277,73 @@ def test_accept_succeeds_while_team_subscription_is_active(client, app, db):
     assert member.role == "collaborator"
 
 
+# --- Resending an invitation is gated too ---------------------------------
+
+def test_resend_is_blocked_after_downgrade_below_team(client, app, db):
+    """Resending is an invite action, so a downgraded org must not keep sending."""
+    owner = _make_user(db, "resend-downgrade@example.com", plan="team")
+    org = _make_org(db, owner, plan="team")
+
+    assert _invite(client, app, owner, org).status_code == 201
+    invite = OrganizationInvitation.query.filter_by(organization_id=org.id).one()
+    original_expires = invite.expires_at
+
+    # Owner downgrades below Team while the invitation is still pending.
+    org.plan_key = "essential"
+    owner.subscription_plan = "essential"
+    db.session.commit()
+
+    response = client.post(
+        f"/api/v1/teams/{org.id}/invitations/{invite.id}/resend",
+        headers=_headers(app, owner),
+    )
+
+    assert response.status_code == 403
+    body = response.get_json()
+    assert body["reason"] == "plan_not_eligible"
+    assert body["required_plan"] == "team"
+
+    # The gate runs before any mutation, so the invitation is untouched.
+    refreshed = OrganizationInvitation.query.filter_by(id=invite.id).one()
+    assert refreshed.status == "pending"
+    assert refreshed.expires_at == original_expires
+
+
+def test_past_due_team_cannot_resend_an_invitation(client, app, db):
+    owner = _make_user(db, "resend-pastdue@example.com", plan="team")
+    org = _make_org(db, owner, plan="team")
+
+    assert _invite(client, app, owner, org).status_code == 201
+    invite = OrganizationInvitation.query.filter_by(organization_id=org.id).one()
+
+    owner.subscription_status = "past_due"
+    db.session.commit()
+
+    response = client.post(
+        f"/api/v1/teams/{org.id}/invitations/{invite.id}/resend",
+        headers=_headers(app, owner),
+    )
+
+    assert response.status_code == 403
+    assert response.get_json()["reason"] == "subscription_not_current"
+
+
+def test_active_team_can_still_resend_an_invitation(client, app, db):
+    """The gate must not block orgs that are entitled and current."""
+    owner = _make_user(db, "resend-ok@example.com", plan="team")
+    org = _make_org(db, owner, plan="team")
+
+    assert _invite(client, app, owner, org).status_code == 201
+    invite = OrganizationInvitation.query.filter_by(organization_id=org.id).one()
+
+    response = client.post(
+        f"/api/v1/teams/{org.id}/invitations/{invite.id}/resend",
+        headers=_headers(app, owner),
+    )
+
+    assert response.status_code == 200, response.get_json()
+
+
 # --- Creating an org is itself gated --------------------------------------
 
 @pytest.mark.parametrize("plan", ["free", "starter", "essential", "founder"])

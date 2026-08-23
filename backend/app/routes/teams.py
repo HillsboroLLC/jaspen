@@ -701,6 +701,13 @@ def resend_team_invitation(org_id, invitation_id):
     if normalize_org_role(membership.role) not in MANAGE_ROLES:
         return jsonify({"error": "Only owner/admin can resend invitations"}), 403
 
+    # Resending is an invite action. An org that dropped below Team, or fell
+    # past due, must not keep pushing out links that accept_team_invitation
+    # would refuse anyway.
+    denied = _collaboration_gate(org)
+    if denied:
+        return denied
+
     invite = (
         OrganizationInvitation.query
         .filter_by(id=str(invitation_id), organization_id=org.id)
