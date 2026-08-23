@@ -173,3 +173,27 @@ push and PR.
    unless the task requires live model calls.
 8. Jaspen is a **thought partner**, not a "SaaS product" — keep that framing in
    any copy.
+9. **Collaboration entitlement is Team-or-higher, and it lives in
+   `backend/app/orgs.py`.** `plan_allows_collaboration()` and
+   `org_collaboration_state()` are the only authority; both team blueprints
+   (`/api/v1/team/*` and `/api/v1/teams/*`) delegate to them. Do not add a
+   second copy of role, seat or entitlement logic to a route module — extend
+   `app.orgs` instead.
+
+   The rule is keyed on **subscription plan rank and nothing else**. Never
+   infer collaboration from credits, Thinking Power balances, persistent
+   credit grants, the 300K limited-time offer, the founder offer, advisory
+   packages, or a generic "has an active entitlement" check. Those confer
+   individual capability, not collaboration. In particular
+   `effective_plan_key()` deliberately lifts a 300K holder to
+   Essential-equivalent access — that lift stops below Team, and `org.plan_key`
+   is synced from the raw `subscription_plan`, so neither path reaches
+   collaboration. A gate written as "is entitled" instead of "is Team+" would
+   wrongly admit all of them.
+
+   Plan eligibility is checked first, billing standing second, seat
+   capacity/overrides third. Billing standing is a separate gate: a past-due
+   Team org keeps its entitlement but cannot send or accept invitations while
+   Stripe retries. Nothing in this path removes an existing member — dunning
+   handles that. Downgrading below Team ends the entitlement; there is no
+   grandfathering in the logic, by design.
