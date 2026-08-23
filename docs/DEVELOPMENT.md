@@ -92,9 +92,16 @@ Production values live **only** in the DigitalOcean server's `.env`
 
 - Dev DB: `backend/instance/jaspen_dev.db` (SQLite, gitignored). Delete it and
   re-run `python scripts/init_dev_db.py` for a clean slate — it's disposable.
-- **Known issue:** the Alembic history has multiple heads (`flask db upgrade`
-  is ambiguous — see `docs/NEXT_STEPS.md` C13). Until merged, dev bootstraps
-  with `db.create_all()` (creates missing tables only, never alters/drops).
+- **Alembic history: single head** (`b7e2d91a4c03`), verified 2026-08-23 with
+  `flask db heads`. `flask db upgrade` is unambiguous, and the production
+  deploy runs it (`.github/workflows/deploy.yml`). The multiple-head tangle
+  described in `docs/NEXT_STEPS.md` C13 has since been resolved. Keep it that
+  way: after generating a migration, run `flask db heads` and confirm it still
+  reports one.
+- Dev still bootstraps with `db.create_all()` (creates missing tables only,
+  never alters/drops). That is independent of head count —
+  `scripts/init_dev_db.py` has not changed, and its inline comment still cites
+  the old multi-head reason.
 - **Adding a model/column in dev:** add the model, then either delete + rebuild
   the dev DB, or write a proper Alembic migration and test it on SQLite first.
 - `scripts/init_dev_db.py` refuses to run against anything that isn't SQLite.
@@ -105,7 +112,7 @@ Production values live **only** in the DigitalOcean server's `.env`
 ```bash
 cd backend
 ./venv/bin/python scripts/init_dev_db.py     # create/refresh schema + seed users
-./venv/bin/flask --app wsgi:app db heads     # inspect the multi-head situation
+./venv/bin/flask --app wsgi:app db heads     # confirm the history is still single-headed
 ```
 
 ## 6. Tests & builds
@@ -161,9 +168,11 @@ push and PR.
 3. **Secrets:** `backend/.env` and `frontend/.env*.local` are gitignored — keep
    it that way. Before committing, check `git status` for env files and check
    diffs for keys (`sk_live_`, `sk_test_`, API keys).
-4. **Database:** dev DB is disposable SQLite. Don't "fix" the multi-head
-   Alembic history as a side effect of another task — it's a deliberate,
-   separate cleanup (NEXT_STEPS C13).
+4. **Database:** dev DB is disposable SQLite. The Alembic history is
+   single-headed (`b7e2d91a4c03`) — a schema change needs a proper migration,
+   and after generating one run `flask db heads` to confirm it still reports a
+   single head. Never restructure or renumber existing migration history as a
+   side effect of another task.
 5. **Testing changes:** backend → `pytest` + exercise the route locally;
    frontend → `npm start` against the local backend; both running = full-stack
    check with the seeded dev users.
