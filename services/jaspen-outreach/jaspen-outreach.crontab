@@ -1,0 +1,1 @@
+@reboot /home/sekki/jaspen-outreach/run.sh >> /home/sekki/jaspen-outreach/service.log 2>&1

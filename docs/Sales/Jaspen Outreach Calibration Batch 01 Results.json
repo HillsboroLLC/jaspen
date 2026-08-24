@@ -1,0 +1,475 @@
+[
+  {
+    "index": 1,
+    "account_id": "ACC-0047",
+    "company": "Lucid",
+    "baseline_company_fit": 70.0,
+    "baseline_purchase_readiness": 17.7,
+    "qualification": {
+      "overall_qualification": "Medium",
+      "product_led_user_fit": 70,
+      "enterprise_company_fit": 70,
+      "purchase_readiness": 85,
+      "evidence_coverage": 60,
+      "evidence_confidence": 60,
+      "recency": 90,
+      "remit_connection": 20,
+      "recommended_outreach_angle": "Position Jaspen as a short-cycle decision-process partner for a major restructuring: emphasize rapid cross-functional stakeholder mapping, trade-off frameworks for cost vs. capacity, and a decision-accelerator to codify ownership after the COO removal. Lead with sensitivity to sponsor-driven timelines and cost-reduction targets. (Use SIG-0001, SIG-0002, SIG-0003, SIG-0004, ACC-0047-COMPANY.)",
+      "qualification_rationale": "Summary: The account shows strong, recent structural change signals indicating a high likelihood of active, consequential cross-functional decisions (supporting Purchase Readiness = 85 and Product-led User Fit = 70). However, company identity and some firmographic items are unverified or low-confidence (ACC-0047-COMPANY), which caps the enterprise fit at 70 and lowers overall confidence, so I rate Overall Qualification as Medium.\n\nEvidence and how it was used:\n- SIG-0001 (R6): Documented ~18% US workforce cut and elimination of second production shift; indicates active cost-reduction trade-offs and incomplete execution timeline (used to justify urgency and cross-functional scope). Supports Purchase Readiness and Product-led User Fit.\n- SIG-0002 (R5): Formal restructuring and elimination of the COO role; directly changes who owns cross-functional execution and increases the need for structured decision processes. Critical for Product-led User Fit and Purchase Readiness.\n- SIG-0003 (R10): Majority-owner (PIF) capital injection tied to restructuring; indicates sponsor/board pressure and a compressed timeline for results. Strengthens Purchase Readiness and recommended outreach angle targeting sponsor-driven execution risk.\n- SIG-0004 (R4): Appointment of a Chief Transformation Officer (Hugo Martinho) consistent with a transformation program; low-confidence source but when combined with the June restructuring signals reinforces that the target is Lucid Group and that a transformation remit exists. Used to inform Product-led User Fit and remit connection (but confidence is low).\n- ACC-0047-COMPANY: Desk-research ICP ratings provided A1=3, A3=3, A6=3, A8=2, A12=2 and notes identity unverified and low confidence; explicitly flags gating (G8) that caps the enterprise fit at 70 and G10 that prevents Tier A assignment until discovery validates structural core. This is why Enterprise Company Fit is capped at 70 despite several strong signals.\n\nScoring rationale:\n- Product-led User Fit = 70: Multiple pieces of evidence (SIG-0001, SIG-0002, SIG-0003, SIG-0004) point to consequential, ambiguous, cross-functional decisions (restructuring, role elimination, sponsor pressure) that would benefit from structured deliberation. Not set to higher because we lack direct evidence of the specific decision-making process, stakeholder map, or explicit calls for external process support.\n- Enterprise Company Fit = 70: Firmographic indicators in ACC-0047-COMPANY lean toward a good structural fit (public, capital-intensive, controlling sponsor), but the provided evidence explicitly notes low identity verification and gates (G8/G10) that prevent a Tier A designation without discovery. The ACC-0047-COMPANY text itself caps the score at 70.\n- Purchase Readiness = 85: Strong, recent R-signals (SIG-0001, SIG-0002, SIG-0003) show active restructuring, cost reduction, and sponsor capital tied to execution\u2014classic purchase-readiness triggers. SIG-0004 adds reinforcement though with lower confidence.\n\nUncertainties and limits: ACC-0047-COMPANY flags that the account identity (Lucid Group vs. Lucid Software) is not verified and sets Evidence Confidence Low; this imposes a formal cap (G8) and prevents Tier A until discovery (G10). Remit connection is low because no named internal buyer/contact in the prospect record is validated; SIG-0004 names a CTrO but the source is low-confidence. Evidence coverage is moderate (60) because we have strong signals about restructuring and sponsor pressure but lack verified buyer names, complete A1-A5 confirmation, and first-party company releases for some claims.\n\nNext step recommendation (review-only): Proceed to discovery validation to (a) confirm company identity (Lucid Group vs Lucid Software), (b) validate the CTrO appointment and whether the transformation remit includes outsourcing decision-process support, and (c) map the current decision owners post-COO removal. These validations would raise enterprise fit confidence and the",
+      "proceed_to_outreach": true,
+      "used_evidence_ids": [
+        "ACC-0047-COMPANY",
+        "SIG-0001",
+        "SIG-0002",
+        "SIG-0003",
+        "SIG-0004"
+      ],
+      "prospect_id": "ACC-0047",
+      "evidence_count": 5,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:55:41.677111Z"
+    }
+  },
+  {
+    "index": 2,
+    "account_id": "ACC-0294",
+    "company": "Tanger",
+    "baseline_company_fit": 68.9,
+    "baseline_purchase_readiness": 10.4,
+    "qualification": {
+      "overall_qualification": "Medium",
+      "product_led_user_fit": 65,
+      "enterprise_company_fit": 40,
+      "purchase_readiness": 85,
+      "evidence_coverage": 40,
+      "evidence_confidence": 75,
+      "recency": 90,
+      "remit_connection": 50,
+      "recommended_outreach_angle": "Surface a short, founder-level decision facilitation offer focused on the immediate sequencing trade-off: use structured scenario analysis to compare redeeming the $350M unsecured bonds in Sept 2026 versus allocating incremental liquidity to growth initiatives. Position Jaspen as a neutral framework to accelerate cross-functional alignment and produce a short executive decision memo ahead of the bond maturity.",
+      "qualification_rationale": "Product-led user fit (65): The company faces a consequential, time-bound sequencing decision (redeeming $350M unsecured bonds due Sep 2026 vs allocating $1B liquidity to growth) that is inherently ambiguous and likely requires cross-functional trade-offs between finance and strategy. This supports a meaningful need for structured deliberation and scenario modeling. (Used evidence: ACC-0294-COMPANY, SIG-0042).\n\nEnterprise company fit (40): Evidence provides A8=3 and A12=3 and material liquidity context, indicating some alignment with Jaspen's ICP at the capability/priority level. However A1-A5 (the core A-tier indicators) are explicitly unknown per the supplied evidence and desk research cannot justify Tier A without discovery. Because primary A1-A5 signals are missing, company fit cannot be elevated; score reflects moderate structural fit but with important unknowns. (Used evidence: ACC-0294-COMPANY).\n\nPurchase readiness (85): A dated forcing event is present and recent: SIG-0042 identifies an imminent maturity (Sept 2026) against a finite $1B liquidity pool, giving a clear near-term planning/purchase window (R2 within 90 days). Source confidence is high. This strongly indicates near-term readiness to prioritize a decision-support engagement. (Used evidence: SIG-0042).\n\nEvidence coverage & confidence: Coverage is limited (40) because only two evidence objects are supplied and they primarily address the financing sequencing decision and one or two A-attributes; many rubric elements (notably A1-A5 and remit-specific signals) are missing. Overall confidence is moderate-high (75) because the purchase-readiness signal is recent and high-confidence but company-fit signals are incomplete. All numeric scores reflect only the supplied evidence and the stated uncertainties.",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0294-COMPANY",
+        "SIG-0042"
+      ],
+      "prospect_id": "ACC-0294",
+      "evidence_count": 2,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:55:28.943821Z"
+    }
+  },
+  {
+    "index": 3,
+    "account_id": "ACC-0452",
+    "company": "The AES Corporation",
+    "baseline_company_fit": 74.0,
+    "baseline_purchase_readiness": 10.3,
+    "qualification": {
+      "overall_qualification": "Medium",
+      "product_led_user_fit": 70,
+      "enterprise_company_fit": 45,
+      "purchase_readiness": 65,
+      "evidence_coverage": 30,
+      "evidence_confidence": 70,
+      "recency": 95,
+      "remit_connection": 60,
+      "recommended_outreach_angle": "Do not outreach before confirming ownership status. If take-private is not completed, position Jaspen as a decision-support partner for capital-allocation and portfolio tradeoffs across renewables, thermal and grid under a material capex constraint \u2014 offer a short diagnostic to surface cross-functional decision criteria and quantify tradeoffs.",
+      "qualification_rationale": "Used evidence: ACC-0452-COMPANY, SIG-0039, SIG-0041. Product-led user fit (70): ACC-0452-COMPANY documents multi-criteria allocation across renewables, thermal and grid under a material capex constraint (A7=3) which describes a consequential, cross-functional capital-allocation decision that maps to Jaspen\u2019s structured-decision value (ACC-0452-COMPANY). Enterprise company fit (45): Desk research shows relevant attributes (A7=3, A8=3, A12=3) but A1\u2013A5 (core weight) are explicitly unknown per ACC-0452-COMPANY; Jaspen\u2019s A\u2011Tier cannot be justified without discovery. Given the unknown core attributes, score is moderate but below the 55 threshold required to proceed. Purchase readiness (65): Two recent investor/10-Q signals (SIG-0039 R5 and SIG-0041 R10, both 2026-08-01) indicate active M&A/board/PE scrutiny and capital-allocation pressure, raising near-term readiness \u2014 both items note medium confidence and recommend confirming transaction completion. Evidence coverage (30) and confidence (70): Coverage is low because only three evidence items are available and key A1\u2013A5 ICP attributes are missing; confidence in the supplied items is moderate (70) and dates are recent (Aug 2026). Because A1\u2013A5 remain unknown and a potential take-private materially changes the buying process, do not proceed to outreach until ownership status and core ICP attributes are validated.",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0452-COMPANY",
+        "SIG-0039",
+        "SIG-0041"
+      ],
+      "prospect_id": "ACC-0452",
+      "evidence_count": 3,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:55:50.450300Z"
+    }
+  },
+  {
+    "index": 4,
+    "account_id": "ACC-0059",
+    "company": "HCA Healthcare",
+    "baseline_company_fit": 56.3,
+    "baseline_purchase_readiness": 9.4,
+    "qualification": {
+      "overall_qualification": "Medium",
+      "product_led_user_fit": 55,
+      "enterprise_company_fit": 58,
+      "purchase_readiness": 30,
+      "evidence_coverage": 30,
+      "evidence_confidence": 75,
+      "recency": 95,
+      "remit_connection": 60,
+      "recommended_outreach_angle": "Hold active outreach. First verify whether the enterprise Transformation/CTO seat is backfilled. If a successor or new leader for Transformation/Enterprise AI is in place, route to that person (or the new transformation/innovation/AI program lead) and position Jaspen as a structured-decision partner to rebuild the transformation function and operationalize the company\u2019s documented approach to scaling AI. Use the imminent vacancy as the trigger to check for a successor and for timing of any reorganization before engaging (see ACC-0059-COMPANY, SIG-0020).",
+      "qualification_rationale": "Summary of evidence used: ACC-0059-COMPANY (company ICP desk research) and SIG-0020 (org announcement / purchase-readiness signal). Rationale: \u2022 Enterprise-company fit: Mixed but modestly positive. ACC-0059-COMPANY shows A3=3 (public company board) and A14=2 (documented approach to scaling AI) which are positive signals for structural fit; A1 is scored 2 but the transformation seat is being vacated (timing caveat) which reduces immediate stability as a champion; A9=0 (~250k employees) is an evidenced negative for scale band fit. Several A attributes (A2, A4, A5, A12) are unknown in the supplied evidence. Given the mix of positive (A3, A14) and negative/timing caveat signals (A1 vacating, A9 out-of-band) and the limited coverage of A1\u2013A5, I scored enterprise_company_fit slightly above the provisional routing threshold (58). Note: desk research alone cannot justify Tier A; discovery would be required to validate a champion and confirm fit (ACC-0059-COMPANY). \u2022 Product-led user fit: Moderate (55). The company publishes a documented approach to scaling AI (ACC-0059-COMPANY) and the transformation function is being rebuilt (SIG-0020/ACC-0059-COMPANY), which implies consequential, cross-functional decisions about program design and scaling. However the evidence is indirect about the specific decision-shape (who will drive the cross-functional process and whether there is an ambiguous, high-stakes decision imminent), so score is moderate. \u2022 Purchase readiness: Low (30). The primary purchase-readiness signal is a departure (SIG-0020) \u2014 the SVP/Chief Transformation Officer is moving to a different role effective 1 Sep 2026, vacating the transformation seat. A departure is a trigger to investigate but is not the same as an arrival/active buyer; it indicates potential forthcoming motion but not immediate readiness. Because purchase readiness metrics require arrival/assignment signals (R1\u2013R11) and we only have a departure signal, the readiness score is low and below the routing threshold of 45. \u2022 Evidence coverage & confidence: Low coverage (30) \u2014 multiple A1\u2013A5 attributes and most R1\u2013R11 readiness signals are not present in the supplied evidence, so many rubric elements are unknown rather than negative. Confidence is moderate-high (75) based on the supplied source confidences (ACC-0059-COMPANY confidence 70; SIG-0020 confidence 90) but tempered by the limited scope of evidence and the timing caveat about the vacating seat. Routing decision: enterprise_company_fit (58) is above the provisional routing threshold (55) but purchase_readiness (30) is below the required threshold (45). Therefore proceed_to_outreach is false. Action recommendation: verify whether the transformation seat has been backfilled and identify the successor or interim owner; only after confirmation of an incoming transformation/AI leader or an explicit program restart should outreach be considered (see ACC-0059-COMPANY, SIG-0020).",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0059-COMPANY",
+        "SIG-0020"
+      ],
+      "prospect_id": "ACC-0059",
+      "evidence_count": 2,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:56:21.432659Z"
+    }
+  },
+  {
+    "index": 5,
+    "account_id": "ACC-0038",
+    "company": "Westpac Banking Corporation",
+    "baseline_company_fit": 71.8,
+    "baseline_purchase_readiness": 0.0,
+    "qualification": {
+      "overall_qualification": "Low",
+      "product_led_user_fit": 70,
+      "enterprise_company_fit": 38,
+      "purchase_readiness": 20,
+      "evidence_coverage": 40,
+      "evidence_confidence": 60,
+      "recency": 14,
+      "remit_connection": 90,
+      "recommended_outreach_angle": "Inbound / partner-led discovery request that leans on the newly-appointed Group Chief Transformation Officer and group-wide transformation remit. Primary goal: validate AI maturity (A14) and procurement/contracting signals (R*-series) on a discovery call. Deprioritise outbound SDR plays given geography flag (Australian HQ) and treat this as a discovery conversation owned by partner/inbound channels.",
+      "qualification_rationale": "Used evidence (ACC-0038-COMPANY) shows a clear group-wide transformation remit: A1=3 (strong executive sponsorship), A2=2 (group transformation / portfolio coordination) and A3=3 (APRA-regulated bank with board governance). These support a high product-led decision shape (consequential, cross-functional transformation) -> product_led_user_fit=70. The A1-A15 scoring from the evidence yields: A1=3, A2=2, A3=3, A4=0, A5=0, A6=3, A7=3, A8=0, A9=1, A10=1, A11=0, A12=0, A13=0, A14=UNKNOWN (explicitly excluded), A15=0. Excluding A14 from the denominator gives a total score 16 out of a possible 42 -> enterprise_company_fit \u2248 38. The evidence also states Discovery Validated = No and notes gate G10 caps this account below the Tier A floor until discovery validates the structural core; this prevents claiming Tier A despite some high A1-A3 signals. There are no R1\u2013R11 purchase-readiness signals in the supplied evidence, so purchase_readiness cannot be confirmed; scored conservatively low (20) to reflect absence of dated buying signals and the need for discovery to surface them. Evidence coverage is limited because AI maturity (A14) and purchase signals are unverified; hence evidence_coverage=40 and evidence_confidence reduced to 60 despite the source confidence of 90%, reflecting gaps in the critical purchase-readiness and AI-maturity areas. Proceed_to_outreach is false because enterprise_company_fit (38) < 55 and purchase_readiness (20) < 45. All judgments are based solely on ACC-0038-COMPANY.",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0038-COMPANY"
+      ],
+      "prospect_id": "ACC-0038",
+      "evidence_count": 1,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:56:32.189094Z"
+    }
+  },
+  {
+    "index": 6,
+    "account_id": "ACC-0057",
+    "company": "Providence",
+    "baseline_company_fit": 72.3,
+    "baseline_purchase_readiness": 0.0,
+    "qualification": {
+      "overall_qualification": "Medium",
+      "product_led_user_fit": 80,
+      "enterprise_company_fit": 72,
+      "purchase_readiness": 30,
+      "evidence_coverage": 100,
+      "evidence_confidence": 90,
+      "recency": 14,
+      "remit_connection": 80,
+      "recommended_outreach_angle": "Internal founder review: validate transformation remit and decision timing with contact(s) in the Office of Transformation, surface whether a prioritized, cross-functional AI adoption decision is underway and whether budget/ procurement timelines exist. Emphasize Providence\u2019s explicit Office of Transformation and stated responsible-AI focus as reasons to probe decision-shape and owners before external outreach.",
+      "qualification_rationale": "Enterprise/company fit: Evidence shows a named Office of Transformation led by Chief Transformation Officer Sara Vaezy, explicit C-suite restructuring, and an expressed organisational focus on responsible adoption of AI \u2014 signals of structural alignment with enterprise transformation buyers (evidence: ACC-0057-COMPANY). Several A-level indicators are strong (A1=3, A2=3, A7=3) with additional supporting signs (A11=2, A12=2, A14=2); based on these observable signals I score company fit above the 55 threshold (enterprise_company_fit=72). Note: this is desk-research evidence; per process, Tier A cannot be declared without discovery validation. Product-led user fit: The presence of a standing Office of Transformation and leadership-level emphasis on operating in a 'polycrisis' and responsible AI adoption imply consequential, cross-functional, and ambiguous decisions that can benefit from structured deliberation, so I rate product_led_user_fit high (80) (evidence: ACC-0057-COMPANY). Purchase readiness: The evidence documents organisational structure and strategic focus but contains no dated procurement/budget/vendor-selection signals (R1\u2013R11). Therefore purchase_readiness is scored conservatively below the 45 outreach threshold (30) until discovery yields explicit timing, budget, or vendor evaluation signals (evidence: ACC-0057-COMPANY). Evidence coverage and confidence: The supplied evidence claims full coverage and is recent (observed 2026-08-09), so evidence_coverage is set to 100 and evidence_confidence to 90. Recency: 14 days since observation. Because purchase_readiness is below the required 45 threshold, proceed_to_outreach is false; recommend internal founder review to validate decision owners, timing, and procurement signals before any external outreach (used evidence: ACC-0057-COMPANY).",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0057-COMPANY"
+      ],
+      "prospect_id": "ACC-0057",
+      "evidence_count": 1,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:56:58.177634Z"
+    }
+  },
+  {
+    "index": 7,
+    "account_id": "ACC-0074",
+    "company": "GitLab Inc.",
+    "baseline_company_fit": 69.4,
+    "baseline_purchase_readiness": 0.0,
+    "qualification": {
+      "overall_qualification": "Medium",
+      "product_led_user_fit": 75,
+      "enterprise_company_fit": 65,
+      "purchase_readiness": 60,
+      "evidence_coverage": 35,
+      "evidence_confidence": 70,
+      "recency": 90,
+      "remit_connection": 80,
+      "recommended_outreach_angle": "Lead with the single-conversation 'Transformation + Finance' entry: position Jaspen as a structured decision framework to help a VP-led, cross-functional transformation align operational changes with capital/finance strategy and SOX/public-company reporting needs. (Use the job posting language to reference cross-functional initiative ownership and the finance pairing.)",
+      "qualification_rationale": "Used evidence: ACC-0074-COMPANY.\n\nProduct-led user fit (75): The job posting explicitly states the role is \"LEADING SIGNIFICANT CROSS-FUNCTIONAL INITIATIVES to optimise processes and improve the business model\" (ACC-0074-COMPANY). That description matches the decision shape Jaspen targets (consequential, ambiguous, cross-functional decisions benefiting from structured deliberation). Confidence is good for this dimension because the cross-functional leadership is stated rather than inferred.\n\nEnterprise company fit (65): Evidence shows A5=3 (strong cross-functional mandate) and A1=2 (transformation owned at VP level), with A9=2 and A10=3 inside ideal firmographic bands and A13=3 (public company / SOX) (ACC-0074-COMPANY). These indicators point to a meaningful enterprise fit (complexity, budget holder at senior level, public-company controls). Several A items (A2, A8, A12, A14) are unknown in the supplied evidence, so we cannot validate a Tier A classification without discovery. Score reflects positive core signals from A1\u2013A5 plus supporting firmographics while accounting for the missing fields.\n\nPurchase readiness (60): The posting is a hiring signal for a VP of Enterprise Transformation & Finance Strategy (ACC-0074-COMPANY) observed 2026-08-09, indicating an active transformation initiative and a likely near-term mandate/budget to engage partners. Recency and the direct nature of the hire increase purchase-readiness signal, but this is a single public hiring signal (no procurement, vendor shortlisting, or RFP evidence), so readiness is assessed as moderate.\n\nEvidence coverage (35) and confidence (70): Only one evidence object (a company ICP desk-research job posting) was provided. That yields solid support for cross-functional need and firmographic signals but leaves many rubric elements (several A attributes and R signals) unobserved. Coverage is therefore low; confidence in the specific evidence is moderate-high (source confidence field 70), but the overall picture remains incomplete.\n\nRecency (90) and remit connection (80): The evidence is fresh (2026-08-09) and the title ties closely to Jaspen\u2019s remit (enterprise transformation paired with finance creates a natural single-conversation opportunity) (ACC-0074-COMPANY).\n\nProceed-to-outreach: Both provisional routing thresholds are met (enterprise_company_fit 65 >= 55 and purchase_readiness 60 >= 45). However, because evidence coverage is low and key A fields are unknown, this recommendation is review-only and should be validated in founder review before any outreach.\n\nUsed evidence ids: [\"ACC-0074-COMPANY\"].",
+      "proceed_to_outreach": true,
+      "used_evidence_ids": [
+        "ACC-0074-COMPANY"
+      ],
+      "prospect_id": "ACC-0074",
+      "evidence_count": 1,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:57:02.716018Z"
+    }
+  },
+  {
+    "index": 8,
+    "account_id": "ACC-0052",
+    "company": "C2i Genomics",
+    "baseline_company_fit": 63.3,
+    "baseline_purchase_readiness": 0.0,
+    "qualification": {
+      "overall_qualification": "Low",
+      "product_led_user_fit": 85,
+      "enterprise_company_fit": 40,
+      "purchase_readiness": 10,
+      "evidence_coverage": 30,
+      "evidence_confidence": 90,
+      "recency": 14,
+      "remit_connection": 75,
+      "recommended_outreach_angle": "Route as Team/Business-tier motion (not Enterprise advisory). Ask for a short discovery to validate core structural signals (A1 transformation office, A8/A14 AI programme maturity) and confirm programme budget cadence. Lead with the PMO hiring signal: probe annual programme intake, intake/prioritisation mechanics, stage gates and executive trade-offs (capacity vs business value) and offer a concise example of how structured decision architecture reduces escalation friction and clarifies trade-offs. (Used evidence: ACC-0052-COMPANY)",
+      "qualification_rationale": "Used evidence: ACC-0052-COMPANY. The single job posting provides clear decision-shape evidence: explicit portfolio governance responsibilities (intake, prioritisation, stage gates, sequencing, escalations, executive trade-off decisions) and ownership of annual programme intake accounting for budget, capacity, value and strategic fit \u2014 supporting a high product-led user fit (score 85) and a strong remit connection (75). Enterprise-company fit is capped below Tier A because desk research shows A2=3, A4=3, A5=3 and A12=2 but A1, A9 and A10 are evidenced absent (A1=0, A9=0, A10=0) and A8/A14 are unknown; discovery has not validated the structural core (the evidence itself notes Discovery Validated = No and that gate G10 caps Tier A). The combination of core positives and several absences yields an enterprise_company_fit of 40 (below the 55 threshold). Purchase readiness is low (10) because there are no dated R1\u2013R11 purchasing signals in the evidence (no procurement/budget approvals, vendor evaluations, RFPs or vendor mentions). Evidence coverage is low (30) because only one desk-research job posting is available \u2014 several rubric items (AI maturity, confirmed transformation office, procurement signals) are unknown and excluded. Evidence confidence equals the source confidence (90). Because both enterprise_company_fit (40 < 55) and purchase_readiness (10 < 45) fail the routing thresholds, proceed_to_outreach is false.",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0052-COMPANY"
+      ],
+      "prospect_id": "ACC-0052",
+      "evidence_count": 1,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:57:26.159344Z"
+    }
+  },
+  {
+    "index": 9,
+    "account_id": "ACC-0043",
+    "company": "Ascension",
+    "baseline_company_fit": 54.7,
+    "baseline_purchase_readiness": 0.0,
+    "qualification": {
+      "overall_qualification": "Medium",
+      "product_led_user_fit": 25,
+      "enterprise_company_fit": 56,
+      "purchase_readiness": 20,
+      "evidence_coverage": 25,
+      "evidence_confidence": 70,
+      "recency": 14,
+      "remit_connection": 20,
+      "recommended_outreach_angle": "Do not send standard sales outreach. Priority next step is a short discovery to validate enterprise-level remit and procurement scope (G10 gate) and to surface any recent R-level purchase signals. Focus the conversation on whether decisions sit beyond clinical-transformation (i.e., cross-functional, enterprise portfolio) and on timelines for multi-state procurement. Evidence: ACC-0043-COMPANY.",
+      "qualification_rationale": "Enterprise fit (56): computed from the supplied A-ratings in ACC-0043-COMPANY (A1=2, A3=2, A6=2, A9=0, A10=1). Method: weighted average using higher weight for A1-A5 (weight 3) and weight 1 for other A-criteria; unknown A-fields were excluded per the evidence note. Normalized to a 0\u2013100 scale gives ~56. However, the evidence explicitly states Discovery Validated = No and that gate G10 caps the account below the Tier A floor until discovery validates the structural core; therefore this account should not be treated as Tier A without discovery (ACC-0043-COMPANY). Product-led user fit (25): evidence indicates remit is scoped to clinical transformation rather than enterprise portfolio decisions, which reduces the likelihood of a consequential, cross-functional decision that benefits from structured deliberation (ACC-0043-COMPANY). Purchase readiness (20): no R1\u2013R11 signals provided in the evidence; this is effectively unknown and scored low pending discovery\u2014coverage is limited (ACC-0043-COMPANY). Overall qualification is Medium because structural indicators are mixed/borderline and purchase-readiness signals are absent; gating requires a discovery call before treating as Tier A (ACC-0043-COMPANY).",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0043-COMPANY"
+      ],
+      "prospect_id": "ACC-0043",
+      "evidence_count": 1,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:57:39.394866Z"
+    }
+  },
+  {
+    "index": 10,
+    "account_id": "ACC-0072",
+    "company": "Mount Sinai Health System",
+    "baseline_company_fit": 57.5,
+    "baseline_purchase_readiness": 0.0,
+    "qualification": {
+      "overall_qualification": "Medium",
+      "product_led_user_fit": 30,
+      "enterprise_company_fit": 57,
+      "purchase_readiness": 10,
+      "evidence_coverage": 30,
+      "evidence_confidence": 60,
+      "recency": 86,
+      "remit_connection": 40,
+      "recommended_outreach_angle": "Reference Mount Sinai's stated digital and AI capability remit and the Chief Digital Transformation Officer role; ask about how digital/AI initiatives are prioritized across clinical, IT and operational stakeholders and offer Jaspen as a way to structure cross-functional decision-making and governance for digital/AI investments (avoid assuming enterprise-wide portfolio remit).",
+      "qualification_rationale": "Enterprise company fit (57): Calculated from the available A-score evidence in ACC-0072-COMPANY. Observed: A1=2 (senior digital remit, not enterprise portfolio), A5=2 (large multi-hospital academic system), A9=1, A10=1, A11=1, A14=2. Scoring computed over the known A dimensions with core A1-A5 weighted higher; known-score proportion \u224857%. Desk research cannot validate Tier A (per rubric) and multiple A fields (A2, A3, A4, A6-A8, A12, A13, A15) are unknown, so this fit is provisional and should be validated in discovery. Source: ACC-0072-COMPANY. Product-led user fit (30): Evidence indicates the remit is digital-scoped rather than enterprise portfolio governance, which reduces the likelihood that there is a broad, ambiguous cross-functional portfolio decision-shape that most benefits from structured deliberation. There is no direct evidence of a consequential, ambiguous, cross-functional decision process that Jaspen targets. Score reflects limited alignment but some potential given digital/AI program complexity. Source: ACC-0072-COMPANY. Purchase readiness (10): No R1\u2013R11 purchase-readiness signals are provided in the evidence. With no dated procurement, budget, vendor, project, or initiative signals, readiness is treated as unknown/low for outreach prioritization. Source: ACC-0072-COMPANY. Evidence coverage (30) and confidence (60): Only a subset of the A1\u2013A15 rubric is present (A1, A5, A9, A10, A11, A14); many rubric items and all purchase-readiness signals are missing. The single desk-research evidence item is medium confidence per source; therefore overall synthesis confidence is moderate but coverage is low, and conclusions should be treated as provisional. Recency (86): Evidence observed 2026-08-09 (recent). Remit connection (40): The remit is explicitly digital/AI-scoped rather than enterprise portfolio governance, lowering direct remit fit for Jaspen's typical enterprise portfolio governance use-case. Source: ACC-0072-COMPANY.",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0072-COMPANY"
+      ],
+      "prospect_id": "ACC-0072",
+      "evidence_count": 1,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:57:55.746129Z"
+    }
+  },
+  {
+    "index": 11,
+    "account_id": "ACC-0082",
+    "company": "NIQ (NielsenIQ)",
+    "baseline_company_fit": 53.9,
+    "baseline_purchase_readiness": 0.0,
+    "qualification": {
+      "overall_qualification": "Low",
+      "product_led_user_fit": 20,
+      "enterprise_company_fit": 30,
+      "purchase_readiness": 15,
+      "evidence_coverage": 25,
+      "evidence_confidence": 60,
+      "recency": 90,
+      "remit_connection": 10,
+      "recommended_outreach_angle": "Do not pursue outbound outreach. This account is marked TIER C / reference-only; verify the CTrO appointment and the core A1\u2013A5 criteria before any outreach. If you choose to re-evaluate, first obtain (a) current confirmation of the Chief Transformation Officer and their remit, (b) evidence of a live, cross-functional transformation initiative or ambiguous high-stakes decision that would benefit from structured deliberation, and (c) updated A1\u2013A5 signals (revenue, headcount, sponsor scrutiny, recent leadership changes).",
+      "qualification_rationale": "Only one piece of supplied evidence (ACC-0082-COMPANY) is available. That source explicitly labels the account TIER C (reference only) and notes the CTrO appointment dates to March 2024; several A-criteria (A2, A8, A12, A14) are unknown. The desk-research note also states NIQ is PE-backed (A13) and retains a CTrO function but that two-year-old appointment evidence is insufficient for outbound time without verification. Per the Jaspen rubric, desk research alone cannot justify Tier A and multiple core A1\u2013A5 signals remain unvalidated. There are no R1\u2013R11 purchase-readiness signals in the supplied evidence and no direct evidence of a product-led decision need or remit connection. For these reasons: (1) enterprise_company_fit is low (30) because the file is explicitly Tier C and key A1\u2013A5 criteria are unverified; (2) purchase_readiness is low (15) because no R signals are present; (3) product_led_user_fit is low (20) due to absence of evidence of a consequential, cross-functional decision-making need. Coverage and confidence are limited because only a single desk-research item is available and several rubric dimensions are unknown. Based on the routing thresholds (enterprise \u226555 and purchase_readiness \u226545), this account should not proceed to outreach.",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0082-COMPANY"
+      ],
+      "prospect_id": "ACC-0082",
+      "evidence_count": 1,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:58:02.743029Z"
+    }
+  },
+  {
+    "index": 12,
+    "account_id": "ACC-0034",
+    "company": "Husch Blackwell LLP",
+    "baseline_company_fit": 57.9,
+    "baseline_purchase_readiness": 3.6,
+    "qualification": {
+      "overall_qualification": "Medium",
+      "product_led_user_fit": 65,
+      "enterprise_company_fit": 62,
+      "purchase_readiness": 60,
+      "evidence_coverage": 40,
+      "evidence_confidence": 70,
+      "recency": 14,
+      "remit_connection": 70,
+      "recommended_outreach_angle": "Request a short discovery to validate the Transformation Office mandate and Joanna Penn's remit: focus on cross-functional governance gaps, data-science/AI priorities, and how the new office is structuring decisions and vendor/internal workflows (validate A1\u2013A5 core signals). Use the press item as context to open with congratulations and a single discovery question about near-term initiatives and decision owners.",
+      "qualification_rationale": "Product-led fit: The launch of a Transformation Office explicitly focused on data science and AI indicates a cross-functional, consequential decision space that likely benefits from structured deliberation (supports product-led use cases). Evidence: ACC-0034-COMPANY. Purchase readiness: A dated but recent R4 signal (new Chief Transformation Officer in seat) signals organizational momentum and a likely window for engagement; source is trade press with medium confidence. Evidence: SIG-0016. Enterprise/company fit: Desk research shows strong individual A-criteria ratings (A1=3, A6=3, A11=3) and an explicit Transformation Office, supporting a solid structural fit \u2014 but the record explicitly states Discovery Validated = No and cites gate G10 that prevents classifying as Tier A without discovery. Therefore the account scores above the routing threshold but remains provisional pending discovery. Evidence: ACC-0034-COMPANY. Coverage & confidence notes: Coverage is limited \u2014 several A-criteria are Unknown or inferred (A3 inferred; A8/A12 unknown) and only one purchase-readiness signal is present; this yields moderate confidence (average reported confidences = 70%) but low-to-moderate rubric coverage. Evidence IDs used: ACC-0034-COMPANY, SIG-0016.",
+      "proceed_to_outreach": true,
+      "used_evidence_ids": [
+        "ACC-0034-COMPANY",
+        "SIG-0016"
+      ],
+      "prospect_id": "ACC-0034",
+      "evidence_count": 2,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:58:28.943463Z"
+    }
+  },
+  {
+    "index": 13,
+    "account_id": "ACC-0031",
+    "company": "Availity, LLC",
+    "baseline_company_fit": 48.4,
+    "baseline_purchase_readiness": 0.0,
+    "qualification": {
+      "overall_qualification": "Low",
+      "product_led_user_fit": 25,
+      "enterprise_company_fit": 54,
+      "purchase_readiness": 10,
+      "evidence_coverage": 20,
+      "evidence_confidence": 70,
+      "recency": 95,
+      "remit_connection": 30,
+      "recommended_outreach_angle": "Discovery-first / qualification call to validate executive sponsorship, transformation scope, revenue and AI maturity before any Tier A routing. Desk research shows a director-level transformation role and a forming transformation function but no C-suite sponsor or AI programme evidence; use discovery to confirm decision-shape and sponsor. (See evidence ACC-0031-COMPANY.)",
+      "qualification_rationale": "Enterprise fit: Desk research supplied explicit A-ratings (A1=2, A2=2, A3=1, A11=2, A13=3) but several core A-fields are unknown from public sources and Discovery Validated = No. Per the supplied evidence, the G10 gate caps this account below the Tier A floor until discovery validates the structural core; therefore the enterprise_company_fit is set to 54 (below the 55 Tier A threshold). Product-led user fit: Evidence indicates a transformation function forming at director level which may imply cross-functional decisions, but the evidence does not document a consequential, ambiguous decision shape or named executive decision owner \u2014 so product_led_user_fit is conservatively low. Purchase readiness: No dated R1\u2013R11 purchase signals are present in the supplied evidence; purchase_readiness is therefore set very low pending discovery. Evidence coverage and confidence: Only one desk-research evidence object is available (single-source, public job/ICP research), so coverage is low and uncertainty remains. All judgments cite the single provided evidence item (ACC-0031-COMPANY).",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0031-COMPANY"
+      ],
+      "prospect_id": "ACC-0031",
+      "evidence_count": 1,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:58:32.727205Z"
+    }
+  },
+  {
+    "index": 14,
+    "account_id": "ACC-0048",
+    "company": "FactSet Research Systems Inc.",
+    "baseline_company_fit": 49.6,
+    "baseline_purchase_readiness": 0.0,
+    "qualification": {
+      "overall_qualification": "Low",
+      "product_led_user_fit": 20,
+      "enterprise_company_fit": 25,
+      "purchase_readiness": 10,
+      "evidence_coverage": 20,
+      "evidence_confidence": 70,
+      "recency": 14,
+      "remit_connection": 10,
+      "recommended_outreach_angle": "Hold \u2014 do not outreach. Evidence indicates the cited hire is HR-scoped (Chief People & Workforce Transformation Officer) rather than an enterprise/portfolio transformation seat, creating a poor remit match and structural ICP gaps. Recommend a discovery call before any outreach to validate A2/A8/A12 and whether the role owns cross-functional transformation; if outreach is later authorized, tailor messaging to HR/workforce-transformation priorities rather than enterprise transformation.",
+      "qualification_rationale": "Single supplied evidence (ACC-0048-COMPANY) documents a recent appointment that is explicitly HR-scoped and was scored low for core ICP criteria (A1=1). The company is public (A3=3) and has some firmographic fit signals (A9=2, A10=3), but the core A1-A5 weight is weak due to the HR-scoped seat and remaining structural criteria are unknown or unvalidated by discovery. No R1\u2013R11 purchase-readiness signals are present in the evidence. Because discovery validation is missing (the source states Discovery Validated = No and flags gate G10), the account is capped below the Tier A floor. All judgments derive from the single evidence item listed below; coverage is therefore low and assessment is provisional pending discovery.",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0048-COMPANY"
+      ],
+      "prospect_id": "ACC-0048",
+      "evidence_count": 1,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:58:49.909356Z"
+    }
+  },
+  {
+    "index": 15,
+    "account_id": "ACC-0050",
+    "company": "Trax Credit Union",
+    "baseline_company_fit": 39.9,
+    "baseline_purchase_readiness": 0.0,
+    "qualification": {
+      "overall_qualification": "Low",
+      "product_led_user_fit": 15,
+      "enterprise_company_fit": 25,
+      "purchase_readiness": 10,
+      "evidence_coverage": 30,
+      "evidence_confidence": 40,
+      "recency": 90,
+      "remit_connection": 10,
+      "recommended_outreach_angle": "Do not outreach. Screened out by ICP model: only a CSO appointment is evidenced and core structural criteria (A1 transformation office and A2 portfolio function) are evidenced as absent. Recommend no proactive sales outreach; instead schedule a discovery-only requalification if/when additional corroborating signals appear (e.g., confirmed transformation office, portfolio governance, or dated procurement signals).",
+      "qualification_rationale": "All judgments rely solely on ACC-0050-COMPANY. That evidence states: A6=3 (appointment of an EVP/Chief Strategy Officer) is the only positive signal; A1=0 and A2=0 are evidenced absences (no transformation office and no portfolio function). Several other criteria (A8, A10, A12, A14) were converted to Unknown in the source and excluded from scoring, and Discovery Validated = No. The source explicitly flags this account as screened out and notes gate G10 will cap the account below Tier A until discovery validates the structural core. No purchase/ procurement signals (R1\u2013R11) or decision-shape evidence are provided. Because the core structural ICP criteria fail and no readiness signals are present, enterprise_company_fit and purchase_readiness are low and outreach is not recommended.",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0050-COMPANY"
+      ],
+      "prospect_id": "ACC-0050",
+      "evidence_count": 1,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:58:48.286565Z"
+    }
+  },
+  {
+    "index": 16,
+    "account_id": "ACC-0324",
+    "company": "BIGLARI HOLDINGS INC.",
+    "baseline_company_fit": 30.0,
+    "baseline_purchase_readiness": 0.0,
+    "qualification": {
+      "overall_qualification": "Low",
+      "product_led_user_fit": 10,
+      "enterprise_company_fit": 30,
+      "purchase_readiness": 10,
+      "evidence_coverage": 40,
+      "evidence_confidence": 70,
+      "recency": 13,
+      "remit_connection": 5,
+      "recommended_outreach_angle": "Do NOT outreach \u2014 account is disqualified by single-decider governance. Deprioritize and do not engage until governance or decision-process evidence changes.",
+      "qualification_rationale": "Primary supplied evidence (ACC-0324-COMPANY) documents a single-decider culture: \"ALL MAJOR OPERATING, INVESTMENT AND CAPITAL ALLOCATION DECISIONS ARE MADE ... BY SARDAR BIGLARI.\" This directly negates the cross-functional, deliberative decision shape Jaspen requires, producing a capped enterprise fit (Tier D, score capped at 30). Product-led user fit is therefore very low because there is no observable multi-stakeholder decision process to benefit from structured deliberation. There are no R1\u2013R11 purchase-readiness signals in the supplied evidence (no vendor engagement, no procurement process, no sourcing activity that counts), so purchase readiness is treated as low/unknown (scored conservatively low). Evidence coverage is limited to company ICP desk research (SEC and annual report excerpts) and therefore cannot assess many rubric elements (notably purchase signals and operational remit at stakeholder level) \u2014 see ACC-0324-COMPANY. Because enterprise_company_fit (30) is below the 55 threshold and purchase_readiness is below 45, this account should not proceed to outreach.",
+      "proceed_to_outreach": false,
+      "used_evidence_ids": [
+        "ACC-0324-COMPANY"
+      ],
+      "prospect_id": "ACC-0324",
+      "evidence_count": 1,
+      "model": "gpt-5-mini",
+      "prompt_version": "qualification-v2",
+      "rubric_version": "jaspen-rubric-v2.0",
+      "qualified_at": "2026-08-23T16:59:16.294566Z"
+    }
+  }
+]

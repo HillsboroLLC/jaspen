@@ -1,0 +1,30 @@
+{
+  "prospect": {
+    "id": "controlled-function-test-20260823",
+    "name": "Lydia Bailey",
+    "job_title": "Founder",
+    "company": "Jaspen",
+    "domain": "jaspen.ai",
+    "research_summary": "Controlled validation record; no outreach is authorized."
+  },
+  "evidence": [
+    {
+      "id": "controlled-evidence-1",
+      "claim": "The founder is evaluating an AI-assisted outreach workflow that preserves human approval before sending.",
+      "evidence_type": "controlled_test",
+      "source_title": "MVP governing scope",
+      "source_url": "https://jaspen.ai/",
+      "observed_at": "2026-08-23T12:00:00Z",
+      "confidence": 100
+    },
+    {
+      "id": "controlled-evidence-2",
+      "claim": "Qualification must preserve product-led user fit, enterprise company fit, purchase readiness, evidence coverage, and rubric version as separate review fields.",
+      "evidence_type": "controlled_test",
+      "source_title": "Qualification calibration requirements",
+      "source_url": "https://jaspen.ai/",
+      "observed_at": "2026-08-23T12:00:00Z",
+      "confidence": 100
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+environment:
+  OPENAI_API_KEY: "${OPENAI_API_KEY}"
+  OPENAI_MODEL: "${OPENAI_MODEL}"
+  JASPEN_OUTREACH_SHARED_SECRET: "${JASPEN_OUTREACH_SHARED_SECRET}"
+
+packages:
+  - name: outreach
+    functions:
+      - name: qualify
+        runtime: python:3.12
+        web: raw
+        webSecure: "${JASPEN_FUNCTION_WEB_SECRET}"
+        limits:
+          timeout: 180000
+          memory: 512
