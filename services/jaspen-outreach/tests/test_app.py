@@ -247,5 +247,120 @@ class QualificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("R4", result.qualification_rationale)
 
 
+
+class ReadinessSignalDateAttestationTests(unittest.TestCase):
+    """observed_at must corroborate a date, never license an arbitrary one.
+
+    Before this guard existed, a populated observed_at short-circuited validation
+    and any model-proposed R1-R11 date was accepted.
+    """
+
+    @staticmethod
+    def _request(claim, observed_at):
+        evidence = {
+            "id": "evidence-1",
+            "claim": claim,
+            "evidence_type": "Purchase Readiness signal",
+            "confidence": 90,
+        }
+        if observed_at is not None:
+            evidence["observed_at"] = observed_at
+        return QualificationRequest.model_validate(
+            {
+                "prospect": {
+                    "id": "prospect-1",
+                    "name": "Test Prospect",
+                    "job_title": "COO",
+                    "company": "Test Co",
+                },
+                "evidence": [evidence],
+            }
+        )
+
+    @staticmethod
+    def _signal(signal_date: str) -> dict:
+        return {
+            "signal_code": "R2",
+            "evidence_id": "evidence-1",
+            "signal_date": signal_date,
+            "rationale": "Readiness assessment under test.",
+        }
+
+    def test_observed_date_set_and_readiness_date_supported_is_accepted(self):
+        request = self._request(
+            "R2 - the 2026-09-01 investment committee will prioritize competing initiatives.",
+            "2026-09-01T00:00:00Z",
+        )
+        output = QualificationModelOutput.model_validate(
+            model_output(readiness_signals=[self._signal("2026-09-01")])
+        )
+        accepted = _validate_traceability(request, output)
+        self.assertEqual([s.signal_code for s in accepted], ["R2"])
+
+    def test_observed_date_alone_does_not_validate_an_undated_claim(self):
+        # The model can always echo observed_at back; that is not attestation.
+        request = self._request(
+            "R2 - the investment committee prioritizes competing initiatives.",
+            "2026-09-01T00:00:00Z",
+        )
+        output = QualificationModelOutput.model_validate(
+            model_output(readiness_signals=[self._signal("2026-09-01")])
+        )
+        self.assertEqual(_validate_traceability(request, output), [])
+
+    def test_observed_date_set_but_readiness_date_fabricated_is_rejected(self):
+        # observed_at is populated, but the proposed date is attested by nothing.
+        request = self._request(
+            "R2 - the 2026-09-01 investment committee will prioritize competing initiatives.",
+            "2026-09-01T00:00:00Z",
+        )
+        output = QualificationModelOutput.model_validate(
+            model_output(readiness_signals=[self._signal("2026-03-01")])
+        )
+        self.assertEqual(_validate_traceability(request, output), [])
+
+    def test_observed_date_null_with_valid_dated_claim_is_accepted(self):
+        request = self._request(
+            "R2 - Budget cycle: the September 2026 investment committee meets to prioritize asks.",
+            None,
+        )
+        output = QualificationModelOutput.model_validate(
+            model_output(readiness_signals=[self._signal("2026-09-01")])
+        )
+        accepted = _validate_traceability(request, output)
+        self.assertEqual([s.signal_code for s in accepted], ["R2"])
+
+    def test_observed_date_null_with_unsupported_readiness_date_is_rejected(self):
+        request = self._request(
+            "R2 - Budget cycle: the investment committee prioritizes competing initiatives.",
+            None,
+        )
+        output = QualificationModelOutput.model_validate(
+            model_output(readiness_signals=[self._signal("2026-09-01")])
+        )
+        self.assertEqual(_validate_traceability(request, output), [])
+
+    def test_evidence_without_a_readiness_signal_does_not_acquire_one(self):
+        # No R-code anywhere in the claim; observed_at populated. Nothing may attach.
+        request = self._request(
+            "The company appointed a new chief transformation officer on 2026-09-01.",
+            "2026-09-01T00:00:00Z",
+        )
+        output = QualificationModelOutput.model_validate(
+            model_output(readiness_signals=[self._signal("2026-09-01")])
+        )
+        self.assertEqual(_validate_traceability(request, output), [])
+
+    def test_observed_date_does_not_license_a_neighbouring_date(self):
+        request = self._request(
+            "R2 - the investment committee prioritizes competing initiatives.",
+            "2026-09-01T00:00:00Z",
+        )
+        output = QualificationModelOutput.model_validate(
+            model_output(readiness_signals=[self._signal("2026-09-02")])
+        )
+        self.assertEqual(_validate_traceability(request, output), [])
+
+
 if __name__ == "__main__":
     unittest.main()

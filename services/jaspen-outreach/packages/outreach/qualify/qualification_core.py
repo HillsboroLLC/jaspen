@@ -192,10 +192,9 @@ def validate_traceability(
     return valid_signals
 
 
-def _evidence_supports_signal_date(evidence: Evidence, signal_date: date) -> bool:
-    if evidence.observed_at is not None:
-        return True
-    claim = evidence.claim.lower()
+def _claim_bears_signal_date(claim: str, signal_date: date) -> bool:
+    """True when the claim text itself carries the signal date."""
+    claim = claim.lower()
     year = str(signal_date.year)
     if year not in claim:
         return False
@@ -212,6 +211,18 @@ def _evidence_supports_signal_date(evidence: Evidence, signal_date: date) -> boo
         or numeric_month_year in claim
         or quarter in claim
     )
+
+
+def _evidence_supports_signal_date(evidence: Evidence, signal_date: date) -> bool:
+    """A readiness date must appear in the evidence claim itself.
+
+    observed_at deliberately plays no part. It records when the evidence was
+    observed, not when the event occurred, so it cannot attest an event date - and
+    a model with no date to work from will simply echo observed_at back, turning
+    "took office last spring" into a signal dated today. Requiring the date in the
+    claim text is the only check the model cannot satisfy by restating our own input.
+    """
+    return _claim_bears_signal_date(evidence.claim, signal_date)
 
 
 def calculate_product_led_fit(criteria: ProductLedCriteria) -> tuple[int, int]:
