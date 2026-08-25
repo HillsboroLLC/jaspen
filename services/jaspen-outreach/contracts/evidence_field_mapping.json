@@ -1,0 +1,17 @@
+{
+  "_comment": "Contract for the Power Automate 'Select' action in the Jaspen - Qualify Prospect flow. Keys are Evidence model fields sent to the qualification Function; values are the Dataverse columns they come from. This file is reference documentation and test input only - the live mapping lives in Dataverse and is rolled back via the flow's Version History.",
+  "flow": "Jaspen - Qualify Prospect",
+  "flow_id": "c53eabf7-fc9e-f111-b8dc-6045bd01f70e",
+  "action": "Select",
+  "from": "@outputs('List_rows')?['body/value']",
+  "reconciled": "2026-08-25",
+  "map": {
+    "id": "new_evidenceitemid",
+    "claim": "new_claim",
+    "evidence_type": "new_evidencetype",
+    "source_title": "new_sourcetitle",
+    "source_url": "new_sourceurl",
+    "observed_at": "new_observeddate",
+    "confidence": "new_confidencescore"
+  }
+}
