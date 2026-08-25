@@ -11,8 +11,8 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-PROMPT_VERSION = "qualification-v3"
-RUBRIC_VERSION = "jaspen-rubric-v3.0"
+PROMPT_VERSION = "qualification-v3.1"
+RUBRIC_VERSION = "jaspen-rubric-v3.1"
 DEFAULT_MODEL = "gpt-5-mini"
 PRODUCT_LED_FIT_THRESHOLD = 60
 ENTERPRISE_FIT_THRESHOLD = 55
@@ -26,18 +26,23 @@ PRODUCT_LED_RATING_POINTS = {
     "strong": 3,
 }
 
+# Reconciled 2026-08-25 against Jaspen Sales Playbook & ICP Brief section 12-C.
+# The previous table was inherited from the archived brief, whose R-codes carried
+# different meanings; six codes were scoring the wrong signal. Points and decay
+# windows are unchanged as a set - only the code each is attached to was corrected.
+# (points, half_life_days): 21d act-within-days, 45d fast, 90d predictable,
+# 180d medium, 365d slow and compounding.
 READINESS_RULES = {
-    "R1": (25, 45),
-    "R2": (12, 90),
-    "R3": (12, 45),
-    "R4": (10, 180),
-    "R5": (8, 180),
-    "R6": (8, 45),
-    "R7": (7, 180),
-    "R8": (15, 365),
-    "R9": (7, 180),
-    "R10": (8, 180),
-    "R11": (15, 21),
+    "R1": (15, 365),   # Existing Jaspen usage - slow, persists and compounds
+    "R2": (25, 45),    # Named strategic decision underway - fast
+    "R3": (12, 90),    # Budget or planning cycle within 90 days - predictable
+    "R4": (10, 180),   # New CTrO/CSO/COO or comparable leader in seat - medium
+    "R5": (8, 180),    # M&A, restructuring, or integration - medium
+    "R6": (8, 45),     # Cost reduction / budget cut - fast
+    "R7": (7, 180),    # Acute capacity constraints - medium
+    "R8": (8, 180),    # Board or PE pressure event - medium
+    "R9": (7, 21),     # Expansion behavior - fast (provisional calibration)
+    "R10": (8, 21),    # Advisory intent - fast (provisional calibration)
 }
 
 
@@ -75,8 +80,9 @@ class QualificationRequest(BaseModel):
 
 ProductLedRating = Literal["unknown", "absent", "weak", "moderate", "strong"]
 ReadinessSignalCode = Literal[
-    "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11"
+    "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"
 ]
+SignalDatePrecision = Literal["day", "month", "quarter"]
 ReviewRoute = Literal[
     "enterprise_ready", "product_led_review", "enterprise_nurture", "hold"
 ]
@@ -101,6 +107,7 @@ class ReadinessSignalAssessment(BaseModel):
     signal_code: ReadinessSignalCode
     evidence_id: str = Field(min_length=1, max_length=100)
     signal_date: date
+    signal_date_precision: SignalDatePrecision
     rationale: str = Field(min_length=1, max_length=1000)
 
 
@@ -108,6 +115,7 @@ class QualificationModelOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     overall_qualification: Literal["High", "Medium", "Low"]
+    a15_deliberate_decision: Literal["pass", "fail", "unknown"]
     product_led_criteria: ProductLedCriteria
     enterprise_company_fit: int = Field(ge=0, le=100)
     readiness_signals: list[ReadinessSignalAssessment] = Field(max_length=11)
@@ -186,34 +194,80 @@ def validate_traceability(
         evidence = supplied_by_id[signal.evidence_id]
         if not re.search(rf"\b{signal.signal_code}\b", evidence.claim, re.IGNORECASE):
             continue
-        if not _evidence_supports_signal_date(evidence, signal.signal_date):
+        if not _evidence_supports_signal_date(evidence, signal):
             continue
         valid_signals.append(signal)
     return valid_signals
 
 
-def _claim_bears_signal_date(claim: str, signal_date: date) -> bool:
-    """True when the claim text itself carries the signal date."""
+def _claim_bears_signal_date(
+    claim: str, signal_date: date, precision: SignalDatePrecision
+) -> bool:
+    """True when the claim carries the signal date at the precision claimed.
+
+    Each precision is checked against exactly what it asserts. A day-precision
+    signal must find the day in the claim: matching only the month would let
+    "April 2026" license a fabricated 2026-04-17.
+    """
     claim = claim.lower()
-    year = str(signal_date.year)
-    if year not in claim:
+    if str(signal_date.year) not in claim:
         return False
+
+    quarter = f"q{((signal_date.month - 1) // 3) + 1} {signal_date.year}"
+    if precision == "quarter":
+        return quarter in claim
+
     month_names = {
         signal_date.strftime("%B").lower(),
         signal_date.strftime("%b").lower(),
     }
-    iso_month = f"{signal_date.year}-{signal_date.month:02d}"
-    numeric_month_year = f"{signal_date.month}/{signal_date.year}"
-    quarter = f"q{((signal_date.month - 1) // 3) + 1} {signal_date.year}"
-    return (
+    month_present = (
         any(name in claim for name in month_names)
-        or iso_month in claim
-        or numeric_month_year in claim
-        or quarter in claim
+        or f"{signal_date.year}-{signal_date.month:02d}" in claim
+        or f"{signal_date.month}/{signal_date.year}" in claim
     )
+    if precision == "month":
+        return month_present
+
+    day = signal_date.day
+    day_tokens = {
+        signal_date.isoformat(),
+        f"{signal_date.month}/{day}/{signal_date.year}",
+        f"{signal_date.strftime('%B').lower()} {day}",
+        f"{signal_date.strftime('%b').lower()} {day}",
+        f"{day} {signal_date.strftime('%B').lower()}",
+    }
+    return month_present and any(token in claim for token in day_tokens)
 
 
-def _evidence_supports_signal_date(evidence: Evidence, signal_date: date) -> bool:
+def _decay_anchor(signal_date: date, precision: SignalDatePrecision) -> date:
+    """Earliest date consistent with the stated precision.
+
+    Conservative by construction: the earliest plausible date maximises elapsed
+    time and therefore decay, so imprecision costs readiness rather than earning
+    it. The anchor is never presented as a sourced date - see _format_signal_date.
+    """
+    if precision == "day":
+        return signal_date
+    if precision == "month":
+        return signal_date.replace(day=1)
+    first_month_of_quarter = ((signal_date.month - 1) // 3) * 3 + 1
+    return signal_date.replace(month=first_month_of_quarter, day=1)
+
+
+def _format_signal_date(signal: "ReadinessSignalAssessment") -> str:
+    """Render a signal date at the precision the source actually supplied."""
+    if signal.signal_date_precision == "day":
+        return signal.signal_date.isoformat()
+    if signal.signal_date_precision == "month":
+        return f"{signal.signal_date.year}-{signal.signal_date.month:02d} (month precision)"
+    quarter = ((signal.signal_date.month - 1) // 3) + 1
+    return f"Q{quarter} {signal.signal_date.year} (quarter precision)"
+
+
+def _evidence_supports_signal_date(
+    evidence: Evidence, signal: "ReadinessSignalAssessment"
+) -> bool:
     """A readiness date must appear in the evidence claim itself.
 
     observed_at deliberately plays no part. It records when the evidence was
@@ -222,7 +276,9 @@ def _evidence_supports_signal_date(evidence: Evidence, signal_date: date) -> boo
     "took office last spring" into a signal dated today. Requiring the date in the
     claim text is the only check the model cannot satisfy by restating our own input.
     """
-    return _claim_bears_signal_date(evidence.claim, signal_date)
+    return _claim_bears_signal_date(
+        evidence.claim, signal.signal_date, signal.signal_date_precision
+    )
 
 
 def calculate_product_led_fit(criteria: ProductLedCriteria) -> tuple[int, int]:
@@ -253,15 +309,20 @@ def calculate_purchase_readiness(
     present_codes: set[str] = set()
     for signal in signals:
         base_points, half_life_days = READINESS_RULES[signal.signal_code]
-        days_since = max(0, (as_of - signal.signal_date).days)
+        anchor = _decay_anchor(signal.signal_date, signal.signal_date_precision)
+        days_since = max(0, (as_of - anchor).days)
         decay = math.pow(0.5, days_since / half_life_days)
         confidence = _confidence_multiplier(evidence_by_id[signal.evidence_id].confidence)
         total += base_points * decay * confidence
         present_codes.add(signal.signal_code)
     score = min(100, round(total))
-    if "R1" not in present_codes:
+    # Both rules were written against the archived numbering and have been
+    # re-pointed to the codes that now carry their meaning. Values unchanged.
+    # Cap: without a nameable strategic decision (now R2) there is nurture, not pursuit.
+    if "R2" not in present_codes:
         score = min(score, 40)
-    if "R8" in present_codes:
+    # Floor: existing Jaspen usage (now R1) alone justifies working an account.
+    if "R1" in present_codes:
         score = max(score, 35)
     return score
 
@@ -286,7 +347,7 @@ def reconcile_qualification_rationale(
 
     if signals:
         accepted = ", ".join(
-            f"{signal.signal_code} (evidence {signal.evidence_id}, dated {signal.signal_date.isoformat()})"
+            f"{signal.signal_code} (evidence {signal.evidence_id}, dated {_format_signal_date(signal)})"
             for signal in signals
         )
         canonical = (
@@ -308,8 +369,25 @@ def reconcile_qualification_rationale(
 
 
 def determine_review_route(
-    *, product_led_user_fit: int, enterprise_company_fit: int, purchase_readiness: int
+    *,
+    product_led_user_fit: int,
+    enterprise_company_fit: int,
+    purchase_readiness: int,
+    a15_deliberate_decision: Literal["pass", "fail", "unknown"],
 ) -> tuple[bool, bool, ReviewRoute, str, bool]:
+    # A15 is a hard gate in the ICP brief ("hard disqualifier when it fails"),
+    # so it is evaluated before any threshold. "unknown" does not gate: absent
+    # evidence is not a failed test.
+    if a15_deliberate_decision == "fail":
+        return (
+            False,
+            False,
+            "hold",
+            "A15 gate: the decision domain is algorithmic or high-volume, which the "
+            "ICP brief treats as a hard disqualifier. Fit and readiness thresholds "
+            "were not evaluated.",
+            False,
+        )
     enterprise_ready = (
         enterprise_company_fit >= ENTERPRISE_FIT_THRESHOLD
         and purchase_readiness >= PURCHASE_READINESS_THRESHOLD
@@ -342,6 +420,15 @@ def build_openai_payload(request: QualificationRequest, model: str) -> dict:
         "store": False,
         "max_output_tokens": 4000,
         "instructions": (
+            "For every readiness signal you must also return signal_date_precision, stating the "
+            "precision the SOURCE actually supplied: 'day' only when the evidence gives a "
+            "specific day, 'month' when it gives only a month and year, 'quarter' when it "
+            "gives only a quarter. Never invent a day to satisfy the field. "
+            "You must also return a15_deliberate_decision: 'fail' when the decision domain is "
+            "algorithmic, high-volume or real-time (pricing engines, credit decisioning, ad "
+            "bidding, supply-chain optimisation, payments optimisation); 'pass' when the "
+            "decision is deliberate, human-owned, low-frequency and high-stakes; 'unknown' "
+            "when the supplied evidence does not establish which it is. "
             "You qualify Jaspen outreach prospects for founder review. Use only the Evidence "
             "objects supplied in the input for factual judgments. Prospect fields provide identity "
             "and context but are not evidence of readiness or fit. Never invent, browse for, or cite "
@@ -438,6 +525,7 @@ async def qualify_with_openai(
             product_led_user_fit=product_led_user_fit,
             enterprise_company_fit=parsed.enterprise_company_fit,
             purchase_readiness=purchase_readiness,
+            a15_deliberate_decision=parsed.a15_deliberate_decision,
         )
         return QualificationResponse(
             **parsed.model_dump(),

@@ -5,6 +5,14 @@ from unittest.mock import patch
 
 import httpx
 
+from datetime import date
+
+from packages.outreach.qualify.qualification_core import (
+    READINESS_RULES,
+    ReadinessSignalAssessment,
+    calculate_purchase_readiness as _calculate_purchase_readiness,
+    determine_review_route as _determine_review_route,
+)
 from app import (
     QualificationModelOutput,
     QualificationRequest,
@@ -38,6 +46,7 @@ def request_payload() -> QualificationRequest:
 def model_output(**overrides) -> dict:
     output = {
         "overall_qualification": "High",
+        "a15_deliberate_decision": "pass",
         "product_led_criteria": {
             "p1_consequential_decision": "strong",
             "p2_human_judgment": "strong",
@@ -54,6 +63,7 @@ def model_output(**overrides) -> dict:
                 "signal_code": "R2",
                 "evidence_id": "evidence-1",
                 "signal_date": "2026-09-01",
+                "signal_date_precision": "month",
                 "rationale": "The supplied evidence explicitly dates the planning cycle.",
             }
         ],
@@ -110,10 +120,10 @@ class QualificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.prospect_id, "prospect-1")
         self.assertEqual(result.used_evidence_ids, ["evidence-1"])
         self.assertEqual(result.product_led_user_fit, 100)
-        self.assertEqual(result.purchase_readiness, 12)
+        self.assertEqual(result.purchase_readiness, 25)  # R2 reconciled to 25 pts
         self.assertEqual(result.review_route, "product_led_review")
-        self.assertEqual(result.prompt_version, "qualification-v3")
-        self.assertEqual(result.rubric_version, "jaspen-rubric-v3.0")
+        self.assertEqual(result.prompt_version, "qualification-v3.1")
+        self.assertEqual(result.rubric_version, "jaspen-rubric-v3.1")
 
     def test_dimensions_and_thresholds_are_explicit_and_separate(self):
         payload = _build_openai_payload(request_payload(), "gpt-5-mini")
@@ -135,6 +145,7 @@ class QualificationTests(unittest.IsolatedAsyncioTestCase):
                         "signal_code": "R4",
                         "evidence_id": "evidence-1",
                         "signal_date": "2026-09-01",
+                        "signal_date_precision": "month",
                         "rationale": "A senior role exists.",
                     }
                 ]
@@ -153,6 +164,7 @@ class QualificationTests(unittest.IsolatedAsyncioTestCase):
                     "signal_code": "R4",
                     "evidence_id": "evidence-1",
                     "signal_date": "2026-09-01",
+                    "signal_date_precision": "month",
                     "rationale": "A senior role exists.",
                 }
             ]
@@ -203,12 +215,14 @@ class QualificationTests(unittest.IsolatedAsyncioTestCase):
                     "signal_code": "R2",
                     "evidence_id": "evidence-1",
                     "signal_date": "2026-09-01",
+                    "signal_date_precision": "month",
                     "rationale": "The supplied evidence explicitly dates the planning cycle.",
                 },
                 {
                     "signal_code": "R4",
                     "evidence_id": "evidence-1",
                     "signal_date": "2026-09-01",
+                    "signal_date_precision": "month",
                     "rationale": "A senior role exists.",
                 },
             ],
@@ -241,7 +255,7 @@ class QualificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([signal.signal_code for signal in result.readiness_signals], ["R2"])
         self.assertIn("The supplied evidence supports the operating context.", result.qualification_rationale)
         self.assertIn(
-            "R2 (evidence evidence-1, dated 2026-09-01)",
+            "R2 (evidence evidence-1, dated 2026-09 (month precision))",
             result.qualification_rationale,
         )
         self.assertNotIn("R4", result.qualification_rationale)
@@ -278,11 +292,12 @@ class ReadinessSignalDateAttestationTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _signal(signal_date: str) -> dict:
+    def _signal(signal_date, precision="day"):
         return {
             "signal_code": "R2",
             "evidence_id": "evidence-1",
             "signal_date": signal_date,
+            "signal_date_precision": precision,
             "rationale": "Readiness assessment under test.",
         }
 
@@ -325,7 +340,7 @@ class ReadinessSignalDateAttestationTests(unittest.TestCase):
             None,
         )
         output = QualificationModelOutput.model_validate(
-            model_output(readiness_signals=[self._signal("2026-09-01")])
+            model_output(readiness_signals=[self._signal("2026-09-01", "month")])
         )
         accepted = _validate_traceability(request, output)
         self.assertEqual([s.signal_code for s in accepted], ["R2"])
@@ -360,6 +375,177 @@ class ReadinessSignalDateAttestationTests(unittest.TestCase):
             model_output(readiness_signals=[self._signal("2026-09-02")])
         )
         self.assertEqual(_validate_traceability(request, output), [])
+
+
+
+class SignalDatePrecisionTests(unittest.TestCase):
+    """A signal may only claim the precision its source actually supplied."""
+
+    @staticmethod
+    def _request(claim):
+        return QualificationRequest.model_validate({
+            "prospect": {"id": "p1", "name": "T", "job_title": "COO", "company": "C"},
+            "evidence": [{"id": "evidence-1", "claim": claim,
+                          "evidence_type": "Purchase Readiness signal", "confidence": 90}],
+        })
+
+    @staticmethod
+    def _out(signal_date, precision):
+        return QualificationModelOutput.model_validate(model_output(readiness_signals=[{
+            "signal_code": "R2", "evidence_id": "evidence-1",
+            "signal_date": signal_date, "signal_date_precision": precision,
+            "rationale": "Under test.",
+        }]))
+
+    MONTH_ONLY = "R2 - the committee meets in April 2026 to prioritize competing initiatives."
+
+    def test_day_precision_is_rejected_on_a_month_only_claim(self):
+        # The regression that matters: month-only evidence must not license an invented day.
+        accepted = _validate_traceability(
+            self._request(self.MONTH_ONLY), self._out("2026-04-01", "day"))
+        self.assertEqual(accepted, [])
+
+    def test_month_precision_is_accepted_on_a_month_only_claim(self):
+        accepted = _validate_traceability(
+            self._request(self.MONTH_ONLY), self._out("2026-04-01", "month"))
+        self.assertEqual([s.signal_code for s in accepted], ["R2"])
+
+    def test_day_precision_is_accepted_when_the_day_is_in_the_claim(self):
+        claim = "R2 - the committee met on 2026-04-17 to prioritize competing initiatives."
+        accepted = _validate_traceability(self._request(claim), self._out("2026-04-17", "day"))
+        self.assertEqual([s.signal_code for s in accepted], ["R2"])
+
+    def test_quarter_precision_requires_a_quarter_token(self):
+        claim = "R2 - the committee decides in Q2 2026 which initiatives proceed."
+        self.assertEqual(
+            [s.signal_code for s in _validate_traceability(
+                self._request(claim), self._out("2026-04-01", "quarter"))], ["R2"])
+        # a day-precision claim over the same quarter-only evidence must fail
+        self.assertEqual(
+            _validate_traceability(self._request(claim), self._out("2026-04-01", "day")), [])
+
+    def test_coarse_precision_anchors_to_earliest_in_period(self):
+        # Conservative anchoring: imprecision must cost readiness, never earn it.
+        request = self._request(self.MONTH_ONLY)
+        as_of = date(2026, 5, 31)
+        month = _calculate_purchase_readiness(
+            request,
+            [ReadinessSignalAssessment.model_validate({
+                "signal_code": "R2", "evidence_id": "evidence-1",
+                "signal_date": "2026-04-30", "signal_date_precision": "month",
+                "rationale": "x"})],
+            as_of=as_of)
+        day = _calculate_purchase_readiness(
+            request,
+            [ReadinessSignalAssessment.model_validate({
+                "signal_code": "R2", "evidence_id": "evidence-1",
+                "signal_date": "2026-04-30", "signal_date_precision": "day",
+                "rationale": "x"})],
+            as_of=as_of)
+        # month anchors to 2026-04-01, so it has decayed further than the 04-30 day anchor
+        self.assertLess(month, day)
+
+
+class A15HardGateTests(unittest.TestCase):
+    """A15 fail is a hard disqualifier, evaluated before any threshold."""
+
+    STRONG = dict(product_led_user_fit=95, enterprise_company_fit=90, purchase_readiness=80)
+
+    def test_high_scoring_prospect_failing_a15_is_held(self):
+        ready, plr, route, reason, proceed = _determine_review_route(
+            **self.STRONG, a15_deliberate_decision="fail")
+        self.assertEqual(route, "hold")
+        self.assertFalse(proceed)
+        self.assertFalse(ready)
+        self.assertFalse(plr)
+        self.assertIn("A15", reason)
+
+    def test_same_prospect_passing_a15_reaches_enterprise_ready(self):
+        ready, _, route, _, proceed = _determine_review_route(
+            **self.STRONG, a15_deliberate_decision="pass")
+        self.assertEqual(route, "enterprise_ready")
+        self.assertTrue(ready)
+        self.assertTrue(proceed)
+
+    def test_unknown_a15_does_not_gate(self):
+        _, _, route, _, proceed = _determine_review_route(
+            **self.STRONG, a15_deliberate_decision="unknown")
+        self.assertEqual(route, "enterprise_ready")
+        self.assertTrue(proceed)
+
+    def test_a15_failure_blocks_the_product_led_route_too(self):
+        _, _, route, reason, proceed = _determine_review_route(
+            product_led_user_fit=95, enterprise_company_fit=10, purchase_readiness=0,
+            a15_deliberate_decision="fail")
+        self.assertEqual(route, "hold")
+        self.assertFalse(proceed)
+        self.assertIn("A15", reason)
+
+    def test_thresholds_are_unchanged_when_a15_passes(self):
+        _, _, route, _, _ = _determine_review_route(
+            product_led_user_fit=60, enterprise_company_fit=10, purchase_readiness=0,
+            a15_deliberate_decision="pass")
+        self.assertEqual(route, "product_led_review")
+
+
+
+class ReconciledReadinessRulesTests(unittest.TestCase):
+    """R-codes now score the meaning the current brief gives them."""
+
+    @staticmethod
+    def _request():
+        return QualificationRequest.model_validate({
+            "prospect": {"id": "p1", "name": "T", "job_title": "COO", "company": "C"},
+            "evidence": [{"id": "e1", "claim": "signals", "confidence": 90}],
+        })
+
+    @staticmethod
+    def _sigs(codes, signal_date="2026-09-01"):
+        return [ReadinessSignalAssessment.model_validate({
+            "signal_code": c, "evidence_id": "e1", "signal_date": signal_date,
+            "signal_date_precision": "day", "rationale": "x"}) for c in codes]
+
+    AS_OF = date(2026, 9, 1)
+
+    def test_r11_is_rejected_by_the_schema(self):
+        with self.assertRaises(Exception):
+            ReadinessSignalAssessment.model_validate({
+                "signal_code": "R11", "evidence_id": "e1", "signal_date": "2026-09-01",
+                "signal_date_precision": "day", "rationale": "retired code"})
+
+    def test_cap_applies_when_no_named_strategic_decision(self):
+        # R3+R4+R5+R6+R7 = 45 raw, but no R2 means the cap binds at 40.
+        score = _calculate_purchase_readiness(
+            self._request(), self._sigs(["R3", "R4", "R5", "R6", "R7"]), as_of=self.AS_OF)
+        self.assertEqual(score, 40)
+
+    def test_named_strategic_decision_lifts_the_cap(self):
+        # R2 is now the gate, so a cold prospect can clear the 45 enterprise threshold.
+        score = _calculate_purchase_readiness(
+            self._request(), self._sigs(["R2", "R3", "R4"]), as_of=self.AS_OF)
+        self.assertEqual(score, 47)
+        self.assertGreaterEqual(score, 45)
+
+    def test_existing_usage_floors_a_decayed_score(self):
+        # R1 alone, three years stale, still floors at 35 - usage compounds.
+        score = _calculate_purchase_readiness(
+            self._request(), self._sigs(["R1"], "2023-09-01"), as_of=self.AS_OF)
+        self.assertEqual(score, 35)
+
+    def test_board_pressure_no_longer_floors(self):
+        # The floor used to sit on R8; R8 now means board/PE pressure and must not floor.
+        score = _calculate_purchase_readiness(
+            self._request(), self._sigs(["R8"], "2023-09-01"), as_of=self.AS_OF)
+        self.assertLess(score, 35)
+
+    def test_reconciled_points_and_windows(self):
+        self.assertEqual(READINESS_RULES["R1"], (15, 365))
+        self.assertEqual(READINESS_RULES["R2"], (25, 45))
+        self.assertEqual(READINESS_RULES["R3"], (12, 90))
+        self.assertEqual(READINESS_RULES["R8"], (8, 180))
+        self.assertEqual(READINESS_RULES["R9"], (7, 21))
+        self.assertEqual(READINESS_RULES["R10"], (8, 21))
+        self.assertNotIn("R11", READINESS_RULES)
 
 
 if __name__ == "__main__":

@@ -61,6 +61,7 @@ def event(*, secret: str = "shared-test-secret", body: dict | None = None) -> di
 def successful_result():
     return QualificationResponse.model_validate(
         {
+            "a15_deliberate_decision": "pass",
             "overall_qualification": "High",
             "product_led_criteria": {
                 "p1_consequential_decision": "strong",
@@ -92,8 +93,8 @@ def successful_result():
             "prospect_id": "prospect-1",
             "evidence_count": 1,
             "model": "gpt-5-mini",
-            "prompt_version": "qualification-v3",
-            "rubric_version": "jaspen-rubric-v3.0",
+            "prompt_version": "qualification-v3.1",
+            "rubric_version": "jaspen-rubric-v3.1",
             "qualified_at": "2026-08-23T17:00:00Z",
         }
     )
@@ -132,7 +133,7 @@ class FunctionContractTests(unittest.TestCase):
         self.assertEqual(response["statusCode"], 200)
         self.assertEqual(response["body"]["prospect_id"], "prospect-1")
         self.assertEqual(response["body"]["used_evidence_ids"], ["evidence-1"])
-        self.assertEqual(response["body"]["rubric_version"], "jaspen-rubric-v3.0")
+        self.assertEqual(response["body"]["rubric_version"], "jaspen-rubric-v3.1")
 
     def test_maps_traceability_failure_to_safe_502(self):
         async def qualify(_request):
