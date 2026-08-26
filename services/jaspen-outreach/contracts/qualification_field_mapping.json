@@ -1,0 +1,46 @@
+{
+  "_comment": "Contract for the Power Automate 'Add a new row' action in the Jaspen - Qualify Prospect flow. Keys are qualification Function response fields; values are the Dataverse columns on new_qualification they are written to. Reference documentation and test input only - the live mapping lives in Dataverse and is rolled back via the flow's Version History.",
+  "flow": "Jaspen - Qualify Prospect",
+  "flow_id": "c53eabf7-fc9e-f111-b8dc-6045bd01f70e",
+  "action": "Add_a_new_row",
+  "entity": "new_qualifications",
+  "reconciled": "2026-08-26",
+  "map": {
+    "a15_deliberate_decision": "new_a15deliberatedecision",
+    "model": "new_aimodel",
+    "enterprise_company_fit": "new_enterprisecompanyfit",
+    "evidence_confidence": "new_evidenceconfidence",
+    "evidence_coverage": "new_evidencecoverage",
+    "used_evidence_ids": "new_evidencereferences",
+    "overall_qualification": "new_overallqualification",
+    "proceed_to_outreach": "new_proceedtooutreach",
+    "product_led_criteria": "new_productledcriteriajson",
+    "product_led_evidence_coverage": "new_productledevidencecoverage",
+    "product_led_user_fit": "new_productleduserfit",
+    "prompt_version": "new_promptversion",
+    "purchase_readiness": "new_purchasereadiness",
+    "qualification_rationale": "new_qualificationrationale",
+    "qualified_at": "new_qualifiedat",
+    "readiness_signals": "new_readinesssignalsjson",
+    "recency": "new_recency",
+    "recommended_outreach_angle": "new_recommendedoutreachangle",
+    "remit_connection": "new_remitconnection",
+    "review_route": "new_reviewroute",
+    "route_reason": "new_routereason",
+    "rubric_version": "new_rubricversion"
+  },
+  "unmapped_by_design": {
+    "prospect_id": "the row is bound to the prospect via the new_Prospect lookup instead",
+    "evidence_count": "derivable by counting the Qualification Evidence junctions",
+    "enterprise_ready": "derivable from review_route",
+    "product_led_review_eligible": "derivable from review_route"
+  },
+  "must_never_be_dropped": [
+    "a15_deliberate_decision",
+    "purchase_readiness",
+    "readiness_signals",
+    "review_route",
+    "prompt_version",
+    "rubric_version"
+  ]
+}
