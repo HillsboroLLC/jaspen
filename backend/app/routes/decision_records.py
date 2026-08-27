@@ -41,6 +41,23 @@ from ..session_access import can_write_session, canonical_row
 decision_records_bp = Blueprint('decision_records', __name__)
 
 
+def _decision_view(record, user):
+    """A record plus the two things the UI cannot compute for itself:
+    its derived current state, and whether THIS caller may change it."""
+    row = canonical_row(user, record.thread_id, include_archived=True)
+    can_edit = True if row is None else can_write_session(row, user)
+    payload = record.to_dict(include_record=False)
+    payload['current_state'] = current_state(record)
+    payload['can_edit'] = bool(can_edit)
+    payload['recommendation'] = (
+        (record.record or {}).get('recommendation') if isinstance(record.record, dict) else None
+    )
+    payload['alternatives'] = (
+        (record.record or {}).get('alternatives') if isinstance(record.record, dict) else []
+    )
+    return payload
+
+
 def _parse_current(raw):
     """`current=true|false|all|unknown`, or None for the default posture.
 
@@ -141,7 +158,7 @@ def list_records():
     page = rows[offset:offset + limit]
 
     return jsonify({
-        'records': [r.to_dict(include_record=False) for r in page],
+        'records': [_decision_view(r, user) for r in page],
         'total': total,
         'limit': limit,
         'offset': offset,
@@ -201,7 +218,11 @@ def get_record(record_id):
     record = _owned_record_or_404(record_id, user)
     if not record:
         return jsonify({'error': 'Decision record not found'}), 404
-    return jsonify({'record': record.to_dict()})
+    full = record.to_dict()
+    full['current_state'] = current_state(record)
+    row = canonical_row(user, record.thread_id, include_archived=True)
+    full['can_edit'] = True if row is None else bool(can_write_session(row, user))
+    return jsonify({'record': full})
 
 
 @decision_records_bp.route('/<record_id>', methods=['PATCH'])
@@ -240,7 +261,7 @@ def update_record(record_id):
     if isinstance(data.get('altitude'), str):
         record.altitude = data['altitude'].strip()[:32] or None
     db.session.commit()
-    return jsonify({'record': record.to_dict()})
+    return jsonify({'record': _decision_view(record, user)})
 
 
 @decision_records_bp.route('/<record_id>/outcomes', methods=['POST'])
