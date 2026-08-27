@@ -8,8 +8,11 @@
 // Article 4, the human decides -- and no view-selection click (such as adopting
 // a scorecard) is ever treated as an affirmation.
 //
-// Deliberately small: state, one action, one confirm. Editing history, outcomes
-// and lessons are separate concerns and are not built here.
+// Once a decision exists, the same panel closes the loop: what happened
+// (outcome) and what we concluded (lesson). Those stay two separate acts --
+// an observation is not a judgement, and it is the judgement that is reusable
+// on future decisions. Both are append-only: a later entry never overwrites an
+// earlier one, so the record shows how understanding developed.
 
 import React from 'react';
 import { API_BASE } from '../../config/apiBase';
@@ -29,6 +32,14 @@ const STATE_LABEL = {
   superseded: 'Superseded',
   unknown: 'Decision pending',
 };
+
+const OUTCOME_STATUS_OPTIONS = [
+  ['achieved', 'Achieved'],
+  ['partially_achieved', 'Partially achieved'],
+  ['not_achieved', 'Not achieved'],
+  ['too_early', 'Too early to tell'],
+  ['abandoned', 'Abandoned'],
+];
 
 const STATE_TONE = {
   current: { fg: '#0e6b3f', bg: '#e3f5ea', bd: '#10b981' },
@@ -76,6 +87,14 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
   const [supersedesId, setSupersedesId] = React.useState('');
   const [candidates, setCandidates] = React.useState([]);
   const [justSaved, setJustSaved] = React.useState(null);
+
+  // The learning loop. Separate forms, separate submissions: an outcome may be
+  // recorded now and a lesson months later, when more is actually known.
+  const [outcomeOpen, setOutcomeOpen] = React.useState(false);
+  const [outcomeText, setOutcomeText] = React.useState('');
+  const [outcomeStatus, setOutcomeStatus] = React.useState('');
+  const [lessonOpen, setLessonOpen] = React.useState(false);
+  const [lessonText, setLessonText] = React.useState('');
 
   const load = React.useCallback(async () => {
     if (!threadId) { setLoading(false); return; }
@@ -158,12 +177,65 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
     }
   }
 
+  async function submitOutcome() {
+    if (!record || !outcomeText.trim()) {
+      setError('Describe what happened.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await api(`/${encodeURIComponent(record.id)}/outcomes`, {
+        method: 'POST',
+        body: JSON.stringify({
+          summary: outcomeText.trim(),
+          ...(outcomeStatus ? { status: outcomeStatus } : {}),
+        }),
+      });
+      setRecord(updated?.record || null);
+      setOutcomeOpen(false);
+      setOutcomeText('');
+      setOutcomeStatus('');
+      await load();
+    } catch (err) {
+      setError(err?.message || 'Could not record the outcome.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitLesson() {
+    if (!record || !lessonText.trim()) {
+      setError('Write what the organization learned.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await api(`/${encodeURIComponent(record.id)}/lessons`, {
+        method: 'POST',
+        body: JSON.stringify({ lesson: lessonText.trim() }),
+      });
+      setRecord(updated?.record || null);
+      setLessonOpen(false);
+      setLessonText('');
+      await load();
+    } catch (err) {
+      setError(err?.message || 'Could not record the lesson.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading || !threadId) return null;
   if (!record) return null;
 
   const state = record.current_state || 'unknown';
   const decided = Boolean(record.final_decision);
   const canEdit = record.can_edit !== false;
+  const outcomes = Array.isArray(record.outcomes) ? record.outcomes : [];
+  const lessons = Array.isArray(record.lessons_learned) ? record.lessons_learned : [];
+  const hasOutcome = outcomes.length > 0;
 
   return (
     <div
@@ -340,6 +412,178 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
               >
                 Cancel
               </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* The learning loop. Only offered once a decision exists: there is
+          nothing to observe the result of until the organization decided
+          something, and an undecided analysis must never acquire an
+          "outcome" that implies one. */}
+      {decided && (
+        <div style={{
+          borderTop: `1px solid ${LINE}`, paddingTop: 12,
+          display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          <div style={{
+            fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em',
+            color: NAVY, textTransform: 'uppercase',
+          }}>
+            What happened
+          </div>
+
+          {hasOutcome ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {outcomes.map((o) => (
+                <div key={o.id || o.recorded_at} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div style={{ fontSize: 13, color: NAVY, lineHeight: 1.5 }}>{o.summary}</div>
+                  <div style={{ fontSize: 11, color: MUTED }}>
+                    {(OUTCOME_STATUS_OPTIONS.find(([v]) => v === o.status) || [])[1] || 'Recorded'}
+                    {o.recorded_by_name ? ` · ${o.recorded_by_name}` : ''}
+                    {o.recorded_at ? ` · ${new Date(o.recorded_at).toLocaleDateString()}` : ''}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12.5, color: SLATE }}>No outcome recorded yet.</div>
+          )}
+
+          {canEdit && !outcomeOpen && (
+            <div>
+              <button
+                type="button" onClick={() => { setOutcomeOpen(true); setError(null); }}
+                style={{
+                  border: `1px solid ${NAVY}`, background: 'transparent', color: NAVY,
+                  borderRadius: 6, padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                {hasOutcome ? 'Add another observation' : 'Record outcome'}
+              </button>
+            </div>
+          )}
+
+          {outcomeOpen && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <textarea
+                value={outcomeText}
+                onChange={(e) => setOutcomeText(e.target.value)}
+                rows={2}
+                placeholder="What actually happened?"
+                style={{
+                  padding: '8px 10px', border: `1px solid ${LINE}`, borderRadius: 6,
+                  fontSize: 13, fontFamily: 'inherit', resize: 'vertical',
+                }}
+              />
+              <select
+                value={outcomeStatus}
+                aria-label="Outcome status"
+                onChange={(e) => setOutcomeStatus(e.target.value)}
+                style={{ padding: '6px 9px', border: `1px solid ${LINE}`, borderRadius: 6, fontSize: 12.5 }}
+              >
+                <option value="">— did it meet the objective? (optional) —</option>
+                {OUTCOME_STATUS_OPTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button" onClick={submitOutcome} disabled={saving}
+                  style={{
+                    border: 'none', background: NAVY, color: '#fff', borderRadius: 6,
+                    padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  {saving ? 'Saving…' : 'Save outcome'}
+                </button>
+                <button
+                  type="button" onClick={() => { setOutcomeOpen(false); setError(null); }}
+                  style={{
+                    border: `1px solid ${LINE}`, background: 'transparent', color: SLATE,
+                    borderRadius: 6, padding: '6px 11px', fontSize: 12, cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div style={{
+            fontSize: 10.5, fontWeight: 600, letterSpacing: '0.08em',
+            color: NAVY, textTransform: 'uppercase', marginTop: 4,
+          }}>
+            What we learned
+          </div>
+
+          {lessons.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {lessons.map((l) => (
+                <div key={l.id || l.recorded_at} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <div style={{ fontSize: 13, color: NAVY, lineHeight: 1.5 }}>{l.lesson}</div>
+                  <div style={{ fontSize: 11, color: MUTED }}>
+                    {l.recorded_by_name || 'Recorded'}
+                    {l.recorded_at ? ` · ${new Date(l.recorded_at).toLocaleDateString()}` : ''}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12.5, color: SLATE }}>No lessons recorded yet.</div>
+          )}
+
+          {canEdit && !lessonOpen && (
+            <div>
+              <button
+                type="button" onClick={() => { setLessonOpen(true); setError(null); }}
+                style={{
+                  border: `1px solid ${NAVY}`, background: 'transparent', color: NAVY,
+                  borderRadius: 6, padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                Add lesson
+              </button>
+              {!hasOutcome && (
+                <span style={{ fontSize: 11, color: MUTED, marginLeft: 8 }}>
+                  You can add this later, once you know more.
+                </span>
+              )}
+            </div>
+          )}
+
+          {lessonOpen && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <textarea
+                value={lessonText}
+                onChange={(e) => setLessonText(e.target.value)}
+                rows={2}
+                placeholder="What should we do differently next time?"
+                style={{
+                  padding: '8px 10px', border: `1px solid ${LINE}`, borderRadius: 6,
+                  fontSize: 13, fontFamily: 'inherit', resize: 'vertical',
+                }}
+              />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button" onClick={submitLesson} disabled={saving}
+                  style={{
+                    border: 'none', background: NAVY, color: '#fff', borderRadius: 6,
+                    padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  }}
+                >
+                  {saving ? 'Saving…' : 'Save lesson'}
+                </button>
+                <button
+                  type="button" onClick={() => { setLessonOpen(false); setError(null); }}
+                  style={{
+                    border: `1px solid ${LINE}`, background: 'transparent', color: SLATE,
+                    borderRadius: 6, padding: '6px 11px', fontSize: 12, cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
         </div>

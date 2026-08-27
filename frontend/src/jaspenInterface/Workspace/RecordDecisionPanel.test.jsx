@@ -221,3 +221,147 @@ describe('RecordDecisionPanel', () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+const DECIDED_RECORD = {
+  ...PENDING_RECORD,
+  current_state: 'current',
+  status: 'decided',
+  final_decision: 'We will pilot in Rotterdam.',
+  decided_at: '2026-08-01T00:00:00',
+  outcomes: [],
+  lessons_learned: [],
+};
+
+describe('RecordDecisionPanel — outcome and lesson loop', () => {
+  it('does not offer outcome capture before a decision exists', async () => {
+    global.fetch = mockFetch([['?thread_id=', () => ({ records: [PENDING_RECORD] })]]);
+    render(<RecordDecisionPanel threadId="t-1" />);
+
+    expect(await screen.findByText('Decision pending')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /record outcome/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add lesson/i })).not.toBeInTheDocument();
+  });
+
+  it('offers outcome and lesson capture once decided', async () => {
+    global.fetch = mockFetch([['?thread_id=', () => ({ records: [DECIDED_RECORD] })]]);
+    render(<RecordDecisionPanel threadId="t-1" />);
+
+    expect(await screen.findByRole('button', { name: /record outcome/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /add lesson/i })).toBeInTheDocument();
+    expect(screen.getByText('No outcome recorded yet.')).toBeInTheDocument();
+  });
+
+  it('submits an outcome with its status', async () => {
+    const posts = [];
+    global.fetch = mockFetch([
+      ['/outcomes', (options, method) => {
+        if (method !== 'POST') return undefined;
+        posts.push(JSON.parse(options.body));
+        return { record: { ...DECIDED_RECORD, outcomes: [{ id: 'out_1', summary: 'Late.' }] } };
+      }],
+      ['?thread_id=', () => ({ records: [DECIDED_RECORD] })],
+    ]);
+
+    render(<RecordDecisionPanel threadId="t-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /record outcome/i }));
+
+    fireEvent.change(screen.getByPlaceholderText(/what actually happened/i), {
+      target: { value: 'Launched six weeks late.' },
+    });
+    fireEvent.change(screen.getByLabelText(/outcome status/i), {
+      target: { value: 'partially_achieved' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save outcome/i }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toEqual({
+      summary: 'Launched six weeks late.',
+      status: 'partially_achieved',
+    });
+  });
+
+  it('submits a lesson separately from the outcome', async () => {
+    const posts = [];
+    global.fetch = mockFetch([
+      ['/lessons', (options, method) => {
+        if (method !== 'POST') return undefined;
+        posts.push(JSON.parse(options.body));
+        return { record: DECIDED_RECORD };
+      }],
+      ['?thread_id=', () => ({ records: [DECIDED_RECORD] })],
+    ]);
+
+    render(<RecordDecisionPanel threadId="t-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /add lesson/i }));
+
+    fireEvent.change(screen.getByPlaceholderText(/what should we do differently/i), {
+      target: { value: 'Involve procurement earlier.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save lesson/i }));
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toEqual({ lesson: 'Involve procurement earlier.' });
+  });
+
+  it('shows every recorded observation and lesson, not just the latest', async () => {
+    global.fetch = mockFetch([
+      ['?thread_id=', () => ({
+        records: [{
+          ...DECIDED_RECORD,
+          outcomes: [
+            { id: 'out_1', summary: 'Too early to tell.', status: 'too_early', recorded_by_name: 'Ada' },
+            { id: 'out_2', summary: 'Target met at six months.', status: 'achieved', recorded_by_name: 'Ada' },
+          ],
+          lessons_learned: [
+            { id: 'les_1', lesson: 'Pilot first.', recorded_by_name: 'Ada' },
+            { id: 'les_2', lesson: 'Budget contingency.', recorded_by_name: 'Bo' },
+          ],
+        }],
+      })],
+    ]);
+
+    render(<RecordDecisionPanel threadId="t-1" />);
+
+    expect(await screen.findByText('Too early to tell.')).toBeInTheDocument();
+    expect(screen.getByText('Target met at six months.')).toBeInTheDocument();
+    expect(screen.getByText('Pilot first.')).toBeInTheDocument();
+    expect(screen.getByText('Budget contingency.')).toBeInTheDocument();
+  });
+
+  it('does not offer outcome or lesson actions to a viewer', async () => {
+    global.fetch = mockFetch([
+      ['?thread_id=', () => ({
+        records: [{
+          ...DECIDED_RECORD,
+          can_edit: false,
+          outcomes: [{ id: 'out_1', summary: 'It shipped.' }],
+        }],
+      })],
+    ]);
+
+    render(<RecordDecisionPanel threadId="t-1" />);
+
+    expect(await screen.findByText('It shipped.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /record outcome/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add lesson/i })).not.toBeInTheDocument();
+  });
+
+  it('refuses an empty outcome', async () => {
+    const posts = [];
+    global.fetch = mockFetch([
+      ['/outcomes', (options, method) => {
+        if (method !== 'POST') return undefined;
+        posts.push(JSON.parse(options.body));
+        return { record: DECIDED_RECORD };
+      }],
+      ['?thread_id=', () => ({ records: [DECIDED_RECORD] })],
+    ]);
+
+    render(<RecordDecisionPanel threadId="t-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /record outcome/i }));
+    fireEvent.click(screen.getByRole('button', { name: /save outcome/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/describe what happened/i);
+    expect(posts).toHaveLength(0);
+  });
+});

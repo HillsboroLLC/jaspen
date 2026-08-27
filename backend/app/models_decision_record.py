@@ -54,10 +54,21 @@ class DecisionRecord(db.Model):
         primary_key=True,
         default=lambda: str(uuid.uuid4()),
     )
+    # ATTRIBUTION, not ownership -- the organization owns the record.
+    #
+    # SET NULL, not CASCADE (Phase 6). Phase 2 catalogued this FK as a latent
+    # risk and deferred it because no user-deletion path existed and the
+    # record's analysis fields could always be re-derived from the project.
+    # That changed when outcomes and lessons landed here: those are
+    # human-authored institutional learning, they cannot be reconstructed from
+    # anything, and cascading them away with the person who happened to type
+    # them would destroy exactly the knowledge this system exists to keep.
+    # The author's NAME is snapshotted into the record payload and onto each
+    # outcome/lesson entry, so attribution survives the row going null.
     user_id = db.Column(
         db.String(36),
-        db.ForeignKey('users.id', ondelete='CASCADE'),
-        nullable=False,
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
         index=True,
     )
     organization_id = db.Column(db.String(36), nullable=True, index=True)

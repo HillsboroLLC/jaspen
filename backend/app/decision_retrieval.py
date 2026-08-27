@@ -34,7 +34,14 @@ from datetime import datetime
 
 from sqlalchemy import or_
 
-from .decision_records import CURRENT, SUPERSEDED, UNKNOWN, can_read_record, current_state
+from .decision_records import (
+    CURRENT,
+    SUPERSEDED,
+    UNKNOWN,
+    can_read_record,
+    current_state,
+    latest_outcome,
+)
 from .models_decision_record import DecisionRecord
 from .orgs import active_membership_for_user
 
@@ -68,7 +75,8 @@ def _tokens(query):
 def authorized_candidates(user, *, organization_id=None, status=None,
                           thread_id=None, decision_type=None,
                           human_decision=None, since=None, until=None,
-                          current=None, ceiling=CANDIDATE_CEILING):
+                          current=None, has_outcome=None, has_lessons=None,
+                          ceiling=CANDIDATE_CEILING):
     """Every Decision Record this user may read, already filtered.
 
     The SQL narrows to organizations the user is an active member of, then
@@ -138,6 +146,19 @@ def authorized_candidates(user, *, organization_id=None, status=None,
         row for row in rows
         if can_read_record(row, user, membership=_membership(row.organization_id))
     ]
+
+    # Loop-state filters. JSON columns, so applied in Python after
+    # authorization rather than pushed into SQL.
+    if has_outcome is not None:
+        permitted = [
+            r for r in permitted
+            if bool(latest_outcome(r)) is bool(has_outcome)
+        ]
+    if has_lessons is not None:
+        permitted = [
+            r for r in permitted
+            if bool(r.lessons_learned) is bool(has_lessons)
+        ]
 
     # Current-state filter, applied AFTER authorization and before ranking.
     # Derived rather than stored, so it cannot be stale.
@@ -238,6 +259,9 @@ def summarize(record):
     confidence = payload.get('confidence') if isinstance(payload.get('confidence'), dict) else {}
     decided = bool(record.final_decision)
     state = current_state(record)
+    outcomes = record.outcomes if isinstance(record.outcomes, list) else []
+    lessons = record.lessons_learned if isinstance(record.lessons_learned, list) else []
+    outcome = latest_outcome(record)
 
     return {
         'source_type': SOURCE_TYPE,
@@ -263,6 +287,19 @@ def summarize(record):
         'is_current': True if state == CURRENT else (False if state == SUPERSEDED else None),
         'supersedes_id': record.supersedes_id,
         'superseded_at': record.superseded_at.isoformat() if record.superseded_at else None,
+        # The learning loop, as PRESENCE and STATUS only. Retrieval can tell
+        # that a decision has an outcome and lessons without loading either --
+        # the full text is fetched by id when a caller decides it needs it.
+        # Nothing here is injected into model context; that is a later phase.
+        'outcome': {
+            'recorded': bool(outcome),
+            'status': (outcome or {}).get('status'),
+            'objective_met': (outcome or {}).get('objective_met'),
+            'recorded_at': (outcome or {}).get('recorded_at'),
+            'observation_count': len(outcomes),
+        },
+        'lesson_count': len(lessons),
+        'has_lessons': bool(lessons),
         'confidence_mean': confidence.get('mean'),
         'scorecard_ids': payload.get('scorecard_ids') if isinstance(payload.get('scorecard_ids'), list) else [],
         'created_at': record.created_at.isoformat() if record.created_at else None,

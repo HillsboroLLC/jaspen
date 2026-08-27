@@ -416,3 +416,152 @@ def test_phase_5_downgrade_removes_the_columns(pre_phase_5_db):
         assert conn.execute("SELECT COUNT(*) FROM decision_records").fetchone()[0] == 2
     finally:
         conn.close()
+
+
+# --- Phase 6: attribution retention on decision_records ----------------------
+
+PHASE_6_REVISION = "e2f9a4d17c63"
+
+
+def _load_phase_6():
+    return ScriptDirectory(MIGRATIONS_DIR).get_revision(PHASE_6_REVISION).module
+
+
+def _user_id_nullable(db_path):
+    conn = sqlite3.connect(db_path)
+    try:
+        for row in conn.execute("PRAGMA table_info(decision_records)"):
+            if row[1] == "user_id":
+                return row[3] == 0  # notnull flag == 0 means nullable
+    finally:
+        conn.close()
+    return None
+
+
+def test_phase_6_makes_decision_record_attribution_nullable(pre_phase_5_db):
+    """Outcomes and lessons cannot be re-derived, so they must not cascade
+    away with the person who typed them."""
+    assert _user_id_nullable(pre_phase_5_db) is False, "precondition: NOT NULL"
+
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_5().upgrade()
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_6().upgrade()
+
+    assert _user_id_nullable(pre_phase_5_db) is True
+
+
+def test_phase_6_preserves_every_existing_record_and_its_attribution(pre_phase_5_db):
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_5().upgrade()
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_6().upgrade()
+
+    conn = sqlite3.connect(pre_phase_5_db)
+    try:
+        rows = conn.execute(
+            "SELECT id, user_id, final_decision FROM decision_records ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(rows) == 2
+    # No data was transformed: attribution is intact, decisions untouched.
+    assert all(user_id == "u-owner" for _id, user_id, _fd in rows)
+    assert dict((r[0], r[2]) for r in rows)["rec-decided"] == "We will proceed."
+
+
+def test_phase_6_upgrade_is_idempotent(pre_phase_5_db):
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_5().upgrade()
+    for _ in range(2):
+        with _migration_ops(pre_phase_5_db):
+            _load_phase_6().upgrade()
+    assert _user_id_nullable(pre_phase_5_db) is True
+
+
+def _insert_orphaned_record(db_path):
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("""
+            INSERT INTO decision_records
+                (id, user_id, organization_id, thread_id, title, status, record,
+                 final_decision, created_at, updated_at)
+            VALUES ('rec-orphan', NULL, 'org-1', 't-3', 'Author departed',
+                    'outcome_recorded', '{}', 'We restructured.',
+                    '2026-03-01 00:00:00', '2026-03-01 00:00:00')
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_phase_6_downgrade_succeeds_when_every_record_has_an_author(pre_phase_5_db):
+    """B. Reversal is safe while nothing has been orphaned."""
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_5().upgrade()
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_6().upgrade()
+    assert _user_id_nullable(pre_phase_5_db) is True
+
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_6().downgrade()
+
+    assert _user_id_nullable(pre_phase_5_db) is False
+    conn = sqlite3.connect(pre_phase_5_db)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM decision_records").fetchone()[0] == 2
+    finally:
+        conn.close()
+
+
+def test_phase_6_downgrade_refuses_when_records_lost_their_author(pre_phase_5_db):
+    """C. The reversal must not invalidate retained organizational records."""
+    module = _load_phase_6()
+
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_5().upgrade()
+    with _migration_ops(pre_phase_5_db):
+        module.upgrade()
+
+    _insert_orphaned_record(pre_phase_5_db)
+
+    with pytest.raises(module.RetainedRecordsBlockDowngrade) as exc:
+        with _migration_ops(pre_phase_5_db):
+            module.downgrade()
+
+    message = str(exc.value)
+    assert 'rec-orphan' in message
+    assert 'cannot be re-derived' in message
+
+
+def test_phase_6_refused_downgrade_leaves_every_record_untouched(pre_phase_5_db):
+    """D. A refusal changes nothing -- no fabricated author, no deletion."""
+    module = _load_phase_6()
+
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_5().upgrade()
+    with _migration_ops(pre_phase_5_db):
+        module.upgrade()
+    _insert_orphaned_record(pre_phase_5_db)
+
+    def _snapshot():
+        conn = sqlite3.connect(pre_phase_5_db)
+        try:
+            return conn.execute(
+                "SELECT id, user_id, final_decision FROM decision_records ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
+
+    before = _snapshot()
+
+    with pytest.raises(module.RetainedRecordsBlockDowngrade):
+        with _migration_ops(pre_phase_5_db):
+            module.downgrade()
+
+    assert _snapshot() == before
+    # Still nullable: the schema was not half-migrated by the refusal.
+    assert _user_id_nullable(pre_phase_5_db) is True
+    # The orphaned record and its human-authored decision survive.
+    assert ('rec-orphan', None, 'We restructured.') in _snapshot()

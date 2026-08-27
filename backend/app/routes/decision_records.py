@@ -55,6 +55,10 @@ def _decision_view(record, user):
     payload['alternatives'] = (
         (record.record or {}).get('alternatives') if isinstance(record.record, dict) else []
     )
+    payload['outcomes'] = record.outcomes if isinstance(record.outcomes, list) else []
+    payload['lessons_learned'] = (
+        record.lessons_learned if isinstance(record.lessons_learned, list) else []
+    )
     return payload
 
 
@@ -270,15 +274,25 @@ def add_outcome(record_id):
     user = _current_user()
     if not user:
         return jsonify({'error': 'User not found'}), 404
-    record = _owned_record_or_404(record_id, user)
+    # WRITE gate, not the read gate. This endpoint previously used
+    # _owned_record_or_404, so a view-only member could append an outcome to
+    # the organization's decision history.
+    record, denied = _writable_record_or_none(record_id, user)
+    if denied == 403:
+        return jsonify({'error': 'Your role on this project is read-only',
+                        'code': 'forbidden'}), 403
     if not record:
         return jsonify({'error': 'Decision record not found'}), 404
+
     data = request.get_json(silent=True) or {}
     summary = str(data.get('summary') or '').strip()
     if not summary:
         return jsonify({'error': 'summary is required'}), 400
-    append_outcome(record, summary, extra=data)
-    return jsonify({'record': record.to_dict()}), 201
+    try:
+        append_outcome(record, summary, extra=data, actor=user)
+    except ValueError as exc:
+        return jsonify({'error': str(exc), 'code': 'invalid_outcome'}), 400
+    return jsonify({'record': _decision_view(record, user)}), 201
 
 
 @decision_records_bp.route('/<record_id>/lessons', methods=['POST'])
@@ -287,15 +301,22 @@ def add_lesson(record_id):
     user = _current_user()
     if not user:
         return jsonify({'error': 'User not found'}), 404
-    record = _owned_record_or_404(record_id, user)
+    record, denied = _writable_record_or_none(record_id, user)
+    if denied == 403:
+        return jsonify({'error': 'Your role on this project is read-only',
+                        'code': 'forbidden'}), 403
     if not record:
         return jsonify({'error': 'Decision record not found'}), 404
+
     data = request.get_json(silent=True) or {}
     lesson = str(data.get('lesson') or '').strip()
     if not lesson:
         return jsonify({'error': 'lesson is required'}), 400
-    append_lesson(record, lesson)
-    return jsonify({'record': record.to_dict()}), 201
+    try:
+        append_lesson(record, lesson, extra=data, actor=user)
+    except ValueError as exc:
+        return jsonify({'error': str(exc), 'code': 'invalid_lesson'}), 400
+    return jsonify({'record': _decision_view(record, user)}), 201
 
 
 @decision_records_bp.route('/<record_id>/consent', methods=['POST'])

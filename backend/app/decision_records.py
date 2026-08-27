@@ -10,6 +10,7 @@
 # recommendation/plan) → Decision Record (this module) → outcome tracking →
 # lessons learned → [future: Library, pattern discovery, decision intelligence].
 
+import uuid
 from datetime import datetime
 
 from sqlalchemy.orm.attributes import flag_modified
@@ -39,6 +40,14 @@ _DERIVED_FIELDS = (
 def _clip(text, limit=2000):
     text = str(text or '').strip()
     return text[:limit]
+
+
+def _display_name_for(user_id):
+    from .models import User
+    user = User.query.get(str(user_id)) if user_id else None
+    if user is None:
+        return None
+    return str(getattr(user, 'name', None) or getattr(user, 'email', None) or '').strip() or None
 
 
 def canonical_context(actor, thread_id):
@@ -311,6 +320,10 @@ def assemble_record_payload(user_id, thread_id, *, actor_user_id=None):
         'execution_plan': wbs if isinstance(wbs, (dict, list)) else None,
         'attribution': {
             'created_by_user_id': str(user_id),
+            # Name snapshot so authorship survives the FK being nulled when a
+            # person leaves. The record stays attributable; only the live link
+            # to a user row goes away.
+            'created_by_name': _display_name_for(user_id),
             'last_refreshed_by_user_id': str(actor_user_id or user_id),
             'last_refreshed_at': datetime.utcnow().isoformat(),
         },
@@ -522,31 +535,161 @@ def record_final_decision(record, final_decision_text, decided_by_user_id=None):
     return record
 
 
-def append_outcome(record, summary, extra=None):
+# ─────────────────────────────────────────────────────────────────────────────
+# Outcomes and lessons (Phase 6)
+#
+# OUTCOME is what happened. LESSON is what the organization concluded from what
+# happened. They are kept structurally separate on purpose: collapsing them
+# into one "retrospective" blob loses the distinction between observation and
+# judgement, and it is the judgement that is reusable across future decisions.
+#
+# Both are HUMAN-AUTHORED. Nothing derives them. A project completing is not a
+# successful outcome, and a model's recommendation is not a lesson -- neither
+# may ever be written here without a person submitting it.
+#
+# Both are APPEND-ONLY sequences, which the original implementation already got
+# right. A later observation never overwrites an earlier one, so the record
+# shows how understanding developed rather than only its latest state.
+# ─────────────────────────────────────────────────────────────────────────────
+
+OUTCOME_STATUSES = (
+    'achieved', 'partially_achieved', 'not_achieved', 'too_early', 'abandoned',
+)
+
+
+def _entry_id(prefix):
+    return f'{prefix}_{uuid.uuid4().hex[:12]}'
+
+
+def _actor_name(actor):
+    return str(getattr(actor, 'name', None) or getattr(actor, 'email', None) or '').strip() or None
+
+
+def _evidence_refs(value):
+    """Stable ids only. Never the source documents themselves."""
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value[:24]:
+        ref = str(item or '').strip()
+        if ref:
+            out.append(ref[:128])
+    return out
+
+
+def _metrics(value):
+    """User-supplied measurements, kept as given. Nothing is computed here."""
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value[:24]:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get('label') or '').strip()
+        if not label:
+            continue
+        out.append({
+            'label': label[:120],
+            'value': str(item.get('value') or '').strip()[:120] or None,
+            'expected': str(item.get('expected') or '').strip()[:120] or None,
+            'unit': str(item.get('unit') or '').strip()[:32] or None,
+        })
+    return out
+
+
+def append_outcome(record, summary, extra=None, actor=None):
+    """Record WHAT HAPPENED after a decision. Append-only.
+
+    `objective_met` is captured only when the human states it. It is never
+    inferred from execution completing, from a metric moving, or from the
+    decision having been made at all.
+    """
+    extra = extra if isinstance(extra, dict) else {}
+
+    status = str(extra.get('status') or '').strip().lower() or None
+    if status and status not in OUTCOME_STATUSES:
+        raise ValueError(f'status must be one of {OUTCOME_STATUSES}')
+
+    objective_met = extra.get('objective_met')
+    if objective_met is not None and not isinstance(objective_met, bool):
+        objective_met = None
+
+    entry = {
+        'id': _entry_id('out'),
+        'summary': _clip(summary, 4000),
+        'status': status,
+        'observed_result': _clip(extra.get('observed_result'), 4000) or None,
+        'expected_result': _clip(extra.get('expected_result'), 4000) or None,
+        'metrics': _metrics(extra.get('metrics')),
+        'evidence_refs': _evidence_refs(extra.get('evidence_refs')),
+        'objective_met': objective_met,
+        'recorded_by_user_id': str(getattr(actor, 'id', '') or '') or None,
+        # Name snapshot, so attribution survives the author leaving.
+        'recorded_by_name': _actor_name(actor),
+        'recorded_at': datetime.utcnow().isoformat(),
+        'outcome_date': _clip(extra.get('outcome_date'), 64) or None,
+    }
+    # Fields the original implementation carried; kept for older readers.
+    if 'went_with_recommendation' in extra:
+        entry['went_with_recommendation'] = extra['went_with_recommendation']
+    if 'sentiment' in extra:
+        entry['sentiment'] = extra['sentiment']
+
     outcomes = list(record.outcomes or [])
-    entry = {'summary': _clip(summary, 4000), 'recorded_at': datetime.utcnow().isoformat()}
-    if isinstance(extra, dict):
-        for key in ('went_with_recommendation', 'outcome_date', 'sentiment'):
-            if key in extra:
-                entry[key] = extra[key]
     outcomes.append(entry)
     record.outcomes = outcomes
     flag_modified(record, 'outcomes')
-    record.status = 'outcome_recorded'
+
+    # Never regress a superseded/archived record, and never overwrite a status
+    # that already says something stronger about lifecycle.
+    if record.status in ('in_analysis', 'recorded', 'decided'):
+        record.status = 'outcome_recorded'
     record.outcome_recorded_at = datetime.utcnow()
     record.updated_at = datetime.utcnow()
     db.session.commit()
     return record
 
 
-def append_lesson(record, lesson):
+def append_lesson(record, lesson, extra=None, actor=None):
+    """Record WHAT THE ORGANIZATION LEARNED. Append-only.
+
+    A lesson may be added long after the outcome, when more is known, and may
+    optionally cite the outcome it came from.
+    """
+    extra = extra if isinstance(extra, dict) else {}
+
+    outcome_id = str(extra.get('outcome_id') or '').strip() or None
+    if outcome_id:
+        known = {
+            str(o.get('id')) for o in (record.outcomes or []) if isinstance(o, dict)
+        }
+        if outcome_id not in known:
+            raise ValueError('outcome_id does not belong to this decision record')
+
+    entry = {
+        'id': _entry_id('les'),
+        'lesson': _clip(lesson, 4000),
+        'outcome_id': outcome_id,
+        'evidence_refs': _evidence_refs(extra.get('evidence_refs')),
+        'recorded_by_user_id': str(getattr(actor, 'id', '') or '') or None,
+        'recorded_by_name': _actor_name(actor),
+        'recorded_at': datetime.utcnow().isoformat(),
+    }
+
     lessons = list(record.lessons_learned or [])
-    lessons.append({'lesson': _clip(lesson, 4000), 'recorded_at': datetime.utcnow().isoformat()})
+    lessons.append(entry)
     record.lessons_learned = lessons
     flag_modified(record, 'lessons_learned')
     record.updated_at = datetime.utcnow()
     db.session.commit()
     return record
+
+
+def latest_outcome(record):
+    """The most recent observation, or None. Earlier ones are still there."""
+    outcomes = record.outcomes if isinstance(record.outcomes, list) else []
+    entries = [o for o in outcomes if isinstance(o, dict)]
+    return entries[-1] if entries else None
 
 
 def set_library_consent(record, level):
