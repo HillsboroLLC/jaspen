@@ -248,11 +248,29 @@ def can_write_session(row, user, membership=None):
 
 
 def can_archive_session(row, user, membership=None):
-    """Permission to archive/purge the ORGANIZATION's canonical row.
+    """Authority to destroy the ORGANIZATION's canonical row -- archive it,
+    schedule its purge, or delete it permanently.
 
-    Distinct from removing it from your own history, which needs no permission
-    beyond read access. Org owners/admins may archive anything in the org; a
-    creator may archive their own work.
+    This is the single destructive-authority predicate. Everything that can
+    destroy organizational work routes through it: the per-project delete, the
+    bulk hard reset, the permanent purge, and the purge sweep. There is
+    deliberately no second permission system.
+
+    The rule, in order:
+
+      * Personal-scope rows and rows with no organization -- attribution.
+      * A solo organization -- attribution. The only member IS the owner, so
+        this is what keeps individual behaviour exactly as it was.
+      * A multi-member organization:
+          - owner/admin may destroy anything in the org;
+          - otherwise the row's visibility decides. PRIVATE work is still the
+            author's own, but once work is SHARED, being the person who
+            happened to create it confers NO destructive authority. It is the
+            organization's now, and other members depend on it.
+
+    That last clause is the Phase 2 correction. Creator status used to grant
+    hard-delete over shared work, which contradicted the per-project rule and
+    let one member destroy institutional work through a bulk reset.
     """
     if not can_read_session(row, user, membership=membership):
         return False
@@ -261,11 +279,18 @@ def can_archive_session(row, user, membership=None):
     if is_personal_session_id(row.session_id) or not row.organization_id:
         return is_attributed_to(row, uid)
 
+    if not org_is_multi_member(row.organization_id):
+        return is_attributed_to(row, uid)
+
     if membership is None:
         membership = active_membership_for_user(row.organization_id, uid)
     if membership is not None and can_manage_org(normalize_org_role(membership.role)):
         return True
-    return is_attributed_to(row, uid)
+
+    visibility = str(row.visibility or VISIBILITY_PRIVATE).strip().lower()
+    if visibility == VISIBILITY_PRIVATE:
+        return is_attributed_to(row, uid)
+    return False
 
 
 # --- The chokepoint ----------------------------------------------------------
@@ -431,21 +456,12 @@ def uses_personal_hide(row, user):
         # the organization's history. Today's behaviour, unchanged.
         return False
 
-    visibility = str(row.visibility or VISIBILITY_PRIVATE).strip().lower()
-    if visibility == VISIBILITY_PRIVATE:
-        # Unshared work in a team org is still just this person's.
-        return not is_attributed_to(row, str(user.id))
-
-    # The row is SHARED with other people. Note this is deliberately stricter
-    # than can_archive_session(): a creator may archive their own project when
-    # they explicitly ask to, but "remove from my history" must not be the
-    # gesture that does it, because the work is now the organization's and
-    # other members are relying on it. Only an owner/admin -- who hold
-    # deliberate organization-level authority -- archive from here.
-    membership = active_membership_for_user(row.organization_id, str(user.id))
-    if membership is None:
-        return False
-    return not can_manage_org(normalize_org_role(membership.role))
+    # Derived from the destructive-authority predicate rather than restating
+    # it. Phase 1 spelled the rule out twice and the two copies disagreed --
+    # the per-project path protected shared work while the bulk reset did not.
+    # Anyone without authority to destroy the organization's copy gets a
+    # personal hide instead.
+    return not can_archive_session(row, user)
 
 
 # --- Duplicate (fork) detection ---------------------------------------------

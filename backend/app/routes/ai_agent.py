@@ -52,6 +52,7 @@ from app.tool_registry import (
     get_tool_entitlements,
     is_tool_allowed,
 )
+from sqlalchemy import or_
 from app.orgs import normalize_org_role, resolve_active_org_for_user
 from app.scenarios_store import save_scenarios_data
 from app.scorecards import (
@@ -194,6 +195,7 @@ from .sessions import (
 from app.session_access import (
     SessionAccessError,
     SessionNotFound,
+    can_archive_session,
     canonical_row,
     check_revision,
     extract_base_revision,
@@ -10529,16 +10531,51 @@ def reset_threads():
     cleared_threads = len(sessions) if isinstance(sessions, dict) else 0
 
     if hard:
-        # Hard wipe: drop the rows and anonymize all ledger entries.
+        # Hard wipe. PHASE 2: partition first. This used to hand every session
+        # id straight to the delete path, so a member who had created and then
+        # shared a project could destroy the organization's canonical copy by
+        # clearing their own history -- the one place creator attribution
+        # still bought destructive authority.
+        #
+        # Rows the caller may destroy are destroyed. Rows they may not are
+        # HIDDEN from their view instead, so the user's cleanup still does what
+        # they asked while the organization's work survives.
         existing_ids = list(sessions.keys()) if isinstance(sessions, dict) else []
-        save_user_sessions(user_id, {}, session_ids_to_delete=existing_ids)
+        destroyable, protected = [], []
         for sid in existing_ids:
+            row = canonical_row(user, sid, include_archived=True) if user else None
+            if row is not None and user is not None and not can_archive_session(row, user):
+                protected.append(sid)
+            else:
+                destroyable.append(sid)
+
+        save_user_sessions(user_id, {}, session_ids_to_delete=destroyable)
+        for sid in destroyable:
             try:
                 mark_ledger_purged(sid)
             except Exception:
                 pass
+
+        for sid in protected:
+            try:
+                archive_user_session(user_id, sid, grace_days=30)
+            except SessionAccessError:
+                current_app.logger.warning(
+                    "[reset_threads] could not hide protected org row %s", sid
+                )
+        if protected:
+            current_app.logger.info(
+                "[reset_threads] user=%s hard reset: destroyed %d, "
+                "protected %d organization-owned row(s)",
+                user_id[:8], len(destroyable), len(protected),
+            )
+        cleared_threads = len(destroyable)
+        hidden_threads = len(protected)
     else:
-        # Soft path: distill → archive each session.
+        # Soft path: distill → archive each session. archive_user_session()
+        # already resolves hide-vs-archive per row, so shared organizational
+        # work is hidden rather than scheduled for purge.
+        hidden_threads = 0
         for sid, session in (sessions.items() if isinstance(sessions, dict) else []):
             try:
                 distill_session_to_ledger_row(user=user, session=session, outcome="active")
@@ -10566,6 +10603,9 @@ def reset_threads():
     return jsonify({
         "success": True,
         "cleared_threads": cleared_threads,
+        # Organization-owned rows this user may not destroy. They were removed
+        # from this member's view, not from the organization.
+        "hidden_threads": hidden_threads,
         "cleared_scenarios": scenarios_cleared,
     }), 200
 
@@ -10993,8 +11033,22 @@ def delete_thread(thread_id):
             if hard_delete_user_session(user_id, sid):
                 removed_any = True
                 break
-        for sid in candidate_ids:
-            delete_thread_scorecards(user_id, sid)
+
+        # PHASE 2 INVARIANT: evidence outlives its canonical project.
+        # Scorecards used to be deleted unconditionally here, so a purge that
+        # matched no session row still destroyed the evidence attached to a
+        # project that was very much alive. Permanent evidence cleanup happens
+        # only when an authorized destructive operation actually removed the
+        # canonical row.
+        if removed_any:
+            for sid in candidate_ids:
+                delete_thread_scorecards(user_id, sid)
+        else:
+            current_app.logger.info(
+                "[delete_thread] no canonical row removed for %s; "
+                "leaving attached scorecards intact",
+                resolved_thread_id,
+            )
         db.session.commit()
         # Anonymize the ledger row: null the user + session links, stamp
         # purged_at. Aggregate signals stay for the org's "ideas like this"
@@ -11232,18 +11286,41 @@ def sweep_purge_expired_threads():
     """
     user_id = str(get_jwt_identity())
     from app.models import UserSession
+    user = User.query.get(user_id)
     now = datetime.utcnow()
+
+    # PHASE 2: the sweep follows ORGANIZATION ownership, not the historical
+    # home user. It used to select on `user_id == caller`, so a shared project
+    # archived by an admin was only ever swept if the person who originally
+    # created it happened to trigger a sweep -- and was stranded entirely once
+    # that person left.
+    #
+    # Scheduling remains the gate: only archived_at + purge_after make a row
+    # eligible, and only an entitled archiver can set those
+    # (archive_user_session). A personal hide never touches them, so hidden
+    # rows are structurally unreachable from here.
+    scope = [UserSession.user_id == user_id]
+    active_org_id = getattr(user, "active_organization_id", None) if user else None
+    if active_org_id:
+        scope.append(UserSession.organization_id == str(active_org_id))
+
     rows = (
         UserSession.query
-        .filter(UserSession.user_id == user_id)
+        .filter(or_(*scope))
         .filter(UserSession.archived_at.isnot(None))
         .filter(UserSession.purge_after.isnot(None))
         .filter(UserSession.purge_after <= now)
         .all()
     )
     purged_ids = []
+    skipped_ids = []
     for row in rows:
         sid = row.session_id
+        # Authority is re-checked per row: reaching a row through the org scope
+        # does not by itself entitle this caller to destroy it.
+        if user is not None and not can_archive_session(row, user):
+            skipped_ids.append(sid)
+            continue
         try:
             db.session.delete(row)
             db.session.commit()
@@ -11253,7 +11330,12 @@ def sweep_purge_expired_threads():
             db.session.rollback()
             current_app.logger.warning(f"[sweep_purge] failed to purge {sid}: {e}")
 
-    return jsonify({"success": True, "purged_count": len(purged_ids), "purged_ids": purged_ids}), 200
+    return jsonify({
+        "success": True,
+        "purged_count": len(purged_ids),
+        "purged_ids": purged_ids,
+        "skipped_count": len(skipped_ids),
+    }), 200
 
 
 @ai_agent_bp.route("/threads/<thread_id>/messages", methods=["POST"])
