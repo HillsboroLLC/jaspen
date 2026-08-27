@@ -3518,7 +3518,39 @@ def analyze_project():
             sessions[session_key or resolved_thread_id] = session
             persisted_session = save_user_sessions(current_user_id, sessions)
 
+        # PHASE 3. A completed score is the product's meaningful "decision
+        # artifact exists" moment -- the same lifecycle point that already
+        # marks the session completed and updates personal memory. That makes
+        # it the right and only chokepoint for the canonical Decision Record;
+        # ordinary chat turns never reach here.
+        #
+        # Synchronous and best-effort: the record is derived from rows that
+        # were just committed above, and a failure here must never fail the
+        # user's score. It is create-OR-REFRESH, so re-scoring the same thread
+        # updates one record rather than accumulating duplicates.
+        try:
+            from app.decision_records import create_or_refresh_record
+            _actor = User.query.get(str(current_user_id))
+            if _actor is not None:
+                _record, _created = create_or_refresh_record(_actor, resolved_thread_id)
+                current_app.logger.info(
+                    "[decision_record] %s record %s for thread %s",
+                    "created" if _created else "refreshed",
+                    _record.id, resolved_thread_id,
+                )
+        except LookupError:
+            # Nothing analyzable in the thread yet -- not an error.
+            current_app.logger.debug(
+                "[decision_record] nothing to record for thread %s", resolved_thread_id
+            )
+        except Exception:
+            current_app.logger.exception(
+                "[decision_record] failed for thread %s", resolved_thread_id
+            )
+
         # Fire-and-forget: extract business facts from this score into persistent user memory.
+        # Unchanged by Phase 3: personal memory and the organization's Decision
+        # Record are separate layers and both continue to run.
         try:
             from app.routes.ai_agent import extract_and_update_user_memory
             _score_val = analysis_result.get('jaspen_score')

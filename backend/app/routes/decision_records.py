@@ -111,7 +111,11 @@ def update_record(record_id):
 
     try:
         if 'final_decision' in data:
-            record_final_decision(record, data.get('final_decision'))
+            # The human decision signal. Capture WHO decided, so the record can
+            # show that a person made this call rather than a model.
+            record_final_decision(
+                record, data.get('final_decision'), decided_by_user_id=user.id
+            )
         if 'status' in data:
             set_status(record, data.get('status'))
     except ValueError as exc:

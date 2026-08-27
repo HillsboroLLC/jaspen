@@ -27,6 +27,7 @@ from app.models import (
     Payment,
     PersistentCreditGrant,
     PersistentCreditTransaction,
+    OrgIdeaLedger,
     SavedStarter,
     Scorecard,
     UsageEvent,
@@ -139,7 +140,11 @@ def client(app):
 @pytest.fixture
 def db(app):
     with app.app_context():
+        from app.models_decision_record import DecisionRecord
+
         for model in (
+            DecisionRecord,
+            OrgIdeaLedger,
             AdminAuditEvent,
             AppSetting,
             ConnectorSyncLog,

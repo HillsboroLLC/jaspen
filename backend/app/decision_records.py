@@ -27,9 +27,13 @@ from .models_decision_record import (
 # on dedicated columns and are never touched by re-derivation.
 _DERIVED_FIELDS = (
     'decision_statement', 'conversation_summary', 'evidence_summary',
-    'objectives', 'rubric', 'alternatives', 'scorecards', 'recommendation',
-    'confidence', 'execution_plan',
+    'objectives', 'rubric', 'alternatives', 'scorecards', 'scorecard_ids',
+    'recommendation', 'confidence', 'execution_plan', 'attribution',
 )
+# NOT derived, deliberately: `human_decision` mirrors the human-owned
+# final_decision column. Refreshing it from a re-derivation would reset a
+# recorded human decision back to "none", which is the worst thing this
+# module could do. It is reconciled FROM the column instead.
 
 
 def _clip(text, limit=2000):
@@ -37,8 +41,58 @@ def _clip(text, limit=2000):
     return text[:limit]
 
 
+def canonical_context(actor, thread_id):
+    """Resolve who OWNS this thread's record and who it is ATTRIBUTED to.
+
+    Phases 1-2 made the organization the owner of a project and left user
+    identity as attribution. A Decision Record is the durable artifact derived
+    from that project, so it must follow the same rule, or two members
+    completing the same decision would produce two competing records and a
+    departure would orphan one of them.
+
+    Returns ``(row, organization_id, attribution_user_id)``:
+
+      * ``organization_id`` comes from the canonical session row, NOT from the
+        actor's active organization -- otherwise a member whose active org has
+        since changed would file the record under the wrong organization.
+      * ``attribution_user_id`` is the project's creator, so a collaborator
+        refreshing a record does not become its author.
+    """
+    from .models import User
+    from .session_access import canonical_row
+
+    if actor is None:
+        return None, None, None
+
+    row = canonical_row(actor, thread_id, include_archived=True)
+    if row is None:
+        # No resolvable project, so there is no organization to attribute the
+        # record to. Return None rather than falling back to the actor's active
+        # organization: guessing here would file a record under whichever
+        # organization the member happened to be looking at. Assembly raises
+        # LookupError immediately afterwards anyway.
+        return None, None, str(actor.id)
+
+    organization_id = row.organization_id
+    attribution_user_id = str(row.created_by_user_id or row.user_id or actor.id)
+
+    # The attributed user must still exist for the record's FK; fall back to
+    # the actor rather than writing a dangling reference.
+    if not User.query.get(attribution_user_id):
+        attribution_user_id = str(actor.id)
+
+    return row, organization_id, attribution_user_id
+
+
 def _load_thread_sources(user_id, thread_id):
-    """Read-only view over the two existing stores for one thread."""
+    """Read-only view over the two existing stores for one thread.
+
+    `user_id` is the ATTRIBUTION identity (the project's creator), not
+    necessarily the caller. Reading under a stable identity is what makes the
+    assembled record identical no matter which member triggers a refresh --
+    otherwise a collaborator would derive a record missing the owner's
+    scorecards and scenario data.
+    """
     # Local imports: routes modules import broadly at module load; deferring
     # avoids import cycles (same pattern strategy.py uses toward ai_agent).
     from .routes.sessions import load_user_sessions
@@ -179,8 +233,13 @@ def _summarize_evidence(cards):
     }
 
 
-def assemble_record_payload(user_id, thread_id):
+def assemble_record_payload(user_id, thread_id, *, actor_user_id=None):
     """Derive the canonical Decision Record payload for a thread.
+
+    `user_id` is the ATTRIBUTION identity -- the project's creator -- and is
+    what the thread's sources and scorecards are read under, so the same
+    evidence set is assembled no matter which member triggered the refresh.
+    `actor_user_id` is whoever triggered it, recorded as a contributor.
 
     Returns (payload, promoted) where `promoted` carries values for the
     queryable columns. Raises LookupError when the thread has no analyzable
@@ -224,9 +283,37 @@ def assemble_record_payload(user_id, thread_id):
         'rubric': rubric,
         'alternatives': [c['name'] for c in cards],
         'scorecards': cards,                       # flat peer list, no baseline flag
+        # Separately addressable evidence. The full cards stay above; this is
+        # the stable-id index so a future retrieval layer can reference the
+        # durable Scorecard rows without re-parsing the payload.
+        'scorecard_ids': [c['id'] for c in cards if c.get('id')],
+
+        # AI OUTPUT. Article 4: the human decides. This is the model's
+        # recommendation and must never be read as the organization's
+        # decision -- see `human_decision` below, which is the only place a
+        # decision can live.
         'recommendation': _clip(portfolio.get('recommended_sequence'), 2000) or None,
+
+        # HUMAN DECISION. Deliberately empty at derivation time: nothing in
+        # the product currently captures a final human decision, so recording
+        # one here would be an invention. `recorded: False` states that
+        # absence explicitly rather than letting a reader infer that the
+        # recommendation above was adopted. record_final_decision() is the only
+        # writer, and it advances status to 'decided'.
+        'human_decision': {
+            'recorded': False,
+            'decision': None,
+            'decided_at': None,
+            'decided_by_user_id': None,
+        },
+
         'confidence': confidence,
         'execution_plan': wbs if isinstance(wbs, (dict, list)) else None,
+        'attribution': {
+            'created_by_user_id': str(user_id),
+            'last_refreshed_by_user_id': str(actor_user_id or user_id),
+            'last_refreshed_at': datetime.utcnow().isoformat(),
+        },
         'derived_at': datetime.utcnow().isoformat(),
         'source': {'thread_id': thread_id},
     }
@@ -237,18 +324,50 @@ def assemble_record_payload(user_id, thread_id):
     return payload, promoted
 
 
+def _find_existing_record(organization_id, attribution_user_id, thread_id):
+    """The canonical record for this thread.
+
+    Identity is (organization_id, thread_id) whenever the thread has an
+    organization -- which, post-Phase-1, is every thread except a personal
+    sentinel. Keying on (user_id, thread_id) as this used to would give each
+    member of a team their own private record of the same decision, which is
+    the exact fork Phase 1 removed at the session layer.
+
+    The user-scoped lookup survives only as a fallback for a thread with no
+    organization, and as a migration path: a record written under the old
+    per-user identity is found and adopted rather than duplicated.
+    """
+    tid = str(thread_id)
+    if organization_id:
+        found = (
+            DecisionRecord.query
+            .filter_by(organization_id=str(organization_id), thread_id=tid)
+            .order_by(DecisionRecord.created_at.asc())
+            .first()
+        )
+        if found is not None:
+            return found
+
+    return (
+        DecisionRecord.query
+        .filter_by(user_id=str(attribution_user_id), thread_id=tid)
+        .order_by(DecisionRecord.created_at.asc())
+        .first()
+    )
+
+
 def create_or_refresh_record(user, thread_id):
     """One active record per thread. Creating twice refreshes the DERIVED
     analysis fields and never touches human-owned fields (final decision,
     outcomes, lessons, consent, advanced status)."""
-    payload, promoted = assemble_record_payload(user.id, thread_id)
+    _row, organization_id, attribution_user_id = canonical_context(user, thread_id)
+    attribution_user_id = attribution_user_id or str(user.id)
 
-    existing = (
-        DecisionRecord.query
-        .filter_by(user_id=user.id, thread_id=str(thread_id))
-        .order_by(DecisionRecord.created_at.desc())
-        .first()
+    payload, promoted = assemble_record_payload(
+        attribution_user_id, thread_id, actor_user_id=user.id
     )
+
+    existing = _find_existing_record(organization_id, attribution_user_id, thread_id)
     if existing:
         # Copy BEFORE mutating: mutating the loaded dict in place makes
         # SQLAlchemy's flush-time comparison see old == new and skip the
@@ -260,6 +379,9 @@ def create_or_refresh_record(user, thread_id):
                 record_json[field] = payload[field]
         record_json['derived_at'] = payload['derived_at']
         record_json['schema_version'] = payload['schema_version']
+        # Reconcile the human-decision block FROM the column, so a refresh can
+        # neither invent a decision nor erase one that was recorded.
+        record_json['human_decision'] = _human_decision_block(existing)
         existing.record = record_json
         flag_modified(existing, 'record')
         existing.title = promoted['title']
@@ -273,11 +395,18 @@ def create_or_refresh_record(user, thread_id):
         return existing, False
 
     record = DecisionRecord(
-        user_id=user.id,
-        organization_id=getattr(user, 'active_organization_id', None),
+        # ATTRIBUTION, not ownership: the project's creator, so a collaborator
+        # completing the decision does not become its author.
+        user_id=attribution_user_id,
+        # OWNERSHIP: taken from the canonical session row rather than the
+        # actor's active organization, which may since have changed.
+        organization_id=organization_id,
         thread_id=str(thread_id),
         title=promoted['title'],
         decision_statement=promoted['decision_statement'],
+        # 'recorded' means the analysis is captured. It is NOT 'decided':
+        # advancing that far requires an actual human decision signal, which
+        # only record_final_decision() supplies.
         status='recorded' if payload.get('scorecards') else 'in_analysis',
         record=payload,
     )
@@ -286,11 +415,38 @@ def create_or_refresh_record(user, thread_id):
     return record, True
 
 
-def record_final_decision(record, final_decision_text):
+def _human_decision_block(record):
+    """The record's human-decision state, derived from its own columns."""
+    decided = bool(record.final_decision)
+    return {
+        'recorded': decided,
+        'decision': record.final_decision if decided else None,
+        'decided_at': record.decided_at.isoformat() if decided and record.decided_at else None,
+        'decided_by_user_id': (record.record or {}).get('human_decision', {}).get('decided_by_user_id')
+        if isinstance(record.record, dict) else None,
+    }
+
+
+def record_final_decision(record, final_decision_text, decided_by_user_id=None):
+    """Capture the FINAL HUMAN DECISION -- the only writer of that field.
+
+    Article 4: the human decides. Nothing in the derivation path may call this;
+    a model recommendation never becomes the organization's decision without a
+    human signal passing through here.
+    """
     record.final_decision = _clip(final_decision_text, 4000) or None
     if record.final_decision:
         record.status = 'decided'
         record.decided_at = datetime.utcnow()
+
+    record_json = {**(record.record if isinstance(record.record, dict) else {})}
+    block = _human_decision_block(record)
+    if decided_by_user_id and record.final_decision:
+        block['decided_by_user_id'] = str(decided_by_user_id)
+    record_json['human_decision'] = block
+    record.record = record_json
+    flag_modified(record, 'record')
+
     record.updated_at = datetime.utcnow()
     db.session.commit()
     return record
