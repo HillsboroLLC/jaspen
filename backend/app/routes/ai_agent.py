@@ -10490,6 +10490,10 @@ def list_threads():
             "starter_lever_defaults": _sanitize_lever_defaults(candidate.get("starter_lever_defaults")),
             "organization_id": candidate.get("organization_id"),
             "created_by_user_id": candidate.get("created_by_user_id"),
+            # Carried so a list-driven mutation (Projects.jsx archive) can
+            # declare the revision it is acting on without refetching.
+            "revision": int(candidate.get("revision") or 1),
+            "last_edited_by_user_id": candidate.get("last_edited_by_user_id"),
             "visibility": candidate.get("visibility") or "private",
             "shared_with_user_ids": candidate.get("shared_with_user_ids") if isinstance(candidate.get("shared_with_user_ids"), list) else [],
             "chat_history": chat_history,
@@ -10690,15 +10694,13 @@ def update_thread(thread_id):
     user, sessions, canonical = _authorized_thread_scope(
         user_id, thread_id, require_write=True
     )
-    # Validate a declared base revision, but do not REQUIRE one here. The
-    # shipped client (Projects.jsx, JaspenClient.updateThread) does not echo
-    # `revision` yet, and requiring it would break renaming a shared project
-    # for existing Team customers. `revision` is now returned by GET
-    # /threads/<id>, so a client can opt in immediately; flipping this to a
-    # hard requirement is a one-line follow-up once it does.
-    _declared = extract_base_revision(data)
-    if _declared is not None:
-        check_revision(canonical, _declared)
+    # PHASE 1.1. A declared base revision is now REQUIRED for a shared project
+    # in a multi-member organization (revision_required_for()), not merely
+    # validated when present. Every client path that can reach this endpoint --
+    # JaspenClient.setThreadObjective / setThreadIntakeContext, Projects.jsx
+    # archive, ThreadEditModal rename -- carries the revision it loaded.
+    # Private and solo work stays exempt, so individual users are unaffected.
+    check_revision(canonical, extract_base_revision(data))
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found", "code": "not_found"}), 404
@@ -10872,10 +10874,14 @@ def update_thread(thread_id):
     }
     session_payload.pop(PENDING_MUTATION_UNDO_KEY, None)
 
+    # Return the post-write revision so a client can keep editing without
+    # refetching the whole thread.
+    _written = canonical_row(user, resolved_thread_id, include_archived=True)
     return jsonify({
         "success": True,
         "thread": {
             "id": resolved_thread_id,
+            "revision": int(_written.revision or 1) if _written is not None else None,
             "name": session.get("name") or "Jaspen Intake",
             "strategy_objective": normalize_strategy_objective(session.get("strategy_objective")),
             "objective_explicitly_set": bool(session.get("objective_explicitly_set")),

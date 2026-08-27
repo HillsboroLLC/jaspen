@@ -79,7 +79,8 @@ def test_collaborator_rename_updates_the_canonical_row_without_forking(client, a
     _seed_project(db, org, owner, session_id="th-rename", visibility="team")
 
     resp = client.patch("/api/v1/ai-agent/threads/th-rename",
-                        headers=_headers(app, editor), json={"name": "Renamed by B"})
+                        headers=_headers(app, editor),
+                        json={"name": "Renamed by B", "base_revision": 1})
     assert resp.status_code == 200, resp.get_json()
 
     rows = UserSession.query.filter_by(session_id="th-rename").all()
@@ -89,13 +90,13 @@ def test_collaborator_rename_updates_the_canonical_row_without_forking(client, a
     assert rows[0].last_edited_by_user_id == editor.id
 
 
-def test_patch_validates_a_declared_stale_revision(client, app, db, team_setup):
-    """Opt-in protection: a client that declares a base gets checked."""
+def test_patch_rejects_a_stale_revision(client, app, db, team_setup):
     org, owner, editor = team_setup["org"], team_setup["owner"], team_setup["editor"]
     _seed_project(db, org, owner, session_id="th-stale", visibility="team")
 
     client.patch("/api/v1/ai-agent/threads/th-stale",
-                 headers=_headers(app, editor), json={"name": "first"})
+                 headers=_headers(app, editor),
+                 json={"name": "first", "base_revision": 1})
 
     resp = client.patch("/api/v1/ai-agent/threads/th-stale",
                         headers=_headers(app, owner),
@@ -105,12 +106,24 @@ def test_patch_validates_a_declared_stale_revision(client, app, db, team_setup):
     assert UserSession.query.filter_by(session_id="th-stale").one().name == "first"
 
 
-def test_patch_without_a_declared_revision_still_works(client, app, db, team_setup):
-    """No regression for the shipped client, which does not echo `revision`."""
+def test_patch_on_shared_work_requires_a_revision(client, app, db, team_setup):
+    """PHASE 1.1: missing is rejected, not silently accepted."""
     org, owner = team_setup["org"], team_setup["owner"]
     _seed_project(db, org, owner, session_id="th-nodecl", visibility="team")
 
     resp = client.patch("/api/v1/ai-agent/threads/th-nodecl",
+                        headers=_headers(app, owner), json={"name": "renamed"})
+    assert resp.status_code == 409
+    assert resp.get_json()["code"] == "revision_conflict"
+    assert UserSession.query.filter_by(session_id="th-nodecl").one().name == "Shared project"
+
+
+def test_patch_on_private_work_does_not_require_a_revision(client, app, db, team_setup):
+    """Unshared work is exempt, so individual usage is untouched."""
+    org, owner = team_setup["org"], team_setup["owner"]
+    _seed_project(db, org, owner, session_id="th-priv-patch", visibility="private")
+
+    resp = client.patch("/api/v1/ai-agent/threads/th-priv-patch",
                         headers=_headers(app, owner), json={"name": "renamed"})
     assert resp.status_code == 200, resp.get_json()
 

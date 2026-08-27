@@ -8,9 +8,65 @@
 import { API_BASE } from '../../config/apiBase';
 import { AUTH_EVENTS, buildAuthHeaders } from '../../shared/auth/http';
 
+// 409 is deliberately absent: a revision conflict must NEVER be retried. Doing
+// so would resend the caller's stale body against a newer server state, which
+// is the exact overwrite the revision model exists to prevent.
 const RETRYABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const RETRY_BACKOFF_MS = [1000, 2000, 4000];
 let lastCreditsExhaustedNoticeAt = 0;
+
+// ── Thread revision registry ────────────────────────────────────────────────
+//
+// The last revision this client observed for each thread. Populated whenever a
+// thread is read and refreshed from every accepted write, then attached to
+// PATCH /threads/<id> as `base_revision` so the server can refuse a write that
+// is based on a version someone else has already replaced.
+//
+// A module-level map rather than React state on purpose: the value is a
+// property of the server row, not of any one component's view, and several
+// unrelated surfaces (the workspace, Projects, the rename modal) mutate the
+// same thread. Threading it through component state would mean redesigning
+// state management, which this phase explicitly does not do.
+const threadRevisions = new Map();
+
+export function rememberThreadRevision(threadId, revision) {
+  const id = String(threadId || '').trim();
+  const value = Number(revision);
+  if (!id || !Number.isFinite(value)) return;
+  threadRevisions.set(id, value);
+}
+
+export function getThreadRevision(threadId) {
+  const id = String(threadId || '').trim();
+  return id && threadRevisions.has(id) ? threadRevisions.get(id) : null;
+}
+
+export function forgetThreadRevision(threadId) {
+  threadRevisions.delete(String(threadId || '').trim());
+}
+
+/** True when an error from this client is a revision conflict. */
+export function isRevisionConflict(error) {
+  return Boolean(error) && (error.status === 409 || error?.data?.code === 'revision_conflict');
+}
+
+export const REVISION_CONFLICT_MESSAGE =
+  'This project changed since you opened it. Reload to get the latest version before saving again.';
+
+/** Record whatever revision a server payload carries, wherever it sits. */
+function captureRevision(threadId, payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const candidate =
+    payload?.thread?.revision ??
+    payload?.session?.revision ??
+    payload?.revision;
+  const id = threadId
+    || payload?.thread?.id
+    || payload?.thread?.session_id
+    || payload?.session?.session_id;
+  rememberThreadRevision(id, candidate);
+  return payload;
+}
 
 export const endpoints = {
   // AI Agent endpoints (NEW)
@@ -271,6 +327,28 @@ async function putJSON(url, body, { withSid = false, sidOverride } = {}) {
 }
 async function patchJSON(url, body, { withSid = false, sidOverride } = {}) {
   return _fetch(url, { method: 'PATCH', body: JSON.stringify(body ?? {}), withSid, sidOverride });
+}
+
+/**
+ * PATCH /threads/<id> with the revision this client last observed.
+ *
+ * The server REQUIRES `base_revision` for a shared project in a multi-member
+ * organization and refuses the write with 409 when it is missing or stale, so
+ * every mutation of a thread goes through here rather than calling patchJSON
+ * on updateThread directly.
+ *
+ * The error is re-thrown untouched. Nothing here retries, and nothing re-sends
+ * the body against the newer revision -- resolving a conflict is the user's
+ * call, made against content they can actually see.
+ */
+async function patchThread(threadId, body = {}, { withSid = true } = {}) {
+  const known = getThreadRevision(threadId);
+  const payload = { ...(body || {}) };
+  if (payload.base_revision == null && known != null) {
+    payload.base_revision = known;
+  }
+  const data = await patchJSON(endpoints.updateThread(threadId), payload, { withSid });
+  return captureRevision(threadId, data);
 }
 async function upsertJSON(url, body, { withSid = false, sidOverride } = {}) {
   return _fetch(url, { method: 'PUT', body: JSON.stringify(body ?? {}), withSid, sidOverride });
@@ -1165,21 +1243,13 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   },
 
   setThreadObjective: async (threadId, strategy_objective, objective_explicitly_set = true) =>
-    patchJSON(
-      endpoints.updateThread(threadId),
-      { strategy_objective, objective_explicitly_set },
-      { withSid: true }
-    ),
+    patchThread(threadId, { strategy_objective, objective_explicitly_set }),
   setThreadIntakeContext: async (threadId, intake_context = {}, strategy_objective = null, objective_explicitly_set = true) =>
-    patchJSON(
-      endpoints.updateThread(threadId),
-      {
-        intake_context: intake_context && typeof intake_context === 'object' ? intake_context : {},
-        ...(strategy_objective ? { strategy_objective } : {}),
-        objective_explicitly_set,
-      },
-      { withSid: true }
-    ),
+    patchThread(threadId, {
+      intake_context: intake_context && typeof intake_context === 'object' ? intake_context : {},
+      ...(strategy_objective ? { strategy_objective } : {}),
+      objective_explicitly_set,
+    }),
 
   generateAiWbs: async (threadId, scenarioIdOrPayload = null, { abortSignal = null } = {}) => {
     const payload = (scenarioIdOrPayload && typeof scenarioIdOrPayload === 'object')
