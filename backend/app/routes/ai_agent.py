@@ -185,10 +185,54 @@ def _rate_limit_usage_count(rate_key, limit_item):
 
 from .sessions import (
     load_user_sessions,
+    load_sessions_for_thread,
     save_user_sessions,
     archive_user_session,
+    restore_user_session,
     hard_delete_user_session,
 )
+from app.session_access import (
+    SessionAccessError,
+    SessionNotFound,
+    canonical_row,
+    check_revision,
+    extract_base_revision,
+    is_hidden_for,
+    resolve_session_for_actor,
+)
+
+
+def _authorized_thread_scope(user_id, thread_id, *, require_write=False,
+                             include_archived=False, allow_missing=False):
+    """Authorize this caller for one thread, then return its working set.
+
+    Returns ``(user, sessions, row)``. Authorization runs BEFORE the sessions
+    dict is assembled, so no handler downstream can build a response or a
+    prompt out of a row the caller may not read.
+
+    The returned dict is the caller's own sessions plus the organization's
+    canonical row for this thread, which keeps the existing
+    ``_resolve_user_session(sessions, thread_id)`` idiom working unchanged.
+
+    Raises SessionAccessError; the app-level handler renders it as
+    404 / 403 / 409 with a machine-readable ``code``.
+    """
+    user = User.query.get(str(user_id))
+    if user is None:
+        raise SessionNotFound()
+    try:
+        row, _membership = resolve_session_for_actor(
+            user, thread_id, require_write=require_write, include_archived=include_archived
+        )
+    except SessionNotFound:
+        # allow_missing preserves endpoints that can still answer for a thread
+        # with no session row (e.g. usage assembled from UsageEvent rows).
+        # A FORBIDDEN row is never softened -- only a genuinely absent one.
+        if not allow_missing:
+            raise
+        row = None
+    sessions = load_sessions_for_thread(user, thread_id, include_archived=include_archived)
+    return user, sessions, row
 from app.idea_ledger import (
     distill_session_to_ledger_row,
     mark_ledger_archived,
@@ -9633,8 +9677,14 @@ def conversation_continue():
             source="conversation_continue",
         )
 
-    sessions = load_user_sessions(user_id)
+    # Continuing an existing thread resolves the ORGANIZATION's canonical row,
+    # so two members talk into one conversation instead of forking it. A brand
+    # new thread has no row yet, so a miss here is normal and not a refusal.
+    sessions = load_sessions_for_thread(user, thread_id)
     session = sessions.get(thread_id)
+    if session is not None:
+        # Write access is required to add a turn; viewers are read-only.
+        resolve_session_for_actor(user, thread_id, require_write=True)
     fallback_model_type = (session or {}).get("model_type")
     model_selection, model_error = _resolve_model_selection(
         user,
@@ -10300,7 +10350,10 @@ def refresh_knowledge_signals(thread_id):
     Runs after each chat turn (called in background from frontend).
     """
     user_id = get_jwt_identity()
-    sessions = load_user_sessions(user_id) or {}
+    # Knowledge refresh rewrites the thread's connector snapshot.
+    _user, sessions, _canonical = _authorized_thread_scope(
+        user_id, thread_id, require_write=True
+    )
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
@@ -10522,11 +10575,17 @@ def reset_threads_post():
 @ai_agent_bp.route("/threads/<thread_id>", methods=["GET"])
 @jwt_required()
 def get_thread(thread_id):
+    # PHASE 0 FIX. This endpoint is what the Shared Projects card navigates
+    # into. It used to resolve through load_user_sessions(user_id) and 404 for
+    # anyone who was not the owner, so a collaborator shown "Can edit" landed
+    # on a blank workspace. It now resolves the ORGANIZATION's canonical row
+    # and authorizes first -- the same path Phase 1 uses everywhere, not a
+    # temporary access mechanism.
     user_id = get_jwt_identity()
-    sessions = load_user_sessions(user_id) or {}
+    _user, sessions, _row = _authorized_thread_scope(user_id, thread_id)
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
-        return jsonify({"error": "Thread not found"}), 404
+        return jsonify({"error": "Thread not found", "code": "not_found"}), 404
 
     resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
     chat_history = _session_chat_history(session)
@@ -10551,6 +10610,10 @@ def get_thread(thread_id):
         "starter_lever_defaults": _sanitize_lever_defaults(session.get("starter_lever_defaults")),
         "organization_id": session.get("organization_id"),
         "created_by_user_id": session.get("created_by_user_id"),
+        # Optimistic-concurrency token. A client that intends to write this
+        # thread should echo it back as `base_revision`; see check_revision().
+        "revision": int(session.get("revision") or 1),
+        "last_edited_by_user_id": session.get("last_edited_by_user_id"),
         "visibility": session.get("visibility") or "private",
         "shared_with_user_ids": session.get("shared_with_user_ids") if isinstance(session.get("shared_with_user_ids"), list) else [],
         "status": session.get("status") or ("completed" if analyses else "in_progress"),
@@ -10622,13 +10685,23 @@ def update_thread(thread_id):
         ), 400
 
     user_id = get_jwt_identity()
-    user = User.query.get(user_id)
-    if not user:
-        return jsonify({"error": "User not found"}), 404
-    sessions = load_user_sessions(user_id) or {}
+    # Rename / retitle / re-share is a WRITE: a viewer must not reach it, and a
+    # stale client must not clobber a concurrent edit.
+    user, sessions, canonical = _authorized_thread_scope(
+        user_id, thread_id, require_write=True
+    )
+    # Validate a declared base revision, but do not REQUIRE one here. The
+    # shipped client (Projects.jsx, JaspenClient.updateThread) does not echo
+    # `revision` yet, and requiring it would break renaming a shared project
+    # for existing Team customers. `revision` is now returned by GET
+    # /threads/<id>, so a client can opt in immediately; flipping this to a
+    # hard requirement is a one-line follow-up once it does.
+    _declared = extract_base_revision(data)
+    if _declared is not None:
+        check_revision(canonical, _declared)
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
-        return jsonify({"error": "Thread not found"}), 404
+        return jsonify({"error": "Thread not found", "code": "not_found"}), 404
 
     resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
     previous_status = str(session.get("status") or "").strip().lower() or None
@@ -10824,10 +10897,12 @@ def update_thread(thread_id):
 @jwt_required()
 def touch_thread(thread_id):
     user_id = get_jwt_identity()
-    sessions = load_user_sessions(user_id) or {}
+    _user, sessions, _canonical = _authorized_thread_scope(
+        user_id, thread_id, require_write=True
+    )
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
-        return jsonify({"error": "Thread not found"}), 404
+        return jsonify({"error": "Thread not found", "code": "not_found"}), 404
 
     resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
     now_iso = _iso_now()
@@ -10863,15 +10938,22 @@ def delete_thread(thread_id):
     )
 
     # Include archived rows so the user can hard-purge something they
-    # previously soft-deleted.
-    sessions = load_user_sessions(user_id, include_archived=True) or {}
+    # previously soft-deleted. Read access is enough to reach this endpoint:
+    # for a shared org project it means "remove from MY history", which
+    # archive_user_session() resolves to a personal hide. The archive and
+    # purge paths below are separately permission-checked in
+    # app/routes/sessions.py, so a collaborator cannot destroy the
+    # organization's canonical row from here.
+    _user, sessions, _canonical = _authorized_thread_scope(
+        user_id, thread_id, include_archived=True
+    )
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
         current_app.logger.warning(
             f"[delete_thread] thread {thread_id!r} not found for user {user_id[:8]} "
             f"(candidates: {list(sessions.keys())[:6]})"
         )
-        return jsonify({"error": "Thread not found"}), 404
+        return jsonify({"error": "Thread not found", "code": "not_found"}), 404
 
     resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
     # Try BOTH the resolved id and the dict key against the DB — legacy
@@ -10976,6 +11058,24 @@ def delete_thread(thread_id):
             "note": "hard-deleted (no row matched soft-archive)",
         }), 200
 
+    # archive_user_session() resolves a shared organization project in a
+    # multi-member org to a PERSONAL HIDE, leaving archived_at NULL. In that
+    # case the organization's work is untouched, so none of the org-level
+    # consequences below may fire: the scorecards stay live, the ledger is not
+    # told the idea was archived, and no archive audit event is written.
+    personal_hide_only = row.archived_at is None
+    if personal_hide_only:
+        current_app.logger.info(
+            f"[delete_thread] hidden for user={user_id[:8]} only; "
+            f"organization row {resolved_thread_id!r} left intact"
+        )
+        return jsonify({
+            "success": True,
+            "archived": False,
+            "scope": "personal",
+            "deleted_thread_id": resolved_thread_id,
+        }), 200
+
     for sid in candidate_ids:
         archive_thread_scorecards(user_id, sid)
     db.session.commit()
@@ -11006,6 +11106,7 @@ def delete_thread(thread_id):
     return jsonify({
         "success": True,
         "archived": True,
+        "scope": "organization",
         "purge_after": row.purge_after.isoformat() if row and row.purge_after else None,
         "deleted_thread_id": resolved_thread_id,
     }), 200
@@ -11021,10 +11122,15 @@ def purge_thread(thread_id):
     user_id = str(get_jwt_identity())
     user = User.query.get(user_id)
 
-    sessions = load_user_sessions(user_id, include_archived=True) or {}
+    # Permanent destruction of the organization's canonical work product.
+    # hard_delete_user_session() enforces can_archive_session(), so a
+    # collaborator or viewer is refused here with a 403.
+    _user, sessions, _canonical = _authorized_thread_scope(
+        user_id, thread_id, include_archived=True
+    )
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
-        return jsonify({"error": "Thread not found"}), 404
+        return jsonify({"error": "Thread not found", "code": "not_found"}), 404
 
     resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
     removed = hard_delete_user_session(user_id, resolved_thread_id)
@@ -11059,26 +11165,36 @@ def restore_thread(thread_id):
     user_id = str(get_jwt_identity())
     user = User.query.get(user_id)
 
-    sessions = load_user_sessions(user_id, include_archived=True) or {}
+    _user, sessions, _canonical = _authorized_thread_scope(
+        user_id, thread_id, include_archived=True
+    )
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
-        return jsonify({"error": "Thread not found"}), 404
+        return jsonify({"error": "Thread not found", "code": "not_found"}), 404
 
     resolved_thread_id = str(session.get("session_id") or session_key or thread_id)
 
-    # Direct row update — sessions.py helpers don't currently surface restore.
-    from app.models import UserSession, OrgIdeaLedger
-    row = UserSession.query.filter_by(user_id=user_id, session_id=resolved_thread_id).first()
-    if row is None or row.archived_at is None:
-        return jsonify({"error": "Thread is not archived"}), 400
-
-    row.archived_at = None
-    row.purge_after = None
+    # restore_user_session() resolves the canonical row, clears this member's
+    # personal hide, and lifts the organization-level archive only for someone
+    # entitled to archive in the first place.
+    from app.models import OrgIdeaLedger
+    probe = canonical_row(user, resolved_thread_id, include_archived=True)
+    was_hidden = probe is not None and is_hidden_for(probe, user_id)
     try:
-        db.session.commit()
+        row = restore_user_session(user_id, resolved_thread_id)
+    except SessionAccessError:
+        # A refusal is not a failure; let the app-level handler render it as
+        # 403/404 rather than flattening it into a 500.
+        db.session.rollback()
+        raise
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": f"Failed to restore: {e}"}), 500
+
+    if row is None:
+        return jsonify({"error": "Thread not found", "code": "not_found"}), 404
+    if row.archived_at is not None and not was_hidden:
+        return jsonify({"error": "Thread is not archived"}), 400
 
     ledger = OrgIdeaLedger.query.filter_by(source_session_id=resolved_thread_id).first()
     if ledger is not None:
@@ -11150,7 +11266,10 @@ def append_thread_messages(thread_id):
         return jsonify({"error": "messages list is required"}), 400
 
     user_id = get_jwt_identity()
-    sessions = load_user_sessions(user_id) or {}
+    # Appending messages is a write to the shared transcript.
+    _user, sessions, _canonical = _authorized_thread_scope(
+        user_id, thread_id, require_write=True
+    )
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
@@ -11215,7 +11334,10 @@ def set_thread_message_feedback(thread_id, message_index):
     note = str(data.get("note") or "").strip()[:1000]
 
     user_id = get_jwt_identity()
-    sessions = load_user_sessions(user_id) or {}
+    # Message feedback mutates the canonical row.
+    _user, sessions, _canonical = _authorized_thread_scope(
+        user_id, thread_id, require_write=True
+    )
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
@@ -11704,7 +11826,11 @@ def conversation_regenerate():
 @jwt_required()
 def get_thread_usage(thread_id):
     user_id = get_jwt_identity()
-    sessions = load_user_sessions(user_id) or {}
+    # Read-only usage view. Tolerates a thread with no session row, because
+    # usage can still be assembled from persisted UsageEvent rows below.
+    _user, sessions, _canonical = _authorized_thread_scope(
+        user_id, thread_id, require_write=False, allow_missing=True
+    )
     session_key, session = _resolve_user_session(sessions, thread_id)
     resolved_thread_id = str((session or {}).get("session_id") or session_key or thread_id)
 
@@ -11754,7 +11880,10 @@ def get_thread_usage(thread_id):
 @jwt_required()
 def get_thread_levers(thread_id):
     user_id = get_jwt_identity()
-    sessions = load_user_sessions(user_id) or {}
+    # Read-only levers view.
+    _user, sessions, _canonical = _authorized_thread_scope(
+        user_id, thread_id, require_write=False
+    )
     session_key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404

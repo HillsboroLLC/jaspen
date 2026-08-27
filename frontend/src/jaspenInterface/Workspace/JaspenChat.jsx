@@ -13879,7 +13879,16 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     <span>Status: {project.status || 'active'}</span>
                     <span>Updated: {project.updated_at ? new Date(project.updated_at).toLocaleString() : '—'}</span>
                     <span className="jas-shared-project-access">
-                      {effectiveIsViewer ? 'View only' : 'Can edit'}
+                      {/* Backend-computed access, not a role guess. This label
+                          used to read "Can edit" purely because the member was
+                          not a viewer, including for projects they could not
+                          open at all. `can_edit` comes from the same predicate
+                          the workspace authorizes with. */}
+                      {project.can_edit === true
+                        ? 'Can edit'
+                        : project.can_read === false
+                          ? 'No access'
+                          : 'View only'}
                     </span>
                   </button>
                 ))}

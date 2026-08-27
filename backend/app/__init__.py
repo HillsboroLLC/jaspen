@@ -593,6 +593,17 @@ def create_app():
     except Exception as e:
         app.logger.exception("Unexpected error registering statistical analysis blueprint: %s", e)
 
+    # Session access refusals render as themselves rather than as a generic
+    # 500. Registered ahead of the catch-all Exception handler so a refusal
+    # that escapes a handler still reaches the client as 404 / 403 / 409 with
+    # a machine-readable `code` the frontend can branch on.
+    from .session_access import SessionAccessError
+
+    @app.errorhandler(SessionAccessError)
+    def handle_session_access_error(e):
+        body, status = e.to_response()
+        return jsonify(body), status
+
     @app.errorhandler(400)
     def handle_400(e):
         return jsonify({"error": "Bad request", "message": str(e)}), 400

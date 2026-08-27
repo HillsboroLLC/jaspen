@@ -43,6 +43,7 @@ from app.orgs import (
     touch_member_activity,
 )
 from app.models import Organization, OrganizationInvitation, OrganizationMember, User, UserSession
+from app.session_access import can_read_session, can_write_session, is_hidden_for
 
 
 team_bp = Blueprint("team", __name__)
@@ -141,14 +142,14 @@ def _get_project_row(org_id, session_id):
     )
 
 
-def _project_payload(row):
+def _project_payload(row, viewer=None):
     payload = row.payload if isinstance(row.payload, dict) else {}
     owner_id = row.created_by_user_id or row.user_id
     owner = User.query.get(owner_id) if owner_id else None
     comments = payload.get("comments") if isinstance(payload.get("comments"), list) else []
     activity = payload.get("activity_feed") if isinstance(payload.get("activity_feed"), list) else []
     result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
-    return {
+    out = {
         "session_id": row.session_id,
         "name": payload.get("name") or result.get("project_name") or "Untitled project",
         "status": payload.get("status") or row.status or "in_progress",
@@ -164,23 +165,33 @@ def _project_payload(row):
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "comment_count": len(comments),
         "activity_count": len(activity),
+        "revision": int(getattr(row, "revision", 1) or 1),
+        "last_edited_by_user_id": getattr(row, "last_edited_by_user_id", None),
     }
+    # Truthful access label. The Shared Projects card used to derive "Can edit"
+    # from the member's ROLE alone, which said "Can edit" for projects the
+    # viewer could not even open. These come from the same predicates the
+    # workspace authorizes with, so the label and the behaviour cannot disagree.
+    if viewer is not None:
+        out["can_read"] = can_read_session(row, viewer)
+        out["can_edit"] = can_write_session(row, viewer)
+    return out
 
 
 def _can_access_project(row, user_id):
+    """Read access to a shared project.
+
+    Thin wrapper over the shared predicate in app/session_access.py so this
+    page and the workspace can never drift apart on who may see what. The
+    predicate lives there because that module is also the chokepoint the
+    workspace and AI-agent thread endpoints authorize through.
+    """
     if not isinstance(row, UserSession):
         return False
-    uid = str(user_id)
-    owner_id = str(row.created_by_user_id or row.user_id or "")
-    if uid == owner_id or uid == str(row.user_id or ""):
-        return True
-    visibility = str(row.visibility or "private").strip().lower()
-    if visibility == "team":
-        return True
-    if visibility == "specific":
-        allowed = row.shared_with_user_ids if isinstance(row.shared_with_user_ids, list) else []
-        return uid in {str(item or "").strip() for item in allowed if str(item or "").strip()}
-    return False
+    user = User.query.get(str(user_id))
+    if user is None:
+        return False
+    return can_read_session(row, user)
 
 
 def _append_activity(row, actor, action, details=None):
@@ -659,7 +670,11 @@ def list_shared_projects():
         .limit(500)
         .all()
     )
-    projects = [_project_payload(row) for row in candidates if _can_access_project(row, user.id)]
+    projects = [
+        _project_payload(row, viewer=user)
+        for row in candidates
+        if _can_access_project(row, user.id) and not is_hidden_for(row, user.id)
+    ]
     return jsonify({
         "success": True,
         "projects": projects,
@@ -720,7 +735,7 @@ def update_project_sharing(session_id):
     )
 
     db.session.commit()
-    return jsonify({"success": True, "project": _project_payload(row)}), 200
+    return jsonify({"success": True, "project": _project_payload(row, viewer=user)}), 200
 
 
 @team_bp.route("/projects/<session_id>/activity", methods=["GET"])
