@@ -34,7 +34,7 @@ from datetime import datetime
 
 from sqlalchemy import or_
 
-from .decision_records import can_read_record
+from .decision_records import CURRENT, SUPERSEDED, UNKNOWN, can_read_record, current_state
 from .models_decision_record import DecisionRecord
 from .orgs import active_membership_for_user
 
@@ -68,7 +68,7 @@ def _tokens(query):
 def authorized_candidates(user, *, organization_id=None, status=None,
                           thread_id=None, decision_type=None,
                           human_decision=None, since=None, until=None,
-                          ceiling=CANDIDATE_CEILING):
+                          current=None, ceiling=CANDIDATE_CEILING):
     """Every Decision Record this user may read, already filtered.
 
     The SQL narrows to organizations the user is an active member of, then
@@ -134,10 +134,27 @@ def authorized_candidates(user, *, organization_id=None, status=None,
             )
         return membership_cache[org_id]
 
-    return [
+    permitted = [
         row for row in rows
         if can_read_record(row, user, membership=_membership(row.organization_id))
     ]
+
+    # Current-state filter, applied AFTER authorization and before ranking.
+    # Derived rather than stored, so it cannot be stale.
+    if current is None or current == 'all':
+        return permitted
+    if current is True or current == CURRENT:
+        return [r for r in permitted if current_state(r) == CURRENT]
+    if current is False or current == SUPERSEDED:
+        return [r for r in permitted if current_state(r) == SUPERSEDED]
+    if current == UNKNOWN:
+        return [r for r in permitted if current_state(r) == UNKNOWN]
+    # "not superseded": current OR unknown. This is the DEFAULT search
+    # posture -- prefer what has not been replaced, without pretending the
+    # unknown ones are affirmed organizational positions.
+    if current == 'not_superseded':
+        return [r for r in permitted if current_state(r) != SUPERSEDED]
+    return permitted
 
 
 # --- 2. RANKING (pure) -------------------------------------------------------
@@ -220,6 +237,7 @@ def summarize(record):
     objectives = payload.get('objectives') if isinstance(payload.get('objectives'), dict) else {}
     confidence = payload.get('confidence') if isinstance(payload.get('confidence'), dict) else {}
     decided = bool(record.final_decision)
+    state = current_state(record)
 
     return {
         'source_type': SOURCE_TYPE,
@@ -237,10 +255,14 @@ def summarize(record):
             'decided_at': record.decided_at.isoformat() if record.decided_at else None,
         },
         'status': record.status,
-        # Status and timestamps are reported as-is. Phase 4 has no supersession
-        # signal, so nothing here asserts that a record is CURRENT truth --
-        # historical records are returned as history.
-        'is_current': None,
+        # PHASE 5: populated honestly from derived state. `is_current` is
+        # tri-state on purpose -- True / False / None -- because "we do not
+        # know whether this is the organization's position" is a real and
+        # common answer, not a missing value to be rounded up to True.
+        'current_state': state,
+        'is_current': True if state == CURRENT else (False if state == SUPERSEDED else None),
+        'supersedes_id': record.supersedes_id,
+        'superseded_at': record.superseded_at.isoformat() if record.superseded_at else None,
         'confidence_mean': confidence.get('mean'),
         'scorecard_ids': payload.get('scorecard_ids') if isinstance(payload.get('scorecard_ids'), list) else [],
         'created_at': record.created_at.isoformat() if record.created_at else None,
@@ -253,8 +275,15 @@ def summarize(record):
 def search(user, query=None, *, limit=DEFAULT_LIMIT, **filters):
     """Authorize, then rank, then summarize. In that order, always.
 
+    Default posture is `not_superseded`: prefer decisions nothing has replaced,
+    without hiding history. History stays reachable by asking for it --
+    current='all' or current=False, or by naming a thread_id, which returns
+    that project's full chain. Nothing is silently suppressed.
+
     Read-only: retrieval never creates or mutates a record.
     """
+    if filters.get('current') is None and not filters.get('thread_id'):
+        filters['current'] = 'not_superseded'
     candidates = authorized_candidates(user, **filters)
     ordered = rank(candidates, query, limit=limit)
     return [summarize(record) for record in ordered]

@@ -17,7 +17,11 @@ from ..models import User
 from ..models_decision_record import DecisionRecord
 from ..decision_records import (
     can_read_record,
+    clear_supersession,
     create_or_refresh_record,
+    current_state,
+    supersede_record,
+    supersession_chain,
     record_final_decision,
     append_outcome,
     append_lesson,
@@ -35,6 +39,26 @@ from ..decision_retrieval import (
 from ..session_access import can_write_session, canonical_row
 
 decision_records_bp = Blueprint('decision_records', __name__)
+
+
+def _parse_current(raw):
+    """`current=true|false|all|unknown`, or None for the default posture.
+
+    Default (None) becomes 'not_superseded' in search(): prefer what has not
+    been replaced, without asserting that never-decided records are current.
+    """
+    if raw is None:
+        return None
+    value = str(raw).strip().lower()
+    if value in ('1', 'true', 'yes', 'current'):
+        return True
+    if value in ('0', 'false', 'no', 'superseded'):
+        return False
+    if value in ('all', 'any'):
+        return 'all'
+    if value == 'unknown':
+        return 'unknown'
+    return None
 
 
 def _current_user():
@@ -154,12 +178,14 @@ def search_records():
         thread_id=str(request.args.get('thread_id') or '').strip() or None,
         decision_type=str(request.args.get('decision_type') or '').strip() or None,
         human_decision=human_decision,
+        current=_parse_current(request.args.get('current')),
     )
     return jsonify({
         'results': results,
         'count': len(results),
         'limit': limit,
         'query': query,
+        'current': _parse_current(request.args.get('current')) or 'not_superseded',
         # Explicit so a future second source (benchmarking signal, personal
         # memory) can be added without silently conflating it with this one.
         'source_types': ['decision_record'],
@@ -267,3 +293,89 @@ def update_consent(record_id):
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     return jsonify({'record': record.to_dict()})
+
+
+@decision_records_bp.route('/<record_id>/supersedes', methods=['POST'])
+@jwt_required()
+def set_supersession(record_id):
+    """Declare that this record replaces an earlier organizational decision.
+
+    Explicit and human-initiated by design. Re-scoring a decision refreshes its
+    existing record; it never lands here. A model producing a different
+    recommendation is not an organization changing its mind, so nothing
+    automatic may create a supersession link.
+    """
+    user = _current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    record, denied = _writable_record_or_none(record_id, user)
+    if denied == 403:
+        return jsonify({'error': 'Your role on this project is read-only',
+                        'code': 'forbidden'}), 403
+    if not record:
+        return jsonify({'error': 'Decision record not found'}), 404
+
+    data = request.get_json(silent=True) or {}
+    prior_id = str(data.get('supersedes_id') or '').strip()
+    if not prior_id:
+        return jsonify({'error': 'supersedes_id is required'}), 400
+
+    prior = DecisionRecord.query.filter_by(id=prior_id).first()
+    try:
+        supersede_record(record, prior, user)
+    except LookupError:
+        # Also covers "exists but you cannot read it", so supersession cannot
+        # be used to probe for records outside the caller's access.
+        return jsonify({'error': 'Decision record not found'}), 404
+    except PermissionError as exc:
+        return jsonify({'error': str(exc), 'code': 'forbidden'}), 403
+    except ValueError as exc:
+        return jsonify({'error': str(exc), 'code': 'invalid_supersession'}), 400
+
+    return jsonify({
+        'record': record.to_dict(include_record=False),
+        'current_state': current_state(record),
+        'chain': supersession_chain(record, user),
+    }), 200
+
+
+@decision_records_bp.route('/<record_id>/supersedes', methods=['DELETE'])
+@jwt_required()
+def unset_supersession(record_id):
+    """Remove a supersession link. Nothing is destroyed either way."""
+    user = _current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    record, denied = _writable_record_or_none(record_id, user)
+    if denied == 403:
+        return jsonify({'error': 'Your role on this project is read-only',
+                        'code': 'forbidden'}), 403
+    if not record:
+        return jsonify({'error': 'Decision record not found'}), 404
+
+    clear_supersession(record)
+    return jsonify({
+        'record': record.to_dict(include_record=False),
+        'current_state': current_state(record),
+    }), 200
+
+
+@decision_records_bp.route('/<record_id>/history', methods=['GET'])
+@jwt_required()
+def get_history(record_id):
+    """How this decision evolved: A -> superseded by B -> superseded by C.
+
+    Relationship metadata only -- ids, titles, timestamps, state. Full payloads
+    are fetched per record, on request. A link the caller may not read is
+    redacted rather than omitted, so the chain stays honest about being
+    incomplete without disclosing what it hides.
+    """
+    user = _current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    record = _owned_record_or_404(record_id, user)
+    if not record:
+        return jsonify({'error': 'Decision record not found'}), 404
+    return jsonify(supersession_chain(record, user)), 200

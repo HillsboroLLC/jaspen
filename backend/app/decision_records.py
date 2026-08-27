@@ -569,3 +569,214 @@ def set_status(record, status):
     record.updated_at = datetime.utcnow()
     db.session.commit()
     return record
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Supersession and current state (Phase 5)
+#
+# REFRESH IS NOT SUPERSESSION. The distinction is the whole point of this
+# section, so it is worth stating plainly:
+#
+#   * REFRESH -- create_or_refresh_record() on the SAME thread. Re-scoring a
+#     decision updates the one canonical record: the analysis improved, the
+#     decision did not change. Human-owned fields are never touched. This
+#     happens automatically, on every completed score.
+#
+#   * SUPERSESSION -- a DIFFERENT record, representing a NEW decision, is
+#     explicitly declared to replace an earlier one. This never happens
+#     automatically. A model producing a different recommendation is not an
+#     organization changing its mind, and treating it as one would fabricate
+#     institutional history. It requires a deliberate human action through
+#     supersede_record().
+# ─────────────────────────────────────────────────────────────────────────────
+
+CURRENT = 'current'
+SUPERSEDED = 'superseded'
+UNKNOWN = 'unknown'
+
+# How deep a supersession chain may be walked. Guards against a cycle that
+# predates the cycle check, and against pathological chains.
+MAX_CHAIN_DEPTH = 50
+
+
+def successor_of(record):
+    """The record that supersedes this one, if any.
+
+    The reverse of `supersedes_id`, resolved by query rather than stored, so
+    the two directions cannot disagree.
+    """
+    if record is None:
+        return None
+    return DecisionRecord.query.filter_by(supersedes_id=str(record.id)).first()
+
+
+def current_state(record):
+    """Is this record the organization's CURRENT position, or history?
+
+    Three states, and the third one matters:
+
+      * SUPERSEDED -- something explicitly replaced it. Definitive.
+      * CURRENT    -- nothing replaced it AND a human recorded a decision on
+                      it. Definitive: a person affirmed this is the
+                      organization's position.
+      * UNKNOWN    -- nothing replaced it and no human ever decided. This is
+                      analysis that was recorded, not a decision that was
+                      taken.
+
+    That third state is why current-ness is not simply "has no successor".
+    Every record that exists today has no successor and no human decision;
+    calling them all "current" would assert an organizational position nobody
+    ever took. Recency is likewise not evidence: a later analysis is not
+    automatically a new decision.
+    """
+    if record is None:
+        return UNKNOWN
+    if successor_of(record) is not None:
+        return SUPERSEDED
+    if record.final_decision:
+        return CURRENT
+    return UNKNOWN
+
+
+def _would_create_cycle(new_record, prior_record):
+    """True if pointing new_record at prior_record closes a loop."""
+    seen = {str(new_record.id)}
+    cursor = prior_record
+    depth = 0
+    while cursor is not None and depth < MAX_CHAIN_DEPTH:
+        cid = str(cursor.id)
+        if cid in seen:
+            return True
+        seen.add(cid)
+        cursor = (
+            DecisionRecord.query.get(cursor.supersedes_id)
+            if cursor.supersedes_id else None
+        )
+        depth += 1
+    return False
+
+
+def supersede_record(new_record, prior_record, actor):
+    """Declare that `new_record` replaces `prior_record`.
+
+    Never called automatically. Validates, in order:
+
+      * both records readable by the actor (so supersession cannot be used to
+        probe for records they cannot see);
+      * write permission on the superseding record;
+      * same organization -- cross-organization supersession is impossible,
+        not merely discouraged;
+      * not itself, and no cycle.
+
+    The prior record is left completely intact: its narrative, evidence and
+    human decision all remain readable. Supersession adds a pointer; it never
+    deletes or rewrites history.
+    """
+    from .session_access import can_write_session, canonical_row
+
+    if new_record is None or prior_record is None:
+        raise LookupError('Decision record not found')
+
+    if str(new_record.id) == str(prior_record.id):
+        raise ValueError('A decision record cannot supersede itself')
+
+    if not can_read_record(new_record, actor) or not can_read_record(prior_record, actor):
+        # Deliberately LookupError, not a permission error: a caller must not
+        # learn that an unreadable record exists by trying to supersede it.
+        raise LookupError('Decision record not found')
+
+    row = canonical_row(actor, new_record.thread_id, include_archived=True)
+    if row is not None and not can_write_session(row, actor):
+        raise PermissionError('Your role on this project is read-only')
+
+    if str(new_record.organization_id or '') != str(prior_record.organization_id or ''):
+        raise ValueError(
+            'A decision record can only supersede one owned by the same organization'
+        )
+
+    if _would_create_cycle(new_record, prior_record):
+        raise ValueError('That supersession would create a cycle')
+
+    existing = successor_of(prior_record)
+    if existing is not None and str(existing.id) != str(new_record.id):
+        raise ValueError(
+            'That decision has already been superseded by another record'
+        )
+
+    new_record.supersedes_id = str(prior_record.id)
+    new_record.superseded_at = datetime.utcnow()
+    new_record.updated_at = datetime.utcnow()
+    db.session.commit()
+    return new_record
+
+
+def clear_supersession(record):
+    """Undo a supersession link. History is restored, nothing is destroyed."""
+    record.supersedes_id = None
+    record.superseded_at = None
+    record.updated_at = datetime.utcnow()
+    db.session.commit()
+    return record
+
+
+def supersession_chain(record, actor, *, max_depth=MAX_CHAIN_DEPTH):
+    """Relationship metadata for the chain around one record.
+
+    Returns lightweight links -- ids, titles, timestamps, state -- never full
+    payloads. Enough to explain "A was superseded by B, which was superseded
+    by C" without loading three records' worth of narrative.
+
+    A link the actor may not read is REDACTED rather than omitted: the chain
+    stays honest about being incomplete without disclosing which record it is
+    or what it said.
+    """
+    def _link(item):
+        if item is None:
+            return None
+        if not can_read_record(item, actor):
+            return {
+                'accessible': False,
+                'id': None,
+                'title': None,
+                'note': 'A related decision exists but is not visible to you',
+            }
+        return {
+            'accessible': True,
+            'id': item.id,
+            'title': item.title,
+            'status': item.status,
+            'current_state': current_state(item),
+            'human_decision_recorded': bool(item.final_decision),
+            'created_at': item.created_at.isoformat() if item.created_at else None,
+            'superseded_at': item.superseded_at.isoformat() if item.superseded_at else None,
+        }
+
+    predecessors = []
+    cursor = DecisionRecord.query.get(record.supersedes_id) if record.supersedes_id else None
+    seen = {str(record.id)}
+    while cursor is not None and len(predecessors) < max_depth:
+        if str(cursor.id) in seen:
+            break
+        seen.add(str(cursor.id))
+        predecessors.append(_link(cursor))
+        cursor = (
+            DecisionRecord.query.get(cursor.supersedes_id)
+            if cursor.supersedes_id else None
+        )
+
+    successors = []
+    cursor = successor_of(record)
+    while cursor is not None and len(successors) < max_depth:
+        if str(cursor.id) in seen:
+            break
+        seen.add(str(cursor.id))
+        successors.append(_link(cursor))
+        cursor = successor_of(cursor)
+
+    return {
+        'record_id': record.id,
+        'current_state': current_state(record),
+        # Oldest first, so the chain reads forwards.
+        'supersedes': list(reversed(predecessors)),
+        'superseded_by': successors,
+    }

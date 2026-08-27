@@ -80,11 +80,24 @@ def _indexes(db_path, table):
 # --- the revision graph ------------------------------------------------------
 
 def test_migration_graph_has_exactly_one_head():
-    """A second head silently splits the schema. Keep the history linear."""
+    """A second head silently splits the schema. Keep the history linear.
+
+    Asserts the INVARIANT (one head), not which revision currently holds it --
+    pinning the id would make every future migration fail this test for no
+    reason.
+    """
     script = ScriptDirectory(MIGRATIONS_DIR)
     heads = script.get_heads()
     assert len(heads) == 1, f"expected a single head, found {heads}"
-    assert heads[0] == PHASE_1_REVISION
+
+
+def test_every_revision_is_reachable_from_the_head():
+    """No orphaned revisions dangling off the chain."""
+    script = ScriptDirectory(MIGRATIONS_DIR)
+    head = script.get_heads()[0]
+    walked = {rev.revision for rev in script.iterate_revisions(head, 'base')}
+    known = {rev.revision for rev in script.walk_revisions()}
+    assert walked == known, f"unreachable revisions: {known - walked}"
 
 
 def test_phase_1_revision_follows_the_previous_head():
@@ -291,3 +304,115 @@ def test_downgrade_removes_the_new_columns(pre_phase_1_db):
 
     columns = _columns(pre_phase_1_db, "user_sessions")
     assert not (NEW_COLUMNS & columns), f"left behind {NEW_COLUMNS & columns}"
+
+
+# --- Phase 5: the supersession revision --------------------------------------
+
+PHASE_5_REVISION = "d7b3c81e4a52"
+PHASE_5_COLUMNS = {"supersedes_id", "superseded_at"}
+
+
+def _load_phase_5():
+    return ScriptDirectory(MIGRATIONS_DIR).get_revision(PHASE_5_REVISION).module
+
+
+def _seed_pre_phase_5_schema(db_path):
+    """decision_records as it stood before supersession existed."""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript("""
+            CREATE TABLE decision_records (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36) NOT NULL,
+                organization_id VARCHAR(36),
+                thread_id VARCHAR(64) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                decision_statement TEXT,
+                status VARCHAR(32) NOT NULL DEFAULT 'recorded',
+                decision_type VARCHAR(64),
+                altitude VARCHAR(32),
+                library_consent VARCHAR(16) NOT NULL DEFAULT 'none',
+                library_consented_at DATETIME,
+                internal_corpus_eligible BOOLEAN NOT NULL DEFAULT 0,
+                schema_version INTEGER NOT NULL DEFAULT 1,
+                record JSON NOT NULL,
+                final_decision TEXT,
+                outcomes JSON NOT NULL DEFAULT '[]',
+                lessons_learned JSON NOT NULL DEFAULT '[]',
+                tags JSON NOT NULL DEFAULT '[]',
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                decided_at DATETIME,
+                outcome_recorded_at DATETIME
+            );
+
+            -- analysis recorded, never decided by a human
+            INSERT INTO decision_records
+                (id, user_id, organization_id, thread_id, title, status, record,
+                 final_decision, created_at, updated_at)
+            VALUES ('rec-undecided', 'u-owner', 'org-1', 't-1', 'Undecided',
+                    'recorded', '{}', NULL,
+                    '2026-01-01 00:00:00', '2026-01-01 00:00:00');
+
+            -- a real human decision
+            INSERT INTO decision_records
+                (id, user_id, organization_id, thread_id, title, status, record,
+                 final_decision, decided_at, created_at, updated_at)
+            VALUES ('rec-decided', 'u-owner', 'org-1', 't-2', 'Decided',
+                    'decided', '{}', 'We will proceed.', '2026-02-01 00:00:00',
+                    '2026-02-01 00:00:00', '2026-02-01 00:00:00');
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def pre_phase_5_db(tmp_path):
+    db_path = tmp_path / "pre_phase_5.sqlite"
+    _seed_pre_phase_5_schema(str(db_path))
+    return str(db_path)
+
+
+def test_phase_5_upgrade_applies_to_a_realistic_pre_phase_5_database(pre_phase_5_db):
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_5().upgrade()
+
+    columns = _columns(pre_phase_5_db, "decision_records")
+    assert PHASE_5_COLUMNS.issubset(columns), f"missing {PHASE_5_COLUMNS - columns}"
+    assert "ix_decision_records_supersedes_id" in _indexes(pre_phase_5_db, "decision_records")
+
+
+def test_phase_5_invents_no_supersession_relationships(pre_phase_5_db):
+    """Historical truth stays honest: nothing is linked, nothing is marked."""
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_5().upgrade()
+
+    conn = sqlite3.connect(pre_phase_5_db)
+    try:
+        rows = conn.execute(
+            "SELECT id, supersedes_id, superseded_at FROM decision_records"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(rows) == 2
+    assert all(supersedes is None and at is None for _id, supersedes, at in rows), (
+        "the migration fabricated a supersession relationship"
+    )
+
+
+def test_phase_5_downgrade_removes_the_columns(pre_phase_5_db):
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_5().upgrade()
+    with _migration_ops(pre_phase_5_db):
+        _load_phase_5().downgrade()
+
+    columns = _columns(pre_phase_5_db, "decision_records")
+    assert not (PHASE_5_COLUMNS & columns), f"left behind {PHASE_5_COLUMNS & columns}"
+    # The records themselves survive a downgrade.
+    conn = sqlite3.connect(pre_phase_5_db)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM decision_records").fetchone()[0] == 2
+    finally:
+        conn.close()
