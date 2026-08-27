@@ -1,9 +1,13 @@
 # backend/app/routes/decision_records.py
 #
-# REST surface for canonical Decision Records. Additive: no existing endpoint
-# changes. All routes are owner-scoped; Ring 1 custody means a record is only
-# ever visible to the user who owns it (org sharing is a future, consented
-# capability — not implemented here by design).
+# REST surface for canonical Decision Records.
+#
+# Access is ORGANIZATION-scoped (Phase 4). Ring 1 custody means a record never
+# leaves the customer, but "the customer" is the organization that owns the
+# work, not the individual who happened to author it -- Constitution Art. 26:
+# private records become part of THAT CUSTOMER'S organizational memory. Within
+# the organization a record inherits the visibility of the project it was
+# derived from, so record access and project access can never disagree.
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -12,6 +16,7 @@ from .. import db
 from ..models import User
 from ..models_decision_record import DecisionRecord
 from ..decision_records import (
+    can_read_record,
     create_or_refresh_record,
     record_final_decision,
     append_outcome,
@@ -19,6 +24,15 @@ from ..decision_records import (
     set_library_consent,
     set_status,
 )
+from ..decision_retrieval import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    authorized_candidates,
+    rank,
+    search,
+    summarize,
+)
+from ..session_access import can_write_session, canonical_row
 
 decision_records_bp = Blueprint('decision_records', __name__)
 
@@ -31,8 +45,37 @@ def _current_user():
 
 
 def _owned_record_or_404(record_id, user):
-    record = DecisionRecord.query.filter_by(id=str(record_id), user_id=user.id).first()
+    """The record, if this user may read it.
+
+    PHASE 4: this used to filter on `user_id`, which made attribution act as
+    ownership -- so once Phase 3 gave a team ONE canonical record, every member
+    except its creator was locked out of their own organization's decision.
+    Access now follows the project the record was derived from, via
+    can_read_record(), which is an adapter over the same session chokepoint
+    rather than a second authorization system.
+
+    Returns None for both "does not exist" and "not yours", so callers answer
+    404 either way and record ids cannot be probed.
+    """
+    record = DecisionRecord.query.filter_by(id=str(record_id)).first()
+    if record is None or not can_read_record(record, user):
+        return None
     return record
+
+
+def _writable_record_or_none(record_id, user):
+    """A record this user may MUTATE (human decision, status, tags).
+
+    Read access is not write access: a viewer can see the organization's
+    decisions without editing them. Mirrors can_write_session() on the project.
+    """
+    record = _owned_record_or_404(record_id, user)
+    if record is None:
+        return None, 404
+    row = canonical_row(user, record.thread_id, include_archived=True)
+    if row is not None and not can_write_session(row, user):
+        return None, 403
+    return record, None
 
 
 @decision_records_bp.route('/from-thread/<thread_id>', methods=['POST'])
@@ -65,23 +108,61 @@ def list_records():
     limit = min(max(int(request.args.get('limit', 50) or 50), 1), 200)
     offset = max(int(request.args.get('offset', 0) or 0), 0)
 
-    query = DecisionRecord.query.filter_by(user_id=user.id)
-    if status:
-        query = query.filter_by(status=status)
-    if thread_id:
-        query = query.filter_by(thread_id=thread_id)
-    total = query.count()
-    rows = (
-        query.order_by(DecisionRecord.updated_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
+    # Organization-scoped and permission-filtered, via the same candidate
+    # assembly the search endpoint uses. Was filter_by(user_id=user.id).
+    rows = authorized_candidates(
+        user, status=status, thread_id=thread_id,
     )
+    total = len(rows)
+    page = rows[offset:offset + limit]
+
     return jsonify({
-        'records': [r.to_dict(include_record=False) for r in rows],
+        'records': [r.to_dict(include_record=False) for r in page],
         'total': total,
         'limit': limit,
         'offset': offset,
+    })
+
+
+@decision_records_bp.route('/search', methods=['GET'])
+@jwt_required()
+def search_records():
+    """Permission-aware organizational decision retrieval.
+
+    authorized candidates -> ranking -> compact summaries. Returns a BOUNDED
+    ranked set of summaries, each carrying the id needed to fetch the full
+    canonical record separately. Nothing here assembles long-form payloads or
+    conversation history.
+    """
+    user = _current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    query = str(request.args.get('q') or '').strip() or None
+    limit = min(max(int(request.args.get('limit', DEFAULT_LIMIT) or DEFAULT_LIMIT), 1), MAX_LIMIT)
+
+    human_decision = request.args.get('human_decision')
+    if human_decision is not None:
+        human_decision = str(human_decision).strip().lower() in ('1', 'true', 'yes')
+
+    results = search(
+        user,
+        query,
+        limit=limit,
+        organization_id=str(request.args.get('organization_id') or '').strip() or None,
+        status=str(request.args.get('status') or '').strip().lower() or None,
+        thread_id=str(request.args.get('thread_id') or '').strip() or None,
+        decision_type=str(request.args.get('decision_type') or '').strip() or None,
+        human_decision=human_decision,
+    )
+    return jsonify({
+        'results': results,
+        'count': len(results),
+        'limit': limit,
+        'query': query,
+        # Explicit so a future second source (benchmarking signal, personal
+        # memory) can be added without silently conflating it with this one.
+        'source_types': ['decision_record'],
     })
 
 
@@ -104,7 +185,10 @@ def update_record(record_id):
     user = _current_user()
     if not user:
         return jsonify({'error': 'User not found'}), 404
-    record = _owned_record_or_404(record_id, user)
+    record, denied = _writable_record_or_none(record_id, user)
+    if denied == 403:
+        return jsonify({'error': 'Your role on this project is read-only',
+                        'code': 'forbidden'}), 403
     if not record:
         return jsonify({'error': 'Decision record not found'}), 404
     data = request.get_json(silent=True) or {}

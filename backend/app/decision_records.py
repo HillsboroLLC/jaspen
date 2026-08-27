@@ -28,7 +28,7 @@ from .models_decision_record import (
 _DERIVED_FIELDS = (
     'decision_statement', 'conversation_summary', 'evidence_summary',
     'objectives', 'rubric', 'alternatives', 'scorecards', 'scorecard_ids',
-    'recommendation', 'confidence', 'execution_plan', 'attribution',
+    'recommendation', 'confidence', 'execution_plan', 'attribution', 'source',
 )
 # NOT derived, deliberately: `human_decision` mirrors the human-owned
 # final_decision column. Refreshing it from a re-derivation would reset a
@@ -315,13 +315,83 @@ def assemble_record_payload(user_id, thread_id, *, actor_user_id=None):
             'last_refreshed_at': datetime.utcnow().isoformat(),
         },
         'derived_at': datetime.utcnow().isoformat(),
-        'source': {'thread_id': thread_id},
+        'source': {
+            'thread_id': thread_id,
+            # Visibility SNAPSHOT of the project this was derived from. A
+            # Decision Record is durable and outlives its session, so once the
+            # project is purged there is no live visibility signal left to
+            # authorize against. Snapshotting it here keeps the fallback
+            # principled instead of guessing -- see can_read_record().
+            'visibility': str((session or {}).get('visibility') or 'private').strip().lower(),
+            'shared_with_user_ids': [
+                str(uid) for uid in ((session or {}).get('shared_with_user_ids') or [])
+                if str(uid or '').strip()
+            ],
+        },
     }
     promoted = {
         'title': title,
         'decision_statement': decision_statement or None,
     }
     return payload, promoted
+
+
+def can_read_record(record, user, membership=None):
+    """May this user read this Decision Record?
+
+    A record is a durable artifact DERIVED from a project, so it inherits that
+    project's access rules rather than inventing its own. This is an adapter
+    over the session chokepoint in app/session_access.py -- deliberately not a
+    second authorization system.
+
+    Two cases:
+
+      * The project still exists -> defer entirely to can_read_session(), so
+        record access and project access can never disagree.
+      * The project has been purged (records outlive their sessions, which is
+        the point of them) -> fall back to the visibility SNAPSHOT taken at
+        derivation time, applying the same private/team/specific rules.
+
+    Organization membership is required first in both cases, so a stale
+    organization_id cannot leak a record to someone who has since been removed.
+    """
+    from .models import UserSession  # noqa: F401  (documents the relationship)
+    from .orgs import active_membership_for_user
+    from .session_access import can_read_session, canonical_row
+
+    if record is None or user is None:
+        return False
+
+    uid = str(user.id)
+    org_id = getattr(record, 'organization_id', None)
+
+    # A record with no organization is personal-scope: attribution decides.
+    if not org_id:
+        return str(record.user_id or '') == uid
+
+    if membership is None:
+        membership = active_membership_for_user(org_id, uid)
+    if membership is None:
+        return False
+
+    row = canonical_row(user, record.thread_id, include_archived=True)
+    if row is not None:
+        return can_read_session(row, user, membership=membership)
+
+    # Project gone: use the snapshot.
+    payload = record.record if isinstance(record.record, dict) else {}
+    source = payload.get('source') if isinstance(payload.get('source'), dict) else {}
+    visibility = str(source.get('visibility') or 'private').strip().lower()
+
+    if str(record.user_id or '') == uid:
+        return True
+    if visibility == 'team':
+        return True
+    if visibility == 'specific':
+        shared = source.get('shared_with_user_ids')
+        shared = shared if isinstance(shared, list) else []
+        return uid in {str(item or '').strip() for item in shared}
+    return False
 
 
 def _find_existing_record(organization_id, attribution_user_id, thread_id):
