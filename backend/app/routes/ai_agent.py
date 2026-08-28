@@ -2878,6 +2878,44 @@ def _readiness_phase_prompt_suffix(readiness):
     )
 
 
+def _organizational_memory_prompt_suffix(user_id, thread_id):
+    """PHASE 7. Prior organizational decisions relevant to this one.
+
+    Distinct from _cross_session_memory_prompt_suffix above, which is the
+    PERSONAL layer -- what Jaspen knows about this individual across their own
+    projects. The two stay separate inputs with separate provenance and are
+    never merged into one blob: one is "what you have told me about you", the
+    other is "what your organization has decided and learned".
+
+    Best-effort and silent on failure: memory is an enhancement, and a
+    retrieval problem must never break the conversation.
+    """
+    try:
+        from app.memory_context import assemble_memory_context, render_memory_prompt
+
+        user = User.query.get(str(user_id)) if user_id else None
+        if user is None or not thread_id:
+            return ""
+
+        sessions = load_sessions_for_thread(user, thread_id)
+        _key, session = _resolve_user_session(sessions, thread_id)
+        if not isinstance(session, dict):
+            return ""
+
+        bundle = assemble_memory_context(user, thread_id, session)
+        if bundle.get('used'):
+            current_app.logger.info(
+                "[org_memory] thread=%s selected %d record(s): %s",
+                thread_id, bundle['count'], bundle['decision_record_ids'],
+            )
+        return render_memory_prompt(bundle)
+    except Exception:
+        current_app.logger.exception(
+            "[org_memory] context assembly failed for thread %s", thread_id
+        )
+        return ""
+
+
 def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id, chat_history=None, readiness=None):
     return (
         f"{_SYSTEM_PROMPT_PREFIX}"
@@ -2887,6 +2925,7 @@ def _build_agent_system_prompt(*, context_summary_text, intake_context, view_con
         f"{_view_context_prompt_suffix(view_context)}"
         f"{_connector_context_prompt_suffix(connector_context_snapshot)}"
         f"{_cross_session_memory_prompt_suffix(user_id, thread_id)}"
+        f"{_organizational_memory_prompt_suffix(user_id, thread_id)}"
         f"{_batch_promotion_prompt_suffix(user_id, thread_id)}"
         f"{_scenario_modeling_prompt_suffix(user_id, thread_id)}"
         f"{_monitoring_prompt_suffix(user_id)}"
