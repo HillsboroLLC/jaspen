@@ -134,10 +134,23 @@ def _membership_payload(member, include_user=True):
 
 
 def _get_project_row(org_id, session_id):
+    """The organization's canonical row for this project.
+
+    Ordered oldest-first, matching app.session_access.canonical_row(). It used
+    to order by updated_at DESC, which is a SECOND resolution rule for the same
+    (organization_id, session_id) pair: where a historical fork exists, this
+    page's sharing, comments and activity writes would land on the fork while
+    the workspace wrote to the canonical row -- the two surfaces silently
+    editing different objects.
+
+    updated_at is also derived from the CLIENT-supplied timestamp
+    (routes/sessions.py), so the old ordering could be steered from outside.
+    created_at is server-assigned, and the original always predates its forks.
+    """
     return (
         UserSession.query
         .filter_by(organization_id=str(org_id), session_id=str(session_id))
-        .order_by(UserSession.updated_at.desc(), UserSession.id.desc())
+        .order_by(UserSession.created_at.asc(), UserSession.id.asc())
         .first()
     )
 

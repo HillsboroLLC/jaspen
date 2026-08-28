@@ -335,3 +335,36 @@ def test_solo_scenario_writes_are_unchanged(db):
 
     assert UserSession.query.filter_by(session_id="sc-solo").count() == 1
     assert load_scenarios_data(solo.id)["sc-solo"]["scenarios"]["x"]["label"] == "X"
+
+
+def test_team_page_and_workspace_resolve_the_same_canonical_row(db, team_setup):
+    """Found in the canonical-write audit.
+
+    _get_project_row ordered by updated_at DESC while canonical_row orders by
+    created_at ASC -- two resolution rules for one (organization_id,
+    session_id) pair. With a historical fork present, the Team page's sharing,
+    comments and activity writes landed on the fork while the workspace wrote
+    to the canonical row.
+    """
+    from datetime import datetime, timedelta
+    from app.routes.team import _get_project_row
+
+    org, owner, editor = team_setup["org"], team_setup["owner"], team_setup["editor"]
+
+    original = _seed_project(db, org, owner, session_id="split", visibility="team")
+    original.created_at = datetime.utcnow() - timedelta(days=5)
+    original.updated_at = datetime.utcnow() - timedelta(days=5)
+
+    # A historical fork that has been touched more recently.
+    db.session.add(UserSession(
+        user_id=editor.id, session_id="split", name="fork",
+        organization_id=org.id, created_by_user_id=owner.id, visibility="team",
+        payload={"session_id": "split"},
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    ))
+    db.session.commit()
+
+    assert _get_project_row(org.id, "split").id == original.id
+    assert canonical_row(owner, "split").id == original.id
+    assert _get_project_row(org.id, "split").id == canonical_row(owner, "split").id
