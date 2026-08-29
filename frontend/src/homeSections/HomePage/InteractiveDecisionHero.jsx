@@ -344,11 +344,22 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
 
       <div className="idh-shell">
         <div className="idh-copy">
-          <p className="idh-eyebrow">Decision intelligence starts here</p>
-          <h1>A thought partner that won't just tell you what you want to hear.</h1>
+          {/* The old headline, "a thought partner that won't just tell you what
+              you want to hear", is a claim every assistant on the market makes,
+              so it could not differentiate. This asks a question only Jaspen
+              answers.
+
+              "Direction" rather than "plan" or "decision" on purpose: a single
+              decision, competing options, a ranked portfolio and a full plan are
+              all directions, so the breadth of the product survives without the
+              page listing what it accepts. The moment, before you commit, is
+              what they have in common and is where the urgency comes from. */}
+          <p className="idh-eyebrow">Decision confidence</p>
+          <h1>How much of your direction is backed by evidence?</h1>
           <p className="idh-subcopy">
-            Paste your notes, emails, or data. Jaspen scores your options and shows
-            exactly how it got the number.
+            Jaspen separates what is evidenced from what is assumed, shows where you
+            are exposed, and names the assumptions that could change the answer,
+            before you commit.
           </p>
         </div>
 
@@ -548,8 +559,15 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
 
         {!hasStarted && (
           <div className="idh-why">
+            {/* Names a failure the reader has personally lost to, rather than
+                asserting that decisions are hard. Softened from an earlier
+                draft that said the best-evidenced case rarely wins: the point
+                lands without implying most corporate decisions are badly
+                evidenced, which is both unprovable and needlessly cynical. */}
             <p className="idh-why-eyebrow">Why Jaspen</p>
-            <p className="idh-why-heading">Some decisions need more than a gut feeling.</p>
+            <p className="idh-why-heading">
+              A well-presented case can look stronger than the evidence behind it.
+            </p>
           </div>
         )}
 

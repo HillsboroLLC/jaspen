@@ -52,7 +52,7 @@ Jaspen can help clarify priorities, but it should not secretly choose them.
 
 A chat answer can be useful and still disappear into conversation history.
 
-Jaspen's current direction is to preserve decisions as structured artifacts: scorecards, execution plans, and canonical Decision Records. Scorecards and execution plans are active decision surfaces; Decision Records are the durable foundation now being formalized. These artifacts are meant to be reviewable, shareable within the user's permitted context, auditable, exportable, updated when appropriate, and learned from.
+Jaspen preserves decisions as structured artifacts: scorecards, execution plans, and canonical Decision Records. All three are active surfaces. A record carries the decision that was made, the outcome when it arrives, the lesson drawn from it, and the chain to whatever superseded it. These artifacts are reviewable, shareable within the user's permitted context, auditable, exportable, updated when appropriate, and learned from.
 
 The artifact matters because organizations do not only need advice. They need memory.
 

@@ -27,7 +27,11 @@ export default function HowScoreWorks() {
       <div className="hsw-inner">
         <div className="hsw-header">
           <p className="hsw-eyebrow">How the score works</p>
-          <h2 className="hsw-heading">You can open up every number.</h2>
+          {/* Section deliberately otherwise unchanged. The worked example below,
+              judged 80 and capped at 45, is the most persuasive thing on the
+              site and needs no rewrite. Only the heading moves, from describing
+              a capability to naming what the reader gets. */}
+          <h2 className="hsw-heading">Every number tells you how much of it is evidence.</h2>
           <p className="hsw-sub">
             A Jaspen score is never a single opaque figure. It is assembled from parts you can
             inspect: what the evidence says, how much each factor matters to you, and how sure

@@ -40,13 +40,23 @@ When someone later asks why the answer was 72, there is an answer: the criteria,
 
 Jaspen currently supports decision analysis, scorecards, evidence grading, confidence calibration, user-owned rubrics, transparent reasoning, and execution planning.
 
+It also computes **Decision Confidence** and **Assumption Exposure**: the share of a decision's weighted criteria standing on evidence rather than assumption, which assumptions carry enough weight to change the score or the ranking, and what evidence would resolve them. These are deterministic, computed from the evidence grades and rubric weights the decision already carries, with no model call involved.
+
+Canonical Decision Records are current, not forthcoming. Records are derived from completed analyses, owned by the customer's organization, and support recorded human decisions, appended outcomes, lessons learned, supersession history, and permission-aware retrieval into a later decision.
+
 ### Foundation / In Development
 
-Jaspen is formalizing canonical Decision Records, private Decision Record infrastructure, and custody architecture. Private customer-owned records are the default design.
+Custody architecture beyond the private, organization-owned default.
 
 ### Future
 
 The public Decision Library, pattern discovery, outcome-based insights, cross-record Decision Intelligence, and broader organizational learning are future layers. They should be described as the Learning System vision, not as fully active production behavior.
+
+**Hold this line carefully.** Records, outcomes, lessons, and retrieval shipped. The Library, pattern discovery across organizations, and cross-record intelligence did not. The maturity line moved; it did not disappear.
+
+### A distinction that must not blur
+
+Decision Confidence measures a **scored** decision: how much of its weighted criteria stand on evidence. Before anything is scored there is no such figure, and no readiness, completeness, or coverage percentage may be presented as one. Those measure how much context Jaspen has been given, which is a different question with a different answer.
 
 ## AI Conversation
 
