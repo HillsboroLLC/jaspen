@@ -47,12 +47,76 @@ describe('DecisionConfidenceCard', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows the resolution path for a resolvable assumption', () => {
+  it('says what the ratio measures so it is not read as certainty', () => {
     render(<DecisionConfidenceCard profile={profile()} />);
-    expect(screen.getByText('Evidence needed')).toBeInTheDocument();
     expect(
-      screen.getByText(/Connect NetSuite or upload the model/),
+      screen.getByText('Evidence-backed share of the weighted decision'),
     ).toBeInTheDocument();
+  });
+
+  describe('hierarchy', () => {
+    it('promotes the most severe claim and demotes the rest', () => {
+      const withBoth = profile({
+        claims: [
+          { kind: 'reversing', text: '1 assumption could change which option leads' },
+          { kind: 'resolvable', text: '2 gaps can be resolved before you commit' },
+        ],
+      });
+      const { container } = render(<DecisionConfidenceCard profile={withBoth} />);
+
+      // The severe one carries the finding treatment.
+      expect(container.querySelector('.dcc-finding-text').textContent).toBe(
+        '1 assumption could change which option leads',
+      );
+      // The rest are context, not competing findings.
+      expect(container.querySelector('.dcc-secondary-claims').textContent).toContain(
+        '2 gaps can be resolved before you commit',
+      );
+    });
+
+    it('lifts the highest-leverage resolution out of the register', () => {
+      const { container } = render(<DecisionConfidenceCard profile={profile()} />);
+      const action = container.querySelector('.dcc-action-text');
+      expect(action.textContent).toContain('Financial viability');
+      expect(action.textContent).toContain('Connect NetSuite or upload the model');
+    });
+
+    it('offers no action when nothing resolvable moves the score', () => {
+      const settled = profile({
+        criteria: [criterion({ swing: 0, severity: 'none', resolvable: false, resolution: null })],
+        claims: [],
+      });
+      const { container } = render(<DecisionConfidenceCard profile={settled} />);
+      expect(container.querySelector('.dcc-action')).toBeNull();
+      expect(container.querySelector('.dcc-finding')).toBeNull();
+    });
+  });
+
+  it('states each resolution once, never twice', () => {
+    // The top exposure's resolution is promoted into the action block, so
+    // repeating it in its own register row reads as two instructions.
+    render(<DecisionConfidenceCard profile={profile()} />);
+    expect(
+      screen.getAllByText(/Connect NetSuite or upload the model/),
+    ).toHaveLength(1);
+    expect(screen.queryByText('Evidence needed')).not.toBeInTheDocument();
+  });
+
+  it('keeps the register resolution for assumptions that were not promoted', () => {
+    const two = profile({
+      criteria: [
+        criterion(),
+        criterion({
+          key: 'ops',
+          label: 'Execution readiness',
+          swing: 6,
+          resolution: 'Attach the staffing plan',
+        }),
+      ],
+    });
+    render(<DecisionConfidenceCard profile={two} />);
+    expect(screen.getByText('Evidence needed')).toBeInTheDocument();
+    expect(screen.getByText(/Attach the staffing plan/)).toBeInTheDocument();
   });
 
   it('groups exposure in plain language, never by tier name', () => {
@@ -121,7 +185,6 @@ describe('DecisionConfidenceCard', () => {
         />,
       );
       expect(screen.getByText(/trails Option A by 8 points/)).toBeInTheDocument();
-      expect(screen.getByText(/could put it ahead/)).toBeInTheDocument();
     });
 
     it('never names an option as overtaking itself', () => {

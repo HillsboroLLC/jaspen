@@ -61,38 +61,87 @@
 .dcc-split-backed { background: #0e6b3f; }
 .dcc-split-assumed { background: #f59e0b; }
 
-.dcc-claims {
+/* Names what the percentage measures. Small, but it is the line that stops
+   the ratio being read as model certainty. */
+.dcc-basis {
   margin: 0;
-  padding: 0 0 0 17px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #8a93ad;
+}
+
+/* --- 2. the finding ---
+   The one sentence the reader should leave with. Given the most typographic
+   weight on the card after the ratio itself, because a card where five
+   findings share equal weight is a diagnostic report, not an executive
+   finding. */
+
+.dcc-finding {
+  border-left: 3px solid #a0036c;
+  background: #faf5f9;
+  padding: 13px 16px;
   display: flex;
   flex-direction: column;
   gap: 5px;
 }
 
-.dcc-claims li {
-  font-size: 13px;
+.dcc-finding-text {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #161f3b;
+}
+
+.dcc-finding-detail {
+  margin: 0;
+  font-size: 12.5px;
   line-height: 1.5;
   color: #5a6585;
 }
 
-.dcc-claims li::marker { color: #8a93ad; }
+/* --- 3. what to do about it --- */
 
-/* --- reversal --- */
-
-.dcc-reversal {
-  border-left: 3px solid #a0036c;
-  background: #faf5f9;
-  padding: 11px 14px;
+.dcc-action {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 4px;
 }
 
-.dcc-reversal p {
+.dcc-action-eyebrow {
   margin: 0;
-  font-size: 13px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #1f5f9e;
+}
+
+.dcc-action-text {
+  margin: 0;
+  font-size: 13.5px;
   line-height: 1.5;
   color: #161f3b;
+}
+
+.dcc-action-criterion {
+  font-weight: 600;
+}
+
+.dcc-action-criterion::after {
+  content: ' · ';
+  font-weight: 400;
+  color: #8a93ad;
+}
+
+/* Remaining claims, deliberately quiet. They are context for the finding
+   above, not competing findings. */
+.dcc-secondary-claims {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8a93ad;
 }
 
 /* --- 2. the register --- */
