@@ -317,6 +317,32 @@ def test_resolvable_requires_a_named_next_step():
     assert by_key["stuck"]["resolvable"] is False
 
 
+def test_source_and_rationale_pass_through_unchanged():
+    """Both are recorded by scoring. Neither is derived or embellished here."""
+    entries = criterion_entries(
+        {"fin": {
+            "score": 80, "confidence": "medium", "label": "Financial viability",
+            "source": "Connector", "rationale": "Unit economics come from the connected ledger.",
+        }},
+        {"fin": 1.0},
+    )
+    assert entries[0]["source"] == "connector"
+    assert entries[0]["rationale"] == "Unit economics come from the connected ledger."
+
+
+def test_missing_source_and_rationale_are_none_not_invented():
+    """A card with no recorded reasoning must not grow one.
+
+    Guards the provenance limit: absent reasoning is reported as absent, never
+    filled with a plausible sentence.
+    """
+    entries = criterion_entries(
+        {"fin": {"score": 80, "confidence": "assumed"}}, {"fin": 1.0},
+    )
+    assert entries[0]["source"] is None
+    assert entries[0]["rationale"] is None
+
+
 def test_evidenced_criteria_are_never_listed_as_resolvable():
     """Nothing to resolve on a criterion that already has strong evidence."""
     profile = evidence_profile(

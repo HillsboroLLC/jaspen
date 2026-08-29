@@ -25,6 +25,19 @@
 # it could change the answer, and something can be done about it before the
 # commitment is made.
 #
+# PROVENANCE LIMIT, read before building anything that shows "evidence":
+# nothing in this system retains WHICH input supported a judgment. Scoring
+# records a channel (`source`: conversation / connector / inferred / assumed)
+# and the model's own reasoning (`rationale`). It does not record the document,
+# the message, the connector field, or the figure that a score rested on.
+#
+# So a surface may say "Jaspen based this on connected data, and here is its
+# stated reasoning". It may NOT present a list of evidence held, cite a figure
+# to a source, or imply an audit trail exists. Doing so would manufacture
+# exactly the confident, unsupported content this module exists to expose, and
+# it would be indistinguishable from the failure the product is sold against.
+# Closing this properly means capturing evidence references during scoring.
+#
 # SCOPE LIMIT, load-bearing, do not let UI or marketing copy exceed it:
 # a confidence cap only ever LOWERS a judgment, so obtaining evidence can only
 # move a score UP, toward what the model already judged. This module therefore
@@ -177,6 +190,21 @@ def criterion_entries(dimensions, weights):
             "evidenced": grade in EVIDENCED_GRADES,
             "resolvable": bool(resolution) and grade not in EVIDENCED_GRADES,
             "resolution": resolution or None,
+            # Passed through, not derived. Both are what the scoring pass
+            # already recorded, and both are weaker than they may look:
+            #
+            #   source     the CHANNEL an input arrived on, one of
+            #              conversation / connector / inferred / assumed. It
+            #              does not identify which input.
+            #   rationale  the model's own account of why it scored this way.
+            #              It is reasoning, not a record of evidence.
+            #
+            # Neither is provenance. Nothing here retains which document,
+            # message, or connector field supported a judgment, so no surface
+            # may present these as an evidence trail. See PROVENANCE LIMIT at
+            # the top of this module.
+            "source": _text(dim.get("source")).lower() or None,
+            "rationale": _text(dim.get("rationale")) or None,
         })
     return entries
 
