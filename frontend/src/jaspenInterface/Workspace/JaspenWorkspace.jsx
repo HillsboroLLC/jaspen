@@ -41,6 +41,13 @@ const BlockGrid = WidthProvider(GridLayout);
 // artifact view. Keep these in sync with the entry-point links in
 // JaspenChat's Session Artifacts dropdown.
 const SENTINEL_TRADEOFF = '__tradeoff__';
+
+// One canvas section per weighted criterion, so the evidence detail resizes and
+// reorders like every other section rather than being a fixed block a user
+// cannot arrange. Prefixed because these keys are generated from the rubric and
+// have to be distinguishable from the static section keys everywhere layout is
+// merged, serialised, or reset.
+const CRITERION_SECTION_PREFIX = 'criterion:';
 const SENTINEL_EXECUTION = '__execution__';
 
 // Color palette matched against the chat scorecard's renderScorecardCard.
@@ -66,11 +73,12 @@ const _GENERIC_TITLE_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-
 // authored, so it must not be editable as prose.
 const DEFAULT_SCORECARD_SECTIONS = [
   { key: 'score',      label: 'Score',                cols: 4, locked: true,  x: 0, y: 0,  w: 12, h: 4 },
-  // Taller than it first looks like it needs. The card stacks a split bar,
-  // the claims, a reversal callout, and a register whose length follows the
-  // rubric, so a short block silently scrolls the headline figure out of view
-  // and clips the last exposure group.
-  { key: 'confidence', label: 'Decision Confidence',  cols: 4, locked: true,  x: 0, y: 4,  w: 12, h: 14 },
+  // Holds the briefing only. The criterion detail moved into its own generated
+  // sections so each can be resized and reordered, which makes this block much
+  // shorter than when it carried the whole report. Auto-sizing grows it if a
+  // decision produces a longer summary; it never shrinks, so a size a user has
+  // chosen is theirs to keep.
+  { key: 'confidence', label: 'Decision Confidence',  cols: 4, locked: true,  x: 0, y: 4,  w: 12, h: 8 },
   { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 18, w: 12, h: 5 },
   { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 23, w: 12, h: 8 },
   { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false, x: 0, y: 31, w: 6,  h: 6 },
@@ -89,10 +97,19 @@ const _SECTION_LAYOUT_FIELDS = ['x', 'y', 'w', 'h', 'cols', 'dimCols', 'dimOrder
  *  sections fall back to their default so an older saved layout still opens. */
 function _mergeSectionLayout(saved) {
   const rows = Array.isArray(saved) ? saved : [];
-  return DEFAULT_SCORECARD_SECTIONS.map((d) => {
+  const merged = DEFAULT_SCORECARD_SECTIONS.map((d) => {
     const found = rows.find((p) => p && p.key === d.key);
     return found ? { ...d, ...found } : { ...d, collapsed: false };
   });
+  // Criterion sections are generated from the rubric, so they are not in the
+  // defaults and this map would otherwise drop them on every merge, silently
+  // discarding a user's arrangement of exactly the sections they arranged.
+  rows.forEach((row) => {
+    if (row && typeof row.key === 'string' && row.key.startsWith(CRITERION_SECTION_PREFIX)) {
+      if (!merged.some((m) => m.key === row.key)) merged.push({ ...row });
+    }
+  });
+  return merged;
 }
 
 /** Strip the layout down to the persisted fields — labels and `locked` come
@@ -152,6 +169,39 @@ function _deriveFromMessage(text) {
  * Generic placeholder names (Baseline Analysis, etc.) are stripped so the
  * canvas always shows a real idea name.
  */
+// Criterion narrative is PRESENTATION. It rides on display_overrides for the
+// same reason risks and the recommended scenario do: it is qualitative text
+// that does not feed the numeric score, so a user may rewrite how a finding
+// reads without rewriting the finding.
+//
+// The separation is the point, and it is enforced structurally rather than by
+// convention. Only `rationale` is replaced. Score, evidence grade, weight,
+// swing, severity and evidence references all pass through untouched because
+// the entry is spread and only that one field is overwritten. Editing wording
+// therefore cannot move a number, and a reader can always recover what Jaspen
+// actually said.
+function applyCriterionNarrative(profile, narrativeOverrides) {
+  if (!profile || !narrativeOverrides || typeof narrativeOverrides !== 'object') {
+    return profile;
+  }
+  const criteria = (profile.criteria || []).map((entry) => {
+    const override = narrativeOverrides[entry.key];
+    const text = override && typeof override === 'object' ? override.rationale : null;
+    if (!text || text === entry.rationale) return entry;
+    return {
+      ...entry,
+      rationale: text,
+      // Jaspen's own words are kept, not replaced, so "restore original" is
+      // always available and the system finding survives the edit.
+      _original_rationale: entry.rationale ?? null,
+      _edited: true,
+      _edited_at: override.edited_at || null,
+      _edit_note: override.note || null,
+    };
+  });
+  return { ...profile, criteria };
+}
+
 function applyOverrides(scorecard, overrides) {
   if (!scorecard) return null;
   const ov = overrides && typeof overrides === 'object' ? overrides : {};
@@ -169,6 +219,9 @@ function applyOverrides(scorecard, overrides) {
     // Risks + recommended scenario are qualitative narrative — they don't feed
     // the numeric score, so they're manually editable (cosmetic override wins).
     top_risks: ov.top_risks ?? scorecard.top_risks,
+    evidence_profile: applyCriterionNarrative(
+      scorecard.evidence_profile, ov.criterion_narrative,
+    ),
     recommended_scenario: ov.recommended_scenario ?? scorecard.recommended_scenario,
     _accent_color: ov.accent_color ?? scorecard._accent_color ?? null,
     _display_overrides: ov,
@@ -773,37 +826,86 @@ export default function JaspenWorkspace() {
   // is correct: there is nothing to overtake.
   const decisionExposure = bundle?.decision_exposure || null;
 
-  // Grow the Decision Confidence section to fit its own content instead of
-  // scrolling inside the tile. The card's height is not knowable in advance:
-  // the register follows the rubric, the finding and resolution blocks appear
-  // only when the arithmetic produces them, and the disclosure expands. A
-  // fixed row count therefore either clips a long card or leaves a short one
-  // stranded in white space, and the internal scrollbar it needed hid the
-  // headline figure the moment the reader scrolled.
+  // Grow a section to fit its own content instead of scrolling inside its tile.
+  // Section heights are not knowable in advance: a criterion's detail depends
+  // on how much evidence verified and whether it carries a resolution, and the
+  // briefing depends on how many sentences the arithmetic produced. A fixed row
+  // count therefore either clips a long section or strands a short one, and the
+  // internal scrollbar it needs hides the figure the reader came for.
   //
   // Only ever grows. Shrinking on every render would fight a user who has
-  // dragged the section to a size they prefer.
-  const confidenceContentRef = useRef(null);
+  // dragged a section to a size they prefer.
+  const autoSizeRefs = useRef({});
+  const registerAutoSize = useCallback((key) => (node) => {
+    if (node) autoSizeRefs.current[key] = node;
+    else delete autoSizeRefs.current[key];
+  }, []);
+
   useEffect(() => {
-    const node = confidenceContentRef.current;
-    if (!node || typeof ResizeObserver === 'undefined') return undefined;
+    if (typeof ResizeObserver === 'undefined') return undefined;
 
     const fit = () => {
-      // rowHeight 28 with a 16px gap, so n rows span n*28 + (n-1)*16. Solve for
-      // n, then add one row of slack for the section header and padding.
-      const needed = Math.ceil((node.scrollHeight + 16) / 44) + 1;
+      const needed = {};
+      Object.entries(autoSizeRefs.current).forEach(([key, node]) => {
+        if (!node) return;
+        // rowHeight 28 with a 16px gap, so n rows span n*28 + (n-1)*16. Solve
+        // for n, then add one row of slack for the header and padding.
+        needed[key] = Math.ceil((node.scrollHeight + 16) / 44) + 1;
+      });
+      if (!Object.keys(needed).length) return;
       setSectionLayout((prev) => {
-        const current = prev.find((s) => s.key === 'confidence');
-        if (!current || current.h >= needed) return prev;
-        return prev.map((s) => (s.key === 'confidence' ? { ...s, h: needed } : s));
+        let changed = false;
+        const next = prev.map((section) => {
+          const want = needed[section.key];
+          if (want === undefined || section.h >= want) return section;
+          changed = true;
+          return { ...section, h: want };
+        });
+        return changed ? next : prev;
       });
     };
 
     fit();
     const observer = new ResizeObserver(fit);
-    observer.observe(node);
+    Object.values(autoSizeRefs.current).forEach((node) => node && observer.observe(node));
     return () => observer.disconnect();
   }, [rendered, decisionExposure]);
+
+  // Ensure a section exists for every weighted criterion, appended below the
+  // rest so a first render has a sensible arrangement. Existing sections are
+  // never repositioned: once a user has moved one, the layout is theirs.
+  const criterionKeys = useMemo(
+    () => (rendered?.evidence_profile?.criteria || []).map((c) => c.key),
+    [rendered],
+  );
+
+  useEffect(() => {
+    if (!criterionKeys.length) return;
+    setSectionLayout((prev) => {
+      const existing = new Set(prev.map((s) => s.key));
+      const missing = criterionKeys.filter(
+        (key) => !existing.has(`${CRITERION_SECTION_PREFIX}${key}`),
+      );
+      if (!missing.length) return prev;
+      let y = prev.reduce((max, s) => Math.max(max, (s.y || 0) + (s.h || 0)), 0);
+      const added = missing.map((key) => {
+        const section = {
+          key: `${CRITERION_SECTION_PREFIX}${key}`,
+          label: 'Criterion',
+          cols: 4,
+          locked: true,
+          x: 0,
+          y,
+          w: 12,
+          h: 8,
+          collapsed: false,
+        };
+        y += 8;
+        return section;
+      });
+      return [...prev, ...added];
+    });
+  }, [criterionKeys]);
 
   // Resolve the display title for THIS specific artifact. Priority:
   // override → meaningful scorecard fields → first user message in the
@@ -989,6 +1091,38 @@ export default function JaspenWorkspace() {
     } finally {
       setExecutionExporting(false);
     }
+  }
+
+  // Criterion wording edits. Presentation only, by construction: these write
+  // into display_overrides.criterion_narrative and applyCriterionNarrative
+  // replaces nothing but `rationale`. The score, grade, weight, exposure and
+  // evidence references are never reachable from here, which is what makes it
+  // safe to let a user rewrite how a finding reads.
+  function setCriterionNarrative(criterionKey, text) {
+    const clean = String(text || '').trim();
+    setOverrides((prev) => {
+      const narrative = { ...(prev.criterion_narrative || {}) };
+      if (!clean) {
+        delete narrative[criterionKey];
+      } else {
+        narrative[criterionKey] = {
+          ...(narrative[criterionKey] || {}),
+          rationale: clean,
+          edited_at: new Date().toISOString(),
+        };
+      }
+      const next = { ...prev };
+      if (Object.keys(narrative).length) {
+        next.criterion_narrative = narrative;
+      } else {
+        delete next.criterion_narrative;
+      }
+      return next;
+    });
+  }
+
+  function restoreCriterionNarrative(criterionKey) {
+    setCriterionNarrative(criterionKey, '');
   }
 
   function setOverride(key, value) {
@@ -2091,6 +2225,15 @@ export default function JaspenWorkspace() {
                   dragSectionRef.current = null;
                 };
 
+                // Generated sections carry the criterion's own name, so the
+                // canvas reads as the report rather than as "Criterion" six
+                // times over.
+                const sectionLabel = section.key.startsWith(CRITERION_SECTION_PREFIX)
+                  ? ((rendered?.evidence_profile?.criteria || []).find(
+                      (c) => c.key === section.key.slice(CRITERION_SECTION_PREFIX.length),
+                    )?.label || section.label)
+                  : section.label;
+
                 return (
                   <div
                     key={section.key}
@@ -2114,7 +2257,7 @@ export default function JaspenWorkspace() {
                         fontSize:11, fontWeight:600, color:'#64748b',
                         letterSpacing:'0.06em', textTransform:'uppercase', flex:1,
                       }}>
-                        {section.label}
+                        {sectionLabel}
                       </span>
                       {/* Lock badge */}
                       {section.locked && (
@@ -2174,14 +2317,28 @@ export default function JaspenWorkspace() {
                       )}
 
                       {section.key === 'confidence' && (
-                        <div ref={confidenceContentRef}>
+                        <div ref={registerAutoSize('confidence')}>
                           <DecisionConfidenceCard
+                            only="summary"
                             profile={rendered?.evidence_profile || null}
                             exposure={decisionExposure}
                             optionName={rendered?.project_name || null}
                             score={score}
                             scoreCategory={category}
                             summary={decisionExposure?.summaries?.[rendered?.project_name] || null}
+                          />
+                        </div>
+                      )}
+
+                      {section.key.startsWith(CRITERION_SECTION_PREFIX) && (
+                        <div ref={registerAutoSize(section.key)}>
+                          <DecisionConfidenceCard
+                            only="criterion"
+                            criterionKey={section.key.slice(CRITERION_SECTION_PREFIX.length)}
+                            profile={rendered?.evidence_profile || null}
+                            editable
+                            onEditNarrative={setCriterionNarrative}
+                            onRestoreNarrative={restoreCriterionNarrative}
                           />
                         </div>
                       )}
