@@ -1,0 +1,40 @@
+/* Section tiles on the scorecard canvas.
+   Flat by default so the canvas reads as a page rather than a grid of cards
+   sitting on a card. Flat also removed the only cue that a section could be
+   resized, so the affordance comes back on hover instead of permanently. */
+
+.jw-section-tile {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  transition: border-color 0.12s ease;
+}
+
+.jw-section-tile:hover,
+.jw-section-tile:focus-within {
+  border-color: #dfe6ef;
+}
+
+/* The resize corner. react-grid-layout ships an invisible handle, which is
+   fine on a bordered card and undiscoverable on a flat one. It shows as a
+   small corner mark whenever the section is hovered. */
+.react-grid-item > .react-resizable-handle {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.jw-section-tile:hover ~ .react-resizable-handle,
+.react-grid-item:hover > .react-resizable-handle {
+  opacity: 1;
+}
+
+.react-grid-item > .react-resizable-handle::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid #8a93ad;
+  border-bottom: 2px solid #8a93ad;
+  border-radius: 1px;
+}

@@ -23,6 +23,7 @@ import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import TradeoffView from './TradeoffView';
 import DecisionConfidenceCard from './DecisionConfidenceCard';
+import './JaspenWorkspace.css';
 import ChoicePrompt, { parseChoicePrompt } from './ChoicePrompt';
 import GridLayout, { WidthProvider } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
@@ -85,7 +86,10 @@ const DEFAULT_SCORECARD_SECTIONS = [
 // follows the user across devices AND lets server-side exports lay the PDF out
 // the way the user actually arranged it. localStorage alone is why exported
 // layout used to diverge from the screen.
-const _SECTION_LAYOUT_FIELDS = ['x', 'y', 'w', 'h', 'cols', 'dimCols', 'dimOrder', 'collapsed'];
+// hUser records that a person chose this height. It has to persist: holding
+// it in a ref meant a resize survived the session and was silently discarded
+// on the next load, when the computed height took over again.
+const _SECTION_LAYOUT_FIELDS = ['x', 'y', 'w', 'h', 'cols', 'dimCols', 'dimOrder', 'collapsed', 'hUser'];
 
 /** Merge a saved layout onto the defaults, keyed by section. Unknown/missing
  *  sections fall back to their default so an older saved layout still opens. */
@@ -832,8 +836,6 @@ export default function JaspenWorkspace() {
   // back always won, so the measured size silently never applied. Prediction
   // has no such race. See estimateCriterionRows below.
   //
-  // A size the user chooses is recorded so nothing recomputes over it.
-  const userSizedRef = useRef(new Set());
 
   // Ensure a section exists for every weighted criterion, appended below the
   // rest so a first render has a sensible arrangement. Existing sections are
@@ -2077,7 +2079,7 @@ export default function JaspenWorkspace() {
                 // overwrote the computed height every time, so the section
                 // silently kept a size that fit nothing. A size the user drags
                 // is recorded and wins over the computation.
-                const computed = (s.key === 'confidence' && !userSizedRef.current.has('confidence'))
+                const computed = (s.key === 'confidence' && !s.hUser)
                   ? confidenceRows
                   : null;
                 return {
@@ -2114,7 +2116,12 @@ export default function JaspenWorkspace() {
                 // A size the user chose is a decision. Recording it here stops
                 // the auto-fit from silently undoing it on the next render.
                 onResizeStop={(_layout, _oldItem, newItem) => {
-                  if (newItem && newItem.i) userSizedRef.current.add(newItem.i);
+                  if (!newItem || !newItem.i) return;
+                  // Marked in state rather than a ref so the choice is saved
+                  // with the layout and survives a reload.
+                  setSectionLayout((prev) => prev.map((sec) => (
+                    sec.key === newItem.i ? { ...sec, h: newItem.h, hUser: true } : sec
+                  )));
                 }}
                 layout={[..._sectionLayoutItems, ..._blockLayoutItems]}
                 onLayoutChange={(nl) => {
@@ -2207,11 +2214,12 @@ export default function JaspenWorkspace() {
                 return (
                   <div
                     key={section.key}
-                    // Flat, not a card. The border and radius on every tile were
-                    // what made the canvas read as a grid of cards sitting on a
-                    // card. Sections are separated by the grid's own gap and by
-                    // their header rules instead. Drag and resize are unchanged:
-                    // the header grip and the resize handle both still render.
+                    // Flat, not a card, so the canvas reads as a page rather
+                    // than a grid of cards on a card. But flat also removed the
+                    // only cue that a section could be resized, so the tile
+                    // shows a faint outline on hover: enough to find the corner
+                    // handle, not enough to reinstate the card look.
+                    className="jw-section-tile"
                     style={{ height:'100%', boxSizing:'border-box', background:'transparent', padding:'2px 4px', display:'flex', flexDirection:'column', overflow:'hidden' }}
                   >
                     {/* Section header bar */}
