@@ -42,12 +42,6 @@ const BlockGrid = WidthProvider(GridLayout);
 // JaspenChat's Session Artifacts dropdown.
 const SENTINEL_TRADEOFF = '__tradeoff__';
 
-// One canvas section per weighted criterion, so the evidence detail resizes and
-// reorders like every other section rather than being a fixed block a user
-// cannot arrange. Prefixed because these keys are generated from the rubric and
-// have to be distinguishable from the static section keys everywhere layout is
-// merged, serialised, or reset.
-const CRITERION_SECTION_PREFIX = 'criterion:';
 const SENTINEL_EXECUTION = '__execution__';
 
 // Color palette matched against the chat scorecard's renderScorecardCard.
@@ -101,12 +95,18 @@ function _mergeSectionLayout(saved) {
     const found = rows.find((p) => p && p.key === d.key);
     return found ? { ...d, ...found } : { ...d, collapsed: false };
   });
-  // Criterion sections are generated from the rubric, so they are not in the
-  // defaults and this map would otherwise drop them on every merge, silently
-  // discarding a user's arrangement of exactly the sections they arranged.
-  rows.forEach((row) => {
-    if (row && typeof row.key === 'string' && row.key.startsWith(CRITERION_SECTION_PREFIX)) {
-      if (!merged.some((m) => m.key === row.key)) merged.push({ ...row });
+  // Saved layouts predate today's section set: one written before Decision
+  // Confidence existed carries stale y positions for everything after it, and
+  // merging those against current defaults leaves a hole where the newer
+  // section was inserted. Re-flowing full-width sections in their saved order
+  // removes that class of gap outright, and keeps a user's ORDER, which is the
+  // part of a saved layout worth preserving.
+  const ordered = merged.slice().sort((a, b) => (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0));
+  let cursor = 0;
+  ordered.forEach((section) => {
+    if ((section.w || 12) >= 12) {
+      section.y = cursor;
+      cursor += section.h || 5;
     }
   });
   return merged;
@@ -838,69 +838,37 @@ export default function JaspenWorkspace() {
   // Ensure a section exists for every weighted criterion, appended below the
   // rest so a first render has a sensible arrangement. Existing sections are
   // never repositioned: once a user has moved one, the layout is theirs.
-  // Height is predicted from what the section will actually render rather than
-  // measured after the fact. Measuring means writing a height back into the
-  // grid, and the grid reports its own layout on every change, so the two
-  // fight and the programmatic size loses. The content is known up front, so
-  // predicting it is both simpler and stable:
+  // The report is ONE section, not one per criterion.
   //
-  //   3 rows  header, name, weight and grade line
-  //   +1      per verified evidence reference
-  //   +2      the assessment paragraph
-  //   +1      "still unsupported", present on every grade below high
-  //   +2      "evidence needed", when a resolution exists
+  // Splitting each criterion into its own canvas section made the report read
+  // as a column of fragments rather than a document, and every seam added a
+  // grid gap that no amount of sizing could close. Arranging happens at the
+  // section level, the same as every other section on the canvas, and the
+  // detail inside flows as one piece.
   //
-  // A user can still resize any of it, and the estimate is never re-applied
-  // to a section that already exists.
-  function estimateCriterionRows(entry) {
-    let rows = 5;
-    const references = (entry.evidence_references || []).length;
-    rows += references;
-    // Excerpts are quoted source text and usually wrap, so a block of them
-    // needs a row of headroom beyond one per reference. Erring high costs a
-    // little white space; erring low costs a scrollbar inside the section,
-    // which is the thing this sizing exists to avoid.
-    if (references) rows += 1;
-    if (entry.confidence !== 'high') rows += 1;
-    if (entry.resolution) rows += 2;
-    return Math.max(4, rows);
-  }
+  // Its height is predicted from what it will render rather than measured.
+  // Measuring means writing a height back into the grid, and the grid reports
+  // its own layout on every change, so the write-back always won and the
+  // measured size silently never applied.
+  const confidenceRows = useMemo(() => {
+    const criteria = rendered?.evidence_profile?.criteria || [];
+    if (!criteria.length) return 8;
+    // 7 rows for the briefing, then per criterion: 5 base, a row per verified
+    // reference, one for "still unsupported", two for a resolution.
+    //
+    // Per-criterion headroom is deliberately absent. A row of slack is cheap on
+    // one section and compounds across six into a visible tail of white space,
+    // which is the complaint this sizing exists to answer. The card's own
+    // padding absorbs the wrap.
+    return criteria.reduce((total, entry) => {
+      let rows = 5 + (entry.evidence_references || []).length;
+      if (entry.confidence !== 'high') rows += 1;
+      if (entry.resolution) rows += 2;
+      return total + rows;
+    }, 7);
+  }, [rendered]);
 
-  const criterionSpecs = useMemo(
-    () => (rendered?.evidence_profile?.criteria || []).map((c) => ({
-      key: c.key,
-      rows: estimateCriterionRows(c),
-    })),
-    [rendered],
-  );
 
-  useEffect(() => {
-    if (!criterionSpecs.length) return;
-    setSectionLayout((prev) => {
-      const existing = new Set(prev.map((s) => s.key));
-      const missing = criterionSpecs.filter(
-        (spec) => !existing.has(`${CRITERION_SECTION_PREFIX}${spec.key}`),
-      );
-      if (!missing.length) return prev;
-      let y = prev.reduce((max, s) => Math.max(max, (s.y || 0) + (s.h || 0)), 0);
-      const added = missing.map((spec) => {
-        const section = {
-          key: `${CRITERION_SECTION_PREFIX}${spec.key}`,
-          label: 'Criterion',
-          cols: 4,
-          locked: true,
-          x: 0,
-          y,
-          w: 12,
-          h: spec.rows,
-          collapsed: false,
-        };
-        y += spec.rows;
-        return section;
-      });
-      return [...prev, ...added];
-    });
-  }, [criterionSpecs]);
 
   // Resolve the display title for THIS specific artifact. Priority:
   // override → meaningful scorecard fields → first user message in the
@@ -2102,14 +2070,25 @@ export default function JaspenWorkspace() {
               };
 
               // Built-in section layout items (keyed by section.key).
-              const _sectionLayoutItems = _visibleSections.map((s, i) => ({
-                i: s.key,
-                x: Number.isFinite(s.x) ? s.x : 0,
-                y: Number.isFinite(s.y) ? s.y : i * 5,
-                w: Number.isFinite(s.w) ? s.w : Math.min(12, Math.max(3, (s.cols || 4) * 3)),
-                h: Number.isFinite(s.h) ? s.h : 5,
-                minW: 3, minH: 2,
-              }));
+              const _sectionLayoutItems = _visibleSections.map((s, i) => {
+                // Decision Confidence is sized from what it renders, supplied
+                // here rather than written into state. State loses: the grid
+                // reports its own layout on every change and that write-back
+                // overwrote the computed height every time, so the section
+                // silently kept a size that fit nothing. A size the user drags
+                // is recorded and wins over the computation.
+                const computed = (s.key === 'confidence' && !userSizedRef.current.has('confidence'))
+                  ? confidenceRows
+                  : null;
+                return {
+                  i: s.key,
+                  x: Number.isFinite(s.x) ? s.x : 0,
+                  y: Number.isFinite(s.y) ? s.y : i * 5,
+                  w: Number.isFinite(s.w) ? s.w : Math.min(12, Math.max(3, (s.cols || 4) * 3)),
+                  h: computed ?? (Number.isFinite(s.h) ? s.h : 5),
+                  minW: 3, minH: 2,
+                };
+              });
               // Custom block layout items (keyed by blk id). Migrate legacy `cols`.
               const _blockLayoutItems = blocks.map((b, i) => {
                 const w = Number.isFinite(b?.w) ? b.w : (b?.cols ? Math.min(12, Math.max(2, b.cols * 3)) : 6);
@@ -2225,15 +2204,6 @@ export default function JaspenWorkspace() {
                   dragSectionRef.current = null;
                 };
 
-                // Generated sections carry the criterion's own name, so the
-                // canvas reads as the report rather than as "Criterion" six
-                // times over.
-                const sectionLabel = section.key.startsWith(CRITERION_SECTION_PREFIX)
-                  ? ((rendered?.evidence_profile?.criteria || []).find(
-                      (c) => c.key === section.key.slice(CRITERION_SECTION_PREFIX.length),
-                    )?.label || section.label)
-                  : section.label;
-
                 return (
                   <div
                     key={section.key}
@@ -2257,7 +2227,7 @@ export default function JaspenWorkspace() {
                         fontSize:11, fontWeight:600, color:'#64748b',
                         letterSpacing:'0.06em', textTransform:'uppercase', flex:1,
                       }}>
-                        {sectionLabel}
+                        {section.label}
                       </span>
                       {/* Lock badge */}
                       {section.locked && (
@@ -2317,30 +2287,17 @@ export default function JaspenWorkspace() {
                       )}
 
                       {section.key === 'confidence' && (
-                        <div>
-                          <DecisionConfidenceCard
-                            only="summary"
-                            profile={rendered?.evidence_profile || null}
-                            exposure={decisionExposure}
-                            optionName={rendered?.project_name || null}
-                            score={score}
-                            scoreCategory={category}
-                            summary={decisionExposure?.summaries?.[rendered?.project_name] || null}
-                          />
-                        </div>
-                      )}
-
-                      {section.key.startsWith(CRITERION_SECTION_PREFIX) && (
-                        <div>
-                          <DecisionConfidenceCard
-                            only="criterion"
-                            criterionKey={section.key.slice(CRITERION_SECTION_PREFIX.length)}
-                            profile={rendered?.evidence_profile || null}
-                            editable
-                            onEditNarrative={setCriterionNarrative}
-                            onRestoreNarrative={restoreCriterionNarrative}
-                          />
-                        </div>
+                        <DecisionConfidenceCard
+                          profile={rendered?.evidence_profile || null}
+                          exposure={decisionExposure}
+                          optionName={rendered?.project_name || null}
+                          score={score}
+                          scoreCategory={category}
+                          summary={decisionExposure?.summaries?.[rendered?.project_name] || null}
+                          editable
+                          onEditNarrative={setCriterionNarrative}
+                          onRestoreNarrative={restoreCriterionNarrative}
+                        />
                       )}
 
                       {section.key === 'executive' && (
