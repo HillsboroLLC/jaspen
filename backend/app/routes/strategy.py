@@ -15,6 +15,7 @@ from app.admin_audit import append_user_audit_event
 from app.decision_confidence import (
     CONFIDENCE_CAPS,
     decision_exposure,
+    decision_summary,
     evidence_profile,
 )
 from app.models import Scorecard, UsageEvent, User

@@ -3,8 +3,11 @@
 // Two layers, both visible. A summary that answers the decision at a glance,
 // then the full evidence and assumption detail for every weighted criterion.
 //
-//   Summary        score, the split, standing against other options, the key
-//                  finding, the highest-priority evidence needed
+//   Summary        a briefing composed server-side from computed values:
+//                  the verdict, standing, the evidence split, where exposure
+//                  sits, what could change the answer, and what to do next.
+//                  Prose, because it is meant to be quoted into a room, and
+//                  deliberately not the first rows of the detail below.
 //   Detail         per criterion: weight, grade, exposure, what Jaspen based
 //                  the judgment on, what remains unsupported, what evidence
 //                  would resolve it, and whether resolving it could change
@@ -23,9 +26,10 @@
 //              record of evidence.
 //
 // Nothing retains which document, message, connector field, or figure a score
-// rested on. So this report says "What Jaspen based this on" and shows the
-// channel plus Jaspen's stated reasoning. It must never render a list of
-// evidence held, attribute a figure to a source, or imply an audit trail.
+// rested on. So this report says "Jaspen's assessment" and shows the model's
+// reasoning plus a hedged characterisation of the channel. It must never
+// render a list of evidence held, attribute a figure to a source, or imply an
+// audit trail.
 // Manufacturing that would produce precisely the confident, unsupported
 // content the product exists to expose. See app/decision_confidence.py.
 //
@@ -159,7 +163,7 @@ function CriterionRow({ entry }) {
 }
 
 export default function DecisionConfidenceCard({
-  profile, exposure, optionName, score, scoreCategory,
+  profile, exposure, optionName, score, scoreCategory, summary,
 }) {
   if (!profile) return null;
 
@@ -167,21 +171,8 @@ export default function DecisionConfidenceCard({
   const assumed = profile.assumption_dependent_pct;
   const claims = Array.isArray(profile.claims) ? profile.claims : [];
   const criteria = profile.criteria || [];
-  const challengers = exposure?.challengers || [];
-  const leaderName = exposure?.leader?.name;
-  const counts = profile.counts || {};
-
   const primaryClaim = claims[0] || null;
   const secondaryClaims = claims.slice(1);
-  const primaryAction = criteria.find(
-    (c) => c.resolvable && c.resolution && c.swing > 0,
-  ) || null;
-
-  // Standing against the other options, when there are any. Rendered from the
-  // server-computed challenger set, since no single scorecard can establish it.
-  const standing = challengers.find((c) => optionName && c.name === optionName)
-    || (leaderName && optionName === leaderName ? { leads: true } : null);
-
   const isClear = primaryClaim?.kind === 'clear';
 
   return (
@@ -210,55 +201,36 @@ export default function DecisionConfidenceCard({
         <p className="dcc-basis">Evidence-backed share of the weighted decision</p>
       </header>
 
-      <dl className="dcc-summary">
-        {standing && (
-          <div className="dcc-summary-row">
-            <dt>Current standing</dt>
-            <dd>
-              {standing.leads
-                ? 'Leads the options under consideration.'
-                : `Trails ${leaderName} by ${standing.gap} ${standing.gap === 1 ? 'point' : 'points'}.`}
-            </dd>
-          </div>
-        )}
-
-        {primaryClaim && (
-          <div className="dcc-summary-row">
-            <dt>Key finding</dt>
-            <dd className={isClear ? 'is-clear' : 'is-finding'}>{primaryClaim.text}</dd>
-          </div>
-        )}
-
-        {primaryAction && (
-          <div className="dcc-summary-row">
-            <dt>Highest-priority evidence</dt>
-            <dd>
-              <span className="dcc-summary-criterion">{primaryAction.label}</span>
-              {primaryAction.resolution}
-            </dd>
-          </div>
-        )}
-
-        <div className="dcc-summary-row">
-          <dt>What could change the answer</dt>
-          <dd>
-            {counts.reversing
-              ? `Resolving ${counts.reversing === 1 ? 'this assumption' : 'these assumptions'} could change which option leads.`
-              : counts.material
-                ? 'Resolving the assumptions below could materially change the score, though not the ranking on current evidence.'
-                : isClear
-                  ? `Most of the weighted decision rests on strong or moderate evidence. The remaining gaps are unlikely to change today's ranking, though closing them would strengthen the record.`
-                  : 'Nothing on current evidence.'}
-          </dd>
+      {/* A briefing, not the first rows of the detail. It reads as continuous
+          prose because it is meant to be quoted into a room, and every
+          sentence is composed server-side from computed values, so it cannot
+          drift from the arithmetic below or smuggle in a claim the detail does
+          not support. See decision_confidence.decision_summary. */}
+      {summary && (
+        <div className="dcc-briefing">
+          <p className="dcc-briefing-label">Summary</p>
+          <p className="dcc-briefing-lead">
+            {summary.verdict} {summary.standing}
+          </p>
+          <p className="dcc-briefing-body">
+            {summary.confidence} {summary.concentration}
+          </p>
+          <p className={`dcc-briefing-sensitivity${isClear ? ' is-clear' : ''}`}>
+            {summary.sensitivity}
+          </p>
+          {summary.next_step && (
+            <p className="dcc-briefing-action">
+              <span className="dcc-briefing-action-label">Do this next</span>
+              {summary.next_step}
+            </p>
+          )}
+          {secondaryClaims.length > 0 && (
+            <p className="dcc-briefing-also">
+              {secondaryClaims.map((c) => c.text).join('. ')}.
+            </p>
+          )}
         </div>
-
-        {secondaryClaims.length > 0 && (
-          <div className="dcc-summary-row">
-            <dt>Also</dt>
-            <dd>{secondaryClaims.map((c) => c.text).join('. ')}.</dd>
-          </div>
-        )}
-      </dl>
+      )}
 
       {/* ── Layer 2: the detail, every criterion, nothing hidden ─────────── */}
       {criteria.length > 0 && (

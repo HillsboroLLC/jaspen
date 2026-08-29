@@ -21,6 +21,18 @@ function criterion(overrides = {}) {
   };
 }
 
+function summary(overrides = {}) {
+  return {
+    verdict: 'Scores 66 of 100, rated Good.',
+    standing: 'Trails Consolidate the Reno hub by 8 points, a gap the assumptions below could close.',
+    confidence: '55% of the weighted decision rests on evidence. The remaining 45% depends on assumptions.',
+    concentration: 'Most of that exposure sits in one criterion, Financial viability, which carries 20% of the decision.',
+    sensitivity: 'Resolving the assumptions below could materially change the score, though not the ranking on current evidence.',
+    next_step: 'Financial viability: Connect NetSuite or upload the model',
+    ...overrides,
+  };
+}
+
 function profile(overrides = {}) {
   return {
     evidence_backed_pct: 55,
@@ -50,38 +62,42 @@ describe('DecisionConfidenceCard', () => {
       ).toBeInTheDocument();
     });
 
-    it('answers the decision questions without any expansion', () => {
+    it('reads as a briefing rather than a label and value list', () => {
+      const { container } = render(
+        <DecisionConfidenceCard profile={profile()} summary={summary()} />,
+      );
+      const briefing = container.querySelector('.dcc-briefing');
+      expect(briefing).toBeInTheDocument();
+      // Continuous prose, so it can be quoted straight into a room.
+      expect(briefing.textContent).toContain('Scores 66 of 100, rated Good.');
+      expect(briefing.textContent).toContain('Trails Consolidate the Reno hub by 8 points');
+      expect(briefing.textContent).toContain('55% of the weighted decision rests on evidence');
+      expect(briefing.textContent).toContain('Most of that exposure sits in one criterion');
+    });
+
+    it('surfaces exactly one instruction', () => {
+      render(<DecisionConfidenceCard profile={profile()} summary={summary()} />);
+      expect(screen.getByText('Do this next')).toBeInTheDocument();
+      expect(
+        screen.getByText(/Financial viability: Connect NetSuite/),
+      ).toBeInTheDocument();
+    });
+
+    it('renders no briefing when the server composed none', () => {
+      const { container } = render(<DecisionConfidenceCard profile={profile()} />);
+      expect(container.querySelector('.dcc-briefing')).toBeNull();
+      // The detail still stands on its own.
+      expect(container.querySelector('.dcc-criteria')).toBeInTheDocument();
+    });
+
+    it('omits the action line when there is nothing to do', () => {
       render(
         <DecisionConfidenceCard
           profile={profile()}
-          optionName="Option B"
-          exposure={{
-            leader: { name: 'Option A', score: 74 },
-            challengers: [{ name: 'Option B', gap: 8, assumptions: [criterion()] }],
-          }}
+          summary={summary({ next_step: undefined })}
         />,
       );
-      expect(screen.getByText('Current standing')).toBeInTheDocument();
-      expect(screen.getByText(/Trails Option A by 8 points/)).toBeInTheDocument();
-      expect(screen.getByText('Key finding')).toBeInTheDocument();
-      expect(screen.getByText('Highest-priority evidence')).toBeInTheDocument();
-      expect(screen.getByText('What could change the answer')).toBeInTheDocument();
-    });
-
-    it('says the option leads when it is the leader', () => {
-      render(
-        <DecisionConfidenceCard
-          profile={profile()}
-          optionName="Option A"
-          exposure={{ leader: { name: 'Option A', score: 74 }, challengers: [] }}
-        />,
-      );
-      expect(screen.getByText(/Leads the options under consideration/)).toBeInTheDocument();
-    });
-
-    it('omits standing entirely when there are no other options', () => {
-      render(<DecisionConfidenceCard profile={profile()} optionName="Only option" />);
-      expect(screen.queryByText('Current standing')).not.toBeInTheDocument();
+      expect(screen.queryByText('Do this next')).not.toBeInTheDocument();
     });
   });
 
@@ -184,20 +200,20 @@ describe('DecisionConfidenceCard', () => {
       criteria: [criterion({ severity: 'other', swing: 0.9, confidence: 'medium', resolution: null })],
     });
 
-    it('states the affirmative finding', () => {
-      render(<DecisionConfidenceCard profile={clear} />);
-      expect(
-        screen.getByText(/No assumption currently carries enough weight/),
-      ).toBeInTheDocument();
-    });
+    it('states the affirmative finding and why, without overclaiming', () => {
+      const clearSummary = summary({
+        sensitivity: 'No assumption currently carries enough weight to change the '
+          + 'score materially. Closing the remaining gaps would strengthen the '
+          + 'record rather than move the answer.',
+        next_step: undefined,
+        concentration: undefined,
+      });
+      render(<DecisionConfidenceCard profile={clear} summary={clearSummary} />);
 
-    it('explains why confidence is high and what would still strengthen it', () => {
-      render(<DecisionConfidenceCard profile={clear} />);
-      const answer = screen.getByText(/Most of the weighted decision rests on strong or moderate evidence/);
-      expect(answer).toBeInTheDocument();
-      // Completion without overclaiming: the gaps are named as still worth closing.
-      expect(answer.textContent).toMatch(/closing them would strengthen the record/);
-      expect(answer.textContent).not.toMatch(/sound|complete|no risk/i);
+      const line = screen.getByText(/No assumption currently carries enough weight/);
+      expect(line).toBeInTheDocument();
+      expect(line.textContent).toMatch(/strengthen the record rather than move the answer/);
+      expect(line.textContent).not.toMatch(/sound|complete|no risk/i);
     });
   });
 
