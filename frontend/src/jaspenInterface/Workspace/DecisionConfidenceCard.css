@@ -454,3 +454,21 @@
   line-height: 1.55;
   color: #5a6585;
 }
+
+/* The only editable text on the card, so it carries a real control rather
+   than relying on someone discovering that the paragraph is clickable. */
+.dcc-edit-open {
+  margin-left: 8px;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: #1f5f9e;
+  background: none;
+  border: 1px solid #c5dcf0;
+  border-radius: 3px;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+.dcc-edit-open:hover { background: #eef4fa; border-color: #9dc2e6; }
+.dcc-edit-open:focus-visible { outline: 2px solid #a0036c; outline-offset: 2px; }

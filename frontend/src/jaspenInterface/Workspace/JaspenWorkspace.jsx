@@ -79,10 +79,10 @@ const DEFAULT_SCORECARD_SECTIONS = [
   // decision produces a longer summary; it never shrinks, so a size a user has
   // chosen is theirs to keep.
   { key: 'confidence', label: 'Decision Confidence',  cols: 4, locked: true,  x: 0, y: 4,  w: 12, h: 8 },
-  { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 18, w: 12, h: 5 },
-  { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 23, w: 12, h: 8 },
-  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false, x: 0, y: 31, w: 6,  h: 6 },
-  { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true,  x: 6, y: 31, w: 6,  h: 6 },
+  { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 12, w: 12, h: 5 },
+  { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 17, w: 12, h: 8 },
+  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false, x: 0, y: 25, w: 6,  h: 6 },
+  { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true,  x: 6, y: 25, w: 6,  h: 6 },
 ];
 
 // The canvas arrangement the user drags into place. Persisted in TWO places on
@@ -826,86 +826,81 @@ export default function JaspenWorkspace() {
   // is correct: there is nothing to overtake.
   const decisionExposure = bundle?.decision_exposure || null;
 
-  // Grow a section to fit its own content instead of scrolling inside its tile.
-  // Section heights are not knowable in advance: a criterion's detail depends
-  // on how much evidence verified and whether it carries a resolution, and the
-  // briefing depends on how many sentences the arithmetic produced. A fixed row
-  // count therefore either clips a long section or strands a short one, and the
-  // internal scrollbar it needs hides the figure the reader came for.
+  // Section sizing is predicted from content, not measured after render. An
+  // earlier version measured each section and wrote a height back into the
+  // grid, but the grid reports its own layout on every change and that write
+  // back always won, so the measured size silently never applied. Prediction
+  // has no such race. See estimateCriterionRows below.
   //
-  // Only ever grows. Shrinking on every render would fight a user who has
-  // dragged a section to a size they prefer.
-  const autoSizeRefs = useRef({});
-  const registerAutoSize = useCallback((key) => (node) => {
-    if (node) autoSizeRefs.current[key] = node;
-    else delete autoSizeRefs.current[key];
-  }, []);
-
-  useEffect(() => {
-    if (typeof ResizeObserver === 'undefined') return undefined;
-
-    const fit = () => {
-      const needed = {};
-      Object.entries(autoSizeRefs.current).forEach(([key, node]) => {
-        if (!node) return;
-        // rowHeight 28 with a 16px gap, so n rows span n*28 + (n-1)*16. Solve
-        // for n, then add one row of slack for the header and padding.
-        needed[key] = Math.ceil((node.scrollHeight + 16) / 44) + 1;
-      });
-      if (!Object.keys(needed).length) return;
-      setSectionLayout((prev) => {
-        let changed = false;
-        const next = prev.map((section) => {
-          const want = needed[section.key];
-          if (want === undefined || section.h >= want) return section;
-          changed = true;
-          return { ...section, h: want };
-        });
-        return changed ? next : prev;
-      });
-    };
-
-    fit();
-    const observer = new ResizeObserver(fit);
-    Object.values(autoSizeRefs.current).forEach((node) => node && observer.observe(node));
-    return () => observer.disconnect();
-  }, [rendered, decisionExposure]);
+  // A size the user chooses is recorded so nothing recomputes over it.
+  const userSizedRef = useRef(new Set());
 
   // Ensure a section exists for every weighted criterion, appended below the
   // rest so a first render has a sensible arrangement. Existing sections are
   // never repositioned: once a user has moved one, the layout is theirs.
-  const criterionKeys = useMemo(
-    () => (rendered?.evidence_profile?.criteria || []).map((c) => c.key),
+  // Height is predicted from what the section will actually render rather than
+  // measured after the fact. Measuring means writing a height back into the
+  // grid, and the grid reports its own layout on every change, so the two
+  // fight and the programmatic size loses. The content is known up front, so
+  // predicting it is both simpler and stable:
+  //
+  //   3 rows  header, name, weight and grade line
+  //   +1      per verified evidence reference
+  //   +2      the assessment paragraph
+  //   +1      "still unsupported", present on every grade below high
+  //   +2      "evidence needed", when a resolution exists
+  //
+  // A user can still resize any of it, and the estimate is never re-applied
+  // to a section that already exists.
+  function estimateCriterionRows(entry) {
+    let rows = 5;
+    const references = (entry.evidence_references || []).length;
+    rows += references;
+    // Excerpts are quoted source text and usually wrap, so a block of them
+    // needs a row of headroom beyond one per reference. Erring high costs a
+    // little white space; erring low costs a scrollbar inside the section,
+    // which is the thing this sizing exists to avoid.
+    if (references) rows += 1;
+    if (entry.confidence !== 'high') rows += 1;
+    if (entry.resolution) rows += 2;
+    return Math.max(4, rows);
+  }
+
+  const criterionSpecs = useMemo(
+    () => (rendered?.evidence_profile?.criteria || []).map((c) => ({
+      key: c.key,
+      rows: estimateCriterionRows(c),
+    })),
     [rendered],
   );
 
   useEffect(() => {
-    if (!criterionKeys.length) return;
+    if (!criterionSpecs.length) return;
     setSectionLayout((prev) => {
       const existing = new Set(prev.map((s) => s.key));
-      const missing = criterionKeys.filter(
-        (key) => !existing.has(`${CRITERION_SECTION_PREFIX}${key}`),
+      const missing = criterionSpecs.filter(
+        (spec) => !existing.has(`${CRITERION_SECTION_PREFIX}${spec.key}`),
       );
       if (!missing.length) return prev;
       let y = prev.reduce((max, s) => Math.max(max, (s.y || 0) + (s.h || 0)), 0);
-      const added = missing.map((key) => {
+      const added = missing.map((spec) => {
         const section = {
-          key: `${CRITERION_SECTION_PREFIX}${key}`,
+          key: `${CRITERION_SECTION_PREFIX}${spec.key}`,
           label: 'Criterion',
           cols: 4,
           locked: true,
           x: 0,
           y,
           w: 12,
-          h: 8,
+          h: spec.rows,
           collapsed: false,
         };
-        y += 8;
+        y += spec.rows;
         return section;
       });
       return [...prev, ...added];
     });
-  }, [criterionKeys]);
+  }, [criterionSpecs]);
 
   // Resolve the display title for THIS specific artifact. Priority:
   // override → meaningful scorecard fields → first user message in the
@@ -2137,6 +2132,11 @@ export default function JaspenWorkspace() {
                 isResizable
                 draggableHandle=".blk-drag-handle"
                 resizeHandles={['se']}
+                // A size the user chose is a decision. Recording it here stops
+                // the auto-fit from silently undoing it on the next render.
+                onResizeStop={(_layout, _oldItem, newItem) => {
+                  if (newItem && newItem.i) userSizedRef.current.add(newItem.i);
+                }}
                 layout={[..._sectionLayoutItems, ..._blockLayoutItems]}
                 onLayoutChange={(nl) => {
                   const byId = {};
@@ -2317,7 +2317,7 @@ export default function JaspenWorkspace() {
                       )}
 
                       {section.key === 'confidence' && (
-                        <div ref={registerAutoSize('confidence')}>
+                        <div>
                           <DecisionConfidenceCard
                             only="summary"
                             profile={rendered?.evidence_profile || null}
@@ -2331,7 +2331,7 @@ export default function JaspenWorkspace() {
                       )}
 
                       {section.key.startsWith(CRITERION_SECTION_PREFIX) && (
-                        <div ref={registerAutoSize(section.key)}>
+                        <div>
                           <DecisionConfidenceCard
                             only="criterion"
                             criterionKey={section.key.slice(CRITERION_SECTION_PREFIX.length)}

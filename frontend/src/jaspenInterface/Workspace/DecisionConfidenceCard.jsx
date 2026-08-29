@@ -184,6 +184,20 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
               Edited
             </span>
           )}
+          {/* A real control, not a hover secret. Click-to-edit alone left the
+              only editable text on the card indistinguishable from the
+              computed text around it, so the affordance had to be found by
+              accident. Everything else here is locked and must stay locked, so
+              the one thing a person may change says so. */}
+          {editable && draft === null && (
+            <button
+              type="button"
+              className="dcc-edit-open"
+              onClick={() => setDraft(entry.rationale || '')}
+            >
+              Edit wording
+            </button>
+          )}
         </p>
 
         {draft !== null ? (
