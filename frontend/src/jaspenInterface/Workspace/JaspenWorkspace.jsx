@@ -773,6 +773,38 @@ export default function JaspenWorkspace() {
   // is correct: there is nothing to overtake.
   const decisionExposure = bundle?.decision_exposure || null;
 
+  // Grow the Decision Confidence section to fit its own content instead of
+  // scrolling inside the tile. The card's height is not knowable in advance:
+  // the register follows the rubric, the finding and resolution blocks appear
+  // only when the arithmetic produces them, and the disclosure expands. A
+  // fixed row count therefore either clips a long card or leaves a short one
+  // stranded in white space, and the internal scrollbar it needed hid the
+  // headline figure the moment the reader scrolled.
+  //
+  // Only ever grows. Shrinking on every render would fight a user who has
+  // dragged the section to a size they prefer.
+  const confidenceContentRef = useRef(null);
+  useEffect(() => {
+    const node = confidenceContentRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return undefined;
+
+    const fit = () => {
+      // rowHeight 28 with a 16px gap, so n rows span n*28 + (n-1)*16. Solve for
+      // n, then add one row of slack for the section header and padding.
+      const needed = Math.ceil((node.scrollHeight + 16) / 44) + 1;
+      setSectionLayout((prev) => {
+        const current = prev.find((s) => s.key === 'confidence');
+        if (!current || current.h >= needed) return prev;
+        return prev.map((s) => (s.key === 'confidence' ? { ...s, h: needed } : s));
+      });
+    };
+
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [rendered, decisionExposure]);
+
   // Resolve the display title for THIS specific artifact. Priority:
   // override → meaningful scorecard fields → first user message in the
   // thread bundle. Never falls back to "Untitled idea" when the thread
@@ -1891,10 +1923,14 @@ export default function JaspenWorkspace() {
           <div
             ref={scorecardExportRef}
             data-scorecard-export
+            // Reads as the page rather than a card floating on it. The rounded
+            // corners, drop shadow and 980px cap made every section look like a
+            // card inside a card. The white background stays: this node is the
+            // export root, and a transparent one renders unpredictably in the
+            // PDF and PowerPoint capture.
             style={{
-              maxWidth:980, margin:'0 auto', background:'#fff', borderRadius:14,
-              boxShadow:'0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.04)',
-              padding:'36px 40px',
+              maxWidth:1240, margin:'0 auto', background:'#fff',
+              padding:'28px 8px 40px',
             }}
           >
             {/* Title — editable */}
@@ -2058,7 +2094,12 @@ export default function JaspenWorkspace() {
                 return (
                   <div
                     key={section.key}
-                    style={{ height:'100%', boxSizing:'border-box', background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, padding:'10px 12px', display:'flex', flexDirection:'column', overflow:'hidden' }}
+                    // Flat, not a card. The border and radius on every tile were
+                    // what made the canvas read as a grid of cards sitting on a
+                    // card. Sections are separated by the grid's own gap and by
+                    // their header rules instead. Drag and resize are unchanged:
+                    // the header grip and the resize handle both still render.
+                    style={{ height:'100%', boxSizing:'border-box', background:'transparent', padding:'2px 4px', display:'flex', flexDirection:'column', overflow:'hidden' }}
                   >
                     {/* Section header bar */}
                     <div style={{
@@ -2133,11 +2174,13 @@ export default function JaspenWorkspace() {
                       )}
 
                       {section.key === 'confidence' && (
-                        <DecisionConfidenceCard
-                          profile={rendered?.evidence_profile || null}
-                          exposure={decisionExposure}
-                          optionName={rendered?.project_name || null}
-                        />
+                        <div ref={confidenceContentRef}>
+                          <DecisionConfidenceCard
+                            profile={rendered?.evidence_profile || null}
+                            exposure={decisionExposure}
+                            optionName={rendered?.project_name || null}
+                          />
+                        </div>
                       )}
 
                       {section.key === 'executive' && (
