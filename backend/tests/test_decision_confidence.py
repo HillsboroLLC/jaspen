@@ -8,8 +8,10 @@ material, and the boundary the reversal claim must not cross.
 
 from app.decision_confidence import (
     CONFIDENCE_CAPS,
+    MATERIAL_SWING_POINTS,
     SEVERITY_MATERIAL,
-    SEVERITY_MINOR,
+    SEVERITY_NONE,
+    SEVERITY_OTHER,
     SEVERITY_REVERSING,
     criterion_entries,
     decision_exposure,
@@ -179,13 +181,84 @@ def test_material_when_the_swing_crosses_a_score_band():
     assert fin["severity"] == SEVERITY_MATERIAL
 
 
-def test_minor_when_the_swing_changes_nothing_anyone_would_describe():
+def test_material_on_swing_alone_without_crossing_a_band():
+    """Band crossing alone under-reports an option sitting mid-band.
+
+    fin carries a quarter of the decision and 8.75 points of exposure, but
+    the option starts at 68 and lands at 76.75, still inside Good. Judged on
+    band crossing alone this reads as immaterial, which is the wrong answer
+    for a quarter of a decision resting on an assumption.
+    """
+    profile = evidence_profile(
+        {
+            "market": _dim(88, "high"),
+            "fin": _dim(80, "assumed"),
+            "ops": _dim(74, "medium"),
+            "ev": _dim(60, "low"),
+        },
+        {"market": 0.30, "fin": 0.25, "ops": 0.25, "ev": 0.20},
+    )
+    assert profile["score"] == 68
+    fin = next(e for e in profile["criteria"] if e["key"] == "fin")
+    assert fin["swing"] == 8.75
+    assert fin["severity"] == SEVERITY_MATERIAL
+
+
+def test_material_threshold_boundary_is_inclusive():
+    # Judged 65 at low confidence caps to 60, so a criterion carrying the whole
+    # decision swings exactly the threshold. At the boundary it counts.
+    profile = evidence_profile({"only": _dim(65, "low")}, {"only": 1.0})
+    entry = profile["criteria"][0]
+    assert entry["swing"] == MATERIAL_SWING_POINTS
+    assert entry["severity"] == SEVERITY_MATERIAL
+
+
+def test_other_exposure_is_real_but_below_the_threshold():
+    """Sub-threshold exposure is still exposure, and is not called minor."""
     profile = evidence_profile(
         {"tiny": _dim(50, "assumed"), "ops": _dim(95, "high")},
         {"tiny": 0.02, "ops": 0.98},
     )
     tiny = next(e for e in profile["criteria"] if e["key"] == "tiny")
-    assert tiny["severity"] == SEVERITY_MINOR
+    assert 0 < tiny["swing"] < MATERIAL_SWING_POINTS
+    assert tiny["severity"] == SEVERITY_OTHER
+
+
+def test_zero_swing_never_claims_the_evidence_is_strong():
+    """A judgment landing on its own cap moves nothing, but is still weak.
+
+    Evidence quality judged 60 at low confidence caps to 60, so resolving it
+    would not move the score. That is an absence of score exposure, not a
+    presence of evidence, and it can still be worth resolving.
+    """
+    from app.decision_confidence import SEVERITY_LABELS
+
+    profile = evidence_profile(
+        {"ev": _dim(60, "low", improve="Attach the customer research")},
+        {"ev": 1.0},
+    )
+    entry = profile["criteria"][0]
+    assert entry["swing"] == 0
+    assert entry["severity"] == SEVERITY_NONE
+    assert entry["evidenced"] is False
+    assert entry["resolvable"] is True
+    assert SEVERITY_LABELS[SEVERITY_NONE] == "No score exposure"
+
+
+def test_evidenced_criteria_carry_no_exposure_tier_at_all():
+    """A criterion its evidence supports is not an assumption to list.
+
+    Separated from `other` so the workspace can drop these rows instead of
+    filing them under assumption exposure, which would overstate what the
+    decision actually depends on.
+    """
+    profile = evidence_profile(
+        {"ops": _dim(90, "high"), "fin": _dim(80, "assumed")},
+        {"ops": 0.5, "fin": 0.5},
+    )
+    ops = next(e for e in profile["criteria"] if e["key"] == "ops")
+    assert ops["severity"] == SEVERITY_NONE
+    assert profile["counts"]["other"] == 0
 
 
 def test_reversal_requires_a_peer_to_overtake():
@@ -198,6 +271,19 @@ def test_reversal_requires_a_peer_to_overtake():
 
     trailing = evidence_profile(dimensions, weights, leader_score=60)
     assert any(e["severity"] == SEVERITY_REVERSING for e in trailing["criteria"])
+
+
+def test_reversing_is_not_double_counted_as_material():
+    """Tiers are exclusive, so surfaces get one escalating count each."""
+    profile = evidence_profile(
+        {"fin": _dim(100, "assumed"), "ops": _dim(60, "high")},
+        {"fin": 0.5, "ops": 0.5},
+        leader_score=60,
+    )
+    counts = profile["counts"]
+    assert counts["reversing"] == 1
+    assert counts["material"] == 0
+    assert counts["material_or_higher"] == 1
 
 
 def test_the_leader_cannot_reverse_itself():

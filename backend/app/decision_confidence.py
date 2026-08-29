@@ -15,8 +15,8 @@
 #
 # Two axes, deliberately kept apart:
 #
-#   SEVERITY (reversing / material / minor) is magnitude. How far could this
-#     criterion move the score if its evidence were actually obtained?
+#   SEVERITY (reversing / material / other / none) is magnitude. How far could
+#     this criterion move the score if its evidence were actually obtained?
 #   RESOLVABLE is actionability. Is there a named next step that would raise
 #     this criterion's confidence grade?
 #
@@ -47,13 +47,41 @@ EVIDENCE_FACTOR = {"high": 1.0, "medium": 0.75, "low": 0.4, "assumed": 0.0}
 
 # Score band floors, mirroring the score_category thresholds in
 # routes/strategy.py. A swing that carries an option into a higher band is
-# material by definition: the decision would be described differently in the
-# room, even if the ranking holds.
+# material: the decision would be described differently in the room, even if
+# the ranking holds.
 SCORE_BANDS = (40, 60, 80)
+
+# The other half of materiality. Band crossing alone under-reports whenever an
+# option sits mid-band: a criterion carrying a quarter of the decision with
+# nearly nine points of unresolved exposure is not immaterial simply because
+# the option happened to start in the middle of "Good". Five points on a
+# hundred point score is large enough to matter and small enough to state
+# without a percentage calculation, so an assumption is material when it can
+# move the option by at least this much OR carry it into a different band.
+MATERIAL_SWING_POINTS = 5.0
 
 SEVERITY_REVERSING = "reversing"
 SEVERITY_MATERIAL = "material"
-SEVERITY_MINOR = "minor"
+# Real but sub-threshold exposure. Deliberately not called "minor": something
+# can be immaterial arithmetically while being nothing of the sort in ordinary
+# English, and the label is read by people deciding where to spend effort.
+SEVERITY_OTHER = "other"
+# No exposure to the score. Either the evidence already supports the judgment,
+# or the judgment happened to land at or below its own cap, so obtaining better
+# evidence would not move the number. Note the second case: a criterion can sit
+# here while still being resolvable, because raising its confidence grade is
+# worth doing even when today it changes nothing. The label therefore speaks
+# only about score movement and never asserts the evidence is strong.
+SEVERITY_NONE = "none"
+
+# What each tier is called in front of a user. Kept here with exposure_claims()
+# so no surface can invent its own vocabulary for the same computation.
+SEVERITY_LABELS = {
+    SEVERITY_REVERSING: "Could change the leading option",
+    SEVERITY_MATERIAL: "Material exposure",
+    SEVERITY_OTHER: "Other assumption exposure",
+    SEVERITY_NONE: "No score exposure",
+}
 
 # Grades that count as evidence rather than assumption when a reader wants the
 # split as a binary rather than a graded share.
@@ -183,7 +211,7 @@ def _severity(entry, score, leader_score):
     """
     swing = entry["swing"]
     if swing <= 0:
-        return SEVERITY_MINOR
+        return SEVERITY_NONE
     if (
         leader_score is not None
         and score is not None
@@ -191,9 +219,11 @@ def _severity(entry, score, leader_score):
         and score + swing >= leader_score
     ):
         return SEVERITY_REVERSING
+    if swing >= MATERIAL_SWING_POINTS:
+        return SEVERITY_MATERIAL
     if score is not None and _band_index(score + swing) > _band_index(score):
         return SEVERITY_MATERIAL
-    return SEVERITY_MINOR
+    return SEVERITY_OTHER
 
 
 def evidence_profile(dimensions, weights, *, score=None, leader_score=None):
@@ -218,6 +248,8 @@ def evidence_profile(dimensions, weights, *, score=None, leader_score=None):
     entries.sort(key=lambda e: (-e["swing"], -e["weight"], e["key"]))
 
     backed = evidence_ratio(entries)
+    reversing = sum(1 for e in entries if e["severity"] == SEVERITY_REVERSING)
+    material = sum(1 for e in entries if e["severity"] == SEVERITY_MATERIAL)
     return {
         "evidence_backed_pct": backed,
         "assumption_dependent_pct": 100 - backed,
@@ -227,8 +259,13 @@ def evidence_profile(dimensions, weights, *, score=None, leader_score=None):
             "total": len(entries),
             "evidenced": sum(1 for e in entries if e["evidenced"]),
             "assumption_dependent": sum(1 for e in entries if not e["evidenced"]),
-            "reversing": sum(1 for e in entries if e["severity"] == SEVERITY_REVERSING),
-            "material": sum(1 for e in entries if e["severity"] == SEVERITY_MATERIAL),
+            "reversing": reversing,
+            "material": material,
+            # Severity tiers are exclusive, so a reversing assumption is not
+            # counted under material. This is for the surfaces that want one
+            # number for "exposure worth acting on" rather than a breakdown.
+            "material_or_higher": reversing + material,
+            "other": sum(1 for e in entries if e["severity"] == SEVERITY_OTHER),
             "resolvable": sum(1 for e in entries if e["resolvable"]),
         },
         "top_exposure": [e for e in entries if e["swing"] > 0][:3],
