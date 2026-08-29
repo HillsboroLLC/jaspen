@@ -2179,6 +2179,8 @@ export default function JaspenWorkspace() {
                             profile={rendered?.evidence_profile || null}
                             exposure={decisionExposure}
                             optionName={rendered?.project_name || null}
+                            score={score}
+                            scoreCategory={category}
                           />
                         </div>
                       )}

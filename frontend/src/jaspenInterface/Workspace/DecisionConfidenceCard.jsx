@@ -1,67 +1,82 @@
-// Decision Confidence and Assumption Exposure for a scored option.
+// The Decision Confidence report.
 //
-// Replaces the "Data confidence" bar, which was a six pixel strip reporting a
-// bare percentage with no explanation of what it measured or what to do about
-// it. It read as a system health indicator. This reports a finding about the
-// user's decision instead.
+// Two layers, both visible. A summary that answers the decision at a glance,
+// then the full evidence and assumption detail for every weighted criterion.
 //
-// Three sections, in the order the reader needs them:
+//   Summary        score, the split, standing against other options, the key
+//                  finding, the highest-priority evidence needed
+//   Detail         per criterion: weight, grade, exposure, what Jaspen based
+//                  the judgment on, what remains unsupported, what evidence
+//                  would resolve it, and whether resolving it could change
+//                  the score or the ranking
 //
-//   1. Decision Confidence   the measurement, evidenced against assumed
-//   2. Assumption Exposure   the actionable finding, ranked by what it moves
-//   3. Evidence needed       the resolution path, per assumption
+// NOTHING IMPORTANT IS COLLAPSED. An earlier version hid most criteria behind
+// "Show 5 criteria", which buried the evidence story, and the evidence story
+// is the product. A reader scrolls the report; they do not hunt for it.
 //
-// EVERY NUMBER AND SENTENCE COMES FROM THE SERVER. The evidence split, the
-// swing, the severity tier and the rendered claims are all computed in
-// app/decision_confidence.py. Nothing here derives a figure, and nothing here
-// composes a claim, because a second implementation would drift from the
-// arithmetic it is supposed to describe. If a statement is needed that the
-// payload does not carry, add it to exposure_claims() rather than writing it
-// in JSX.
+// PROVENANCE LIMIT, the constraint that shapes this whole file. Scoring
+// records only two things about why a criterion scored as it did:
 //
-// TWO DISTINCTIONS THIS UI MUST NOT COLLAPSE
+//   source     the CHANNEL an input arrived on: conversation, connector,
+//              inferred, or assumed. It does not identify which input.
+//   rationale  the model's own account of its reasoning. Reasoning, not a
+//              record of evidence.
 //
-// Weak evidence is not the same as score exposure. A criterion can rest on
-// thin evidence while moving the score by nothing at all, because the model's
-// judgment already sat at or below its cap. Those criteria carry severity
-// "none" and stay out of the exposure register, but they can still be worth
-// resolving, so their evidence grade is still shown in the breakdown. Never
-// render "no score exposure" as "the evidence is fine".
+// Nothing retains which document, message, connector field, or figure a score
+// rested on. So this report says "What Jaspen based this on" and shows the
+// channel plus Jaspen's stated reasoning. It must never render a list of
+// evidence held, attribute a figure to a source, or imply an audit trail.
+// Manufacturing that would produce precisely the confident, unsupported
+// content the product exists to expose. See app/decision_confidence.py.
+//
+// Everything numeric comes from the server. Nothing here derives a figure or
+// composes a claim; claims arrive rendered from exposure_claims() so the
+// workspace, exports and email cannot drift into three vocabularies.
+//
+// TWO DISTINCTIONS THAT MUST NOT COLLAPSE
+//
+// Weak evidence is not score exposure. A criterion can rest on thin evidence
+// while moving the score by nothing, because the judgment already sat at or
+// below its cap. Those are reported as not materially affecting the score,
+// never as evidence being fine.
 //
 // Reversal is upside only. The arithmetic supports "resolving this could lift
 // another option above the leader". It does not support "if this assumption is
-// wrong the plan fails", because nothing models a downside floor. Do not add
-// language implying the second.
+// wrong the plan fails", because nothing models a downside floor.
 
-import React, { useMemo, useState } from 'react';
+import React from 'react';
 import './DecisionConfidenceCard.css';
-
-// Plain-language headings for the severity tiers. The taxonomy is engineering
-// vocabulary and should not be read by a user: they see grouped sections, not
-// tier names.
-const EXPOSURE_GROUPS = [
-  {
-    key: 'reversing',
-    tiers: ['reversing'],
-    heading: 'Could change which option leads',
-  },
-  {
-    key: 'material',
-    tiers: ['material'],
-    heading: 'Could materially change the score',
-  },
-  // Sub-threshold exposure has no group of its own. A 0.3 point item under its
-  // own "Smaller exposure" heading claimed the same structural weight as an
-  // assumption that could change the ranking, which overstates it and pads a
-  // register whose value is that everything in it is worth acting on. Those
-  // entries move into the disclosure below, where their swing is still shown.
-];
 
 const GRADE_LABELS = {
   high: 'Strong evidence',
-  medium: 'Some evidence',
+  medium: 'Moderate evidence',
   low: 'Thin evidence',
   assumed: 'Assumed',
+};
+
+// What the channel means in plain language. Deliberately describes where an
+// input came from, never what it was.
+const SOURCE_LABELS = {
+  conversation: 'From what you described',
+  connector: 'From connected data',
+  inferred: 'Inferred from context',
+  assumed: 'No supporting input',
+};
+
+// What is still unsupported at each grade, stated as a consequence of the cap
+// rather than as a judgment about the decision.
+const UNSUPPORTED_BY_GRADE = {
+  high: null,
+  medium: 'Self-reported rather than verified, so this contributes at most 75.',
+  low: 'Only partially supported, so this contributes at most 60.',
+  assumed: 'Nothing verifiable behind this yet, so it contributes at most 45.',
+};
+
+const SEVERITY_CONSEQUENCE = {
+  reversing: 'Resolving this could change which option leads.',
+  material: 'Resolving this could materially change the score.',
+  other: 'Resolving this would move the score slightly.',
+  none: 'Resolving this would not move the score today.',
 };
 
 function pointsLabel(swing) {
@@ -69,81 +84,107 @@ function pointsLabel(swing) {
   return `${rounded} ${rounded === 1 ? 'point' : 'points'}`;
 }
 
-function ExposureRow({ entry, showResolution = true }) {
+function CriterionRow({ entry }) {
+  const unsupported = UNSUPPORTED_BY_GRADE[entry.confidence];
   return (
-    <li className="dcc-row">
-      <div className="dcc-row-head">
-        <span className="dcc-row-label">{entry.label}</span>
-        <span className="dcc-row-swing" title="How far the score could move if this evidence were obtained">
-          {pointsLabel(entry.swing)}
-        </span>
-      </div>
-      <div className="dcc-row-meta">
+    <li className={`dcc-criterion dcc-criterion-${entry.severity}`}>
+      <div className="dcc-criterion-head">
+        <span className="dcc-criterion-name">{entry.label}</span>
         <span className={`dcc-grade dcc-grade-${entry.confidence}`}>
           {GRADE_LABELS[entry.confidence] || entry.confidence}
         </span>
-        <span className="dcc-row-weight">
-          {Math.round(entry.weight * 100)}% of this decision
-        </span>
       </div>
-      {showResolution && entry.resolution && (
-        <p className="dcc-row-resolution">
-          <span className="dcc-resolution-tag">Evidence needed</span>
-          {entry.resolution}
-        </p>
+
+      <div className="dcc-criterion-meta">
+        <span>{Math.round(entry.weight * 100)}% of the decision</span>
+        <span aria-hidden="true">·</span>
+        <span>contributes {entry.score}</span>
+        {entry.swing > 0 && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="dcc-criterion-swing">
+              {pointsLabel(entry.swing)} of exposure
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* What Jaspen based this on. The channel, then Jaspen's own reasoning,
+          labelled as reasoning. Never presented as evidence held. */}
+      <div className="dcc-basis-block">
+        <p className="dcc-block-label dcc-block-basis">What Jaspen based this on</p>
+        {entry.source && (
+          <p className="dcc-basis-source">{SOURCE_LABELS[entry.source] || entry.source}</p>
+        )}
+        {entry.rationale ? (
+          <p className="dcc-basis-text">{entry.rationale}</p>
+        ) : (
+          <p className="dcc-basis-text is-empty">
+            No reasoning was recorded for this criterion.
+          </p>
+        )}
+      </div>
+
+      {unsupported && (
+        <div className="dcc-unsupported-block">
+          <p className="dcc-block-label dcc-block-unsupported">Still unsupported</p>
+          <p className="dcc-block-text">{unsupported}</p>
+        </div>
       )}
+
+      {entry.resolution && (
+        <div className="dcc-needed-block">
+          <p className="dcc-block-label dcc-block-needed">Evidence needed</p>
+          <p className="dcc-block-text">{entry.resolution}</p>
+        </div>
+      )}
+
+      <p className="dcc-criterion-consequence">
+        {SEVERITY_CONSEQUENCE[entry.severity]}
+      </p>
     </li>
   );
 }
 
-export default function DecisionConfidenceCard({ profile, exposure, optionName }) {
-  const [showAll, setShowAll] = useState(false);
-
-  const grouped = useMemo(() => {
-    const criteria = profile?.criteria || [];
-    return EXPOSURE_GROUPS
-      .map((group) => ({
-        ...group,
-        entries: criteria.filter((c) => group.tiers.includes(c.severity)),
-      }))
-      .filter((group) => group.entries.length > 0);
-  }, [profile]);
-
-  // Everything the register does not surface: criteria the evidence already
-  // supports, judgments sitting at their own cap, and real but sub-threshold
-  // exposure. Held back because none of them is an assumption worth acting on
-  // before committing, but kept reachable, because a thin grade or a small
-  // swing is still worth knowing.
-  const settled = useMemo(
-    () => (profile?.criteria || []).filter(
-      (c) => c.severity === 'none' || c.severity === 'other',
-    ),
-    [profile],
-  );
-
+export default function DecisionConfidenceCard({
+  profile, exposure, optionName, score, scoreCategory,
+}) {
   if (!profile) return null;
 
   const backed = profile.evidence_backed_pct;
   const assumed = profile.assumption_dependent_pct;
   const claims = Array.isArray(profile.claims) ? profile.claims : [];
+  const criteria = profile.criteria || [];
   const challengers = exposure?.challengers || [];
+  const leaderName = exposure?.leader?.name;
+  const counts = profile.counts || {};
 
-  // Claims arrive in descending severity from exposure_claims, so the first is
-  // the most consequential finding and the rest are context.
   const primaryClaim = claims[0] || null;
   const secondaryClaims = claims.slice(1);
-
-  // The assumption with the most power to change the answer, and something to
-  // do about it. Criteria are already sorted by swing, so the first resolvable
-  // one is the highest-leverage action available.
-  const primaryAction = (profile.criteria || []).find(
+  const primaryAction = criteria.find(
     (c) => c.resolvable && c.resolution && c.swing > 0,
   ) || null;
 
+  // Standing against the other options, when there are any. Rendered from the
+  // server-computed challenger set, since no single scorecard can establish it.
+  const standing = challengers.find((c) => optionName && c.name === optionName)
+    || (leaderName && optionName === leaderName ? { leads: true } : null);
+
+  const isClear = primaryClaim?.kind === 'clear';
+
   return (
-    <section className="dcc card-shell" aria-label="Decision confidence">
+    <section className="dcc" aria-label="Decision confidence report">
+      {/* ── Layer 1: the summary ─────────────────────────────────────────── */}
       <header className="dcc-head">
         <p className="dcc-eyebrow">Decision Confidence</p>
+
+        {Number.isFinite(score) && (
+          <p className="dcc-score-line">
+            <strong>{score}</strong>
+            {scoreCategory && <span className="dcc-score-cat">{scoreCategory}</span>}
+          </p>
+        )}
+
         <p className="dcc-headline">
           <strong>{backed}%</strong> evidence-backed
           <span className="dcc-sep" aria-hidden="true">·</span>
@@ -154,118 +195,73 @@ export default function DecisionConfidenceCard({ profile, exposure, optionName }
           <span className="dcc-split-backed" style={{ width: `${backed}%` }} />
           <span className="dcc-split-assumed" style={{ width: `${assumed}%` }} />
         </div>
-        {/* Says what the number measures, right under it. Without this, 57%
-            reads as "Jaspen is 57% sure", which is a generic model-confidence
-            reading and the opposite of the claim. It is a property of the
-            evidence behind the weighted criteria, not of Jaspen's certainty. */}
         <p className="dcc-basis">Evidence-backed share of the weighted decision</p>
       </header>
 
-      {/* 2. The finding. One sentence, promoted above everything else.
-          exposure_claims already returns claims in descending severity, so the
-          first is the most consequential thing Jaspen found. The rest are
-          demoted to a quiet line so the card reads as an executive finding
-          rather than a diagnostic report with five equal-weight results. */}
-      {primaryClaim && (
-        <div className="dcc-finding">
-          <p className="dcc-finding-text">{primaryClaim.text}</p>
-          {/* Detail only, never the finding itself. Rendered solely from a
-              server-computed challenger, since it depends on the peer set. */}
-          {challengers.map((challenger) => {
-            // Who it would overtake is the leader, never the card being
-            // viewed. Passing the current option here named it against itself
-            // whenever the reader was already looking at the challenger.
-            const leaderName = exposure?.leader?.name;
-            const isThisOption = optionName && challenger.name === optionName;
-            const points = `${challenger.gap} ${challenger.gap === 1 ? 'point' : 'points'}`;
-            return (
-              <p className="dcc-finding-detail" key={challenger.name}>
-                {isThisOption ? 'This option' : <strong>{challenger.name}</strong>}
-                {' '}trails{leaderName ? ` ${leaderName}` : ''} by {points}.
-              </p>
-            );
-          })}
-        </div>
-      )}
+      <dl className="dcc-summary">
+        {standing && (
+          <div className="dcc-summary-row">
+            <dt>Current standing</dt>
+            <dd>
+              {standing.leads
+                ? 'Leads the options under consideration.'
+                : `Trails ${leaderName} by ${standing.gap} ${standing.gap === 1 ? 'point' : 'points'}.`}
+            </dd>
+          </div>
+        )}
 
-      {/* 3. What to do about it. The resolution for the single assumption with
-          the most power to change the answer, lifted out of the register so
-          the reader does not have to find it. */}
-      {primaryAction && (
-        <div className="dcc-action">
-          <p className="dcc-action-eyebrow">What would resolve it</p>
-          <p className="dcc-action-text">
-            <span className="dcc-action-criterion">{primaryAction.label}</span>
-            {primaryAction.resolution}
+        {primaryClaim && (
+          <div className="dcc-summary-row">
+            <dt>Key finding</dt>
+            <dd className={isClear ? 'is-clear' : 'is-finding'}>{primaryClaim.text}</dd>
+          </div>
+        )}
+
+        {primaryAction && (
+          <div className="dcc-summary-row">
+            <dt>Highest-priority evidence</dt>
+            <dd>
+              <span className="dcc-summary-criterion">{primaryAction.label}</span>
+              {primaryAction.resolution}
+            </dd>
+          </div>
+        )}
+
+        <div className="dcc-summary-row">
+          <dt>What could change the answer</dt>
+          <dd>
+            {counts.reversing
+              ? `Resolving ${counts.reversing === 1 ? 'this assumption' : 'these assumptions'} could change which option leads.`
+              : counts.material
+                ? 'Resolving the assumptions below could materially change the score, though not the ranking on current evidence.'
+                : isClear
+                  ? `Most of the weighted decision rests on strong or moderate evidence. The remaining gaps are unlikely to change today's ranking, though closing them would strengthen the record.`
+                  : 'Nothing on current evidence.'}
+          </dd>
+        </div>
+
+        {secondaryClaims.length > 0 && (
+          <div className="dcc-summary-row">
+            <dt>Also</dt>
+            <dd>{secondaryClaims.map((c) => c.text).join('. ')}.</dd>
+          </div>
+        )}
+      </dl>
+
+      {/* ── Layer 2: the detail, every criterion, nothing hidden ─────────── */}
+      {criteria.length > 0 && (
+        <div className="dcc-detail">
+          <h4 className="dcc-detail-head">Evidence and assumption detail</h4>
+          <ul className="dcc-criteria">
+            {criteria.map((entry) => (
+              <CriterionRow entry={entry} key={entry.key} />
+            ))}
+          </ul>
+          <p className="dcc-provenance-note">
+            "What Jaspen based this on" is Jaspen's own reasoning and the channel
+            an input arrived on. It is not a record of which document or figure
+            supported the score.
           </p>
-        </div>
-      )}
-
-      {secondaryClaims.length > 0 && (
-        <p className="dcc-secondary-claims">
-          {secondaryClaims.map((claim) => claim.text).join('. ')}.
-        </p>
-      )}
-
-      {grouped.length > 0 && (
-        <div className="dcc-register">
-          <h4 className="dcc-subhead">Assumption exposure</h4>
-          {grouped.map((group) => (
-            <div className="dcc-group" key={group.key}>
-              <p className={`dcc-group-heading dcc-group-${group.key}`}>{group.heading}</p>
-              <ul className="dcc-rows">
-                {group.entries.map((entry) => (
-                  <ExposureRow
-                    entry={entry}
-                    key={entry.key}
-                    // Already stated in full under "What would resolve it".
-                    // Repeating it here reads as two separate instructions.
-                    showResolution={entry.key !== primaryAction?.key}
-                  />
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {settled.length > 0 && (
-        <div className="dcc-settled">
-          <button
-            type="button"
-            className="dcc-settled-toggle"
-            onClick={() => setShowAll((v) => !v)}
-            aria-expanded={showAll}
-          >
-            {showAll ? 'Hide' : 'Show'} {settled.length}{' '}
-            {settled.length === 1 ? 'criterion' : 'criteria'} not materially
-            affecting the score
-          </button>
-          {showAll && (
-            <ul className="dcc-settled-list">
-              {settled.map((entry) => (
-                <li key={entry.key}>
-                  <span className="dcc-settled-label">{entry.label}</span>
-                  {/* Sub-threshold entries keep their swing. They move the
-                      score by a little, and hiding that would misreport them
-                      as moving it by nothing. */}
-                  {entry.swing > 0 && (
-                    <span className="dcc-settled-swing">{pointsLabel(entry.swing)}</span>
-                  )}
-                  <span className={`dcc-grade dcc-grade-${entry.confidence}`}>
-                    {GRADE_LABELS[entry.confidence] || entry.confidence}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {showAll && (
-            <p className="dcc-settled-note">
-              None of these carries enough weight to change the score
-              materially. Where the evidence is thin, it can still be worth
-              strengthening.
-            </p>
-          )}
         </div>
       )}
     </section>
