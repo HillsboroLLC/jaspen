@@ -303,6 +303,15 @@
 
 .dcc-settled-label { flex: 1 1 auto; }
 
+.dcc-settled-swing {
+  flex: 0 0 auto;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: #8a93ad;
+  white-space: nowrap;
+}
+
 .dcc-settled-note {
   margin: 0;
   font-size: 11.5px;

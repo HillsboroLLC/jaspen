@@ -143,7 +143,7 @@ describe('DecisionConfidenceCard', () => {
       render(<DecisionConfidenceCard profile={profile({ criteria: [settled] })} />);
 
       expect(screen.queryByText('Assumption exposure')).not.toBeInTheDocument();
-      expect(screen.getByText(/1 criteria not moving the score/)).toBeInTheDocument();
+      expect(screen.getByText(/1 criterion not materially affecting the score/)).toBeInTheDocument();
     });
 
     it('never presents no score exposure as strong evidence', () => {
@@ -156,13 +156,42 @@ describe('DecisionConfidenceCard', () => {
       });
       render(<DecisionConfidenceCard profile={profile({ criteria: [settled] })} />);
 
-      fireEvent.click(screen.getByText(/criteria not moving the score/));
+      fireEvent.click(screen.getByText(/not materially affecting the score/));
       // The weak grade stays visible, and the note says the score is what is
       // unaffected, not the evidence that is fine.
       expect(screen.getByText('Thin evidence')).toBeInTheDocument();
       expect(
         screen.getByText(/it can still be worth strengthening/),
       ).toBeInTheDocument();
+    });
+
+    it('gives sub-threshold exposure no section of its own', () => {
+      // A 0.3 point item under its own heading claimed the same structural
+      // weight as an assumption that could change the ranking.
+      const small = criterion({
+        key: 'market',
+        label: 'Market opportunity',
+        swing: 0.3,
+        severity: 'other',
+        confidence: 'medium',
+      });
+      render(<DecisionConfidenceCard profile={profile({ criteria: [small] })} />);
+
+      expect(screen.queryByText('Smaller exposure')).not.toBeInTheDocument();
+      expect(screen.queryByText('Assumption exposure')).not.toBeInTheDocument();
+      expect(
+        screen.getByText(/1 criterion not materially affecting the score/),
+      ).toBeInTheDocument();
+    });
+
+    it('keeps the swing visible on sub-threshold entries', () => {
+      // They move the score by a little. Hiding that would misreport them as
+      // moving it by nothing, which is a different finding.
+      const small = criterion({ key: 'market', swing: 0.3, severity: 'other' });
+      render(<DecisionConfidenceCard profile={profile({ criteria: [small] })} />);
+
+      fireEvent.click(screen.getByText(/not materially affecting the score/));
+      expect(screen.getByText('0.3 points')).toBeInTheDocument();
     });
 
     it('only claims reversal from a server-computed challenger', () => {

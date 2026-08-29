@@ -50,11 +50,11 @@ const EXPOSURE_GROUPS = [
     tiers: ['material'],
     heading: 'Could materially change the score',
   },
-  {
-    key: 'other',
-    tiers: ['other'],
-    heading: 'Smaller exposure',
-  },
+  // Sub-threshold exposure has no group of its own. A 0.3 point item under its
+  // own "Smaller exposure" heading claimed the same structural weight as an
+  // assumption that could change the ranking, which overstates it and pads a
+  // register whose value is that everything in it is worth acting on. Those
+  // entries move into the disclosure below, where their swing is still shown.
 ];
 
 const GRADE_LABELS = {
@@ -109,12 +109,15 @@ export default function DecisionConfidenceCard({ profile, exposure, optionName }
       .filter((group) => group.entries.length > 0);
   }, [profile]);
 
-  // Criteria the evidence already supports, or whose judgment sits at its own
-  // cap. Held back from the register because they are not assumptions the
-  // decision depends on, but still reachable, because a thin grade here is
-  // worth knowing even when it moves nothing today.
+  // Everything the register does not surface: criteria the evidence already
+  // supports, judgments sitting at their own cap, and real but sub-threshold
+  // exposure. Held back because none of them is an assumption worth acting on
+  // before committing, but kept reachable, because a thin grade or a small
+  // swing is still worth knowing.
   const settled = useMemo(
-    () => (profile?.criteria || []).filter((c) => c.severity === 'none'),
+    () => (profile?.criteria || []).filter(
+      (c) => c.severity === 'none' || c.severity === 'other',
+    ),
     [profile],
   );
 
@@ -234,13 +237,21 @@ export default function DecisionConfidenceCard({ profile, exposure, optionName }
             onClick={() => setShowAll((v) => !v)}
             aria-expanded={showAll}
           >
-            {showAll ? 'Hide' : 'Show'} {settled.length} criteria not moving the score
+            {showAll ? 'Hide' : 'Show'} {settled.length}{' '}
+            {settled.length === 1 ? 'criterion' : 'criteria'} not materially
+            affecting the score
           </button>
           {showAll && (
             <ul className="dcc-settled-list">
               {settled.map((entry) => (
                 <li key={entry.key}>
                   <span className="dcc-settled-label">{entry.label}</span>
+                  {/* Sub-threshold entries keep their swing. They move the
+                      score by a little, and hiding that would misreport them
+                      as moving it by nothing. */}
+                  {entry.swing > 0 && (
+                    <span className="dcc-settled-swing">{pointsLabel(entry.swing)}</span>
+                  )}
                   <span className={`dcc-grade dcc-grade-${entry.confidence}`}>
                     {GRADE_LABELS[entry.confidence] || entry.confidence}
                   </span>
@@ -250,8 +261,9 @@ export default function DecisionConfidenceCard({ profile, exposure, optionName }
           )}
           {showAll && (
             <p className="dcc-settled-note">
-              Resolving these would not move the score today. Where the evidence
-              is thin, it can still be worth strengthening.
+              None of these carries enough weight to change the score
+              materially. Where the evidence is thin, it can still be worth
+              strengthening.
             </p>
           )}
         </div>
