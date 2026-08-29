@@ -345,3 +345,112 @@
   letter-spacing: 0.04em;
   color: #0e6b3f;
 }
+
+/* ── Editing the narrative ───────────────────────────────────────────────
+   Wording is presentation. The score, grade and exposure are not reachable
+   from any control here, which is why an edit affordance can sit directly on
+   the assessment text without risking the finding underneath. */
+
+.dcc-basis-text.is-editable {
+  cursor: text;
+  border-radius: 3px;
+  margin: -2px -4px;
+  padding: 2px 4px;
+}
+.dcc-basis-text.is-editable:hover { background: #eef4fa; }
+
+/* Edited copy is marked rather than passed off as the system finding. */
+.dcc-edited-badge {
+  margin-left: 8px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a5406;
+  background: #fdf2dc;
+  border: 1px solid #f0c675;
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.dcc-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dcc-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #161f3b;
+  padding: 8px 10px;
+  border: 1px solid #9dc2e6;
+  border-radius: 4px;
+  background: #fff;
+  resize: vertical;
+}
+.dcc-edit-input:focus { outline: 2px solid #a0036c; outline-offset: 1px; }
+
+.dcc-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dcc-edit-save,
+.dcc-edit-cancel,
+.dcc-restore {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.dcc-edit-save {
+  background: #161f3b;
+  color: #fff;
+  border: 1px solid #161f3b;
+}
+.dcc-edit-cancel,
+.dcc-restore {
+  background: none;
+  border: 1px solid #d6e9ef;
+  color: #5a6585;
+}
+.dcc-edit-save:focus-visible,
+.dcc-edit-cancel:focus-visible,
+.dcc-restore:focus-visible { outline: 2px solid #a0036c; outline-offset: 2px; }
+
+/* The one thing a person needs to know before typing. */
+.dcc-edit-hint {
+  font-size: 11.5px;
+  color: #8a93ad;
+}
+
+.dcc-edited-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+
+.dcc-original summary {
+  font-size: 11.5px;
+  color: #1f5f9e;
+  cursor: pointer;
+}
+.dcc-original summary:focus-visible { outline: 2px solid #a0036c; outline-offset: 2px; }
+.dcc-original p {
+  margin: 5px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid #d6e9ef;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #5a6585;
+}

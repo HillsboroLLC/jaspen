@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import DecisionConfidenceCard from './DecisionConfidenceCard';
 
 function criterion(overrides = {}) {
@@ -277,6 +277,86 @@ describe('DecisionConfidenceCard', () => {
       expect(line).toBeInTheDocument();
       expect(line.textContent).toMatch(/strengthen the record rather than move the answer/);
       expect(line.textContent).not.toMatch(/sound|complete|no risk/i);
+    });
+  });
+
+  describe('editing the narrative', () => {
+    const edited = () => profile({
+      criteria: [criterion({
+        rationale: 'Ops confirmed this verbally on 12 Aug.',
+        _edited: true,
+        _original_rationale: 'Dock capacity and staffing were described but not corroborated.',
+      })],
+    });
+
+    it('marks edited copy rather than passing it off as the system finding', () => {
+      render(<DecisionConfidenceCard profile={edited()} />);
+      expect(screen.getByText('Edited')).toBeInTheDocument();
+      expect(screen.getByText('Ops confirmed this verbally on 12 Aug.')).toBeInTheDocument();
+    });
+
+    it('keeps Jaspen\'s original wording recoverable', () => {
+      render(<DecisionConfidenceCard profile={edited()} />);
+      expect(screen.getByText("Jaspen's original wording")).toBeInTheDocument();
+      expect(
+        screen.getByText('Dock capacity and staffing were described but not corroborated.'),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Restore original' })).toBeInTheDocument();
+    });
+
+    it('restores through the caller rather than mutating anything locally', () => {
+      const onRestoreNarrative = jest.fn();
+      render(
+        <DecisionConfidenceCard
+          profile={edited()}
+          editable
+          onRestoreNarrative={onRestoreNarrative}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Restore original' }));
+      expect(onRestoreNarrative).toHaveBeenCalledWith('fin');
+    });
+
+    it('tells the writer what an edit does not change', () => {
+      render(<DecisionConfidenceCard profile={profile()} editable onEditNarrative={jest.fn()} />);
+      fireEvent.click(screen.getByText(/The penalty figure was described/));
+      expect(
+        screen.getByText('Wording only. This does not change the score, grade, or exposure.'),
+      ).toBeInTheDocument();
+    });
+
+    it('offers no edit affordance when editing is off', () => {
+      const { container } = render(<DecisionConfidenceCard profile={profile()} />);
+      expect(container.querySelector('.dcc-basis-text.is-editable')).toBeNull();
+    });
+  });
+
+  describe('rendering one criterion into its own section', () => {
+    it('renders only the criterion asked for', () => {
+      const two = profile({
+        criteria: [criterion(), criterion({ key: 'ops', label: 'Execution readiness' })],
+      });
+      const { container } = render(
+        <DecisionConfidenceCard profile={two} only="criterion" criterionKey="ops" />,
+      );
+      expect(screen.getByText('Execution readiness')).toBeInTheDocument();
+      expect(screen.queryByText('Financial viability')).not.toBeInTheDocument();
+      expect(container.querySelectorAll('.dcc-criterion')).toHaveLength(1);
+    });
+
+    it('renders nothing for a criterion that is not in the profile', () => {
+      const { container } = render(
+        <DecisionConfidenceCard profile={profile()} only="criterion" criterionKey="gone" />,
+      );
+      expect(container).toBeEmptyDOMElement();
+    });
+
+    it('drops the detail list in summary mode', () => {
+      const { container } = render(
+        <DecisionConfidenceCard profile={profile()} only="summary" summary={summary()} />,
+      );
+      expect(container.querySelector('.dcc-briefing')).toBeInTheDocument();
+      expect(container.querySelector('.dcc-criteria')).toBeNull();
     });
   });
 

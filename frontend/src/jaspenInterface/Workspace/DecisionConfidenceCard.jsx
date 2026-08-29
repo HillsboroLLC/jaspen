@@ -48,7 +48,7 @@
 // another option above the leader". It does not support "if this assumption is
 // wrong the plan fails", because nothing models a downside floor.
 
-import React from 'react';
+import React, { useState } from 'react';
 import './DecisionConfidenceCard.css';
 
 const GRADE_LABELS = {
@@ -118,7 +118,8 @@ function evidenceSource(reference) {
   return 'From your input';
 }
 
-function CriterionRow({ entry }) {
+function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) {
+  const [draft, setDraft] = useState(null);
   const unsupported = UNSUPPORTED_BY_GRADE[entry.confidence];
   const references = Array.isArray(entry.evidence_references)
     ? entry.evidence_references
@@ -172,14 +173,80 @@ function CriterionRow({ entry }) {
           about the channel. Calling it an assessment is accurate now and stays
           accurate later, when a real Evidence block can sit beside it. */}
       <div className="dcc-basis-block">
-        <p className="dcc-block-label dcc-block-basis">Jaspen&apos;s assessment</p>
-        {entry.rationale ? (
-          <p className="dcc-basis-text">{entry.rationale}</p>
+        <p className="dcc-block-label dcc-block-basis">
+          Jaspen&apos;s assessment
+          {/* Edited copy is marked, never passed off as the system finding.
+              Jaspen's original wording is preserved underneath and is one
+              click away, so a reader can always see what Jaspen actually
+              said. */}
+          {entry._edited && (
+            <span className="dcc-edited-badge" title="Edited by a person. Jaspen's original wording is preserved.">
+              Edited
+            </span>
+          )}
+        </p>
+
+        {draft !== null ? (
+          <div className="dcc-edit">
+            <textarea
+              className="dcc-edit-input"
+              value={draft}
+              rows={3}
+              autoFocus
+              onChange={(event) => setDraft(event.target.value)}
+              aria-label={`Assessment for ${entry.label}`}
+            />
+            <div className="dcc-edit-actions">
+              <button
+                type="button"
+                className="dcc-edit-save"
+                onClick={() => { onEditNarrative(entry.key, draft); setDraft(null); }}
+              >
+                Save wording
+              </button>
+              <button type="button" className="dcc-edit-cancel" onClick={() => setDraft(null)}>
+                Cancel
+              </button>
+              <span className="dcc-edit-hint">
+                Wording only. This does not change the score, grade, or exposure.
+              </span>
+            </div>
+          </div>
         ) : (
-          <p className="dcc-basis-text is-empty">
-            No assessment was recorded for this criterion.
-          </p>
+          <>
+            {entry.rationale ? (
+              <p
+                className={`dcc-basis-text${editable ? ' is-editable' : ''}`}
+                onClick={editable ? () => setDraft(entry.rationale || '') : undefined}
+                title={editable ? 'Click to edit the wording' : undefined}
+              >
+                {entry.rationale}
+              </p>
+            ) : (
+              <p className="dcc-basis-text is-empty">
+                No assessment was recorded for this criterion.
+              </p>
+            )}
+            {entry._edited && (
+              <div className="dcc-edited-meta">
+                {entry._original_rationale && (
+                  <details className="dcc-original">
+                    <summary>Jaspen&apos;s original wording</summary>
+                    <p>{entry._original_rationale}</p>
+                  </details>
+                )}
+                <button
+                  type="button"
+                  className="dcc-restore"
+                  onClick={() => onRestoreNarrative(entry.key)}
+                >
+                  Restore original
+                </button>
+              </div>
+            )}
+          </>
         )}
+
         {entry.source && (
           <p className="dcc-basis-source">{ASSESSMENT_BASIS[entry.source] || entry.source}</p>
         )}
@@ -208,6 +275,12 @@ function CriterionRow({ entry }) {
 
 export default function DecisionConfidenceCard({
   profile, exposure, optionName, score, scoreCategory, summary,
+  onEditNarrative, onRestoreNarrative, editable = false,
+  // Which half to render. The report is split across canvas sections so each
+  // criterion can be resized and reordered on its own, which means this
+  // component is mounted once for the briefing and once per criterion rather
+  // than once for the whole thing.
+  only = null, criterionKey = null,
 }) {
   if (!profile) return null;
 
@@ -218,6 +291,26 @@ export default function DecisionConfidenceCard({
   const primaryClaim = claims[0] || null;
   const secondaryClaims = claims.slice(1);
   const isClear = primaryClaim?.kind === 'clear';
+
+  // One criterion, rendered into its own section.
+  if (only === 'criterion') {
+    const entry = criteria.find((c) => c.key === criterionKey);
+    if (!entry) return null;
+    return (
+      <section className="dcc dcc-single" aria-label={`${entry.label} detail`}>
+        <ul className="dcc-criteria">
+          <CriterionRow
+            entry={entry}
+            editable={editable}
+            onEditNarrative={onEditNarrative}
+            onRestoreNarrative={onRestoreNarrative}
+          />
+        </ul>
+      </section>
+    );
+  }
+
+  const showDetail = only !== 'summary';
 
   return (
     <section className="dcc" aria-label="Decision confidence report">
@@ -277,12 +370,18 @@ export default function DecisionConfidenceCard({
       )}
 
       {/* ── Layer 2: the detail, every criterion, nothing hidden ─────────── */}
-      {criteria.length > 0 && (
+      {showDetail && criteria.length > 0 && (
         <div className="dcc-detail">
           <h4 className="dcc-detail-head">Evidence and assumption detail</h4>
           <ul className="dcc-criteria">
             {criteria.map((entry) => (
-              <CriterionRow entry={entry} key={entry.key} />
+              <CriterionRow
+                entry={entry}
+                key={entry.key}
+                editable={editable}
+                onEditNarrative={onEditNarrative}
+                onRestoreNarrative={onRestoreNarrative}
+              />
             ))}
           </ul>
           <p className="dcc-provenance-note">
