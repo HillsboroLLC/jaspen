@@ -250,7 +250,10 @@ def _build_summary(session, scorecard, peers):
     if not next_step:
         next_step = f"Validate the most important evidence gap before committing resources to {top_name}."
 
+    confidence = _confidence_blocks(top, ranked)
     return {
+        "confidence_html": confidence["html"],
+        "confidence_text": confidence["text"],
         "decision_name": decision_name,
         "generated": str(generated),
         "ranking": ranking,
@@ -263,6 +266,27 @@ def _build_summary(session, scorecard, peers):
         "change_order": change_order,
         "next_step": next_step,
     }
+
+
+
+def _confidence_blocks(scorecard, peers=None):
+    """Rendered Decision Confidence blocks for an email, or empty strings.
+
+    Scorecards written before the report existed carry no evidence_profile, so
+    they render nothing rather than a hollow section. Failure here must never
+    cost a delivery: the rest of the email is still worth sending.
+    """
+    try:
+        from app.decision_report import build_report
+        from app.decision_report_email import render_report_html, render_report_text
+
+        report = build_report(scorecard or {}, peers=peers)
+        if not report:
+            return {"html": "", "text": ""}
+        return {"html": render_report_html(report), "text": render_report_text(report)}
+    except Exception:
+        current_app.logger.exception("decision confidence email block failed")
+        return {"html": "", "text": ""}
 
 
 def _bullet_text(title, values):
@@ -293,6 +317,7 @@ def render_email(summary):
         f"Why this order:\n{summary['explanation']}",
         _bullet_text("Most important tradeoffs", summary["tradeoffs"]),
         _bullet_text("Evidence gaps", summary["evidence_gaps"]),
+        summary.get("confidence_text") or "",
         _bullet_text("Assumptions", summary["assumptions"]),
         _bullet_text("Risks", summary["risks"]),
         _bullet_text("What could change the order", summary["change_order"]),
@@ -321,6 +346,7 @@ p,li{{font-size:15px}}ol,ul{{padding-left:22px}}.top{{border-left:4px solid #a00
 <h2>Why this order</h2><p>{html.escape(summary['explanation'])}</p>
 {_bullet_html('Most important tradeoffs', summary['tradeoffs'])}
 {_bullet_html('Evidence gaps', summary['evidence_gaps'])}
+{summary.get('confidence_html') or ''}
 {_bullet_html('Assumptions', summary['assumptions'])}
 {_bullet_html('Risks', summary['risks'])}
 {_bullet_html('What could change the order', summary['change_order'])}
@@ -553,7 +579,7 @@ def _build_attachments(context, output_types):
     # either), so no PDF is attached here.
     if "scorecard_detail" in output_types:
         try:
-            pptx = _pptx_bytes(scorecard, org=org)
+            pptx = _pptx_bytes(scorecard, org=org, peers=context.get("peers"))
         except Exception as exc:
             raise DeliveryError("artifact_generation_failed") from exc
         if not pptx:
@@ -568,7 +594,7 @@ def _build_attachments(context, output_types):
     if {"scorecards", "ranked_ideas", "tradeoff"}.intersection(output_types):
         try:
             pdf = _scorecard_pdf_bytes(scorecard, org=org)
-            pptx = _pptx_bytes(scorecard, org=org)
+            pptx = _pptx_bytes(scorecard, org=org, peers=context.get("peers"))
         except Exception as exc:
             raise DeliveryError("artifact_generation_failed") from exc
         if not pdf or not pptx:
