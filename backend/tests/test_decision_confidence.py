@@ -328,9 +328,54 @@ def test_evidenced_criteria_are_never_listed_as_resolvable():
 
 # --- claims ------------------------------------------------------------------
 
-def test_claims_are_absent_when_the_arithmetic_does_not_support_them():
+def test_a_clean_decision_says_so_rather_than_falling_silent():
+    """The healthy case is a finding, not an absence of one.
+
+    A well-evidenced option previously produced no claims at all, so the card
+    showed a ratio and then nothing. That reads as an incomplete analysis
+    rather than as good news, and it lands on the user who did the work.
+    """
     profile = evidence_profile({"ops": _dim(90, "high")}, {"ops": 1.0})
-    assert exposure_claims(profile) == []
+    claims = exposure_claims(profile)
+
+    assert [c["kind"] for c in claims] == ["clear"]
+    assert claims[0]["text"] == (
+        "No assumption currently carries enough weight to materially change the score."
+    )
+
+
+def test_the_clear_claim_says_only_what_was_computed():
+    """It speaks about score movement, never about the decision being sound."""
+    profile = evidence_profile({"ops": _dim(90, "high")}, {"ops": 1.0})
+    text = exposure_claims(profile)[0]["text"].lower()
+
+    assert "weight" in text and "change the score" in text
+    for overclaim in ("sound", "safe", "complete", "no risk", "confident"):
+        assert overclaim not in text
+
+
+def test_the_clear_claim_disappears_once_something_is_material():
+    profile = evidence_profile(
+        {"fin": _dim(90, "assumed"), "ops": _dim(60, "medium")},
+        {"fin": 0.5, "ops": 0.5},
+    )
+    kinds = [c["kind"] for c in exposure_claims(profile)]
+    assert "clear" not in kinds
+    assert "material" in kinds
+
+
+def test_sub_threshold_exposure_alone_still_counts_as_clear():
+    """"Other" exposure is real but not material, so the clear claim stands.
+
+    Saying nothing is material while a 0.3 point item exists is accurate: the
+    claim is about materiality, not about the absence of any exposure at all.
+    """
+    profile = evidence_profile(
+        {"tiny": _dim(50, "assumed"), "ops": _dim(95, "high")},
+        {"tiny": 0.02, "ops": 0.98},
+    )
+    assert profile["counts"]["other"] == 1
+    assert [c["kind"] for c in exposure_claims(profile)] == ["clear"]
 
 
 def test_claims_are_singular_and_plural_correctly():

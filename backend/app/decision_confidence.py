@@ -283,6 +283,29 @@ def exposure_claims(profile):
         return []
     counts = profile["counts"]
     claims = []
+
+    # The healthy case has to say so. When nothing is material and nothing can
+    # change the ranking, every other claim below is correctly absent, and an
+    # earlier version simply fell silent: a well-evidenced decision showed a
+    # ratio and then nothing at all. Silence there reads as an incomplete
+    # analysis rather than as good news, and it lands precisely on the user who
+    # did the work Jaspen asked for. Resolving your assumptions should not be
+    # rewarded with a blank card.
+    #
+    # Scoped carefully. This says no assumption carries enough WEIGHT to move
+    # the score, which is what was computed. It does not say the decision is
+    # sound, that the evidence is complete, or that nothing can go wrong, none
+    # of which this module knows.
+    if not counts["reversing"] and not counts["material"]:
+        claims.append({
+            "kind": "clear",
+            "count": 0,
+            "text": (
+                "No assumption currently carries enough weight to materially "
+                "change the score."
+            ),
+        })
+
     if counts["reversing"]:
         n = counts["reversing"]
         claims.append({
