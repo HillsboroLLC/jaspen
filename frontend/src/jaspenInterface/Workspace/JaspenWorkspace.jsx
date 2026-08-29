@@ -22,6 +22,7 @@ import { Jaspen } from './JaspenClient';
 import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import TradeoffView from './TradeoffView';
+import DecisionConfidenceCard from './DecisionConfidenceCard';
 import ChoicePrompt, { parseChoicePrompt } from './ChoicePrompt';
 import GridLayout, { WidthProvider } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
@@ -59,12 +60,21 @@ const _GENERIC_TITLE_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-
 // module-level const (not state) so it is stable across renders.
 // cols is out of 4 — the outer grid uses repeat(4, 1fr)
 // 1 = 25%  2 = 50%  3 = 75%  4 = 100%
+// Decision Confidence sits directly under the score. "How much should we trust
+// this" is the next question after "what is it", and every block below assumes
+// an answer to it. Locked for the same reason the score is: it is computed, not
+// authored, so it must not be editable as prose.
 const DEFAULT_SCORECARD_SECTIONS = [
   { key: 'score',      label: 'Score',                cols: 4, locked: true,  x: 0, y: 0,  w: 12, h: 4 },
-  { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 4,  w: 12, h: 5 },
-  { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 9, w: 12, h: 8 },
-  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false, x: 0, y: 17, w: 6,  h: 6 },
-  { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true,  x: 6, y: 17, w: 6,  h: 6 },
+  // Taller than it first looks like it needs. The card stacks a split bar,
+  // the claims, a reversal callout, and a register whose length follows the
+  // rubric, so a short block silently scrolls the headline figure out of view
+  // and clips the last exposure group.
+  { key: 'confidence', label: 'Decision Confidence',  cols: 4, locked: true,  x: 0, y: 4,  w: 12, h: 14 },
+  { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 18, w: 12, h: 5 },
+  { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 23, w: 12, h: 8 },
+  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false, x: 0, y: 31, w: 6,  h: 6 },
+  { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true,  x: 6, y: 31, w: 6,  h: 6 },
 ];
 
 // The canvas arrangement the user drags into place. Persisted in TWO places on
@@ -756,6 +766,12 @@ export default function JaspenWorkspace() {
   }, [sectionLayout, threadId, scorecardId, loading]);
 
   const rendered = useMemo(() => applyOverrides(snapshot, overrides), [snapshot, overrides]);
+
+  // Reversal across the option set, computed server-side. It cannot come from
+  // the selected scorecard because no single card can see its peers, so it
+  // travels with the bundle instead. Null with fewer than two options, which
+  // is correct: there is nothing to overtake.
+  const decisionExposure = bundle?.decision_exposure || null;
 
   // Resolve the display title for THIS specific artifact. Priority:
   // override → meaningful scorecard fields → first user message in the
@@ -2114,6 +2130,14 @@ export default function JaspenWorkspace() {
                             <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>Locked · scores reflect Jaspen's analysis. Open chat to rescore.</div>
                           </div>
                         </div>
+                      )}
+
+                      {section.key === 'confidence' && (
+                        <DecisionConfidenceCard
+                          profile={rendered?.evidence_profile || null}
+                          exposure={decisionExposure}
+                          optionName={rendered?.project_name || null}
+                        />
                       )}
 
                       {section.key === 'executive' && (

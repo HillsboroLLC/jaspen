@@ -1,0 +1,266 @@
+/* Decision Confidence card.
+   App palette: navy #161f3b, slate #5a6585, muted #8a93ad, rose #a0036c,
+   line #d6e9ef, with the semantic set already used by RecordDecisionPanel.
+   Solid colours only, no gradients. */
+
+.dcc {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px 20px;
+  text-align: left;
+}
+
+/* --- 1. the measurement --- */
+
+.dcc-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dcc-eyebrow {
+  margin: 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #a0036c;
+}
+
+.dcc-headline {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+  color: #5a6585;
+}
+
+.dcc-headline strong {
+  font-size: 19px;
+  font-weight: 700;
+  color: #161f3b;
+  font-variant-numeric: tabular-nums;
+}
+
+.dcc-sep {
+  margin: 0 8px;
+  color: #8a93ad;
+}
+
+/* One bar, two shares. Not a progress meter: nothing is filling up, the split
+   is the finding. */
+.dcc-split {
+  display: flex;
+  height: 8px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: #eef1f6;
+}
+
+.dcc-split-backed { background: #0e6b3f; }
+.dcc-split-assumed { background: #f59e0b; }
+
+.dcc-claims {
+  margin: 0;
+  padding: 0 0 0 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.dcc-claims li {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #5a6585;
+}
+
+.dcc-claims li::marker { color: #8a93ad; }
+
+/* --- reversal --- */
+
+.dcc-reversal {
+  border-left: 3px solid #a0036c;
+  background: #faf5f9;
+  padding: 11px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dcc-reversal p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #161f3b;
+}
+
+/* --- 2. the register --- */
+
+.dcc-register {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.dcc-subhead,
+.dcc-group-heading {
+  margin: 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.dcc-subhead {
+  font-size: 11px;
+  color: #161f3b;
+}
+
+.dcc-group-heading {
+  font-size: 9.5px;
+  color: #8a93ad;
+  margin-bottom: 7px;
+}
+
+.dcc-group-reversing { color: #9f1f16; }
+.dcc-group-material { color: #8a5406; }
+
+.dcc-rows,
+.dcc-settled-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.dcc-row {
+  border-left: 2px solid #d6e9ef;
+  padding-left: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dcc-group-reversing + .dcc-rows .dcc-row { border-left-color: #dc2626; }
+.dcc-group-material + .dcc-rows .dcc-row { border-left-color: #f59e0b; }
+
+.dcc-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dcc-row-label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #161f3b;
+}
+
+.dcc-row-swing {
+  flex: 0 0 auto;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #5a6585;
+  white-space: nowrap;
+}
+
+.dcc-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.dcc-grade {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.dcc-grade-high { color: #0e6b3f; background: #e3f5ea; border: 1px solid #10b981; }
+.dcc-grade-medium { color: #0e6b3f; background: #eef7f1; border: 1px solid #a7d9bf; }
+.dcc-grade-low { color: #8a5406; background: #fdf2dc; border: 1px solid #f59e0b; }
+.dcc-grade-assumed { color: #9f1f16; background: #fbe9e7; border: 1px solid #dc2626; }
+
+.dcc-row-weight {
+  font-size: 11.5px;
+  color: #8a93ad;
+}
+
+/* --- 3. the resolution path --- */
+
+.dcc-row-resolution {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #5a6585;
+}
+
+.dcc-resolution-tag {
+  display: inline-block;
+  margin-right: 7px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #1f5f9e;
+}
+
+/* --- criteria not moving the score --- */
+
+.dcc-settled {
+  border-top: 1px solid #d6e9ef;
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.dcc-settled-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  color: #1f5f9e;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dcc-settled-toggle:hover { color: #161f3b; }
+.dcc-settled-toggle:focus-visible { outline: 2px solid #a0036c; outline-offset: 3px; border-radius: 2px; }
+
+.dcc-settled-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+  color: #5a6585;
+}
+
+.dcc-settled-label { flex: 1 1 auto; }
+
+.dcc-settled-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #8a93ad;
+}
+
+@media (max-width: 640px) {
+  .dcc-row-head { flex-wrap: wrap; }
+}

@@ -250,7 +250,7 @@ def evidence_profile(dimensions, weights, *, score=None, leader_score=None):
     backed = evidence_ratio(entries)
     reversing = sum(1 for e in entries if e["severity"] == SEVERITY_REVERSING)
     material = sum(1 for e in entries if e["severity"] == SEVERITY_MATERIAL)
-    return {
+    profile = {
         "evidence_backed_pct": backed,
         "assumption_dependent_pct": 100 - backed,
         "score": resolved_score,
@@ -270,6 +270,12 @@ def evidence_profile(dimensions, weights, *, score=None, leader_score=None):
         },
         "top_exposure": [e for e in entries if e["swing"] > 0][:3],
     }
+    # Claims travel with the profile so a consumer never has to assemble a
+    # sentence from the counts itself. Every surface renders the same words for
+    # the same computation, and a claim that is not in this list was not
+    # computed and must not appear.
+    profile["claims"] = exposure_claims(profile)
+    return profile
 
 
 def exposure_claims(profile):
