@@ -2181,6 +2181,7 @@ export default function JaspenWorkspace() {
                             optionName={rendered?.project_name || null}
                             score={score}
                             scoreCategory={category}
+                            summary={decisionExposure?.summaries?.[rendered?.project_name] || null}
                           />
                         </div>
                       )}

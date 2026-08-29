@@ -87,61 +87,75 @@
   color: #8a93ad;
 }
 
-/* Definition list, so the summary reads as a briefing rather than prose. */
-.dcc-summary {
-  margin: 0;
+/* The briefing. Prose, set at reading size, because this block is what gets
+   read aloud or pasted into a board pack. It is not a label/value list: that
+   shape made the summary read as the first rows of the detail rather than as
+   a standalone readout. */
+.dcc-briefing {
   display: flex;
   flex-direction: column;
-  gap: 0;
-  border-top: 1px solid #d6e9ef;
+  gap: 9px;
+  padding: 16px 18px;
+  background: #f7fafc;
+  border-left: 3px solid #161f3b;
 }
 
-.dcc-summary-row {
-  display: grid;
-  grid-template-columns: 190px 1fr;
-  gap: 16px;
-  padding: 11px 0;
-  border-bottom: 1px solid #eef1f6;
-}
-
-.dcc-summary-row dt {
+.dcc-briefing-label {
+  margin: 0;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 700;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
   color: #8a93ad;
-  padding-top: 3px;
 }
 
-.dcc-summary-row dd {
+.dcc-briefing-lead {
   margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #161f3b;
+}
+
+.dcc-briefing-body,
+.dcc-briefing-sensitivity {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #3f4a68;
+}
+
+.dcc-briefing-sensitivity { font-weight: 600; color: #161f3b; }
+.dcc-briefing-sensitivity.is-clear { color: #0e6b3f; }
+
+/* The one instruction in the whole report. Given the accent so a reader
+   skimming for "what do I do" lands on it. */
+.dcc-briefing-action {
+  margin: 3px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid #dfe6ef;
   font-size: 14px;
   line-height: 1.55;
   color: #161f3b;
 }
 
-/* The key finding carries weight when something is at stake, and reads calm
-   when nothing is. */
-.dcc-summary-row dd.is-finding {
-  font-weight: 600;
-}
-.dcc-summary-row dd.is-clear {
-  color: #0e6b3f;
-  font-weight: 600;
+.dcc-briefing-action-label {
+  display: block;
+  margin-bottom: 3px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #a0036c;
 }
 
-.dcc-summary-criterion {
-  font-weight: 600;
-}
-.dcc-summary-criterion::after {
-  content: ' · ';
-  font-weight: 400;
+.dcc-briefing-also {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
   color: #8a93ad;
-}
-
-@media (max-width: 720px) {
-  .dcc-summary-row { grid-template-columns: 1fr; gap: 4px; }
 }
 
 /* ── Layer 2: detail ──────────────────────────────────────────────────── */

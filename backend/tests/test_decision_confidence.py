@@ -414,6 +414,82 @@ def test_claims_are_singular_and_plural_correctly():
     assert "1 gap can be resolved before you commit" in texts
 
 
+# --- the executive summary ---------------------------------------------------
+
+def _summary(dimensions, weights, **kwargs):
+    from app.decision_confidence import decision_summary
+    return decision_summary(evidence_profile(dimensions, weights), **kwargs)
+
+
+def test_summary_answers_the_decision_not_the_criteria():
+    """It is a readout, not a condensed copy of the detail below it."""
+    summary = _summary(
+        {"fin": _dim(90, "assumed", improve="Attach the cost model"),
+         "ops": _dim(60, "medium")},
+        {"fin": 0.5, "ops": 0.5},
+        score=52, score_category="Fair",
+    )
+    assert summary["verdict"] == "Scores 52 of 100, rated Fair."
+    # The score and the evidence-backed share are different numbers, and the
+    # summary must never let them read as the same one. 52 is what the option
+    # scored; 38 is how much of the weighted decision stands on evidence.
+    assert "38% of the weighted decision rests on evidence" in summary["confidence"]
+    assert "The remaining 62% depends on assumptions" in summary["confidence"]
+    assert summary["next_step"].startswith("fin:") or "Attach the cost model" in summary["next_step"]
+    assert "materially change the score" in summary["sensitivity"]
+
+
+def test_summary_says_where_the_exposure_sits():
+    """45% assumption-dependence spread evenly is a different problem from all
+    of it sitting in one heavy criterion, and only the second is quickly fixed.
+    """
+    concentrated = _summary(
+        {"big": _dim(95, "assumed"), "ops": _dim(70, "medium")},
+        {"big": 0.7, "ops": 0.3},
+    )
+    assert "Most of that exposure sits in one criterion" in concentrated["concentration"]
+
+    spread = _summary(
+        {"a": _dim(90, "assumed"), "b": _dim(90, "assumed"), "c": _dim(90, "assumed")},
+        {"a": 0.34, "b": 0.33, "c": 0.33},
+    )
+    assert "spread across 3 criteria" in spread["concentration"]
+
+
+def test_summary_states_standing_only_when_there_are_peers():
+    dimensions = {"fin": _dim(90, "assumed"), "ops": _dim(60, "medium")}
+    weights = {"fin": 0.5, "ops": 0.5}
+
+    alone = _summary(dimensions, weights, option_name="Only option")
+    assert "standing" not in alone
+
+    trailing = _summary(
+        dimensions, weights, option_name="Option B",
+        exposure={"leader": {"name": "Option A"},
+                  "challengers": [{"name": "Option B", "gap": 8}]},
+    )
+    assert "Trails Option A by 8 points" in trailing["standing"]
+
+    leading = _summary(
+        dimensions, weights, option_name="Option A",
+        exposure={"leader": {"name": "Option A"}, "challengers": []},
+    )
+    assert "Currently leads" in leading["standing"]
+
+
+def test_summary_omits_fields_rather_than_filling_them():
+    """A decision with nothing to resolve has no next step, not a vague one."""
+    summary = _summary({"ops": _dim(90, "high")}, {"ops": 1.0})
+    assert "next_step" not in summary
+    assert "concentration" not in summary
+    assert "Closing the remaining gaps would strengthen the record" in summary["sensitivity"]
+
+
+def test_summary_is_none_without_a_profile():
+    from app.decision_confidence import decision_summary
+    assert decision_summary(None) is None
+
+
 # --- cross-option exposure ---------------------------------------------------
 
 def test_decision_exposure_names_the_challenger_and_its_assumption():
