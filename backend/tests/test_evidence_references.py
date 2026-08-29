@@ -189,6 +189,28 @@ def test_attaching_is_safe_on_dimensions_that_claimed_nothing():
     assert dimensions["ops"] == {"score": 70, "confidence": "high"}
 
 
+def test_capture_never_touches_the_score_or_the_grade():
+    """Provenance is not a scoring input.
+
+    Letting a judgment score higher for citing more would reward volume of
+    quotation and reopen the "best-argued case wins" failure the confidence
+    caps exist to close. Capture may only add a record.
+    """
+    before = {
+        "ops": {"score": 70, "confidence": "medium",
+                "evidence": ["Dock capacity at Reno is the constraint"]},
+        "fin": {"score": 80, "confidence": "assumed",
+                "evidence": ["A competitor did the same thing last year"]},
+    }
+    attach_evidence_references(before, HISTORY)
+
+    assert before["ops"]["score"] == 70
+    assert before["ops"]["confidence"] == "medium"
+    # The criterion whose every claim was rejected is graded exactly as before.
+    assert before["fin"]["score"] == 80
+    assert before["fin"]["confidence"] == "assumed"
+
+
 # --- the other two paths, schema only ----------------------------------------
 
 def test_attachment_reference_carries_a_location_inside_the_file():

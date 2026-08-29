@@ -96,8 +96,33 @@ function pointsLabel(swing) {
   return `${rounded} ${rounded === 1 ? 'point' : 'points'}`;
 }
 
+// A concise, human source for a verified reference. The exact locator stays on
+// the element as a data attribute for inspection and audit, but raw offsets
+// like "message 0 · chars 89-140" are implementation detail and do not belong
+// in a report someone reads.
+function evidenceSource(reference) {
+  const locator = reference.locator || {};
+  if (reference.kind === 'attachment') {
+    const place = locator.location
+      ? Object.values(locator.location).filter(Boolean).join(' · ')
+      : '';
+    return [locator.filename || 'Uploaded file', place].filter(Boolean).join(' · ');
+  }
+  if (reference.kind === 'connector') {
+    const system = (locator.system || 'Connected system').toUpperCase();
+    const when = locator.retrieved_at
+      ? `retrieved ${String(locator.retrieved_at).slice(0, 10)}`
+      : null;
+    return [system, locator.field, when].filter(Boolean).join(' · ');
+  }
+  return 'From your input';
+}
+
 function CriterionRow({ entry }) {
   const unsupported = UNSUPPORTED_BY_GRADE[entry.confidence];
+  const references = Array.isArray(entry.evidence_references)
+    ? entry.evidence_references
+    : [];
   return (
     <li className={`dcc-criterion dcc-criterion-${entry.severity}`}>
       <div className="dcc-criterion-head">
@@ -120,6 +145,25 @@ function CriterionRow({ entry }) {
           </>
         )}
       </div>
+
+      {/* Verified evidence, above the assessment on purpose. These excerpts
+          were located in the input by deterministic code, so they outrank the
+          model's reasoning about them and should be read first. A criterion
+          with none simply omits the block: manufacturing an entry here would
+          undo the entire point of verifying them. */}
+      {references.length > 0 && (
+        <div className="dcc-evidence-block">
+          <p className="dcc-block-label dcc-block-evidence">Evidence used</p>
+          <ul className="dcc-evidence-list">
+            {references.map((reference) => (
+              <li key={reference.id} data-evidence-locator={JSON.stringify(reference.locator)}>
+                <span className="dcc-evidence-excerpt">{reference.excerpt}</span>
+                <span className="dcc-evidence-source">{evidenceSource(reference)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Jaspen's assessment, not evidence.
           The heading was "What Jaspen based this on", which sounded like a
