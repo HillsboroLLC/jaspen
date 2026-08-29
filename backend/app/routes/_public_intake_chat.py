@@ -35,6 +35,7 @@ import time
 
 from flask import Response, current_app, jsonify, stream_with_context
 
+from app.confidence_check import build_confidence_check
 from app.intake_readiness import (
     MAX_USER_MESSAGE_LENGTH,
     _active_readiness_spec,
@@ -309,6 +310,11 @@ def stream_public_chat_response(request):
             "overall_percent": overall_percent,
             "known": known,
             "missing": missing,
+            # Same finding /analyze returns, from the same deterministic
+            # readiness result computed above. Both entry points have to carry
+            # it or the homepage silently falls back to the old checklist
+            # whenever the pre-signup AI path is the one that answers.
+            "confidence_check": build_confidence_check(readiness, spec),
             "next_question": next_question_value,
             "spec_version": readiness.get("version") or spec.get("version"),
             "characters_used": used,

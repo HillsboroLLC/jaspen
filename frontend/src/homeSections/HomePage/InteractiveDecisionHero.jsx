@@ -8,6 +8,7 @@ import {
   MAX_INTAKE_LENGTH_HINT,
 } from '../../shared/auth/pendingIntakeContext';
 import StarterDecisionChips from './StarterDecisionChips';
+import ConfidenceCheckPanel from './ConfidenceCheckPanel';
 
 const BOTTOM_WORDS = [
   { word: 'idea',       article: 'an', color: '#e9b57b' },
@@ -362,9 +363,24 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
 
         <div className="idh-workspace" aria-live="polite">
           <div className="idh-chat-panel">
+            {/* Artifact-first framing, delivered through copy rather than a
+                file control. The wedge is someone who has already built the
+                plan and wants it pressure-tested, so the prompt has to invite
+                an existing document, not only a typed description.
+
+                It stays a paste affordance on purpose. See the note by the
+                textarea: a pre-auth attachment control was removed once
+                already because it did less than the authenticated one, and a
+                picker that handled only plain text would repeat that. Pasting
+                works from every format a plan actually arrives in.
+
+                "Weighing" rather than "decision" keeps the breadth. A single
+                decision, competing options, a ranked portfolio and a plan are
+                all things someone weighs, and the moment before committing is
+                what they have in common. */}
             {!hasStarted && (
               <label className="idh-input-label" htmlFor="decision-context">
-                What decision are you working through?
+                What are you weighing?
               </label>
             )}
 
@@ -390,7 +406,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
                 value={draftText}
                 onChange={handleTextChange}
                 placeholder={!hasStarted
-                  ? "Paste notes, emails, meeting context, or whatever you're working with..."
+                  ? 'Paste the plan, proposal, or options you are about to commit to. Notes and emails work too.'
                   : 'Type your reply...'}
                 rows={hasStarted ? 2 : 3}
                 disabled={handoffRequired}
@@ -462,16 +478,34 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
           </div>
 
           <aside className="idh-insights-panel" aria-label="Jaspen insights preview">
-            <div className="idh-insights-header">
-              <span>{bandLabel}</span>
-            </div>
+            {/* The band label sits above the panel and contradicts it: "Jaspen
+                is just getting started with this" directly over "What Jaspen
+                can already see" says both nothing-yet and here-is-something in
+                the same breath, and nothing-yet is the framing this panel
+                exists to replace. The progress bar above the workspace still
+                carries the same signal for anyone tracking it. */}
+            {!insights?.confidence_check && (
+              <div className="idh-insights-header">
+                <span>{bandLabel}</span>
+              </div>
+            )}
 
-            {/* Deterministic only: every row mirrors a boolean the intake engine
-                already computed, using the workspace's own active readiness
-                spec (known = completed, missing = not yet). No wording here
-                is generated — this panel just exposes what Jaspen has
-                confidently identified so far. */}
-            {insights && (
+            {/* Deterministic only: every line traces to something the intake
+                engine already computed, and the sentences arrive rendered from
+                the server so no wording is generated here.
+
+                This replaces the old known/missing checklist. The checklist
+                reported what the visitor had failed to supply, which is the
+                cold-start problem: thin context is exactly when Jaspen's own
+                mechanic produces the least impressive result, and exactly when
+                someone is deciding whether to stay. ConfidenceCheckPanel shows
+                the same booleans as an early finding instead. */}
+            {insights?.confidence_check && (
+              <ConfidenceCheckPanel check={insights.confidence_check} />
+            )}
+
+            {/* Fallback for a server that predates confidence_check. */}
+            {insights && !insights.confidence_check && (
               <div className="idh-insight-list">
                 {insights.known.map((category) => (
                   <div className="idh-insight-row is-complete" key={category.key}>
