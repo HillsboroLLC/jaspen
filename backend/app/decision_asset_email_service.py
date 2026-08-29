@@ -283,7 +283,11 @@ def _confidence_blocks(scorecard, peers=None):
         report = build_report(scorecard or {}, peers=peers)
         if not report:
             return {"html": "", "text": ""}
-        return {"html": render_report_html(report), "text": render_report_text(report)}
+        from app.decision_report_email import render_risks_html, render_risks_text
+        return {
+            "html": render_report_html(report) + render_risks_html(report),
+            "text": render_report_text(report) + "\n\n" + render_risks_text(report),
+        }
     except Exception:
         current_app.logger.exception("decision confidence email block failed")
         return {"html": "", "text": ""}

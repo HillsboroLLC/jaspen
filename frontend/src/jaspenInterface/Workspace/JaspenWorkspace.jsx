@@ -23,6 +23,7 @@ import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import TradeoffView from './TradeoffView';
 import DecisionConfidenceCard from './DecisionConfidenceCard';
+import RiskRegister from './RiskRegister';
 import './JaspenWorkspace.css';
 import ChoicePrompt, { parseChoicePrompt } from './ChoicePrompt';
 import GridLayout, { WidthProvider } from 'react-grid-layout';
@@ -82,8 +83,8 @@ const DEFAULT_SCORECARD_SECTIONS = [
   { key: 'confidence', label: 'Decision Confidence',  cols: 4, locked: true,  x: 0, y: 4,  w: 12, h: 8 },
   { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 12, w: 12, h: 5 },
   { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 17, w: 12, h: 8 },
-  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false, x: 0, y: 25, w: 6,  h: 6 },
-  { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true,  x: 6, y: 25, w: 6,  h: 6 },
+  { key: 'risks',      label: 'Top Risks',            cols: 4, locked: false, x: 0, y: 25, w: 12, h: 8 },
+  { key: 'scenario',   label: 'Recommended Scenario', cols: 4, locked: true,  x: 0, y: 33, w: 12, h: 6 },
 ];
 
 // The canvas arrangement the user drags into place. Persisted in TWO places on
@@ -220,6 +221,37 @@ function applyCriterionNarrative(profile, narrativeOverrides) {
   return { ...profile, criteria };
 }
 
+// Risk narrative is PRESENTATION, exactly as criterion narrative is. A person
+// may rewrite how a risk reads without rewriting the risk.
+//
+// Only `risk` and `mitigation` are replaced. Probability, impact, impact
+// category, mitigation cost and residual risk are spread through untouched, so
+// rewording cannot move a number, and Jaspen's original text is kept rather
+// than overwritten so "restore" is always available.
+function applyRiskNarrative(risks, narrativeOverrides) {
+  if (!Array.isArray(risks) || !narrativeOverrides || typeof narrativeOverrides !== 'object') {
+    return risks;
+  }
+  return risks.map((risk) => {
+    const override = risk && risk.id ? narrativeOverrides[risk.id] : null;
+    if (!override || typeof override !== 'object') return risk;
+    const nextRisk = typeof override.risk === 'string' && override.risk.trim()
+      ? override.risk.trim() : risk.risk;
+    const nextMitigation = typeof override.mitigation === 'string'
+      ? override.mitigation.trim() : risk.mitigation;
+    if (nextRisk === risk.risk && nextMitigation === risk.mitigation) return risk;
+    return {
+      ...risk,
+      risk: nextRisk,
+      mitigation: nextMitigation,
+      _original_risk: risk.risk ?? null,
+      _original_mitigation: risk.mitigation ?? null,
+      _edited: true,
+      _edited_at: override.edited_at || null,
+    };
+  });
+}
+
 function applyOverrides(scorecard, overrides) {
   if (!scorecard) return null;
   const ov = overrides && typeof overrides === 'object' ? overrides : {};
@@ -236,7 +268,10 @@ function applyOverrides(scorecard, overrides) {
     executive_summary: ov.executive_summary ?? scorecard.executive_summary,
     // Risks + recommended scenario are qualitative narrative — they don't feed
     // the numeric score, so they're manually editable (cosmetic override wins).
-    top_risks: ov.top_risks ?? scorecard.top_risks,
+    // A narrative override, not an array replacement. The previous override
+    // swapped the whole list for plain strings, so one edit destroyed
+    // probability, impact, mitigation cost and residual risk for every risk.
+    top_risks: applyRiskNarrative(scorecard.top_risks, ov.risk_narrative),
     evidence_profile: applyCriterionNarrative(
       scorecard.evidence_profile, ov.criterion_narrative,
     ),
@@ -908,6 +943,15 @@ export default function JaspenWorkspace() {
   // The briefing alone, so it is short.
   const confidenceRows = 8;
 
+  // The risk register, sized from what it renders. Each risk carries a
+  // description, a row of levels, and usually a mitigation, so a register is
+  // several times the height of the sentence list it replaced.
+  const riskRows = useMemo(() => {
+    const risks = Array.isArray(rendered?.top_risks) ? rendered.top_risks : [];
+    if (!risks.length) return 4;
+    return risks.reduce((total, risk) => total + (risk?.mitigation ? 6 : 4), 2);
+  }, [rendered]);
+
 
 
   // Resolve the display title for THIS specific artifact. Priority:
@@ -1126,6 +1170,31 @@ export default function JaspenWorkspace() {
 
   function restoreCriterionNarrative(criterionKey) {
     setCriterionNarrative(criterionKey, '');
+  }
+
+  // Risk wording edits. Presentation only, by the same construction as the
+  // criterion handlers: these write into display_overrides.risk_narrative and
+  // applyRiskNarrative replaces nothing but the description and mitigation.
+  function setRiskNarrative(riskId, draft) {
+    if (!riskId) return;
+    const risk = String(draft?.risk || '').trim();
+    const mitigation = String(draft?.mitigation || '').trim();
+    setOverrides((prev) => {
+      const narrative = { ...(prev.risk_narrative || {}) };
+      if (!risk && !mitigation) {
+        delete narrative[riskId];
+      } else {
+        narrative[riskId] = { risk, mitigation, edited_at: new Date().toISOString() };
+      }
+      const next = { ...prev };
+      if (Object.keys(narrative).length) next.risk_narrative = narrative;
+      else delete next.risk_narrative;
+      return next;
+    });
+  }
+
+  function restoreRiskNarrative(riskId) {
+    setRiskNarrative(riskId, { risk: '', mitigation: '' });
   }
 
   function setOverride(key, value) {
@@ -2120,9 +2189,11 @@ export default function JaspenWorkspace() {
                 // overwrote the computed height every time, so the section
                 // silently kept a size that fit nothing. A size the user drags
                 // is recorded and wins over the computation.
-                const computed = (s.key === 'confidence' && !s.hUser)
-                  ? confidenceRows
-                  : null;
+                let computed = null;
+                if (!s.hUser) {
+                  if (s.key === 'confidence') computed = confidenceRows;
+                  else if (s.key === 'risks') computed = riskRows;
+                }
                 return {
                   i: s.key,
                   x: Number.isFinite(s.x) ? s.x : 0,
@@ -2388,22 +2459,17 @@ export default function JaspenWorkspace() {
                       )}
 
                       {section.key === 'risks' && (
-                        // Manually editable — one risk per line. Risks are
-                        // qualitative and don't change the score, so they're not
-                        // locked. AI edits flow through chat; this is the manual
-                        // path. pre-line keeps the line breaks in read mode.
-                        <EditableText
-                          multiline
-                          value={(Array.isArray(rendered?.top_risks) ? rendered.top_risks : [])
-                            .map((r) => (typeof r === 'string' ? r : (r?.risk || r?.label || '')))
-                            .filter(Boolean)
-                            .join('\n')}
-                          onCommit={(v) => {
-                            const arr = String(v || '')
-                              .split('\n').map((s) => s.trim()).filter(Boolean);
-                            setOverride('top_risks', arr.length ? arr : null);
-                          }}
-                          style={{ fontSize:13, color:'#334155', lineHeight:1.65, whiteSpace:'pre-line' }}
+                        // Was a textarea of newline-joined descriptions, which
+                        // discarded probability, impact, impact category,
+                        // mitigation, mitigation cost and residual risk at the
+                        // point of display, and destroyed them permanently on
+                        // the first edit. Wording stays editable; the numbers
+                        // are no longer reachable from here.
+                        <RiskRegister
+                          risks={rendered?.top_risks}
+                          editable
+                          onEdit={setRiskNarrative}
+                          onRestore={restoreRiskNarrative}
                         />
                       )}
 

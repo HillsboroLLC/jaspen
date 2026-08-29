@@ -1023,6 +1023,19 @@ def _section_provenance(has_values, *, estimated=False, uploaded=False):
     return 'derived_from_conversation'
 
 
+
+def _risk_identity(risk_text, position):
+    """Stable id for one risk, from its original wording.
+
+    Position is only a tiebreak for two risks that read identically; it is not
+    the identity itself, because a reordered register would otherwise hand each
+    risk somebody else's edits.
+    """
+    basis = _clean_scorecard_text(risk_text) or f'risk-{position}'
+    digest = hashlib.sha1(basis.encode('utf-8')).hexdigest()[:10]
+    return f'rk_{digest}'
+
+
 def _normalize_scorecard_payload(payload):
     source = payload if isinstance(payload, dict) else {}
     normalized = dict(source)
@@ -1164,6 +1177,7 @@ def _normalize_scorecard_payload(payload):
             cleaned = _clean_scorecard_text(item)
             if cleaned:
                 risk_items.append({
+                    'id': _risk_identity(cleaned, len(risk_items)),
                     'risk': cleaned,
                     'probability': None,
                     'impact_dollars': None,
@@ -1197,6 +1211,11 @@ def _normalize_scorecard_payload(payload):
             continue
         risk_items.append({
             **item,
+            # A stable key so a presentation override can address one risk.
+            # Derived from the ORIGINAL text, which system truth never changes,
+            # so an edited description still resolves to the same risk and a
+            # reordered register does not reassign anyone's edits.
+            'id': _risk_identity(risk_text, len(risk_items)),
             'risk': risk_text,
             'probability': probability,
             'impact_dollars': impact_raw,
