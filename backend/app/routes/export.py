@@ -857,7 +857,7 @@ def _send_bytes(payload, *, filename, mimetype):
     return send_file(buffer, mimetype=mimetype, as_attachment=True, download_name=filename)
 
 
-def _pptx_bytes(scorecard, *, org=None):
+def _pptx_bytes(scorecard, *, org=None, peers=None):
     try:
         from pptx import Presentation
         from pptx.dml.color import RGBColor
@@ -993,6 +993,84 @@ def _pptx_bytes(scorecard, *, org=None):
     if isinstance(decision_signal, dict):
         decision_signal = decision_signal.get("text") or decision_signal.get("action")
     add_text(slide, decision_signal or "Review the score, evidence, and risks before committing resources.", 4.25, 5.48, 8.25, 1.0, size=18, color=magenta, bold=True)
+
+    # Decision Confidence slides.
+    #
+    # Deck-shaped, deliberately NOT the emailed report with slide breaks. The
+    # email is scrolled by one reader; a deck is read from across a room while
+    # someone talks over it. So the deck carries the split, the finding, the
+    # single action, and only the criteria that could move the score or the
+    # ranking. Everything else lives in the email and the workspace.
+    #
+    # Failure here must never cost the export: a scorecard without a report
+    # simply skips these slides.
+    try:
+        from app.decision_report import build_report
+
+        # Peers enable the standing line, which no single card can state.
+        report = build_report(scorecard, peers=peers)
+    except Exception:
+        report = None
+
+    if report:
+        summary = report.get("summary") or {}
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        add_header(slide, "Decision Confidence", "How much of this decision rests on evidence")
+
+        backed = report.get("evidence_backed_pct") or 0
+        assumed = report.get("assumption_dependent_pct") or 0
+
+        add_text(slide, f"{backed}%", 0.65, 1.85, 2.6, 1.0, size=54, color=navy, bold=True)
+        add_text(slide, "EVIDENCE-BACKED", 0.65, 2.95, 2.6, 0.3, size=11, color=gray, bold=True)
+        add_text(slide, f"{assumed}%", 3.55, 1.85, 2.6, 1.0, size=54, color=magenta, bold=True)
+        add_text(slide, "ASSUMPTION-DEPENDENT", 3.55, 2.95, 2.6, 0.3, size=11, color=gray, bold=True)
+
+        # One bar, two shares. Widths are the split, so the figure and the
+        # picture cannot disagree.
+        bar_w = 5.5
+        backed_w = max(0.05, bar_w * (backed / 100.0))
+        add_rule(slide, 0.65, 3.45, backed_w, color=RGBColor(0x0E, 0x6B, 0x3F), height=0.12)
+        add_rule(slide, 0.65 + backed_w, 3.45, bar_w - backed_w,
+                 color=RGBColor(0xF5, 0x9E, 0x0B), height=0.12)
+        add_text(slide, "Evidence-backed share of the weighted decision",
+                 0.65, 3.65, 5.5, 0.3, size=10, color=gray)
+
+        briefing = " ".join(
+            summary[key] for key in ("verdict", "standing", "confidence", "concentration")
+            if summary.get(key)
+        )
+        add_text(slide, briefing, 6.6, 1.85, 6.1, 2.2, size=15)
+        if summary.get("sensitivity"):
+            add_rule(slide, 6.6, 4.15, 6.1)
+            add_text(slide, summary["sensitivity"], 6.6, 4.35, 6.1, 1.1, size=15, bold=True)
+        if summary.get("next_step"):
+            add_text(slide, "DO THIS NEXT", 0.65, 4.35, 5.5, 0.3, size=11, color=magenta, bold=True)
+            add_text(slide, summary["next_step"], 0.65, 4.7, 5.5, 1.6, size=14, color=navy)
+
+        # Only what could move the answer earns a slide. A deck listing every
+        # criterion is the email, and nobody reads the email from a projector.
+        material = report.get("material") or []
+        if material:
+            slide = prs.slides.add_slide(prs.slide_layouts[6])
+            add_header(slide, "What could change the answer",
+                       "Assumptions ranked by their power to move the score")
+            top = 1.9
+            for criterion in material[:4]:
+                add_text(slide, criterion["label"], 0.65, top, 6.4, 0.4, size=17, bold=True)
+                add_text(slide,
+                         f'{criterion["weight_pct"]}% of the decision  •  '
+                         f'{criterion["grade_label"]}  •  {criterion["swing"]} points of exposure',
+                         0.65, top + 0.42, 6.4, 0.32, size=12, color=gray)
+                if criterion.get("evidence_needed"):
+                    add_text(slide, f'Evidence needed: {criterion["evidence_needed"]}',
+                             7.3, top, 5.4, 0.9, size=13, color=navy)
+                add_rule(slide, 0.65, top + 1.0, 12.0)
+                top += 1.25
+
+        # The provenance limit travels with the deck. A slide that showed
+        # Jaspen's reasoning without it would read as a source citation to a
+        # room that never saw the caveat.
+        add_text(slide, report["provenance_note"], 0.65, 6.75, 12.0, 0.5, size=9, color=gray)
 
     # Slides 2+: criterion detail in readable groups of six.
     for page_index in range(0, len(component_rows), 6):
