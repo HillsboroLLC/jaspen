@@ -301,8 +301,30 @@ class TestResponseShape:
         assert set(data.keys()) == {
             "spec_version", "ready", "overall_percent", "band", "known",
             "missing", "next_question", "characters_used", "characters_remaining",
-            "user_turns", "turn_limit", "turn_limit_reached",
+            "user_turns", "turn_limit", "turn_limit_reached", "confidence_check",
         }
+
+    def test_confidence_check_never_returns_an_evidence_backed_percentage(self, client):
+        """Guarded at the API boundary, not only inside the module.
+
+        Nothing is scored before signup, so no evidence-backed figure exists to
+        report. This endpoint is where a future change would be most tempted to
+        relabel the readiness percentage as one.
+        """
+        check = _analyze(client, _single_turn(RICH_INPUT)).get_json()["confidence_check"]
+        assert check is not None
+        assert "evidence_backed_pct" not in check
+        assert "assumption_dependent_pct" not in check
+        assert check["scored"] is False
+        assert "context_coverage_pct" in check
+        for claim in check["claims"]:
+            assert "evidence-backed" not in claim["text"].lower()
+
+    def test_confidence_check_leads_with_a_finding_not_coverage(self, client):
+        """A cold start must not open on how little it has."""
+        check = _analyze(client, _single_turn(VAGUE_INPUT)).get_json()["confidence_check"]
+        assert check["claims"][0]["kind"] != "coverage"
+        assert check["claims"][-1]["kind"] == "coverage"
 
     def test_category_labels_are_server_authoritative(self, app, client):
         with app.app_context():

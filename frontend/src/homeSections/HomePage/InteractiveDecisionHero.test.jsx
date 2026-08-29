@@ -51,7 +51,7 @@ describe('InteractiveDecisionHero anonymous handoff gate', () => {
     const openModal = jest.fn();
     render(<InteractiveDecisionHero onOpenModal={openModal} />);
 
-    fireEvent.change(screen.getByLabelText('What decision are you working through?'), {
+    fireEvent.change(screen.getByLabelText('What are you weighing?'), {
       target: { value: 'I need help making a decision.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send to Jaspen' }));
@@ -84,7 +84,7 @@ describe('InteractiveDecisionHero anonymous handoff gate', () => {
     ]));
 
     render(<InteractiveDecisionHero />);
-    fireEvent.change(screen.getByLabelText('What decision are you working through?'), {
+    fireEvent.change(screen.getByLabelText('What are you weighing?'), {
       target: { value: 'A well-defined decision with evidence.' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send to Jaspen' }));
@@ -106,7 +106,7 @@ describe('InteractiveDecisionHero anonymous handoff gate', () => {
     ]));
 
     render(<InteractiveDecisionHero />);
-    const input = screen.getByLabelText('What decision are you working through?');
+    const input = screen.getByLabelText('What are you weighing?');
     fireEvent.change(input, { target: { value: 'Help me decide.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send to Jaspen' }));
 

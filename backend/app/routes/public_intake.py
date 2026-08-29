@@ -24,6 +24,7 @@ import os
 from flask import Blueprint, jsonify, request
 
 from app import limiter
+from app.confidence_check import build_confidence_check
 from app.intake_readiness import (
     MAX_USER_MESSAGE_LENGTH,
     _active_readiness_spec,
@@ -136,6 +137,14 @@ def analyze_intake():
         if not c.get("completed")
     ]
 
+    # The same readiness result, reframed as a finding rather than a checklist.
+    # Additive: every field above is unchanged, so anything already reading this
+    # response keeps working. Still deterministic, still no model call, and
+    # build_confidence_check does not mutate the readiness payload.
+    #
+    # Note what this deliberately does NOT contain: an evidence-backed
+    # percentage. Nothing has been scored at this point, so there are no graded
+    # criteria to compute one from. See app/confidence_check.py.
     return jsonify({
         "spec_version": readiness.get("version") or spec.get("version"),
         "ready": ready,
@@ -143,6 +152,7 @@ def analyze_intake():
         "band": _band_for(ready, overall_percent),
         "known": known,
         "missing": missing,
+        "confidence_check": build_confidence_check(readiness, spec),
         "next_question": None if ready else _next_question(readiness),
         "characters_used": used,
         "characters_remaining": max(0, MAX_USER_MESSAGE_LENGTH - used),
