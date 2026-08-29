@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronDown, faDownload, faGripVertical, faPencil, faPrint, faRedo, faSpinner, faTimes, faUndo } from '@fortawesome/free-solid-svg-icons';
 import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
+import DecisionConfidenceCard from './DecisionConfidenceCard';
 import './ScoreDashboard.css';
 
 const DEFAULT_CARD_LAYOUT = {
@@ -47,6 +48,10 @@ const DEFAULT_CARD_ORDER = [
 
 export default function ScoreDashboard({
   analysisResult,
+  // Cross-option reversal, computed server-side from the peer set. A single
+  // scorecard cannot establish it, so it arrives alongside the snapshots
+  // rather than on the card.
+  decisionExposure = null,
   // Props passed from parent workspace (kept for API compatibility)
   onOpenChat: _onOpenChat,
   onOpenScenario: _onOpenScenario,
@@ -117,6 +122,10 @@ export default function ScoreDashboard({
   const result = selectedSnapshot || analysisResult || {};
   const score = result.jaspen_score || 0;
   const dataConfidence = Number(result.data_confidence);
+  // Attached by the scoring engine (app/decision_confidence.py). Absent on
+  // scorecards written before it existed, which is what keeps the old
+  // confidence bar reachable as a fallback rather than leaving a blank space.
+  const evidenceProfile = result.evidence_profile || null;
   const componentScores = useMemo(() => result.component_scores || {}, [result.component_scores]);
   const componentRationale = useMemo(() => result.component_rationale || {}, [result.component_rationale]);
   const sectionProvenance = useMemo(() => result.section_provenance || {}, [result.section_provenance]);
@@ -604,7 +613,14 @@ export default function ScoreDashboard({
           <div className="score-text">
             <h3>Strategy Score</h3>
             <span className={`score-rating ${scoreRatingClass}`}>{scoreLabel}</span>
-            {Number.isFinite(dataConfidence) && dataConfidence > 0 && (
+            {/* The "Data confidence" bar that lived here reported a bare
+                percentage with no account of what it measured or what to do
+                about it, which read as a system health meter rather than a
+                finding. It is replaced by the Decision Confidence card below,
+                which carries the evidence split, the exposure register and the
+                resolution path. The bar remains only as a fallback for
+                scorecards scored before evidence_profile existed. */}
+            {!evidenceProfile && Number.isFinite(dataConfidence) && dataConfidence > 0 && (
               <div className="score-confidence">
                 <span className="score-confidence-label">Data confidence</span>
                 <div className="score-confidence-bar">
@@ -621,6 +637,22 @@ export default function ScoreDashboard({
             )}
           </div>
         </div>
+      ),
+    },
+    {
+      // Directly under the score, because "how much should we trust this" is
+      // the next question after "what is it", and every other card on this
+      // dashboard assumes an answer to it.
+      key: 'confidence',
+      title: 'Decision Confidence',
+      populated: Boolean(evidenceProfile),
+      priority: 0.5,
+      render: () => (
+        <DecisionConfidenceCard
+          profile={evidenceProfile}
+          exposure={decisionExposure}
+          optionName={result.project_name || null}
+        />
       ),
     },
     {

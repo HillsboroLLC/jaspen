@@ -12,7 +12,12 @@ import uuid
 from types import SimpleNamespace
 from app import db, limiter
 from app.admin_audit import append_user_audit_event
-from app.decision_confidence import CONFIDENCE_CAPS, evidence_profile
+from app.decision_confidence import (
+    CONFIDENCE_CAPS,
+    decision_exposure,
+    decision_summary,
+    evidence_profile,
+)
 from app.evidence_references import attach_evidence_references
 from app.models import Scorecard, UsageEvent, User
 from app.scorecards import (
@@ -1571,6 +1576,38 @@ def _assert_scorecard_write_fresh(
             )
 
 
+def _decision_exposure_from_snapshots(snapshots):
+    """Whether any option's assumptions could change which one leads.
+
+    Reversal is a property of the option set, not of a scorecard, so it cannot
+    be attached during scoring: _recompute_jaspen_score sees one card at a time
+    and has no view of its peers. This is the first point where they are all in
+    hand together.
+
+    Computed here rather than in the browser on purpose. The rule for reversal
+    (a swing large enough to close the gap to the leader) lives once, in
+    app/decision_confidence.py, alongside the caps it depends on. A second
+    implementation in JavaScript would drift from it silently, and the claim it
+    supports is one the product cannot afford to get wrong.
+
+    Returns None with fewer than two options, since there is nothing to overtake.
+    """
+    cards = [s for s in (snapshots or []) if isinstance(s, dict)]
+    if len(cards) < 2:
+        return None
+    # Peers in a thread share one rubric, so the first card carrying weights
+    # speaks for all of them. Cards written before weights were persisted have
+    # none, and yield no exposure rather than a guess.
+    weights = next(
+        (c['scoring_weights'] for c in cards
+         if isinstance(c.get('scoring_weights'), dict) and c['scoring_weights']),
+        None,
+    )
+    if not weights:
+        return None
+    return decision_exposure(cards, weights)
+
+
 def _snapshot_meta_from_result(result_payload, thread_id, snapshot=None, deleted_snapshot_id=None):
     snapshot_state = _scorecard_snapshot_state(result_payload, thread_id) if isinstance(result_payload, dict) else None
     if not snapshot_state:
@@ -1579,12 +1616,15 @@ def _snapshot_meta_from_result(result_payload, thread_id, snapshot=None, deleted
             'deleted_snapshot_id': deleted_snapshot_id,
             'scorecard_snapshots': [],
             'selected_scorecard_id': None,
+            'decision_exposure': None,
         }
+    snapshots = snapshot_state.get('snapshots') or []
     return {
         'snapshot': snapshot,
         'deleted_snapshot_id': deleted_snapshot_id,
-        'scorecard_snapshots': snapshot_state.get('snapshots') or [],
+        'scorecard_snapshots': snapshots,
         'selected_scorecard_id': snapshot_state.get('selected_id'),
+        'decision_exposure': _decision_exposure_from_snapshots(snapshots),
     }
 
 
@@ -8428,6 +8468,11 @@ def get_thread_bundle(thread_id):
             'current_scorecard': current_scorecard,
             'scorecard_snapshots': merged_snapshots,
             'peer_scorecards': merged_snapshots,
+            # Reversal across the option set. Every scorecard already carries
+            # its own evidence_profile, but none of them can see the peers, so
+            # the only claim that depends on the whole set has to be assembled
+            # here where they are all in hand.
+            'decision_exposure': _decision_exposure_from_snapshots(merged_snapshots),
             'selected_scorecard_id': selected_id,
             'scenarios': scenarios_list,
             'scenario_levers': scenario_levers,

@@ -278,7 +278,7 @@ def evidence_profile(dimensions, weights, *, score=None, leader_score=None):
     backed = evidence_ratio(entries)
     reversing = sum(1 for e in entries if e["severity"] == SEVERITY_REVERSING)
     material = sum(1 for e in entries if e["severity"] == SEVERITY_MATERIAL)
-    return {
+    profile = {
         "evidence_backed_pct": backed,
         "assumption_dependent_pct": 100 - backed,
         "score": resolved_score,
@@ -298,6 +298,12 @@ def evidence_profile(dimensions, weights, *, score=None, leader_score=None):
         },
         "top_exposure": [e for e in entries if e["swing"] > 0][:3],
     }
+    # Claims travel with the profile so a consumer never has to assemble a
+    # sentence from the counts itself. Every surface renders the same words for
+    # the same computation, and a claim that is not in this list was not
+    # computed and must not appear.
+    profile["claims"] = exposure_claims(profile)
+    return profile
 
 
 def exposure_claims(profile):
@@ -370,6 +376,110 @@ def exposure_claims(profile):
     return claims
 
 
+def decision_summary(profile, *, exposure=None, option_name=None,
+                     score=None, score_category=None):
+    """The executive readout, composed from computed values only.
+
+    Every sentence is assembled from numbers this module already produced. No
+    model wrote any of it, which is what lets the summary be quoted into a
+    room: it cannot drift from the arithmetic underneath it, and it cannot
+    smuggle in a claim the detail does not support.
+
+    Deliberately not a condensed copy of the detail. The detail answers "what
+    is true of each criterion". This answers "what should I do about this
+    decision", which is a different question and needs different sentences.
+
+    Returns None when there is nothing to summarise. Absent fields are omitted
+    rather than filled: a decision with one option has no standing, and a
+    decision with no exposure has nothing concentrated anywhere.
+    """
+    if not profile:
+        return None
+
+    entries = profile.get("criteria") or []
+    counts = profile.get("counts") or {}
+    backed = profile.get("evidence_backed_pct")
+    assumed = profile.get("assumption_dependent_pct")
+
+    summary = {}
+
+    if score is not None:
+        rated = f", rated {score_category}" if score_category else ""
+        summary["verdict"] = f"Scores {score} of 100{rated}."
+
+    # Standing needs the peer set, so it only exists when peers were scored.
+    leader = (exposure or {}).get("leader") or {}
+    leader_name = _text(leader.get("name"))
+    challengers = (exposure or {}).get("challengers") or []
+    if leader_name and option_name:
+        if option_name == leader_name:
+            summary["standing"] = "Currently leads the options under consideration."
+        else:
+            trailing = next((c for c in challengers if c.get("name") == option_name), None)
+            if trailing:
+                gap = trailing.get("gap")
+                unit = "point" if gap == 1 else "points"
+                summary["standing"] = (
+                    f"Trails {leader_name} by {gap} {unit}, a gap the assumptions "
+                    "below could close."
+                )
+            else:
+                summary["standing"] = f"Does not currently lead. {leader_name} scores higher."
+
+    if backed is not None:
+        summary["confidence"] = (
+            f"{backed}% of the weighted decision rests on evidence. "
+            f"The remaining {assumed}% depends on assumptions."
+        )
+
+    # Where the exposure actually sits. A decision with 45% assumption
+    # dependence spread evenly is a different problem from one where it all
+    # sits in a single heavy criterion, and only the second is quickly fixable.
+    exposed = [e for e in entries if e.get("swing", 0) > 0]
+    total_swing = sum(e["swing"] for e in exposed)
+    if exposed and total_swing > 0:
+        top = exposed[0]
+        share = top["swing"] / total_swing
+        weight_pct = int(round(top["weight"] * 100))
+        if share >= 0.6:
+            summary["concentration"] = (
+                f"Most of that exposure sits in one criterion, {top['label']}, "
+                f"which carries {weight_pct}% of the decision."
+            )
+        else:
+            summary["concentration"] = (
+                f"That exposure is spread across {len(exposed)} criteria, led by "
+                f"{top['label']} at {weight_pct}% of the decision."
+            )
+
+    action = next(
+        (e for e in entries if e.get("resolvable") and e.get("resolution") and e.get("swing", 0) > 0),
+        None,
+    )
+    if action:
+        summary["next_step"] = f"{action['label']}: {action['resolution']}"
+
+    if counts.get("reversing"):
+        n = counts["reversing"]
+        summary["sensitivity"] = (
+            f"{'One assumption' if n == 1 else f'{n} assumptions'} could change "
+            "which option leads."
+        )
+    elif counts.get("material"):
+        summary["sensitivity"] = (
+            "Resolving the assumptions below could materially change the score, "
+            "though not the ranking on current evidence."
+        )
+    else:
+        summary["sensitivity"] = (
+            "No assumption currently carries enough weight to change the score "
+            "materially. Closing the remaining gaps would strengthen the record "
+            "rather than move the answer."
+        )
+
+    return summary or None
+
+
 def decision_exposure(scorecards, weights):
     """Exposure across every option on the table, not just one card.
 
@@ -420,9 +530,27 @@ def decision_exposure(scorecards, weights):
                 "assumptions": reversers,
             })
 
-    return {
+    result = {
         "leader": {"name": leader["name"], "score": leader["score"], "profile": leader_profile},
         "options": len(scored),
         "challengers": challengers,
         "could_change_leader": bool(challengers),
     }
+    # Each option's readout, keyed by name, assembled where the peer set is in
+    # hand. Standing is part of the briefing and no single scorecard can state
+    # it, so composing this per-card downstream would produce a summary that
+    # silently omits the one sentence an executive reads first.
+    result["summaries"] = {
+        card["name"]: decision_summary(
+            evidence_profile(
+                card["dimensions"], weights,
+                score=card["score"],
+                leader_score=None if card["name"] == leader["name"] else leader["score"],
+            ),
+            exposure=result,
+            option_name=card["name"],
+            score=card["score"],
+        )
+        for card in scored
+    }
+    return result

@@ -22,6 +22,7 @@ import { Jaspen } from './JaspenClient';
 import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import TradeoffView from './TradeoffView';
+import DecisionConfidenceCard from './DecisionConfidenceCard';
 import ChoicePrompt, { parseChoicePrompt } from './ChoicePrompt';
 import GridLayout, { WidthProvider } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
@@ -59,12 +60,21 @@ const _GENERIC_TITLE_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-
 // module-level const (not state) so it is stable across renders.
 // cols is out of 4 — the outer grid uses repeat(4, 1fr)
 // 1 = 25%  2 = 50%  3 = 75%  4 = 100%
+// Decision Confidence sits directly under the score. "How much should we trust
+// this" is the next question after "what is it", and every block below assumes
+// an answer to it. Locked for the same reason the score is: it is computed, not
+// authored, so it must not be editable as prose.
 const DEFAULT_SCORECARD_SECTIONS = [
   { key: 'score',      label: 'Score',                cols: 4, locked: true,  x: 0, y: 0,  w: 12, h: 4 },
-  { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 4,  w: 12, h: 5 },
-  { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 9, w: 12, h: 8 },
-  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false, x: 0, y: 17, w: 6,  h: 6 },
-  { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true,  x: 6, y: 17, w: 6,  h: 6 },
+  // Taller than it first looks like it needs. The card stacks a split bar,
+  // the claims, a reversal callout, and a register whose length follows the
+  // rubric, so a short block silently scrolls the headline figure out of view
+  // and clips the last exposure group.
+  { key: 'confidence', label: 'Decision Confidence',  cols: 4, locked: true,  x: 0, y: 4,  w: 12, h: 14 },
+  { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 18, w: 12, h: 5 },
+  { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 23, w: 12, h: 8 },
+  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false, x: 0, y: 31, w: 6,  h: 6 },
+  { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true,  x: 6, y: 31, w: 6,  h: 6 },
 ];
 
 // The canvas arrangement the user drags into place. Persisted in TWO places on
@@ -756,6 +766,44 @@ export default function JaspenWorkspace() {
   }, [sectionLayout, threadId, scorecardId, loading]);
 
   const rendered = useMemo(() => applyOverrides(snapshot, overrides), [snapshot, overrides]);
+
+  // Reversal across the option set, computed server-side. It cannot come from
+  // the selected scorecard because no single card can see its peers, so it
+  // travels with the bundle instead. Null with fewer than two options, which
+  // is correct: there is nothing to overtake.
+  const decisionExposure = bundle?.decision_exposure || null;
+
+  // Grow the Decision Confidence section to fit its own content instead of
+  // scrolling inside the tile. The card's height is not knowable in advance:
+  // the register follows the rubric, the finding and resolution blocks appear
+  // only when the arithmetic produces them, and the disclosure expands. A
+  // fixed row count therefore either clips a long card or leaves a short one
+  // stranded in white space, and the internal scrollbar it needed hid the
+  // headline figure the moment the reader scrolled.
+  //
+  // Only ever grows. Shrinking on every render would fight a user who has
+  // dragged the section to a size they prefer.
+  const confidenceContentRef = useRef(null);
+  useEffect(() => {
+    const node = confidenceContentRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return undefined;
+
+    const fit = () => {
+      // rowHeight 28 with a 16px gap, so n rows span n*28 + (n-1)*16. Solve for
+      // n, then add one row of slack for the section header and padding.
+      const needed = Math.ceil((node.scrollHeight + 16) / 44) + 1;
+      setSectionLayout((prev) => {
+        const current = prev.find((s) => s.key === 'confidence');
+        if (!current || current.h >= needed) return prev;
+        return prev.map((s) => (s.key === 'confidence' ? { ...s, h: needed } : s));
+      });
+    };
+
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [rendered, decisionExposure]);
 
   // Resolve the display title for THIS specific artifact. Priority:
   // override → meaningful scorecard fields → first user message in the
@@ -1875,10 +1923,14 @@ export default function JaspenWorkspace() {
           <div
             ref={scorecardExportRef}
             data-scorecard-export
+            // Reads as the page rather than a card floating on it. The rounded
+            // corners, drop shadow and 980px cap made every section look like a
+            // card inside a card. The white background stays: this node is the
+            // export root, and a transparent one renders unpredictably in the
+            // PDF and PowerPoint capture.
             style={{
-              maxWidth:980, margin:'0 auto', background:'#fff', borderRadius:14,
-              boxShadow:'0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.04)',
-              padding:'36px 40px',
+              maxWidth:1240, margin:'0 auto', background:'#fff',
+              padding:'28px 8px 40px',
             }}
           >
             {/* Title — editable */}
@@ -2042,7 +2094,12 @@ export default function JaspenWorkspace() {
                 return (
                   <div
                     key={section.key}
-                    style={{ height:'100%', boxSizing:'border-box', background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, padding:'10px 12px', display:'flex', flexDirection:'column', overflow:'hidden' }}
+                    // Flat, not a card. The border and radius on every tile were
+                    // what made the canvas read as a grid of cards sitting on a
+                    // card. Sections are separated by the grid's own gap and by
+                    // their header rules instead. Drag and resize are unchanged:
+                    // the header grip and the resize handle both still render.
+                    style={{ height:'100%', boxSizing:'border-box', background:'transparent', padding:'2px 4px', display:'flex', flexDirection:'column', overflow:'hidden' }}
                   >
                     {/* Section header bar */}
                     <div style={{
@@ -2113,6 +2170,19 @@ export default function JaspenWorkspace() {
                             <div style={{ fontSize:18, fontWeight:600, color:'#0f172a', marginTop:4 }}>Strategy scorecard</div>
                             <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>Locked · scores reflect Jaspen's analysis. Open chat to rescore.</div>
                           </div>
+                        </div>
+                      )}
+
+                      {section.key === 'confidence' && (
+                        <div ref={confidenceContentRef}>
+                          <DecisionConfidenceCard
+                            profile={rendered?.evidence_profile || null}
+                            exposure={decisionExposure}
+                            optionName={rendered?.project_name || null}
+                            score={score}
+                            scoreCategory={category}
+                            summary={decisionExposure?.summaries?.[rendered?.project_name] || null}
+                          />
                         </div>
                       )}
 
