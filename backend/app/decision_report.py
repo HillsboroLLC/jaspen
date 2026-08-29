@@ -165,5 +165,71 @@ def build_report(scorecard, *, peers=None):
             c for c in criteria
             if c["severity"] in (SEVERITY_REVERSING, SEVERITY_MATERIAL)
         ],
+        "risks": build_risk_register(scorecard),
         "provenance_note": PROVENANCE_NOTE,
     }
+
+
+IMPACT_CATEGORY_LABELS = {
+    "financial_health": "Financial",
+    "operational_efficiency": "Operational",
+    "market_position": "Market",
+    "execution_readiness": "Execution",
+}
+
+_LEVEL_ORDER = {"High": 3, "Medium": 2, "Low": 1}
+
+
+def _money(value):
+    """Money at the precision a decision uses, or None."""
+    try:
+        amount = float(str(value).replace("$", "").replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+    if amount == 0:
+        return "No cost"
+    if abs(amount) >= 1_000_000:
+        return f"${amount / 1_000_000:.1f}M"
+    if abs(amount) >= 1_000:
+        return f"${round(amount / 1_000)}K"
+    return f"${amount:.0f}"
+
+
+def build_risk_register(scorecard):
+    """The risks, ordered by what survives mitigation.
+
+    Sorting by raw exposure would put the already-handled risks at the top,
+    which is the opposite of useful: the decision turns on what is left after
+    the mitigation, not on what the risk looked like before anyone acted.
+    """
+    risks = scorecard.get("top_risks") if isinstance(scorecard, dict) else None
+    if not isinstance(risks, list):
+        return []
+
+    rows = []
+    for item in risks:
+        if not isinstance(item, dict):
+            text = _text(item)
+            if text:
+                rows.append({"risk": text, "probability": None, "impact": None,
+                             "impact_category": None, "mitigation": None,
+                             "mitigation_cost": None, "residual": None, "edited": False})
+            continue
+        rows.append({
+            "risk": _text(item.get("risk")),
+            "probability": item.get("probability"),
+            "impact": _money(item.get("impact_dollars") or item.get("impact")),
+            "impact_category": IMPACT_CATEGORY_LABELS.get(item.get("impact_category")),
+            "mitigation": _text(item.get("mitigation")) or None,
+            "mitigation_cost": _money(item.get("mitigation_cost")),
+            "residual": item.get("residual_risk"),
+            # Exports must show this, or a rewritten risk leaves the building
+            # looking like Jaspen's own wording.
+            "edited": bool(item.get("_edited")),
+        })
+
+    rows.sort(key=lambda r: (
+        -_LEVEL_ORDER.get(r.get("residual"), 0),
+        -_LEVEL_ORDER.get(r.get("probability"), 0),
+    ))
+    return rows

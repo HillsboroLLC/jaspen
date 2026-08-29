@@ -246,3 +246,107 @@ def render_report_text(report):
 
     lines += ["", report["provenance_note"]]
     return "\n".join(lines)
+
+
+def _risk_html(risk):
+    """One risk: the position first, then the narrative.
+
+    A risk is not a sentence, it is a position. Likelihood, exposure and what
+    survives mitigation come before the prose so two risks can be compared
+    without reading either in full.
+    """
+    tone = {
+        "High": ("#fbe9e7", "#dc2626", "#9f1f16"),
+        "Medium": ("#fdf2dc", "#f59e0b", "#8a5406"),
+        "Low": ("#e3f5ea", "#10b981", "#0e6b3f"),
+    }
+
+    def chip(label, value):
+        if not value:
+            return ""
+        bg, border, fg = tone.get(value, ("#fbfcfe", "#e4e9f0", NAVY))
+        return (
+            f'<span style="display:inline-block;margin:0 6px 4px 0;padding:3px 8px;'
+            f'background:{bg};border:1px solid {border};font:400 11px/1.3 Arial,sans-serif;'
+            f'color:{fg}"><span style="font:700 8px/1 Arial,sans-serif;letter-spacing:.08em;'
+            f'text-transform:uppercase;color:{fg}">{_esc(label)}</span> {_esc(value)}</span>'
+        )
+
+    impact = ""
+    if risk.get("impact"):
+        category = f' <span style="color:{MUTED}">{_esc(risk["impact_category"])}</span>' if risk.get("impact_category") else ""
+        impact = (
+            f'<span style="display:inline-block;margin:0 6px 4px 0;padding:3px 8px;'
+            f'background:#fbfcfe;border:1px solid #e4e9f0;font:400 11px/1.3 Arial,sans-serif;'
+            f'color:{NAVY}"><span style="font:700 8px/1 Arial,sans-serif;letter-spacing:.08em;'
+            f'text-transform:uppercase;color:{MUTED}">Impact</span> {_esc(risk["impact"])}{category}</span>'
+        )
+
+    edited = (
+        f'<span style="margin-left:8px;font:700 9px/1 Arial,sans-serif;letter-spacing:.08em;'
+        f'text-transform:uppercase;color:{AMBER};background:#fdf2dc;border:1px solid #f0c675;'
+        f'padding:2px 5px">Edited</span>' if risk.get("edited") else ""
+    )
+
+    mitigation = ""
+    if risk.get("mitigation"):
+        cost = (
+            f'<span style="color:{GREEN};white-space:nowrap"> &nbsp;{_esc(risk["mitigation_cost"])} to mitigate</span>'
+            if risk.get("mitigation_cost") else ""
+        )
+        mitigation = (
+            f'<div style="border-left:2px solid #cfe3d6;padding-left:10px;margin:8px 0 0">'
+            + _label("Mitigation", GREEN)
+            + f'<p style="margin:0;font:400 13px/1.55 Arial,sans-serif;color:{SLATE}">'
+              f'{_esc(risk["mitigation"])}{cost}</p></div>'
+        )
+
+    return (
+        f'<tr><td style="padding:0 0 14px"><div style="border-left:2px solid {LINE};padding-left:11px">'
+        f'<p style="margin:0 0 6px;font:600 14px/1.45 Arial,sans-serif;color:{NAVY}">'
+        f'{_esc(risk.get("risk") or "Untitled risk")}{edited}</p>'
+        f'<div style="margin:0 0 2px">{chip("Likelihood", risk.get("probability"))}{impact}'
+        f'{chip("After mitigation", risk.get("residual"))}</div>'
+        f'{mitigation}</div></td></tr>'
+    )
+
+
+def render_risks_html(report):
+    """The risk register as an HTML fragment, or an empty string."""
+    risks = (report or {}).get("risks") or []
+    if not risks:
+        return ""
+    rows = "".join(_risk_html(risk) for risk in risks)
+    return (
+        f'<h3 style="margin:24px 0 10px;font:700 11px/1.3 Arial,sans-serif;'
+        f'letter-spacing:.09em;text-transform:uppercase;color:{NAVY}">Risk register</h3>'
+        f'<p style="margin:0 0 12px;font:400 11px/1.4 Arial,sans-serif;color:{MUTED}">'
+        f'Ordered by what survives mitigation.</p>'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0">{rows}</table>'
+    )
+
+
+def render_risks_text(report):
+    risks = (report or {}).get("risks") or []
+    if not risks:
+        return ""
+    lines = ["RISK REGISTER (ordered by what survives mitigation)"]
+    for risk in risks:
+        lines.append("")
+        lines.append(f'{risk.get("risk") or "Untitled risk"}{" [EDITED]" if risk.get("edited") else ""}')
+        position = []
+        if risk.get("probability"):
+            position.append(f'Likelihood {risk["probability"]}')
+        if risk.get("impact"):
+            impact = f'Impact {risk["impact"]}'
+            if risk.get("impact_category"):
+                impact += f' ({risk["impact_category"]})'
+            position.append(impact)
+        if risk.get("residual"):
+            position.append(f'After mitigation {risk["residual"]}')
+        if position:
+            lines.append("  " + ", ".join(position))
+        if risk.get("mitigation"):
+            cost = f' [{risk["mitigation_cost"]} to mitigate]' if risk.get("mitigation_cost") else ""
+            lines.append(f'  Mitigation: {risk["mitigation"]}{cost}')
+    return "\n".join(lines)

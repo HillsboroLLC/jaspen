@@ -1067,6 +1067,42 @@ def _pptx_bytes(scorecard, *, org=None, peers=None):
                 add_rule(slide, 0.65, top + 1.0, 12.0)
                 top += 1.25
 
+        # Risk, at slide density rather than register density.
+        #
+        # Deliberately NOT every field. A slide showing likelihood, impact,
+        # category, mitigation, mitigation cost and residual for each of five
+        # risks is a spreadsheet photographed badly. The deck carries what a
+        # room needs to react to: the risk, what survives mitigation, and the
+        # exposure. Mitigation detail and costs live in the email.
+        risks = report.get("risks") or []
+        if risks:
+            slide = prs.slides.add_slide(prs.slide_layouts[6])
+            add_header(slide, "Risk register", "Ordered by what survives mitigation")
+            add_text(slide, "RISK", 0.65, 1.75, 8.0, 0.3, size=10, color=gray, bold=True)
+            add_text(slide, "AFTER MITIGATION", 8.9, 1.75, 2.0, 0.3, size=10, color=gray, bold=True)
+            add_text(slide, "EXPOSURE", 11.1, 1.75, 1.6, 0.3, size=10, color=gray, bold=True)
+            add_rule(slide, 0.65, 2.05, 12.0)
+
+            top = 2.2
+            for risk in risks[:5]:
+                add_text(slide, risk.get("risk") or "Untitled risk", 0.65, top, 8.0, 0.85, size=14)
+                residual = risk.get("residual")
+                residual_color = {
+                    "High": RGBColor(0x9F, 0x1F, 0x16),
+                    "Medium": RGBColor(0x8A, 0x54, 0x06),
+                    "Low": RGBColor(0x0E, 0x6B, 0x3F),
+                }.get(residual, gray)
+                add_text(slide, residual or "Not rated", 8.9, top, 2.0, 0.4,
+                         size=14, color=residual_color, bold=True)
+                add_text(slide, risk.get("impact") or "Not sized", 11.1, top, 1.6, 0.4,
+                         size=14, color=navy)
+                add_rule(slide, 0.65, top + 0.9, 12.0, color=RGBColor(0xEF, 0xF1, 0xF6))
+                top += 1.05
+
+            if len(risks) > 5:
+                add_text(slide, f"{len(risks) - 5} further risks are in the full report.",
+                         0.65, top + 0.1, 12.0, 0.3, size=11, color=gray)
+
         # The provenance limit travels with the deck. A slide that showed
         # Jaspen's reasoning without it would read as a source citation to a
         # room that never saw the caveat.

@@ -160,3 +160,71 @@ def test_the_email_carries_every_criterion():
     html = render_report_html(report)
     assert "Financial viability" in html
     assert "Execution readiness" in html
+
+
+# --- the risk register -------------------------------------------------------
+
+RISK = {
+    "id": "rk_abc",
+    "risk": "Consolidation concentrates volume on one dock.",
+    "probability": "Medium",
+    "impact_dollars": 2100000,
+    "impact_category": "operational_efficiency",
+    "mitigation": "Retain Sparks as a warm standby for eight weeks.",
+    "mitigation_cost": 180000,
+    "residual_risk": "Low",
+}
+
+
+def _with_risks(risks):
+    from app.decision_report import build_risk_register
+    return build_risk_register({"top_risks": risks})
+
+
+def test_the_register_orders_by_what_survives_mitigation():
+    """Sorting by raw exposure puts already-handled risks first, which is the
+    opposite of useful: the decision turns on what is left after acting."""
+    rows = _with_risks([
+        {**RISK, "risk": "Handled", "impact_dollars": 5000000, "residual_risk": "Low"},
+        {**RISK, "risk": "Live", "impact_dollars": 100000, "residual_risk": "High"},
+    ])
+    assert [r["risk"] for r in rows] == ["Live", "Handled"]
+
+
+def test_money_reads_at_decision_precision():
+    rows = _with_risks([RISK])
+    assert rows[0]["impact"] == "$2.1M"
+    assert rows[0]["mitigation_cost"] == "$180K"
+
+
+def test_a_zero_cost_mitigation_says_so_rather_than_showing_nothing():
+    """Free to mitigate is a finding, and an empty cell reads as unknown."""
+    rows = _with_risks([{**RISK, "mitigation_cost": 0}])
+    assert rows[0]["mitigation_cost"] == "No cost"
+
+
+def test_every_captured_field_reaches_the_email():
+    from app.decision_report_email import render_risks_html
+    html = render_risks_html({"risks": _with_risks([RISK])})
+    for fragment in ("Likelihood", "Medium", "Impact", "$2.1M", "Operational",
+                     "After mitigation", "Low", "Mitigation", "$180K to mitigate"):
+        assert fragment in html, fragment
+
+
+def test_edited_risk_wording_is_marked_in_the_email():
+    from app.decision_report_email import render_risks_html
+    html = render_risks_html({"risks": _with_risks([{**RISK, "_edited": True}])})
+    assert "Edited" in html
+
+
+def test_a_plain_string_risk_still_renders():
+    """Older scorecards stored risks as bare strings."""
+    rows = _with_risks(["Carriers may renegotiate rates."])
+    assert rows[0]["risk"] == "Carriers may renegotiate rates."
+    assert rows[0]["residual"] is None
+
+
+def test_no_risks_renders_nothing_rather_than_an_empty_heading():
+    from app.decision_report_email import render_risks_html, render_risks_text
+    assert render_risks_html({"risks": []}) == ""
+    assert render_risks_text({"risks": []}) == ""
