@@ -392,6 +392,23 @@
   line-height: 1.6;
   color: #4f5d75;
 }
+/* The function of the engagement, given more weight than the fee sitting
+   below it. This is the line the reader should price against. */
+.pvb-advisory-lead {
+  margin: 6px 0 0;
+  font-size: 1.02rem;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #161f3b;
+}
+/* Guidance, not a gate. Kept quiet so it reads as "who this suits" rather
+   than "who is allowed". */
+.pvb-advisory-band {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: #6b7280;
+}
 .pvb-advisory-included-label {
   margin: 8px 0 0;
   font-size: 0.72rem;
@@ -399,6 +416,15 @@
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: #9ca3af;
+}
+/* Logistics heading, deliberately the quietest label on the card. */
+.pvb-advisory-logistics-label {
+  margin: 14px 0 0;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #b6bcc7;
 }
 .pvb-advisory-list {
   margin: 0;

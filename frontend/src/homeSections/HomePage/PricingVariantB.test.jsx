@@ -14,7 +14,7 @@ describe('PricingVariantB', () => {
     const planNote = screen.getByText(/preserve the reasoning behind decisions that matter/i);
 
     expect(essentialCard).toHaveClass('is-featured');
-    expect(essentialCard).toHaveTextContent('When the decision has real consequences, Essential is built for you.');
+    expect(essentialCard).toHaveTextContent('For consequential decisions where confidence needs to be grounded in evidence.');
     expect(essentialCard).not.toHaveTextContent(/preserve the reasoning behind decisions that matter/i);
     expect(planNote).toHaveClass('pvb-plan-note');
     expect(screen.queryByText(/For people making real decisions regularly/i)).not.toBeInTheDocument();
@@ -28,7 +28,7 @@ describe('PricingVariantB', () => {
     render(<PricingVariantB onOpenModal={jest.fn()} />);
 
     const essentialCard = screen.getByText('Essential').closest('.pvb-card');
-    expect(essentialCard).toHaveTextContent(/When the decision has real consequences/);
+    expect(essentialCard).toHaveTextContent(/For consequential decisions/);
     expect(essentialCard.textContent).not.toContain('—');
   });
 
@@ -138,12 +138,75 @@ describe('Advisory Partnerships tab', () => {
     render(<PricingVariantB onOpenModal={jest.fn()} />);
     await openAdvisory(user);
 
-    expect(screen.getByText('Jaspen access and AI capacity included during the engagement')).toBeInTheDocument();
-    expect(screen.getByText('Includes Jaspen access and AI capacity during the engagement, plus five Executive Decision Intensives with the full decision advisory process applied to each, along with:')).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/Jaspen access and AI capacity are included throughout the engagement/),
+    ).toHaveLength(2);
+    expect(screen.getAllByText('You receive')).toHaveLength(2);
+    expect(
+      screen.getByText('Everything in the Intensive, applied across the cycle, plus:'),
+    ).toBeInTheDocument();
 
     // The comparison table still carries the existing planning context.
     expect(screen.getByText(/approximate planning estimates, not guaranteed quantities/i)).toBeInTheDocument();
     expect(screen.getByText(/Actual usage varies based on model selection/i)).toBeInTheDocument();
+  });
+
+  it('never invites a reader to divide the fee by the hours', async () => {
+    // The point of the repositioning. A comparison row counting sessions or
+    // naming a duration teaches the reader to price a calendar, which is the
+    // one comparison neither engagement should invite. Logistics belong on the
+    // cards, below the deliverables, not in a table built for scanning.
+    const user = userEvent.setup();
+    render(<PricingVariantB onOpenModal={jest.fn()} />);
+    await openAdvisory(user);
+    await user.click(screen.getByRole('button', { name: /compare advisory engagements/i }));
+
+    const table = screen.getByRole('table');
+    const rowLabels = [...table.querySelectorAll('tbody th, tbody td:first-child')]
+      .map(cell => cell.textContent);
+
+    expect(rowLabels).not.toContain('Session duration');
+    expect(rowLabels).not.toContain('Executive Decision Intensives');
+    expect(table.textContent).not.toMatch(/90 minutes/);
+  });
+
+  it('leads each engagement with its function, not its fee', async () => {
+    const user = userEvent.setup();
+    render(<PricingVariantB onOpenModal={jest.fn()} />);
+    await openAdvisory(user);
+
+    expect(
+      screen.getByText('Decision assurance before a consequential commitment.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Decision assurance across a planning or capital cycle.'),
+    ).toBeInTheDocument();
+  });
+
+  it('frames the impact bands as guidance rather than eligibility', async () => {
+    const user = userEvent.setup();
+    render(<PricingVariantB onOpenModal={jest.fn()} />);
+    await openAdvisory(user);
+
+    // "Best suited for" leaves room to accept a smaller decision carrying
+    // unusual complexity. A requirement would not.
+    expect(screen.getByText(/Best suited for decisions carrying roughly \$10M or more/)).toBeInTheDocument();
+    expect(screen.getByText(/roughly \$50M or more in aggregate consequence/)).toBeInTheDocument();
+    expect(screen.queryByText(/minimum|required|must have/i)).not.toBeInTheDocument();
+  });
+
+  it('distinguishes the partnership by cross-decision work, not by volume', async () => {
+    const user = userEvent.setup();
+    render(<PricingVariantB onOpenModal={jest.fn()} />);
+    await openAdvisory(user);
+
+    expect(screen.getByText(/Five reviews is not the product/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Shared assumptions traced across initiatives/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/whether your organization.s confidence is running ahead of its evidence/i),
+    ).toBeInTheDocument();
   });
 
   it('hides the billing toggle and the enterprise calculator on advisory', async () => {
@@ -188,8 +251,9 @@ describe('Advisory Partnerships tab', () => {
     const investmentRow = screen.getByText('Investment').closest('tr');
     expect(investmentRow).toHaveTextContent('$25,000 flat fee');
     expect(investmentRow).toHaveTextContent('$100,000 flat fee');
-    const checkoutRow = screen.getByText('Direct checkout').closest('tr');
-    expect(checkoutRow.textContent).toContain('No');
+    const scopeRow = screen.getByText('Decision scope').closest('tr');
+    expect(scopeRow).toHaveTextContent('One decision and the options under it');
+    expect(scopeRow).toHaveTextContent('Every decision in the cycle, and the relationships between them');
 
     await user.click(toggle);
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
