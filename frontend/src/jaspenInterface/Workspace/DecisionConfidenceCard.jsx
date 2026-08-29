@@ -54,13 +54,21 @@ const GRADE_LABELS = {
   assumed: 'Assumed',
 };
 
-// What the channel means in plain language. Deliberately describes where an
-// input came from, never what it was.
-const SOURCE_LABELS = {
-  conversation: 'From what you described',
-  connector: 'From connected data',
-  inferred: 'Inferred from context',
-  assumed: 'No supporting input',
+// How Jaspen characterises the input it used. Every one of these is hedged on
+// purpose, because `source` is the model's own claim about where something came
+// from and nothing verifies it.
+//
+// "From connected data" used to sit here and it was actively misleading: it
+// reads as "Jaspen retrieved this from a system you connected", which is a
+// factual assertion about system state that this field cannot support. Even on
+// a real scoring run the value is the model saying so, not a retrieval record.
+// Hedged wording stays until evidence references are actually captured, at
+// which point the specific source can be named and these can be retired.
+const ASSESSMENT_BASIS = {
+  conversation: 'Based on what you described',
+  connector: 'Jaspen reports drawing on connected data',
+  inferred: 'Inferred rather than stated',
+  assumed: 'No supporting input identified',
 };
 
 // What is still unsupported at each grade, stated as a consequence of the cap
@@ -109,19 +117,23 @@ function CriterionRow({ entry }) {
         )}
       </div>
 
-      {/* What Jaspen based this on. The channel, then Jaspen's own reasoning,
-          labelled as reasoning. Never presented as evidence held. */}
+      {/* Jaspen's assessment, not evidence.
+          The heading was "What Jaspen based this on", which sounded like a
+          provenance record and is more authority than the underlying data
+          carries: what follows is the model's own reasoning plus its own claim
+          about the channel. Calling it an assessment is accurate now and stays
+          accurate later, when a real Evidence block can sit beside it. */}
       <div className="dcc-basis-block">
-        <p className="dcc-block-label dcc-block-basis">What Jaspen based this on</p>
-        {entry.source && (
-          <p className="dcc-basis-source">{SOURCE_LABELS[entry.source] || entry.source}</p>
-        )}
+        <p className="dcc-block-label dcc-block-basis">Jaspen&apos;s assessment</p>
         {entry.rationale ? (
           <p className="dcc-basis-text">{entry.rationale}</p>
         ) : (
           <p className="dcc-basis-text is-empty">
-            No reasoning was recorded for this criterion.
+            No assessment was recorded for this criterion.
           </p>
+        )}
+        {entry.source && (
+          <p className="dcc-basis-source">{ASSESSMENT_BASIS[entry.source] || entry.source}</p>
         )}
       </div>
 
@@ -258,9 +270,10 @@ export default function DecisionConfidenceCard({
             ))}
           </ul>
           <p className="dcc-provenance-note">
-            "What Jaspen based this on" is Jaspen's own reasoning and the channel
-            an input arrived on. It is not a record of which document or figure
-            supported the score.
+            Jaspen&apos;s assessment is its own reasoning about the inputs it was
+            given. Jaspen cannot yet identify the specific document, message, or
+            record behind a judgment, so nothing here should be read as a source
+            citation or an audit trail.
           </p>
         </div>
       )}
