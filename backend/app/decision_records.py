@@ -88,7 +88,13 @@ def _collect_peer_scorecards(session, thread_data, *, user_id=None, thread_id=No
         data_confidence = card.get('data_confidence')
         if data_confidence is None and dims:
             from .routes.strategy import _data_confidence_from_dimensions
-            data_confidence = _data_confidence_from_dimensions(dims)
+            # Pass the card's own weights. Confidence is now weighted by the
+            # rubric, so deriving it here without them would reproduce the
+            # unweighted mean and reintroduce exactly the disagreement between
+            # the record and the UI that this branch exists to prevent.
+            data_confidence = _data_confidence_from_dimensions(
+                dims, card.get('scoring_weights')
+            )
         cards.append({
             'id': cid or None,
             'name': str(card.get('project_name') or card.get('name') or card.get('label') or 'Option').strip(),

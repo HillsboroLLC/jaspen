@@ -12,6 +12,7 @@ import uuid
 from types import SimpleNamespace
 from app import db, limiter
 from app.admin_audit import append_user_audit_event
+from app.decision_confidence import CONFIDENCE_CAPS, evidence_profile
 from app.models import Scorecard, UsageEvent, User
 from app.scorecards import (
     COMPARISON_SESSION_LIMIT_MESSAGE,
@@ -961,30 +962,49 @@ def _list_has_values(items):
 _DIMENSION_CONFIDENCE_PCT = {"high": 92, "medium": 70, "low": 48, "assumed": 30}
 
 
-def _data_confidence_from_dimensions(dimensions, *, conversation_turns=0):
-    """Derive overall data_confidence (%) from the LLM's per-dimension confidence
-    labels. Returns an int 0-100, or None if there are no usable dimensions (caller
+def _data_confidence_from_dimensions(dimensions, weights=None):
+    """Derive overall data_confidence (%) from the per-dimension confidence labels.
+
+    Returns an int 0-100, or None if there are no usable dimensions (the caller
     falls back to the legacy heuristic).
 
-    Confidence is the mean of each dimension's mapped percentage, with a small
-    grounding bonus for a substantive conversation (more turns → more real signal).
+    Weighted by the rubric when weights are available, and an unweighted mean
+    only when they are not. Weighting matters because this number is published
+    as a statement about the decision: a criterion carrying 30% of the decision
+    has to move it six times as far as one carrying 5%, or the figure describes
+    the label distribution rather than the decision.
+
+    No conversation-length term. An earlier version added up to +8 points for a
+    longer conversation, which meant the reported confidence rose when a user
+    talked more without producing any additional evidence. That is the exact
+    failure the confidence caps exist to prevent, and it cannot sit inside the
+    number that reports on them.
     """
     if not isinstance(dimensions, dict) or not dimensions:
         return None
-    vals = []
-    for dim in dimensions.values():
+
+    weight_map = weights if isinstance(weights, dict) else {}
+    total_w = 0.0
+    acc = 0.0
+    fallback = []
+    for key, dim in dimensions.items():
         if not isinstance(dim, dict):
             continue
         conf = str(dim.get("confidence") or "").strip().lower()
         pct = _DIMENSION_CONFIDENCE_PCT.get(conf)
-        if pct is not None:
-            vals.append(pct)
-    if not vals:
-        return None
-    base = sum(vals) / len(vals)
-    # Up to +8 for a well-developed conversation (caps at ~8 turns).
-    grounding_bonus = min(8, max(0, conversation_turns)) if conversation_turns else 0
-    return int(round(max(15, min(100, base + grounding_bonus))))
+        if pct is None:
+            continue
+        fallback.append(pct)
+        w = _safe_float(weight_map.get(key))
+        if w is not None and w > 0:
+            acc += pct * w
+            total_w += w
+
+    if total_w > 0:
+        return int(round(max(15, min(100, acc / total_w))))
+    if fallback:
+        return int(round(max(15, min(100, sum(fallback) / len(fallback)))))
+    return None
 
 
 def _section_provenance(has_values, *, estimated=False, uploaded=False):
@@ -1256,14 +1276,29 @@ def _normalize_scorecard_payload(payload):
     if isinstance(source_meta, dict):
         conversation_turns = _safe_int(source_meta.get('conversation_turns')) or 0
 
-    # Prefer deriving confidence from the LLM's own per-dimension confidence labels
-    # (high/medium/low/assumed) — that is the real signal of how grounded the score
-    # is, and it varies card-to-card. The old turn-count heuristic bucketed to a few
-    # fixed values (e.g. 10+25+0+20 = a sticky 55%), which is why every batch card
-    # looked the same. Fall back to the heuristic only when there are no dimensions.
+    # Carry forward the weight map the score was built from. _recompute_jaspen_score
+    # stores it; scorecards written before that existed have none, and fall back to
+    # the rubric when the thread carries one.
+    scoring_weights = source.get('scoring_weights')
+    if not isinstance(scoring_weights, dict) or not scoring_weights:
+        rubric = source.get('rubric') if isinstance(source.get('rubric'), dict) else {}
+        criteria = rubric.get('criteria') if isinstance(rubric.get('criteria'), list) else []
+        scoring_weights = {
+            str(c.get('key')): _safe_float(c.get('weight'))
+            for c in criteria
+            if isinstance(c, dict) and c.get('key') and _safe_float(c.get('weight')) is not None
+        }
+    normalized['scoring_weights'] = scoring_weights or {}
+
+    # Prefer deriving confidence from the per-dimension confidence labels
+    # (high/medium/low/assumed), weighted by the rubric. That is the real signal of
+    # how grounded the score is, and it varies card-to-card. The old turn-count
+    # heuristic bucketed to a few fixed values (e.g. 10+25+0+20 = a sticky 55%),
+    # which is why every batch card looked the same. Fall back to the heuristic only
+    # when there are no dimensions to read.
     dimension_confidence_pct = _data_confidence_from_dimensions(
         normalized.get('dimensions'),
-        conversation_turns=conversation_turns,
+        normalized['scoring_weights'],
     )
     if dimension_confidence_pct is not None:
         confidence_pct = dimension_confidence_pct
@@ -1279,6 +1314,20 @@ def _normalize_scorecard_payload(payload):
             ),
         )
     normalized['data_confidence'] = int(confidence_pct)
+
+    # Decision Confidence and Assumption Exposure for this card. Recomputed here
+    # rather than trusted from storage so a card loaded from an older write, or
+    # edited since it was scored, reports a split that matches what it currently
+    # shows. Absent when there are no weighted dimensions to measure.
+    profile = evidence_profile(
+        normalized.get('dimensions'),
+        normalized['scoring_weights'],
+        score=_safe_int(normalized.get('jaspen_score')),
+    )
+    if profile:
+        normalized['evidence_profile'] = profile
+    elif isinstance(source.get('evidence_profile'), dict):
+        normalized['evidence_profile'] = source['evidence_profile']
 
     score_value = _safe_int(normalized.get('jaspen_score')) or 0
     risks = normalized.get('top_risks') if isinstance(normalized.get('top_risks'), list) else []
@@ -2304,7 +2353,12 @@ def _require_tool_access(user_id, tool_id, access='read'):
 # Confidence → max allowed dimension score. The model assigns a raw 0-100 and a
 # confidence; Python enforces the cap so an "assumed" dimension can never inflate
 # the score. Kept in lockstep with the cap rules stated in the scoring prompt.
-_CONFIDENCE_CAPS = {"high": 100, "medium": 75, "low": 60, "assumed": 45}
+#
+# Now sourced from app.decision_confidence, which is also what measures exposure
+# against these caps. Two copies of this table would let the caps enforced in
+# scoring drift from the caps used to report how much a decision rests on
+# assumption, and the second number would quietly stop describing the first.
+_CONFIDENCE_CAPS = CONFIDENCE_CAPS
 
 # component_scores is a flat mirror of four dimension scores — keep it in sync so
 # downstream readers that use component_scores see the same capped values.
@@ -2394,14 +2448,27 @@ def _recompute_jaspen_score(payload, weights):
         dim = dims.get(dim_key)
         if not isinstance(dim, dict):
             continue
+        # Prefer a raw_score already on the dimension. This function runs more
+        # than once over the same payload, and after the first pass "score"
+        # holds the CAPPED value. Reading it again would record a cap as though
+        # it were a judgment, and every exposure figure derived from it would
+        # silently collapse to zero.
         try:
-            raw_val = float(dim.get("score"))
+            raw_val = float(
+                dim["raw_score"] if dim.get("raw_score") is not None else dim.get("score")
+            )
         except (TypeError, ValueError):
             continue
         raw_val = max(0.0, min(100.0, raw_val))
         conf = str(dim.get("confidence") or "").strip().lower()
         cap = _CONFIDENCE_CAPS.get(conf, 100)
         capped = min(raw_val, cap)
+        # Keep the pre-cap judgment. The distance between it and the capped
+        # value is what an assumption is currently costing this option, which
+        # is the input to every Assumption Exposure figure downstream. The
+        # scorecard already showed a user "judged 80, capped at 45"; until now
+        # the 80 was discarded the moment it was displayed.
+        dim["raw_score"] = int(round(raw_val))
         # Write the capped value back so the dimension bar matches what fed the
         # score (otherwise the UI would show an uncapped bar above a capped total).
         dim["score"] = int(round(capped))
@@ -2427,6 +2494,26 @@ def _recompute_jaspen_score(payload, weights):
             dim = dims.get(dim_key)
             if isinstance(dim, dict) and dim.get("score") is not None:
                 comp[comp_key] = dim["score"]
+
+    # Persist the weight map that produced this score. Only the two call sites
+    # inside the scoring pass know it (a rubric in custom mode, an objective
+    # preset in default mode); normalization, exports, and the workspace all
+    # run later without it. Storing it here means the evidence split is always
+    # measured against the weights the score was actually built from, not a
+    # guess reconstructed downstream.
+    payload["scoring_weights"] = {
+        str(k): float(v)
+        for k, v in (weights or {}).items()
+        if isinstance(dims.get(str(k)), dict) and _safe_float(v) is not None
+    }
+
+    # Decision Confidence for this option, computed from the same capped
+    # dimensions that produced the score. Reversal is deliberately absent here:
+    # it depends on the peer set, which this function cannot see. Callers that
+    # hold the peers add it via decision_confidence.decision_exposure.
+    profile = evidence_profile(dims, payload["scoring_weights"], score=score)
+    if profile:
+        payload["evidence_profile"] = profile
 
     return payload
 
