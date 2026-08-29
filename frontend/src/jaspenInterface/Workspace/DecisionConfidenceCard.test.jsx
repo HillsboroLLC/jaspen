@@ -153,6 +153,69 @@ describe('DecisionConfidenceCard', () => {
     });
   });
 
+  describe('verified evidence', () => {
+    const withEvidence = (refs) => profile({
+      criteria: [criterion({
+        evidence_references: refs,
+      })],
+    });
+
+    it('shows the stored excerpt and a human source, never raw offsets', () => {
+      render(<DecisionConfidenceCard profile={withEvidence([{
+        id: 'ev_1', kind: 'conversation',
+        excerpt: 'paying roughly $40,000 a month in carrier penalties',
+        locator: { message_index: 0, role: 'user', start: 89, end: 140 },
+      }])} />);
+
+      expect(screen.getByText('Evidence used')).toBeInTheDocument();
+      expect(
+        screen.getByText('paying roughly $40,000 a month in carrier penalties'),
+      ).toBeInTheDocument();
+      expect(screen.getByText('From your input')).toBeInTheDocument();
+      // Offsets are provenance, not reading material.
+      expect(screen.queryByText(/chars 89/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/message 0/)).not.toBeInTheDocument();
+    });
+
+    it('keeps the exact locator available for audit', () => {
+      const locator = { message_index: 0, role: 'user', start: 89, end: 140 };
+      const { container } = render(<DecisionConfidenceCard profile={withEvidence([{
+        id: 'ev_1', kind: 'conversation', excerpt: 'some verified passage here', locator,
+      }])} />);
+
+      const item = container.querySelector('[data-evidence-locator]');
+      expect(JSON.parse(item.getAttribute('data-evidence-locator'))).toEqual(locator);
+    });
+
+    it('names the file for attachment evidence', () => {
+      render(<DecisionConfidenceCard profile={withEvidence([{
+        id: 'ev_2', kind: 'attachment', excerpt: 'Penalty accrual: $40,000/mo',
+        locator: { filename: 'Cost Model.xlsx', location: { sheet: 'Assumptions', cell: 'F18' } },
+      }])} />);
+      expect(screen.getByText('Cost Model.xlsx · Assumptions · F18')).toBeInTheDocument();
+    });
+
+    it('shows when connector evidence was retrieved', () => {
+      // A connector value can change after the decision, so when it was true
+      // is part of the evidence rather than a footnote.
+      render(<DecisionConfidenceCard profile={withEvidence([{
+        id: 'ev_3', kind: 'connector', excerpt: '40217.55',
+        locator: { system: 'netsuite', field: 'monthly_penalty', retrieved_at: '2026-08-29T10:00:00' },
+      }])} />);
+      expect(
+        screen.getByText('NETSUITE · monthly_penalty · retrieved 2026-08-29'),
+      ).toBeInTheDocument();
+    });
+
+    it('omits the block entirely rather than manufacturing an entry', () => {
+      render(<DecisionConfidenceCard profile={profile()} />);
+      expect(screen.queryByText('Evidence used')).not.toBeInTheDocument();
+      // The distinction survives: assessment is still shown, and is still
+      // labelled as assessment rather than promoted to evidence.
+      expect(screen.getByText("Jaspen's assessment")).toBeInTheDocument();
+    });
+  });
+
   describe('the provenance limit', () => {
     it('labels the basis as reasoning, never as an evidence record', () => {
       render(<DecisionConfidenceCard profile={profile()} />);

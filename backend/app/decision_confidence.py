@@ -205,6 +205,12 @@ def criterion_entries(dimensions, weights):
             # the top of this module.
             "source": _text(dim.get("source")).lower() or None,
             "rationale": _text(dim.get("rationale")) or None,
+            # Verified provenance, passed through untouched. Unlike `source`
+            # and `rationale` these are not model claims: each was located in
+            # the input by deterministic code before being stored, so they are
+            # the only thing in this record a reader may treat as evidence.
+            # See app/evidence_references.py.
+            "evidence_references": dim.get("evidence_references") or [],
         })
     return entries
 
