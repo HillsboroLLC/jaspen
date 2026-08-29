@@ -43,6 +43,12 @@ const BlockGrid = WidthProvider(GridLayout);
 // JaspenChat's Session Artifacts dropdown.
 const SENTINEL_TRADEOFF = '__tradeoff__';
 
+// One card per criterion, each its own section, so every card can be resized
+// and reordered independently. Prefixed because these keys are generated from
+// the rubric and must be distinguishable from the static section keys wherever
+// layout is merged, serialised, or reset.
+const CRITERION_SECTION_PREFIX = 'criterion:';
+
 const SENTINEL_EXECUTION = '__execution__';
 
 // Color palette matched against the chat scorecard's renderScorecardCard.
@@ -105,6 +111,14 @@ function _mergeSectionLayout(saved) {
   // section was inserted. Re-flowing full-width sections in their saved order
   // removes that class of gap outright, and keeps a user's ORDER, which is the
   // part of a saved layout worth preserving.
+  // Generated sections are not in the defaults, so carry saved ones through or
+  // every merge would discard a user's arrangement of exactly the cards they
+  // arranged.
+  rows.forEach((row) => {
+    if (row && typeof row.key === 'string' && row.key.startsWith(CRITERION_SECTION_PREFIX)) {
+      if (!merged.some((m) => m.key === row.key)) merged.push({ ...row });
+    }
+  });
   const ordered = merged.slice().sort((a, b) => (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0));
   let cursor = 0;
   ordered.forEach((section) => {
@@ -840,35 +854,59 @@ export default function JaspenWorkspace() {
   // Ensure a section exists for every weighted criterion, appended below the
   // rest so a first render has a sensible arrangement. Existing sections are
   // never repositioned: once a user has moved one, the layout is theirs.
-  // The report is ONE section, not one per criterion.
-  //
-  // Splitting each criterion into its own canvas section made the report read
-  // as a column of fragments rather than a document, and every seam added a
-  // grid gap that no amount of sizing could close. Arranging happens at the
-  // section level, the same as every other section on the canvas, and the
-  // detail inside flows as one piece.
-  //
-  // Its height is predicted from what it will render rather than measured.
-  // Measuring means writing a height back into the grid, and the grid reports
-  // its own layout on every change, so the write-back always won and the
-  // measured size silently never applied.
-  const confidenceRows = useMemo(() => {
-    const criteria = rendered?.evidence_profile?.criteria || [];
-    if (!criteria.length) return 8;
-    // 7 rows for the briefing, then per criterion: 5 base, a row per verified
-    // reference, one for "still unsupported", two for a resolution.
-    //
-    // Per-criterion headroom is deliberately absent. A row of slack is cheap on
-    // one section and compounds across six into a visible tail of white space,
-    // which is the complaint this sizing exists to answer. The card's own
-    // padding absorbs the wrap.
-    return criteria.reduce((total, entry) => {
-      let rows = 5 + (entry.evidence_references || []).length;
-      if (entry.confidence !== 'high') rows += 1;
-      if (entry.resolution) rows += 2;
-      return total + rows;
-    }, 7);
-  }, [rendered]);
+  // Each criterion is its own card, sized from what it will actually render.
+  // Prediction rather than measurement: writing a measured height into state
+  // loses, because the grid reports its own layout on every change and that
+  // write-back overwrites it.
+  function estimateCriterionRows(entry) {
+    let rows = 5 + (entry.evidence_references || []).length;
+    if ((entry.evidence_references || []).length) rows += 1;
+    if (entry.confidence !== 'high') rows += 1;
+    if (entry.resolution) rows += 2;
+    return Math.max(4, rows);
+  }
+
+  const criterionSpecs = useMemo(
+    () => (rendered?.evidence_profile?.criteria || []).map((c) => ({
+      key: c.key,
+      rows: estimateCriterionRows(c),
+    })),
+    [rendered],
+  );
+
+  // Ensure a card exists for every weighted criterion. Appended below whatever
+  // is already placed, and existing cards are never repositioned: once a user
+  // has moved one, the arrangement is theirs.
+  useEffect(() => {
+    if (!criterionSpecs.length) return;
+    setSectionLayout((prev) => {
+      const existing = new Set(prev.map((s) => s.key));
+      const missing = criterionSpecs.filter(
+        (spec) => !existing.has(`${CRITERION_SECTION_PREFIX}${spec.key}`),
+      );
+      if (!missing.length) return prev;
+      let y = prev.reduce((max, s) => Math.max(max, (s.y || 0) + (s.h || 0)), 0);
+      const added = missing.map((spec) => {
+        const section = {
+          key: `${CRITERION_SECTION_PREFIX}${spec.key}`,
+          label: 'Criterion',
+          cols: 4,
+          locked: true,
+          x: 0,
+          y,
+          w: 12,
+          h: spec.rows,
+          collapsed: false,
+        };
+        y += spec.rows;
+        return section;
+      });
+      return [...prev, ...added];
+    });
+  }, [criterionSpecs]);
+
+  // The briefing alone, so it is short.
+  const confidenceRows = 8;
 
 
 
@@ -1910,7 +1948,7 @@ export default function JaspenWorkspace() {
         </div>
 
         {/* Canvas */}
-        <div data-ws-canvas style={{ flex:1, overflow:'auto', padding: isTradeoff ? 0 : '32px 48px' }}>
+        <div data-ws-canvas style={{ flex:1, overflow:'auto', background: isTradeoff ? undefined : '#eceff5', padding: isTradeoff ? 0 : '32px 48px' }}>
           {isTradeoff ? (
             // Trade-off canvas: full TradeoffView render. Cosmetic edits
             // (title overrides etc.) will land in v1.1 — this v1 shows the
@@ -2028,8 +2066,11 @@ export default function JaspenWorkspace() {
             // export root, and a transparent one renders unpredictably in the
             // PDF and PowerPoint capture.
             style={{
-              maxWidth:1240, margin:'0 auto', background:'#fff',
-              padding:'28px 8px 40px',
+              // Deep enough that white cards read as sitting ON it. At a
+              // lighter value the cards and the page were the same surface
+              // and the two-layer structure disappeared.
+              maxWidth:1240, margin:'0 auto', background:'#eceff5',
+              padding:'20px 16px 40px',
             }}
           >
             {/* Title — editable */}
@@ -2211,6 +2252,12 @@ export default function JaspenWorkspace() {
                   dragSectionRef.current = null;
                 };
 
+                const sectionLabel = section.key.startsWith(CRITERION_SECTION_PREFIX)
+                  ? ((rendered?.evidence_profile?.criteria || []).find(
+                      (c) => c.key === section.key.slice(CRITERION_SECTION_PREFIX.length),
+                    )?.label || section.label)
+                  : section.label;
+
                 return (
                   <div
                     key={section.key}
@@ -2220,7 +2267,7 @@ export default function JaspenWorkspace() {
                     // shows a faint outline on hover: enough to find the corner
                     // handle, not enough to reinstate the card look.
                     className="jw-section-tile"
-                    style={{ height:'100%', boxSizing:'border-box', background:'transparent', padding:'2px 4px', display:'flex', flexDirection:'column', overflow:'hidden' }}
+                    style={{ height:'100%', boxSizing:'border-box', background:'#fff', border:'1px solid #e4e9f0', borderRadius:8, padding:'12px 16px', display:'flex', flexDirection:'column', overflow:'hidden' }}
                   >
                     {/* Section header bar */}
                     <div style={{
@@ -2235,7 +2282,7 @@ export default function JaspenWorkspace() {
                         fontSize:11, fontWeight:600, color:'#64748b',
                         letterSpacing:'0.06em', textTransform:'uppercase', flex:1,
                       }}>
-                        {section.label}
+                        {sectionLabel}
                       </span>
                       {/* Lock badge */}
                       {section.locked && (
@@ -2296,12 +2343,21 @@ export default function JaspenWorkspace() {
 
                       {section.key === 'confidence' && (
                         <DecisionConfidenceCard
+                          only="summary"
                           profile={rendered?.evidence_profile || null}
                           exposure={decisionExposure}
                           optionName={rendered?.project_name || null}
                           score={score}
                           scoreCategory={category}
                           summary={decisionExposure?.summaries?.[rendered?.project_name] || null}
+                        />
+                      )}
+
+                      {section.key.startsWith(CRITERION_SECTION_PREFIX) && (
+                        <DecisionConfidenceCard
+                          only="criterion"
+                          criterionKey={section.key.slice(CRITERION_SECTION_PREFIX.length)}
+                          profile={rendered?.evidence_profile || null}
                           editable
                           onEditNarrative={setCriterionNarrative}
                           onRestoreNarrative={restoreCriterionNarrative}
