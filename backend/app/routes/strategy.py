@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from app import db, limiter
 from app.admin_audit import append_user_audit_event
 from app.decision_confidence import CONFIDENCE_CAPS, evidence_profile
+from app.evidence_references import attach_evidence_references
 from app.models import Scorecard, UsageEvent, User
 from app.scorecards import (
     COMPARISON_SESSION_LIMIT_MESSAGE,
@@ -2525,6 +2526,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         },
         "financial_viability": {
@@ -2532,6 +2534,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         },
         "execution_readiness": {
@@ -2539,6 +2542,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         },
         "strategic_alignment": {
@@ -2546,6 +2550,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         },
         "risk_profile": {
@@ -2553,6 +2558,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         },
         "evidence_quality": {
@@ -2560,6 +2566,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         }'''
 
@@ -2649,7 +2656,8 @@ def _generate_jaspen_scorecard(
                 f'            "confidence": "<high|medium|low|assumed>",\n'
                 f'            "source": "<conversation|connector|inferred|assumed>",\n'
                 f'            "rationale": "<1-2 sentences>",\n'
-                f'            "what_would_improve": "<specific action or null if confidence is high>"\n'
+                f'            "evidence": ["<verbatim quote from the input that supports this score>"],\n'
+            f'            "what_would_improve": "<specific action or null if confidence is high>"\n'
                 f'        }}'
             )
         dimensions_block = ",\n".join(_dim_snippets)
@@ -2720,6 +2728,7 @@ Rules:
 - For each dimension, assign a confidence level based on the QUALITY OF THE EVIDENCE, not how clearly it was stated: "high" = evidence Jaspen can itself see or check in this conversation (uploaded documents, connected data sources, or figures cross-checkable against material provided); "medium" = specific, concrete facts the user self-reported (exact salary, current rent, a signed offer's terms); "low" = the user's own estimates, predictions, or qualitative impressions ('promotion is possible', 'clients seem happy', 'we think it will appreciate'); "assumed" = anything you filled in yourself with no user input. A decision built entirely on uncorroborated self-report should rarely show "high" on any dimension — confident-sounding conversation is not corroboration. Self-reported specifics are respectable evidence (medium); they are not verified evidence (high).
 - For each dimension, identify the source: "conversation" (explicitly stated), "connector" (from connected data source), "inferred" (logical derivation), or "assumed" (industry/pattern-based).
 - For any dimension with confidence "low" or "assumed", populate what_would_improve with a specific, actionable suggestion.
+- EVIDENCE QUOTES: populate "evidence" with the exact passages from the input that support the score. Quote verbatim, do not paraphrase, and do not quote your own words back. If nothing in the input supports the score, return an empty list rather than inventing a quote. Every quote is checked against the input and silently discarded if it is not found there, so a fabricated one buys nothing and an accurate one becomes part of the record.
 - MISSING-VARIABLE PENALTY (critical): the score must reward how well-evidenced an idea is, not how good it sounds. Score only what THIS idea actually gives you — never borrow context from other ideas. When the inputs needed to judge a dimension are absent or only "assumed", that dimension's score MUST be depressed, not given the benefit of the doubt:
     - confidence "high"   → no penalty.
     - confidence "medium" → cap that dimension at 75.
@@ -2887,6 +2896,27 @@ The executive_summary must read like a concise leadership briefing. It should ne
     # (Art. 7: caps are enforced in code, not requested in prompts). Only ever
     # demotes an unverified "high" to "medium" — never raises anything.
     parsed = _clamp_unverified_high_confidence_dimensions(parsed)
+
+    # Verify every passage the model claimed as evidence against the text it was
+    # actually shown. Quotes that cannot be found are discarded rather than
+    # stored, so `evidence_references` means "this text demonstrably exists in
+    # the input", not "the model said it did". A fabricated quote therefore buys
+    # the model nothing, and an accurate one becomes part of a record the user
+    # can inspect later.
+    #
+    # Deliberately does NOT feed scoring. References are provenance, not a
+    # scoring input: letting a judgment score higher for citing more would
+    # reward volume of quotation and reopen exactly the "best-argued case wins"
+    # failure the confidence caps exist to close.
+    try:
+        verified_count = attach_evidence_references(
+            parsed.get("dimensions"), project_description,
+        )
+        if verified_count:
+            parsed["evidence_reference_count"] = verified_count
+    except Exception:
+        # Provenance is additive. A failure here must never cost a scorecard.
+        current_app.logger.exception("evidence reference capture failed")
 
     # Deterministic final step: recompute the score from the (capped) dimensions
     # in Python instead of trusting the model's arithmetic. `weights` is the
