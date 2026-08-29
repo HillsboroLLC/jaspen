@@ -1,22 +1,22 @@
-/* Decision Confidence card.
+/* Decision Confidence report.
    App palette: navy #161f3b, slate #5a6585, muted #8a93ad, rose #a0036c,
-   line #d6e9ef, with the semantic set already used by RecordDecisionPanel.
+   line #d6e9ef, plus the semantic set from RecordDecisionPanel.
    Solid colours only, no gradients. */
 
 .dcc {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 18px 20px;
+  gap: 20px;
+  padding: 4px 2px 8px;
   text-align: left;
 }
 
-/* --- 1. the measurement --- */
+/* ── Layer 1: summary ─────────────────────────────────────────────────── */
 
 .dcc-head {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 7px;
 }
 
 .dcc-eyebrow {
@@ -27,6 +27,30 @@
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: #a0036c;
+}
+
+.dcc-score-line {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.dcc-score-line strong {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+  color: #161f3b;
+  font-variant-numeric: tabular-nums;
+}
+
+.dcc-score-cat {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #5a6585;
 }
 
 .dcc-headline {
@@ -43,13 +67,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-.dcc-sep {
-  margin: 0 8px;
-  color: #8a93ad;
-}
+.dcc-sep { margin: 0 8px; color: #8a93ad; }
 
-/* One bar, two shares. Not a progress meter: nothing is filling up, the split
-   is the finding. */
+/* One bar, two shares. Not a progress meter: the split is the finding. */
 .dcc-split {
   display: flex;
   height: 8px;
@@ -57,12 +77,9 @@
   overflow: hidden;
   background: #eef1f6;
 }
-
 .dcc-split-backed { background: #0e6b3f; }
 .dcc-split-assumed { background: #f59e0b; }
 
-/* Names what the percentage measures. Small, but it is the line that stops
-   the ratio being read as model certainty. */
 .dcc-basis {
   margin: 0;
   font-size: 11.5px;
@@ -70,162 +87,136 @@
   color: #8a93ad;
 }
 
-/* --- 2. the finding ---
-   The one sentence the reader should leave with. Given the most typographic
-   weight on the card after the ratio itself, because a card where five
-   findings share equal weight is a diagnostic report, not an executive
-   finding. */
-
-.dcc-finding {
-  border-left: 3px solid #a0036c;
-  background: #faf5f9;
-  padding: 13px 16px;
+/* Definition list, so the summary reads as a briefing rather than prose. */
+.dcc-summary {
+  margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 0;
+  border-top: 1px solid #d6e9ef;
 }
 
-.dcc-finding-text {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.4;
-  color: #161f3b;
+.dcc-summary-row {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid #eef1f6;
 }
 
-.dcc-finding-detail {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: #5a6585;
-}
-
-/* --- 3. what to do about it --- */
-
-.dcc-action {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.dcc-action-eyebrow {
-  margin: 0;
+.dcc-summary-row dt {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 9.5px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: #1f5f9e;
+  color: #8a93ad;
+  padding-top: 3px;
 }
 
-.dcc-action-text {
+.dcc-summary-row dd {
   margin: 0;
-  font-size: 13.5px;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.55;
   color: #161f3b;
 }
 
-.dcc-action-criterion {
+/* The key finding carries weight when something is at stake, and reads calm
+   when nothing is. */
+.dcc-summary-row dd.is-finding {
+  font-weight: 600;
+}
+.dcc-summary-row dd.is-clear {
+  color: #0e6b3f;
   font-weight: 600;
 }
 
-.dcc-action-criterion::after {
+.dcc-summary-criterion {
+  font-weight: 600;
+}
+.dcc-summary-criterion::after {
   content: ' · ';
   font-weight: 400;
   color: #8a93ad;
 }
 
-/* Remaining claims, deliberately quiet. They are context for the finding
-   above, not competing findings. */
-.dcc-secondary-claims {
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: #8a93ad;
+@media (max-width: 720px) {
+  .dcc-summary-row { grid-template-columns: 1fr; gap: 4px; }
 }
 
-/* --- 2. the register --- */
+/* ── Layer 2: detail ──────────────────────────────────────────────────── */
 
-.dcc-register {
+.dcc-detail {
   display: flex;
   flex-direction: column;
-  gap: 13px;
+  gap: 12px;
 }
 
-.dcc-subhead,
-.dcc-group-heading {
+.dcc-detail-head {
   margin: 0;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-}
-
-.dcc-subhead {
-  font-size: 11px;
   color: #161f3b;
 }
 
-.dcc-group-heading {
-  font-size: 9.5px;
-  color: #8a93ad;
-  margin-bottom: 7px;
-}
-
-.dcc-group-reversing { color: #9f1f16; }
-.dcc-group-material { color: #8a5406; }
-
-.dcc-rows,
-.dcc-settled-list {
+.dcc-criteria {
   margin: 0;
   padding: 0;
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 9px;
-}
-
-.dcc-row {
-  border-left: 2px solid #d6e9ef;
-  padding-left: 11px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.dcc-group-reversing + .dcc-rows .dcc-row { border-left-color: #dc2626; }
-.dcc-group-material + .dcc-rows .dcc-row { border-left-color: #f59e0b; }
-
-.dcc-row-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
   gap: 10px;
 }
 
-.dcc-row-label {
-  font-size: 13.5px;
+/* Severity shows as a left rule, so the register scans by seriousness without
+   the tier ever being named. */
+.dcc-criterion {
+  border: 1px solid #e6eaf2;
+  border-left-width: 3px;
+  border-left-color: #d6e9ef;
+  background: #fcfdfe;
+  padding: 13px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dcc-criterion-reversing { border-left-color: #dc2626; background: #fffcfc; }
+.dcc-criterion-material  { border-left-color: #f59e0b; background: #fffdfa; }
+.dcc-criterion-other     { border-left-color: #c9d4e4; }
+.dcc-criterion-none      { border-left-color: #d6e9ef; }
+
+.dcc-criterion-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dcc-criterion-name {
+  font-size: 14.5px;
   font-weight: 600;
   color: #161f3b;
 }
 
-.dcc-row-swing {
-  flex: 0 0 auto;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: #5a6585;
-  white-space: nowrap;
-}
-
-.dcc-row-meta {
+.dcc-criterion-meta {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   flex-wrap: wrap;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: #8a93ad;
 }
 
+.dcc-criterion-swing { color: #5a6585; }
+
 .dcc-grade {
+  flex: 0 0 auto;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 9px;
   font-weight: 700;
@@ -235,90 +226,69 @@
   border-radius: 3px;
   white-space: nowrap;
 }
-
-.dcc-grade-high { color: #0e6b3f; background: #e3f5ea; border: 1px solid #10b981; }
-.dcc-grade-medium { color: #0e6b3f; background: #eef7f1; border: 1px solid #a7d9bf; }
-.dcc-grade-low { color: #8a5406; background: #fdf2dc; border: 1px solid #f59e0b; }
+.dcc-grade-high    { color: #0e6b3f; background: #e3f5ea; border: 1px solid #10b981; }
+.dcc-grade-medium  { color: #0e6b3f; background: #eef7f1; border: 1px solid #a7d9bf; }
+.dcc-grade-low     { color: #8a5406; background: #fdf2dc; border: 1px solid #f59e0b; }
 .dcc-grade-assumed { color: #9f1f16; background: #fbe9e7; border: 1px solid #dc2626; }
 
-.dcc-row-weight {
-  font-size: 11.5px;
-  color: #8a93ad;
-}
-
-/* --- 3. the resolution path --- */
-
-.dcc-row-resolution {
-  margin: 2px 0 0;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: #5a6585;
-}
-
-.dcc-resolution-tag {
-  display: inline-block;
-  margin-right: 7px;
+/* Three blocks, visually distinct on purpose. What Jaspen had, what is still
+   missing, and what the user should supply are three different things and were
+   previously collapsed into one sentence. */
+.dcc-block-label {
+  margin: 0 0 3px;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: #1f5f9e;
 }
+.dcc-block-basis       { color: #5a6585; }
+.dcc-block-unsupported { color: #8a5406; }
+.dcc-block-needed      { color: #1f5f9e; }
 
-/* --- criteria not moving the score --- */
-
-.dcc-settled {
-  border-top: 1px solid #d6e9ef;
-  padding-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
+.dcc-basis-block,
+.dcc-unsupported-block,
+.dcc-needed-block {
+  padding-left: 10px;
+  border-left: 2px solid #e6eaf2;
 }
+.dcc-unsupported-block { border-left-color: #f5d9a4; }
+.dcc-needed-block      { border-left-color: #9dc2e6; }
 
-.dcc-settled-toggle {
-  align-self: flex-start;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  font-family: inherit;
+.dcc-basis-source {
+  margin: 0 0 2px;
   font-size: 12px;
-  color: #1f5f9e;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  font-weight: 600;
+  color: #161f3b;
 }
 
-.dcc-settled-toggle:hover { color: #161f3b; }
-.dcc-settled-toggle:focus-visible { outline: 2px solid #a0036c; outline-offset: 3px; border-radius: 2px; }
-
-.dcc-settled-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 12.5px;
+.dcc-basis-text,
+.dcc-block-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
   color: #5a6585;
 }
 
-.dcc-settled-label { flex: 1 1 auto; }
-
-.dcc-settled-swing {
-  flex: 0 0 auto;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
+.dcc-basis-text.is-empty {
+  font-style: italic;
   color: #8a93ad;
-  white-space: nowrap;
 }
 
-.dcc-settled-note {
-  margin: 0;
-  font-size: 11.5px;
+.dcc-criterion-consequence {
+  margin: 2px 0 0;
+  font-size: 12px;
   line-height: 1.5;
   color: #8a93ad;
 }
 
-@media (max-width: 640px) {
-  .dcc-row-head { flex-wrap: wrap; }
+/* The honesty note. Small, but it is what keeps "What Jaspen based this on"
+   from reading as an evidence trail the system does not keep. */
+.dcc-provenance-note {
+  margin: 2px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid #eef1f6;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a93ad;
 }
