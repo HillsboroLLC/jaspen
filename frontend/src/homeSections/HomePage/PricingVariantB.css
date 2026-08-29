@@ -393,8 +393,12 @@
   color: #4f5d75;
 }
 /* The function of the engagement, given more weight than the fee sitting
-   below it. This is the line the reader should price against. */
-.pvb-advisory-lead {
+   below it. This is the line the reader should price against.
+
+   Named -function, not -lead: .pvb-advisory-lead already exists above for the
+   section intro paragraph, and a second rule with that name silently restyled
+   it, since the later definition wins. */
+.pvb-advisory-function {
   margin: 6px 0 0;
   font-size: 1.02rem;
   font-weight: 700;

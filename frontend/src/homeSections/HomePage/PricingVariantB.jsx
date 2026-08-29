@@ -335,7 +335,7 @@ export default function PricingVariantB({ onOpenModal }) {
                     meets the fee before the function prices a calendar; one who
                     meets the function first prices a decision. */}
                 <p className="pvb-card-name">{offering.title}</p>
-                <p className="pvb-advisory-lead">{offering.lead}</p>
+                <p className="pvb-advisory-function">{offering.lead}</p>
                 <p className="pvb-advisory-band">{offering.band}</p>
                 <p className="pvb-advisory-price">
                   <strong>{offering.price}</strong>
