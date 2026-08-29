@@ -109,7 +109,7 @@ describe('DecisionConfidenceCard', () => {
 
     it('separates what Jaspen had from what is still needed', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
-      expect(screen.getByText('What Jaspen based this on')).toBeInTheDocument();
+      expect(screen.getByText("Jaspen's assessment")).toBeInTheDocument();
       expect(screen.getByText('Still unsupported')).toBeInTheDocument();
       expect(screen.getByText('Evidence needed')).toBeInTheDocument();
     });
@@ -141,15 +141,25 @@ describe('DecisionConfidenceCard', () => {
     it('labels the basis as reasoning, never as an evidence record', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(
-        screen.getByText(/It is not a record of which document or figure supported the score/),
+        screen.getByText(/nothing here should be read as a source citation or an audit trail/),
       ).toBeInTheDocument();
     });
 
-    it('describes the channel without claiming to know the input', () => {
+    it('never states connector provenance as fact', () => {
+      // "From connected data" read as "Jaspen retrieved this from a system you
+      // connected", which is an assertion about system state that `source`
+      // cannot support. It is the model's own claim, and nothing verifies it.
       render(<DecisionConfidenceCard profile={profile({
         criteria: [criterion({ source: 'connector' })],
       })} />);
-      expect(screen.getByText('From connected data')).toBeInTheDocument();
+      expect(screen.queryByText('From connected data')).not.toBeInTheDocument();
+      expect(screen.getByText('Jaspen reports drawing on connected data')).toBeInTheDocument();
+    });
+
+    it('calls the narrative an assessment rather than a basis', () => {
+      render(<DecisionConfidenceCard profile={profile()} />);
+      expect(screen.getByText("Jaspen's assessment")).toBeInTheDocument();
+      expect(screen.queryByText('What Jaspen based this on')).not.toBeInTheDocument();
     });
 
     it('says nothing was recorded rather than inventing reasoning', () => {
@@ -157,7 +167,7 @@ describe('DecisionConfidenceCard', () => {
         criteria: [criterion({ rationale: null, source: null })],
       })} />);
       expect(
-        screen.getByText('No reasoning was recorded for this criterion.'),
+        screen.getByText('No assessment was recorded for this criterion.'),
       ).toBeInTheDocument();
     });
   });
