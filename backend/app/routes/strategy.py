@@ -2620,6 +2620,7 @@ def _generate_jaspen_scorecard(
     strategy_objective='balanced',
     rubric=None,
     return_usage=False,
+    evidence_corpus=None,
 ):
     """Run the existing LLM scoring flow and return parsed scorecard JSON.
 
@@ -2749,6 +2750,30 @@ def _generate_jaspen_scorecard(
             "explain the gap in assumptions."
         )
 
+    # WHAT THE MODEL MAY QUOTE, AND WHAT A QUOTE IS CHECKED AGAINST.
+    #
+    # `project_description` is frequently a short summary written upstream: the
+    # chat tool's schema asks for a "concise description of the idea to score",
+    # so the words the user actually typed never reached this function. Quotes
+    # were then verified against that summary, so every genuine quote failed to
+    # match and was discarded. The visible result was evidence_references coming
+    # back empty and every dimension reading as "inferred", which looked like
+    # the model paraphrasing when it was really the wrong text being searched.
+    #
+    # `evidence_corpus` carries the user's own input. It is shown to the model
+    # so there is real language available to quote, and verification runs
+    # against the same text, so a quote counts only when it demonstrably
+    # appears in what the user provided.
+    corpus_text = str(evidence_corpus or "").strip()
+    verification_text = "\n\n".join(
+        t for t in (str(project_description or "").strip(), corpus_text) if t
+    )
+    source_material_section = (
+        "\nSource material (the user's own words, quote ONLY from here):\n"
+        f'"""\n{corpus_text}\n"""\n'
+        if corpus_text else ""
+    )
+
     system_prompt = (
         "You are a Jaspen strategy analyst specializing in commercialization strategy. "
         "Always respond with valid JSON only. Temperature is 0 — be deterministic and evidence-based."
@@ -2757,7 +2782,7 @@ def _generate_jaspen_scorecard(
 You are a Jaspen strategy analyst. Analyze the following initiative and return a comprehensive confidence-weighted scorecard.
 
 Project Description: {project_description}
-
+{source_material_section}
 {objective_section}
 
 Return a single valid JSON object only. No markdown fences, no commentary outside the JSON.
@@ -2950,7 +2975,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
     # failure the confidence caps exist to close.
     try:
         verified_count = attach_evidence_references(
-            parsed.get("dimensions"), project_description,
+            parsed.get("dimensions"), verification_text,
         )
         if verified_count:
             parsed["evidence_reference_count"] = verified_count
