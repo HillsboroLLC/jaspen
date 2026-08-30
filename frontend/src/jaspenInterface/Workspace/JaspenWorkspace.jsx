@@ -946,10 +946,31 @@ export default function JaspenWorkspace() {
   // The risk register, sized from what it renders. Each risk carries a
   // description, a row of levels, and usually a mitigation, so a register is
   // several times the height of the sentence list it replaced.
+  // Height for the risk section, from what each row will ACTUALLY render.
+  //
+  // The old estimate charged a flat 4 rows per risk (6 with a mitigation),
+  // which assumed every risk arrives fully populated. Real scoring often
+  // returns a bare description with no probability, impact, mitigation or
+  // residual, and RiskRegister renders nothing for the fields that are absent.
+  // A one-sentence risk was therefore given the space of a complete register
+  // entry, leaving the empty band below the content.
+  //
+  // Each part is counted only when the row will draw it.
   const riskRows = useMemo(() => {
     const risks = Array.isArray(rendered?.top_risks) ? rendered.top_risks : [];
-    if (!risks.length) return 4;
-    return risks.reduce((total, risk) => total + (risk?.mitigation ? 6 : 4), 2);
+    // "No risks recorded for this decision." is a single line.
+    if (!risks.length) return 3;
+    // The ordering-basis line above the list.
+    return risks.reduce((total, risk) => {
+      const hasPosition = Boolean(
+        risk?.probability || risk?.residual_risk ||
+        risk?.impact_dollars || risk?.impact,
+      );
+      return total
+        + 2                                  // the description itself
+        + (hasPosition ? 1 : 0)              // the chip row
+        + (risk?.mitigation ? 2 : 0);        // the mitigation block
+    }, 2);
   }, [rendered]);
 
 
