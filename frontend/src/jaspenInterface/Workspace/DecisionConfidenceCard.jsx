@@ -84,6 +84,24 @@ const UNSUPPORTED_BY_GRADE = {
   assumed: 'Nothing verifiable behind this yet, so it contributes at most 45.',
 };
 
+// What a person can actually do about this criterion, when the scoring pass did
+// not name something specific.
+//
+// Scoring is asked to populate `what_would_improve` for any criterion below
+// "high", but it does not always do so, and a criterion that shows an exposure
+// figure with no way to act on it is a dead end: the reader is told the score
+// could move and not told how to move it.
+//
+// These are deliberately generic. A fallback that invented a specific ask
+// ("upload the Q3 carrier contract") would read as though Jaspen knew such a
+// document existed. Generic and true beats specific and fabricated.
+const FALLBACK_ACTION_BY_GRADE = {
+  high: null,
+  medium: 'Share the source behind this, a document, export, or connected system, so it can be verified rather than taken as reported.',
+  low: 'Provide the underlying figures or documents for this criterion so more of it rests on evidence.',
+  assumed: 'Nothing verifiable supports this yet. Upload or connect the source that would establish it.',
+};
+
 const SEVERITY_CONSEQUENCE = {
   reversing: 'Resolving this could change which option leads.',
   material: 'Resolving this could materially change the score.',
@@ -121,6 +139,8 @@ function evidenceSource(reference) {
 function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) {
   const [draft, setDraft] = useState(null);
   const unsupported = UNSUPPORTED_BY_GRADE[entry.confidence];
+  // Scoring's own suggestion when it made one, otherwise an honest generic.
+  const action = entry.resolution || FALLBACK_ACTION_BY_GRADE[entry.confidence] || null;
   const references = Array.isArray(entry.evidence_references)
     ? entry.evidence_references
     : [];
@@ -273,16 +293,19 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
         </div>
       )}
 
-      {entry.resolution && (
-        <div className="dcc-needed-block">
-          <p className="dcc-block-label dcc-block-needed">Evidence needed</p>
-          <p className="dcc-block-text">{entry.resolution}</p>
-        </div>
-      )}
-
+      {/* The consequence, then what to do about it. The action sits directly
+          under the line that states the exposure, so "this could move the
+          score" is never left without an answer to "so what do I do?". */}
       <p className="dcc-criterion-consequence">
         {SEVERITY_CONSEQUENCE[entry.severity]}
       </p>
+
+      {action && (
+        <div className="dcc-needed-block">
+          <p className="dcc-block-label dcc-block-needed">How to improve this</p>
+          <p className="dcc-block-text">{action}</p>
+        </div>
+      )}
     </li>
   );
 }
