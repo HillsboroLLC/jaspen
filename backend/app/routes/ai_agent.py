@@ -609,6 +609,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "Scorecards accumulate inline in the conversation — chat, chat, scorecard, chat, scorecard, etc. The idea the user has OPEN in the workspace is editable in place (see EDITING THE OPEN SCORECARD above). "
     "When the user proposes a genuinely NEW idea or a variation they want to keep alongside the original, call generate_scorecard (no rescore_scorecard_id). "
     "When the user asks to change the idea they're viewing, edit it in place: patch_scorecard for wording OR for renaming the title (pass the new title in `name`), or generate_scorecard with rescore_scorecard_id to re-score that same idea. "
+    "EDIT A CRITERION'S WORDING: when the user names a criterion (Strategic Fit, Risk Profile, Financial Return, any rubric criterion) and asks you to reword, clarify, expand or rewrite what it says, call patch_scorecard with `criterion_narrative` keyed by that criterion. This is the ONLY field that changes what a criterion card displays. Using add_blocks instead appends a stray section and leaves the criterion untouched, so the user is told the report changed while it visibly did not. Wording only; the score never moves. "
     "ADD A SECTION: when the user wants to ADD a new section/note/block to the open scorecard that isn't one of the standard fields (e.g. 'add a section on regulatory risk', 'add a go-to-market note', 'add a block about competitors'), call patch_scorecard with `add_blocks` — a list of {heading, body}. This appends a free-form section to the card and NEVER moves the score. "
     "FILL/UPDATE AN EXISTING SECTION: if the user asks you to populate or update a block they already created (e.g. a 'Mitigation' block), call patch_scorecard with `add_blocks` using the SAME heading — it updates that block in place rather than creating a duplicate. Do NOT fold that content into top_risks or other standard fields when the user clearly wants it in their named block. "
     "BRAND COLOR: when the user asks for their brand color or a custom accent (e.g. 'use our brand blue #0A66C2', 'make the scorecard match our colors', 'change the accent to green'), call patch_scorecard with `accent_color` as a #RRGGBB hex. If they name a color without a hex, pick a sensible hex for it. This recolors the live scorecard and its exports; it never moves the score. "
@@ -1256,6 +1257,58 @@ def _sanitize_view_context(raw_context):
     if active_scenario_id:
         cleaned["active_scenario_id"] = active_scenario_id[:120]
 
+    # The Decision Confidence report and the risk register are on screen and
+    # were invisible to the agent, so it answered about surfaces it could not
+    # see and edited the wrong field when a user named one of them. Both are
+    # allowlisted here because _sanitize_view_context drops anything it does
+    # not know, which is what made the omission silent.
+    sections = context.get("visible_sections")
+    if isinstance(sections, list):
+        cleaned_sections = [
+            str(item)[:80] for item in sections[:24] if str(item or "").strip()
+        ]
+        if cleaned_sections:
+            cleaned["visible_sections"] = cleaned_sections
+
+    confidence = context.get("decision_confidence")
+    if isinstance(confidence, dict):
+        criteria = []
+        for item in (confidence.get("criteria") or [])[:12]:
+            if not isinstance(item, dict):
+                continue
+            criteria.append({
+                "label": str(item.get("label") or "")[:80],
+                "grade": str(item.get("grade") or "")[:20],
+                "weight_pct": _safe_nonnegative_int(item.get("weight_pct")),
+                "swing": item.get("swing"),
+                "evidence_count": _safe_nonnegative_int(item.get("evidence_count")) or 0,
+                "edited": bool(item.get("edited")),
+            })
+        summary = {
+            "evidence_backed_pct": _safe_nonnegative_int(confidence.get("evidence_backed_pct")),
+            "assumption_dependent_pct": _safe_nonnegative_int(confidence.get("assumption_dependent_pct")),
+            "criteria": criteria,
+        }
+        if summary["evidence_backed_pct"] is not None or criteria:
+            cleaned["decision_confidence"] = summary
+
+    risks = context.get("risk_register")
+    if isinstance(risks, list):
+        cleaned_risks = []
+        for item in risks[:10]:
+            if not isinstance(item, dict):
+                continue
+            cleaned_risks.append({
+                "risk": str(item.get("risk") or "")[:300],
+                "probability": str(item.get("probability") or "")[:10] or None,
+                "impact": str(item.get("impact") or "")[:24] or None,
+                "residual": str(item.get("residual") or "")[:10] or None,
+                "mitigation": str(item.get("mitigation") or "")[:300] or None,
+                "edited": bool(item.get("edited")),
+            })
+        if cleaned_risks:
+            cleaned["risk_register"] = cleaned_risks
+
     wbs_summary = _sanitize_wbs_summary(context.get("wbs_summary"))
     if wbs_summary:
         cleaned["wbs_summary"] = wbs_summary
@@ -1355,6 +1408,77 @@ def _view_context_prompt_suffix(view_context):
             "act on it directly and NEVER ask which of the ideas they mean. "
             "Only ask for clarification if the user explicitly names a DIFFERENT idea than the one open. "
             "If multiple ideas exist in the thread, the on-screen one above always takes precedence."
+        )
+
+    sections = normalized.get("visible_sections")
+    if sections:
+        lines.append(f"- Sections currently on the canvas: {', '.join(sections)}.")
+
+    confidence = normalized.get("decision_confidence")
+    if confidence:
+        backed = confidence.get("evidence_backed_pct")
+        assumed = confidence.get("assumption_dependent_pct")
+        if backed is not None:
+            lines.append(
+                f"- Decision Confidence on screen: {backed}% evidence-backed, "
+                f"{assumed}% assumption-dependent. This is the share of the WEIGHTED "
+                "decision resting on evidence. It is NOT the score and NOT how sure "
+                "Jaspen is; never describe it as either."
+            )
+        for criterion in confidence.get("criteria") or []:
+            bits = [f'\"{criterion["label"]}\"']
+            if criterion.get("weight_pct") is not None:
+                bits.append(f'{criterion["weight_pct"]}% of the decision')
+            if criterion.get("grade"):
+                bits.append(f'evidence graded {criterion["grade"]}')
+            if criterion.get("swing"):
+                bits.append(f'{criterion["swing"]} points of exposure')
+            if criterion.get("evidence_count"):
+                bits.append(f'{criterion["evidence_count"]} verified evidence excerpt(s)')
+            if criterion.get("edited"):
+                bits.append("wording edited by the user")
+            lines.append(f"  - Criterion {', '.join(bits)}.")
+
+    risks = normalized.get("risk_register")
+    if risks:
+        lines.append("- Risk register on screen (Top Risks section):")
+        for risk in risks:
+            bits = []
+            if risk.get("probability"):
+                bits.append(f'likelihood {risk["probability"]}')
+            if risk.get("impact"):
+                bits.append(f'impact {risk["impact"]}')
+            if risk.get("residual"):
+                bits.append(f'residual if mitigated {risk["residual"]}')
+            if risk.get("edited"):
+                bits.append("wording edited by the user")
+            detail = f" ({'; '.join(bits)})" if bits else ""
+            lines.append(f'  - "{risk["risk"]}"{detail}')
+
+    if confidence or risks:
+        # The two surfaces a user most easily conflates, and the agent did too:
+        # a request about "the risk profile" was answered by rewriting
+        # top_risks, which is a different field on a different section.
+        lines.append(
+            "- IMPORTANT, two different things share the word risk. \"Risk profile\" is a "
+            "SCORED CRITERION inside the Decision Confidence report, with an evidence grade "
+            "and an assessment. \"Top Risks\" is the RISK REGISTER, a separate section listing "
+            "individual risks with likelihood, impact, mitigation and residual level. If the "
+            "user names one, act on that one, and ask which they mean only if genuinely "
+            "ambiguous."
+        )
+        lines.append(
+            "- What may and may not be changed here. Criterion assessments and risk/mitigation "
+            "wording are PRESENTATION and can be rewritten; the user can also edit them inline. "
+            "Scores, evidence grades, weights, exposure figures, likelihood, impact, costs and "
+            "residual levels are COMPUTED and must never be altered to make wording fit. If a "
+            "user asks for a number to change, explain that it follows from the evidence and "
+            "would need rescoring, and offer to rescore."
+        )
+        lines.append(
+            "- Verified evidence excerpts were located in the user's own input by code. "
+            "Jaspen's assessment is its own reasoning and is NOT a source citation, so never "
+            "present it as one or claim Jaspen can identify the document behind a judgment."
         )
 
     active_scenario_id = str(normalized.get("active_scenario_id") or "").strip()
@@ -4674,6 +4798,21 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                             "type": "string",
                             "description": "Set the scorecard's brand accent color as a #RRGGBB hex (e.g. '#0A66C2'). Use when the user asks for their brand color / a custom color (e.g. 'use our blue #0A66C2', 'make it match our brand'). Applies to the live scorecard and exports; never moves the score.",
                         },
+                        "criterion_narrative": {
+                            "type": "object",
+                            "description": (
+                                "Rewrite how one or more CRITERION assessments read on the scorecard. "
+                                "Map the criterion to its new wording, e.g. {\"strategic_fit\": \"...\"}; "
+                                "the criterion key or its visible label both work. USE THIS whenever the "
+                                "user names a criterion and asks you to reword, clarify, expand, tighten "
+                                "or rewrite what it says (e.g. 'make Strategic Fit clearer', 'add detail "
+                                "to the Risk Profile write-up'). Do NOT use add_blocks for that: a new "
+                                "block leaves the criterion card unchanged and the user sees no edit. "
+                                "Changes wording only and never moves the score, grade or exposure; the "
+                                "original is preserved and the card is marked as edited."
+                            ),
+                            "additionalProperties": {"type": "string"},
+                        },
                         "add_blocks": {
                             "type": "array",
                             "description": "Add or update one or more free-form sections on the open scorecard (like adding a slide/section). Each is {heading, body}. To update a section the user already added, pass the same heading (case-insensitive) or its id; the block is updated in place instead of duplicated. Use when the user asks to add, fill, or update a section, note, or extra context that isn't an existing standard field. Never moves the score.",
@@ -4950,6 +5089,40 @@ def _trigger_post_mutation_sync(user_id, thread_id, project_wbs):
     if not reason:
         reason = str(result.get("reason") or "sync_failed")
     return {"status": "error", "connector_id": connector_id, "reason": reason}
+
+
+
+def _thread_user_corpus(user_id, thread_id, *, max_chars=20000):
+    """The user's own words in this thread, newest-last, for evidence capture.
+
+    Only `user` turns are included. Quoting the assistant back would let the
+    model cite its own prose as evidence for its own score, which is exactly
+    the circularity the verification step exists to prevent.
+    """
+    try:
+        sessions = load_user_sessions(str(user_id)) or {}
+        session = sessions.get(thread_id)
+        if not isinstance(session, dict):
+            return ""
+        turns = session.get("chat_history")
+        if not isinstance(turns, list):
+            return ""
+        parts = []
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            if str(turn.get("role") or "").strip().lower() != "user":
+                continue
+            text = str(turn.get("content") or "").strip()
+            if text:
+                parts.append(text)
+        corpus = "\n\n".join(parts)
+        # Keep the most recent context when a thread runs long: the latest turns
+        # are the ones the current score is about.
+        return corpus[-max_chars:] if len(corpus) > max_chars else corpus
+    except Exception:
+        # Evidence capture is additive; never cost a scorecard over it.
+        return ""
 
 
 def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None):
@@ -5280,6 +5453,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 strategy_objective=strategy_objective,
                 rubric=rubric,
                 return_usage=True,
+                # The user's own turns, not the summary this tool wrote. Without
+                # this the scorer only ever saw `idea_description` and every
+                # evidence quote was checked against a paraphrase, so all of
+                # them were discarded as unverifiable.
+                evidence_corpus=_thread_user_corpus(user_id, thread_id),
             )
         except Exception as generation_error:
             _release_reserved_credits(user, reserved_credits)
@@ -5780,6 +5958,28 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     "body": body,
                 })
 
+        # CRITERION WORDING: rewrite how one criterion's assessment READS.
+        #
+        # This is the same presentation override a person writes by hand from
+        # the criterion card, and it must be written to the same place. Without
+        # it the agent had no way to touch a criterion at all: asked to reword
+        # "Strategic Fit" it fell back to add_blocks, appended a stray section,
+        # and reported success while the criterion card was unchanged. An agent
+        # saying it edited the report while the report disagrees is worse than
+        # one saying it cannot.
+        #
+        # Keys arrive as either the criterion key (strategic_fit) or its label
+        # ("Strategic Fit"), because the user names it the way they see it.
+        raw_narrative = tool_input.get("criterion_narrative")
+        new_narrative = {}
+        if isinstance(raw_narrative, dict):
+            for key, value in raw_narrative.items():
+                text = value.get("rationale") if isinstance(value, dict) else value
+                text = str(text or "").strip()
+                handle = str(key or "").strip()
+                if text and handle:
+                    new_narrative[handle] = text
+
         # ACCENT COLOR: set the scorecard's brand accent (#RRGGBB) on the open card.
         new_accent = ""
         _accent_raw = str(tool_input.get("accent_color") or tool_input.get("brand_color") or "").strip()
@@ -5789,7 +5989,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             if re.fullmatch(r"#[0-9a-fA-F]{6}", _accent_raw):
                 new_accent = _accent_raw.upper()
 
-        if not patch and not new_name and not new_blocks and not new_accent:
+        if not patch and not new_name and not new_blocks and not new_accent and not new_narrative:
             return _tool_error("No patchable scorecard fields provided.", code="no_fields")
 
         # The open idea wins; fall back to an explicit id, then the thread's
@@ -5833,6 +6033,42 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 _ova = dict(_ova) if isinstance(_ova, dict) else {}
                 _ova["accent_color"] = new_accent
                 merged["display_overrides"] = _ova
+            # Criterion wording -> display_overrides.criterion_narrative[key].
+            # applyCriterionNarrative in the workspace reads exactly this shape
+            # and keeps Jaspen's original for "restore", so an agent edit is
+            # marked and reversible in the same way a hand edit is.
+            if new_narrative:
+                _ovn = merged.get("display_overrides")
+                _ovn = dict(_ovn) if isinstance(_ovn, dict) else {}
+                narrative = _ovn.get("criterion_narrative")
+                narrative = dict(narrative) if isinstance(narrative, dict) else {}
+
+                # Resolve whatever the user called it to the real dimension key.
+                dims = merged.get("dimensions") if isinstance(merged.get("dimensions"), dict) else {}
+                by_handle = {}
+                for dim_key, dim in dims.items():
+                    by_handle[str(dim_key).strip().casefold()] = dim_key
+                    label = str((dim or {}).get("label") or "").strip().casefold()
+                    if label:
+                        by_handle.setdefault(label, dim_key)
+                    # "Strategic Fit" and "strategic_fit" should both land.
+                    by_handle.setdefault(str(dim_key).replace("_", " ").casefold(), dim_key)
+
+                for handle, text in new_narrative.items():
+                    resolved = by_handle.get(handle.strip().casefold())
+                    if not resolved:
+                        # Naming a criterion that does not exist must not
+                        # silently create a phantom one.
+                        continue
+                    narrative[resolved] = {
+                        "rationale": text,
+                        "edited_at": _iso_now(),
+                        "note": "Edited by Jaspen at your request",
+                    }
+                if narrative:
+                    _ovn["criterion_narrative"] = narrative
+                    merged["display_overrides"] = _ovn
+
             # Upsert free-form sections into display_overrides.custom_blocks
             # (read AFTER the rename so we don't clobber a title override).
             if new_blocks:

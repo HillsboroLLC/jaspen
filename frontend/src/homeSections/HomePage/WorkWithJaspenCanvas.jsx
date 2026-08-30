@@ -11,9 +11,12 @@ export default function WorkWithJaspenCanvas({ demo }) {
       <div className="wj-layout">
         <div className="wj-intro" id="intro-header">
           <span className="wj-eyebrow">Work with Jaspen</span>
+          {/* The previous copy listed three generic capabilities in a row, all
+              of which a reader already believes general AI does. This says the
+              one thing it does not. */}
           <h3>This is Jaspen.</h3>
-          <p>An AI partner that evaluates ideas, prioritizes opportunities, and structures cross-functional work into coordinated, executable plans.</p>
-          <p className="wj-tagline">Bring your problem. Leave with clarity.</p>
+          <p>Jaspen reads what you bring, grades the evidence behind every criterion, and shows how much of your direction the evidence actually supports.</p>
+          <p className="wj-tagline">Bring what you are weighing. Leave knowing what it rests on.</p>
         </div>
 
         <JaspenWorkspace demo={d} />

@@ -1,0 +1,36 @@
+/* Two layers on the scorecard canvas: the page, and the cards on it.
+   Each section IS a card. There is no container between them, which is what
+   made the canvas read as cards inside a card inside a page. */
+
+.jw-section-tile {
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.jw-section-tile:hover,
+.jw-section-tile:focus-within {
+  border-color: #cbd7e6;
+  box-shadow: 0 1px 3px rgba(22, 31, 59, 0.06);
+}
+
+/* The resize corner. react-grid-layout ships an invisible handle, so it shows
+   a small mark whenever the card is hovered: enough to find, quiet otherwise. */
+.react-grid-item > .react-resizable-handle {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.react-grid-item:hover > .react-resizable-handle {
+  opacity: 1;
+}
+
+.react-grid-item > .react-resizable-handle::after {
+  content: '';
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid #8a93ad;
+  border-bottom: 2px solid #8a93ad;
+  border-radius: 1px;
+}

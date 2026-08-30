@@ -22,6 +22,9 @@ import { Jaspen } from './JaspenClient';
 import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import TradeoffView from './TradeoffView';
+import DecisionConfidenceCard from './DecisionConfidenceCard';
+import RiskRegister from './RiskRegister';
+import './JaspenWorkspace.css';
 import ChoicePrompt, { parseChoicePrompt } from './ChoicePrompt';
 import GridLayout, { WidthProvider } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
@@ -40,6 +43,13 @@ const BlockGrid = WidthProvider(GridLayout);
 // artifact view. Keep these in sync with the entry-point links in
 // JaspenChat's Session Artifacts dropdown.
 const SENTINEL_TRADEOFF = '__tradeoff__';
+
+// One card per criterion, each its own section, so every card can be resized
+// and reordered independently. Prefixed because these keys are generated from
+// the rubric and must be distinguishable from the static section keys wherever
+// layout is merged, serialised, or reset.
+const CRITERION_SECTION_PREFIX = 'criterion:';
+
 const SENTINEL_EXECUTION = '__execution__';
 
 // Color palette matched against the chat scorecard's renderScorecardCard.
@@ -59,12 +69,22 @@ const _GENERIC_TITLE_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-
 // module-level const (not state) so it is stable across renders.
 // cols is out of 4 — the outer grid uses repeat(4, 1fr)
 // 1 = 25%  2 = 50%  3 = 75%  4 = 100%
+// Decision Confidence sits directly under the score. "How much should we trust
+// this" is the next question after "what is it", and every block below assumes
+// an answer to it. Locked for the same reason the score is: it is computed, not
+// authored, so it must not be editable as prose.
 const DEFAULT_SCORECARD_SECTIONS = [
   { key: 'score',      label: 'Score',                cols: 4, locked: true,  x: 0, y: 0,  w: 12, h: 4 },
-  { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 4,  w: 12, h: 5 },
-  { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 9, w: 12, h: 8 },
-  { key: 'risks',      label: 'Top Risks',            cols: 2, locked: false, x: 0, y: 17, w: 6,  h: 6 },
-  { key: 'scenario',   label: 'Recommended Scenario', cols: 2, locked: true,  x: 6, y: 17, w: 6,  h: 6 },
+  // Holds the briefing only. The criterion detail moved into its own generated
+  // sections so each can be resized and reordered, which makes this block much
+  // shorter than when it carried the whole report. Auto-sizing grows it if a
+  // decision produces a longer summary; it never shrinks, so a size a user has
+  // chosen is theirs to keep.
+  { key: 'confidence', label: 'Decision Confidence',  cols: 4, locked: true,  x: 0, y: 4,  w: 12, h: 8 },
+  { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 12, w: 12, h: 5 },
+  { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 17, w: 12, h: 8 },
+  { key: 'risks',      label: 'Top Risks',            cols: 4, locked: false, x: 0, y: 25, w: 12, h: 8 },
+  { key: 'scenario',   label: 'Recommended Scenario', cols: 4, locked: true,  x: 0, y: 33, w: 12, h: 6 },
 ];
 
 // The canvas arrangement the user drags into place. Persisted in TWO places on
@@ -73,16 +93,42 @@ const DEFAULT_SCORECARD_SECTIONS = [
 // follows the user across devices AND lets server-side exports lay the PDF out
 // the way the user actually arranged it. localStorage alone is why exported
 // layout used to diverge from the screen.
-const _SECTION_LAYOUT_FIELDS = ['x', 'y', 'w', 'h', 'cols', 'dimCols', 'dimOrder', 'collapsed'];
+// hUser records that a person chose this height. It has to persist: holding
+// it in a ref meant a resize survived the session and was silently discarded
+// on the next load, when the computed height took over again.
+const _SECTION_LAYOUT_FIELDS = ['x', 'y', 'w', 'h', 'cols', 'dimCols', 'dimOrder', 'collapsed', 'hUser'];
 
 /** Merge a saved layout onto the defaults, keyed by section. Unknown/missing
  *  sections fall back to their default so an older saved layout still opens. */
 function _mergeSectionLayout(saved) {
   const rows = Array.isArray(saved) ? saved : [];
-  return DEFAULT_SCORECARD_SECTIONS.map((d) => {
+  const merged = DEFAULT_SCORECARD_SECTIONS.map((d) => {
     const found = rows.find((p) => p && p.key === d.key);
     return found ? { ...d, ...found } : { ...d, collapsed: false };
   });
+  // Saved layouts predate today's section set: one written before Decision
+  // Confidence existed carries stale y positions for everything after it, and
+  // merging those against current defaults leaves a hole where the newer
+  // section was inserted. Re-flowing full-width sections in their saved order
+  // removes that class of gap outright, and keeps a user's ORDER, which is the
+  // part of a saved layout worth preserving.
+  // Generated sections are not in the defaults, so carry saved ones through or
+  // every merge would discard a user's arrangement of exactly the cards they
+  // arranged.
+  rows.forEach((row) => {
+    if (row && typeof row.key === 'string' && row.key.startsWith(CRITERION_SECTION_PREFIX)) {
+      if (!merged.some((m) => m.key === row.key)) merged.push({ ...row });
+    }
+  });
+  const ordered = merged.slice().sort((a, b) => (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0));
+  let cursor = 0;
+  ordered.forEach((section) => {
+    if ((section.w || 12) >= 12) {
+      section.y = cursor;
+      cursor += section.h || 5;
+    }
+  });
+  return merged;
 }
 
 /** Strip the layout down to the persisted fields — labels and `locked` come
@@ -142,6 +188,70 @@ function _deriveFromMessage(text) {
  * Generic placeholder names (Baseline Analysis, etc.) are stripped so the
  * canvas always shows a real idea name.
  */
+// Criterion narrative is PRESENTATION. It rides on display_overrides for the
+// same reason risks and the recommended scenario do: it is qualitative text
+// that does not feed the numeric score, so a user may rewrite how a finding
+// reads without rewriting the finding.
+//
+// The separation is the point, and it is enforced structurally rather than by
+// convention. Only `rationale` is replaced. Score, evidence grade, weight,
+// swing, severity and evidence references all pass through untouched because
+// the entry is spread and only that one field is overwritten. Editing wording
+// therefore cannot move a number, and a reader can always recover what Jaspen
+// actually said.
+function applyCriterionNarrative(profile, narrativeOverrides) {
+  if (!profile || !narrativeOverrides || typeof narrativeOverrides !== 'object') {
+    return profile;
+  }
+  const criteria = (profile.criteria || []).map((entry) => {
+    const override = narrativeOverrides[entry.key];
+    const text = override && typeof override === 'object' ? override.rationale : null;
+    if (!text || text === entry.rationale) return entry;
+    return {
+      ...entry,
+      rationale: text,
+      // Jaspen's own words are kept, not replaced, so "restore original" is
+      // always available and the system finding survives the edit.
+      _original_rationale: entry.rationale ?? null,
+      _edited: true,
+      _edited_at: override.edited_at || null,
+      _edit_note: override.note || null,
+    };
+  });
+  return { ...profile, criteria };
+}
+
+// Risk narrative is PRESENTATION, exactly as criterion narrative is. A person
+// may rewrite how a risk reads without rewriting the risk.
+//
+// Only `risk` and `mitigation` are replaced. Probability, impact, impact
+// category, mitigation cost and residual risk are spread through untouched, so
+// rewording cannot move a number, and Jaspen's original text is kept rather
+// than overwritten so "restore" is always available.
+function applyRiskNarrative(risks, narrativeOverrides) {
+  if (!Array.isArray(risks) || !narrativeOverrides || typeof narrativeOverrides !== 'object') {
+    return risks;
+  }
+  return risks.map((risk) => {
+    const override = risk && risk.id ? narrativeOverrides[risk.id] : null;
+    if (!override || typeof override !== 'object') return risk;
+    const nextRisk = typeof override.risk === 'string' && override.risk.trim()
+      ? override.risk.trim() : risk.risk;
+    const nextMitigation = typeof override.mitigation === 'string'
+      ? override.mitigation.trim() : risk.mitigation;
+    if (nextRisk === risk.risk && nextMitigation === risk.mitigation) return risk;
+    return {
+      ...risk,
+      risk: nextRisk,
+      mitigation: nextMitigation,
+      _original_risk: risk.risk ?? null,
+      _original_mitigation: risk.mitigation ?? null,
+      _edited: true,
+      _edited_at: override.edited_at || null,
+    };
+  });
+}
+
 function applyOverrides(scorecard, overrides) {
   if (!scorecard) return null;
   const ov = overrides && typeof overrides === 'object' ? overrides : {};
@@ -158,7 +268,13 @@ function applyOverrides(scorecard, overrides) {
     executive_summary: ov.executive_summary ?? scorecard.executive_summary,
     // Risks + recommended scenario are qualitative narrative — they don't feed
     // the numeric score, so they're manually editable (cosmetic override wins).
-    top_risks: ov.top_risks ?? scorecard.top_risks,
+    // A narrative override, not an array replacement. The previous override
+    // swapped the whole list for plain strings, so one edit destroyed
+    // probability, impact, mitigation cost and residual risk for every risk.
+    top_risks: applyRiskNarrative(scorecard.top_risks, ov.risk_narrative),
+    evidence_profile: applyCriterionNarrative(
+      scorecard.evidence_profile, ov.criterion_narrative,
+    ),
     recommended_scenario: ov.recommended_scenario ?? scorecard.recommended_scenario,
     _accent_color: ov.accent_color ?? scorecard._accent_color ?? null,
     _display_overrides: ov,
@@ -757,6 +873,108 @@ export default function JaspenWorkspace() {
 
   const rendered = useMemo(() => applyOverrides(snapshot, overrides), [snapshot, overrides]);
 
+  // Reversal across the option set, computed server-side. It cannot come from
+  // the selected scorecard because no single card can see its peers, so it
+  // travels with the bundle instead. Null with fewer than two options, which
+  // is correct: there is nothing to overtake.
+  const decisionExposure = bundle?.decision_exposure || null;
+
+  // Section sizing is predicted from content, not measured after render. An
+  // earlier version measured each section and wrote a height back into the
+  // grid, but the grid reports its own layout on every change and that write
+  // back always won, so the measured size silently never applied. Prediction
+  // has no such race. See estimateCriterionRows below.
+  //
+
+  // Ensure a section exists for every weighted criterion, appended below the
+  // rest so a first render has a sensible arrangement. Existing sections are
+  // never repositioned: once a user has moved one, the layout is theirs.
+  // Each criterion is its own card, sized from what it will actually render.
+  // Prediction rather than measurement: writing a measured height into state
+  // loses, because the grid reports its own layout on every change and that
+  // write-back overwrites it.
+  function estimateCriterionRows(entry) {
+    let rows = 5 + (entry.evidence_references || []).length;
+    if ((entry.evidence_references || []).length) rows += 1;
+    if (entry.confidence !== 'high') rows += 1;
+    if (entry.resolution) rows += 2;
+    return Math.max(4, rows);
+  }
+
+  const criterionSpecs = useMemo(
+    () => (rendered?.evidence_profile?.criteria || []).map((c) => ({
+      key: c.key,
+      rows: estimateCriterionRows(c),
+    })),
+    [rendered],
+  );
+
+  // Ensure a card exists for every weighted criterion. Appended below whatever
+  // is already placed, and existing cards are never repositioned: once a user
+  // has moved one, the arrangement is theirs.
+  useEffect(() => {
+    if (!criterionSpecs.length) return;
+    setSectionLayout((prev) => {
+      const existing = new Set(prev.map((s) => s.key));
+      const missing = criterionSpecs.filter(
+        (spec) => !existing.has(`${CRITERION_SECTION_PREFIX}${spec.key}`),
+      );
+      if (!missing.length) return prev;
+      let y = prev.reduce((max, s) => Math.max(max, (s.y || 0) + (s.h || 0)), 0);
+      const added = missing.map((spec) => {
+        const section = {
+          key: `${CRITERION_SECTION_PREFIX}${spec.key}`,
+          label: 'Criterion',
+          cols: 4,
+          locked: true,
+          x: 0,
+          y,
+          w: 12,
+          h: spec.rows,
+          collapsed: false,
+        };
+        y += spec.rows;
+        return section;
+      });
+      return [...prev, ...added];
+    });
+  }, [criterionSpecs]);
+
+  // The briefing alone, so it is short.
+  const confidenceRows = 8;
+
+  // The risk register, sized from what it renders. Each risk carries a
+  // description, a row of levels, and usually a mitigation, so a register is
+  // several times the height of the sentence list it replaced.
+  // Height for the risk section, from what each row will ACTUALLY render.
+  //
+  // The old estimate charged a flat 4 rows per risk (6 with a mitigation),
+  // which assumed every risk arrives fully populated. Real scoring often
+  // returns a bare description with no probability, impact, mitigation or
+  // residual, and RiskRegister renders nothing for the fields that are absent.
+  // A one-sentence risk was therefore given the space of a complete register
+  // entry, leaving the empty band below the content.
+  //
+  // Each part is counted only when the row will draw it.
+  const riskRows = useMemo(() => {
+    const risks = Array.isArray(rendered?.top_risks) ? rendered.top_risks : [];
+    // "No risks recorded for this decision." is a single line.
+    if (!risks.length) return 3;
+    // The ordering-basis line above the list.
+    return risks.reduce((total, risk) => {
+      const hasPosition = Boolean(
+        risk?.probability || risk?.residual_risk ||
+        risk?.impact_dollars || risk?.impact,
+      );
+      return total
+        + 2                                  // the description itself
+        + (hasPosition ? 1 : 0)              // the chip row
+        + (risk?.mitigation ? 2 : 0);        // the mitigation block
+    }, 2);
+  }, [rendered]);
+
+
+
   // Resolve the display title for THIS specific artifact. Priority:
   // override → meaningful scorecard fields → first user message in the
   // thread bundle. Never falls back to "Untitled idea" when the thread
@@ -943,6 +1161,63 @@ export default function JaspenWorkspace() {
     }
   }
 
+  // Criterion wording edits. Presentation only, by construction: these write
+  // into display_overrides.criterion_narrative and applyCriterionNarrative
+  // replaces nothing but `rationale`. The score, grade, weight, exposure and
+  // evidence references are never reachable from here, which is what makes it
+  // safe to let a user rewrite how a finding reads.
+  function setCriterionNarrative(criterionKey, text) {
+    const clean = String(text || '').trim();
+    setOverrides((prev) => {
+      const narrative = { ...(prev.criterion_narrative || {}) };
+      if (!clean) {
+        delete narrative[criterionKey];
+      } else {
+        narrative[criterionKey] = {
+          ...(narrative[criterionKey] || {}),
+          rationale: clean,
+          edited_at: new Date().toISOString(),
+        };
+      }
+      const next = { ...prev };
+      if (Object.keys(narrative).length) {
+        next.criterion_narrative = narrative;
+      } else {
+        delete next.criterion_narrative;
+      }
+      return next;
+    });
+  }
+
+  function restoreCriterionNarrative(criterionKey) {
+    setCriterionNarrative(criterionKey, '');
+  }
+
+  // Risk wording edits. Presentation only, by the same construction as the
+  // criterion handlers: these write into display_overrides.risk_narrative and
+  // applyRiskNarrative replaces nothing but the description and mitigation.
+  function setRiskNarrative(riskId, draft) {
+    if (!riskId) return;
+    const risk = String(draft?.risk || '').trim();
+    const mitigation = String(draft?.mitigation || '').trim();
+    setOverrides((prev) => {
+      const narrative = { ...(prev.risk_narrative || {}) };
+      if (!risk && !mitigation) {
+        delete narrative[riskId];
+      } else {
+        narrative[riskId] = { risk, mitigation, edited_at: new Date().toISOString() };
+      }
+      const next = { ...prev };
+      if (Object.keys(narrative).length) next.risk_narrative = narrative;
+      else delete next.risk_narrative;
+      return next;
+    });
+  }
+
+  function restoreRiskNarrative(riskId) {
+    setRiskNarrative(riskId, { risk: '', mitigation: '' });
+  }
+
   function setOverride(key, value) {
     setOverrides((prev) => {
       const next = { ...prev };
@@ -1063,6 +1338,51 @@ export default function JaspenWorkspace() {
           .slice(0, 12);
         if (visibleCustomBlocks.length) {
           viewContext.custom_blocks = visibleCustomBlocks;
+        }
+
+        // Everything else on the canvas. The agent could previously see the
+        // scorecard name, the score and any custom blocks, and nothing about
+        // the Decision Confidence report or the risk register even though both
+        // are on screen. So it answered about surfaces it could not see, and a
+        // request about "the risk profile" was carried out by rewriting
+        // top_risks, which is a different field on a different section.
+        viewContext.visible_sections = sectionLayout
+          .filter((section) => !section.collapsed)
+          .map((section) => (
+            section.key.startsWith(CRITERION_SECTION_PREFIX)
+              ? ((rendered?.evidence_profile?.criteria || []).find(
+                  (c) => c.key === section.key.slice(CRITERION_SECTION_PREFIX.length),
+                )?.label || section.label)
+              : section.label
+          ))
+          .filter(Boolean);
+
+        const profile = rendered?.evidence_profile;
+        if (profile) {
+          viewContext.decision_confidence = {
+            evidence_backed_pct: profile.evidence_backed_pct,
+            assumption_dependent_pct: profile.assumption_dependent_pct,
+            criteria: (profile.criteria || []).map((c) => ({
+              label: c.label,
+              grade: c.confidence,
+              weight_pct: Math.round((c.weight || 0) * 100),
+              swing: c.swing,
+              evidence_count: (c.evidence_references || []).length,
+              edited: Boolean(c._edited),
+            })),
+          };
+        }
+
+        const risks = Array.isArray(rendered?.top_risks) ? rendered.top_risks : [];
+        if (risks.length) {
+          viewContext.risk_register = risks.map((r) => ({
+            risk: r?.risk,
+            probability: r?.probability,
+            impact: r?.impact_dollars || r?.impact,
+            residual: r?.residual_risk,
+            mitigation: r?.mitigation,
+            edited: Boolean(r?._edited),
+          }));
         }
       }
       if (isTradeoff) {
@@ -1763,7 +2083,7 @@ export default function JaspenWorkspace() {
         </div>
 
         {/* Canvas */}
-        <div data-ws-canvas style={{ flex:1, overflow:'auto', padding: isTradeoff ? 0 : '32px 48px' }}>
+        <div data-ws-canvas style={{ flex:1, overflow:'auto', background: isTradeoff ? undefined : '#eceff5', padding: isTradeoff ? 0 : '32px 48px' }}>
           {isTradeoff ? (
             // Trade-off canvas: full TradeoffView render. Cosmetic edits
             // (title overrides etc.) will land in v1.1 — this v1 shows the
@@ -1875,10 +2195,17 @@ export default function JaspenWorkspace() {
           <div
             ref={scorecardExportRef}
             data-scorecard-export
+            // Reads as the page rather than a card floating on it. The rounded
+            // corners, drop shadow and 980px cap made every section look like a
+            // card inside a card. The white background stays: this node is the
+            // export root, and a transparent one renders unpredictably in the
+            // PDF and PowerPoint capture.
             style={{
-              maxWidth:980, margin:'0 auto', background:'#fff', borderRadius:14,
-              boxShadow:'0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.04)',
-              padding:'36px 40px',
+              // Deep enough that white cards read as sitting ON it. At a
+              // lighter value the cards and the page were the same surface
+              // and the two-layer structure disappeared.
+              maxWidth:1240, margin:'0 auto', background:'#eceff5',
+              padding:'20px 16px 40px',
             }}
           >
             {/* Title — editable */}
@@ -1921,14 +2248,27 @@ export default function JaspenWorkspace() {
               };
 
               // Built-in section layout items (keyed by section.key).
-              const _sectionLayoutItems = _visibleSections.map((s, i) => ({
-                i: s.key,
-                x: Number.isFinite(s.x) ? s.x : 0,
-                y: Number.isFinite(s.y) ? s.y : i * 5,
-                w: Number.isFinite(s.w) ? s.w : Math.min(12, Math.max(3, (s.cols || 4) * 3)),
-                h: Number.isFinite(s.h) ? s.h : 5,
-                minW: 3, minH: 2,
-              }));
+              const _sectionLayoutItems = _visibleSections.map((s, i) => {
+                // Decision Confidence is sized from what it renders, supplied
+                // here rather than written into state. State loses: the grid
+                // reports its own layout on every change and that write-back
+                // overwrote the computed height every time, so the section
+                // silently kept a size that fit nothing. A size the user drags
+                // is recorded and wins over the computation.
+                let computed = null;
+                if (!s.hUser) {
+                  if (s.key === 'confidence') computed = confidenceRows;
+                  else if (s.key === 'risks') computed = riskRows;
+                }
+                return {
+                  i: s.key,
+                  x: Number.isFinite(s.x) ? s.x : 0,
+                  y: Number.isFinite(s.y) ? s.y : i * 5,
+                  w: Number.isFinite(s.w) ? s.w : Math.min(12, Math.max(3, (s.cols || 4) * 3)),
+                  h: computed ?? (Number.isFinite(s.h) ? s.h : 5),
+                  minW: 3, minH: 2,
+                };
+              });
               // Custom block layout items (keyed by blk id). Migrate legacy `cols`.
               const _blockLayoutItems = blocks.map((b, i) => {
                 const w = Number.isFinite(b?.w) ? b.w : (b?.cols ? Math.min(12, Math.max(2, b.cols * 3)) : 6);
@@ -1951,6 +2291,16 @@ export default function JaspenWorkspace() {
                 isResizable
                 draggableHandle=".blk-drag-handle"
                 resizeHandles={['se']}
+                // A size the user chose is a decision. Recording it here stops
+                // the auto-fit from silently undoing it on the next render.
+                onResizeStop={(_layout, _oldItem, newItem) => {
+                  if (!newItem || !newItem.i) return;
+                  // Marked in state rather than a ref so the choice is saved
+                  // with the layout and survives a reload.
+                  setSectionLayout((prev) => prev.map((sec) => (
+                    sec.key === newItem.i ? { ...sec, h: newItem.h, hUser: true } : sec
+                  )));
+                }}
                 layout={[..._sectionLayoutItems, ..._blockLayoutItems]}
                 onLayoutChange={(nl) => {
                   const byId = {};
@@ -2039,10 +2389,22 @@ export default function JaspenWorkspace() {
                   dragSectionRef.current = null;
                 };
 
+                const sectionLabel = section.key.startsWith(CRITERION_SECTION_PREFIX)
+                  ? ((rendered?.evidence_profile?.criteria || []).find(
+                      (c) => c.key === section.key.slice(CRITERION_SECTION_PREFIX.length),
+                    )?.label || section.label)
+                  : section.label;
+
                 return (
                   <div
                     key={section.key}
-                    style={{ height:'100%', boxSizing:'border-box', background:'#fff', border:'1px solid #e6eaf2', borderRadius:10, padding:'10px 12px', display:'flex', flexDirection:'column', overflow:'hidden' }}
+                    // Flat, not a card, so the canvas reads as a page rather
+                    // than a grid of cards on a card. But flat also removed the
+                    // only cue that a section could be resized, so the tile
+                    // shows a faint outline on hover: enough to find the corner
+                    // handle, not enough to reinstate the card look.
+                    className="jw-section-tile"
+                    style={{ height:'100%', boxSizing:'border-box', background:'#fff', border:'1px solid #e4e9f0', borderRadius:8, padding:'12px 16px', display:'flex', flexDirection:'column', overflow:'hidden' }}
                   >
                     {/* Section header bar */}
                     <div style={{
@@ -2057,7 +2419,7 @@ export default function JaspenWorkspace() {
                         fontSize:11, fontWeight:600, color:'#64748b',
                         letterSpacing:'0.06em', textTransform:'uppercase', flex:1,
                       }}>
-                        {section.label}
+                        {sectionLabel}
                       </span>
                       {/* Lock badge */}
                       {section.locked && (
@@ -2116,6 +2478,29 @@ export default function JaspenWorkspace() {
                         </div>
                       )}
 
+                      {section.key === 'confidence' && (
+                        <DecisionConfidenceCard
+                          only="summary"
+                          profile={rendered?.evidence_profile || null}
+                          exposure={decisionExposure}
+                          optionName={rendered?.project_name || null}
+                          score={score}
+                          scoreCategory={category}
+                          summary={decisionExposure?.summaries?.[rendered?.project_name] || null}
+                        />
+                      )}
+
+                      {section.key.startsWith(CRITERION_SECTION_PREFIX) && (
+                        <DecisionConfidenceCard
+                          only="criterion"
+                          criterionKey={section.key.slice(CRITERION_SECTION_PREFIX.length)}
+                          profile={rendered?.evidence_profile || null}
+                          editable
+                          onEditNarrative={setCriterionNarrative}
+                          onRestoreNarrative={restoreCriterionNarrative}
+                        />
+                      )}
+
                       {section.key === 'executive' && (
                         <EditableText
                           multiline
@@ -2140,22 +2525,17 @@ export default function JaspenWorkspace() {
                       )}
 
                       {section.key === 'risks' && (
-                        // Manually editable — one risk per line. Risks are
-                        // qualitative and don't change the score, so they're not
-                        // locked. AI edits flow through chat; this is the manual
-                        // path. pre-line keeps the line breaks in read mode.
-                        <EditableText
-                          multiline
-                          value={(Array.isArray(rendered?.top_risks) ? rendered.top_risks : [])
-                            .map((r) => (typeof r === 'string' ? r : (r?.risk || r?.label || '')))
-                            .filter(Boolean)
-                            .join('\n')}
-                          onCommit={(v) => {
-                            const arr = String(v || '')
-                              .split('\n').map((s) => s.trim()).filter(Boolean);
-                            setOverride('top_risks', arr.length ? arr : null);
-                          }}
-                          style={{ fontSize:13, color:'#334155', lineHeight:1.65, whiteSpace:'pre-line' }}
+                        // Was a textarea of newline-joined descriptions, which
+                        // discarded probability, impact, impact category,
+                        // mitigation, mitigation cost and residual risk at the
+                        // point of display, and destroyed them permanently on
+                        // the first edit. Wording stays editable; the numbers
+                        // are no longer reachable from here.
+                        <RiskRegister
+                          risks={rendered?.top_risks}
+                          editable
+                          onEdit={setRiskNarrative}
+                          onRestore={restoreRiskNarrative}
                         />
                       )}
 

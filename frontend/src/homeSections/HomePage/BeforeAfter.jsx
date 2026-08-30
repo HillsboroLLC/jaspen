@@ -1,31 +1,35 @@
 import React from 'react';
 import './BeforeAfter.css';
 
+// Every previous row was a claim any AI tool could make, and none of them
+// mentioned evidence. The first three carry the Decision Confidence spine, and
+// the last two keep what was already working: defensibility, and reasoning that
+// outlives the person who did it.
 const ROWS = [
   {
-    topic: 'Starting point',
-    before: 'A pile of notes, emails, and opinions with no clear structure',
-    after: 'A shared decision brief with context, constraints, and options in one place',
+    topic: 'What the numbers mean',
+    before: 'Assumed figures and evidenced figures look identical on the page',
+    after: 'Every input carries its evidence grade, so you can tell them apart',
   },
   {
-    topic: "Who's involved",
-    before: 'Unclear. People find out later and push back',
-    after: 'Stakeholders identified upfront, aligned on what they care about',
+    topic: 'Where confidence comes from',
+    before: 'From how well the case is argued',
+    after: 'From what the evidence supports. Thin support cannot contribute as if it were strong',
   },
   {
-    topic: 'How options get evaluated',
-    before: 'Gut feel, loudest voice, or whoever made the deck',
-    after: 'A scorecard built from your actual criteria, transparent and repeatable',
+    topic: 'What you know before committing',
+    before: 'That the plan looks strong',
+    after: 'How much of it is evidenced, how much is assumed, and where that leaves you exposed',
   },
   {
-    topic: 'Time to a clear path',
-    before: 'Days of back-and-forth, often no resolution',
-    after: 'One focused session. Clear recommendation with tradeoffs visible',
+    topic: 'When someone asks why',
+    before: 'The answer is seniority, momentum, or whoever built the deck',
+    after: 'The answer is the criteria, the weights, the evidence behind each, and the math',
   },
   {
-    topic: 'What you walk away with',
-    before: 'A decision that nobody fully owns',
-    after: 'A documented decision with rationale your team can actually stand behind',
+    topic: 'Six months later',
+    before: "The reasoning lives in one person's memory",
+    after: 'The record holds what you decided, what you assumed, and what actually happened',
   },
 ];
 

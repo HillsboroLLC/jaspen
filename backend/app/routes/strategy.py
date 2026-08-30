@@ -12,6 +12,13 @@ import uuid
 from types import SimpleNamespace
 from app import db, limiter
 from app.admin_audit import append_user_audit_event
+from app.decision_confidence import (
+    CONFIDENCE_CAPS,
+    decision_exposure,
+    decision_summary,
+    evidence_profile,
+)
+from app.evidence_references import attach_evidence_references
 from app.models import Scorecard, UsageEvent, User
 from app.scorecards import (
     COMPARISON_SESSION_LIMIT_MESSAGE,
@@ -961,30 +968,49 @@ def _list_has_values(items):
 _DIMENSION_CONFIDENCE_PCT = {"high": 92, "medium": 70, "low": 48, "assumed": 30}
 
 
-def _data_confidence_from_dimensions(dimensions, *, conversation_turns=0):
-    """Derive overall data_confidence (%) from the LLM's per-dimension confidence
-    labels. Returns an int 0-100, or None if there are no usable dimensions (caller
+def _data_confidence_from_dimensions(dimensions, weights=None):
+    """Derive overall data_confidence (%) from the per-dimension confidence labels.
+
+    Returns an int 0-100, or None if there are no usable dimensions (the caller
     falls back to the legacy heuristic).
 
-    Confidence is the mean of each dimension's mapped percentage, with a small
-    grounding bonus for a substantive conversation (more turns → more real signal).
+    Weighted by the rubric when weights are available, and an unweighted mean
+    only when they are not. Weighting matters because this number is published
+    as a statement about the decision: a criterion carrying 30% of the decision
+    has to move it six times as far as one carrying 5%, or the figure describes
+    the label distribution rather than the decision.
+
+    No conversation-length term. An earlier version added up to +8 points for a
+    longer conversation, which meant the reported confidence rose when a user
+    talked more without producing any additional evidence. That is the exact
+    failure the confidence caps exist to prevent, and it cannot sit inside the
+    number that reports on them.
     """
     if not isinstance(dimensions, dict) or not dimensions:
         return None
-    vals = []
-    for dim in dimensions.values():
+
+    weight_map = weights if isinstance(weights, dict) else {}
+    total_w = 0.0
+    acc = 0.0
+    fallback = []
+    for key, dim in dimensions.items():
         if not isinstance(dim, dict):
             continue
         conf = str(dim.get("confidence") or "").strip().lower()
         pct = _DIMENSION_CONFIDENCE_PCT.get(conf)
-        if pct is not None:
-            vals.append(pct)
-    if not vals:
-        return None
-    base = sum(vals) / len(vals)
-    # Up to +8 for a well-developed conversation (caps at ~8 turns).
-    grounding_bonus = min(8, max(0, conversation_turns)) if conversation_turns else 0
-    return int(round(max(15, min(100, base + grounding_bonus))))
+        if pct is None:
+            continue
+        fallback.append(pct)
+        w = _safe_float(weight_map.get(key))
+        if w is not None and w > 0:
+            acc += pct * w
+            total_w += w
+
+    if total_w > 0:
+        return int(round(max(15, min(100, acc / total_w))))
+    if fallback:
+        return int(round(max(15, min(100, sum(fallback) / len(fallback)))))
+    return None
 
 
 def _section_provenance(has_values, *, estimated=False, uploaded=False):
@@ -995,6 +1021,19 @@ def _section_provenance(has_values, *, estimated=False, uploaded=False):
     if estimated:
         return 'estimated'
     return 'derived_from_conversation'
+
+
+
+def _risk_identity(risk_text, position):
+    """Stable id for one risk, from its original wording.
+
+    Position is only a tiebreak for two risks that read identically; it is not
+    the identity itself, because a reordered register would otherwise hand each
+    risk somebody else's edits.
+    """
+    basis = _clean_scorecard_text(risk_text) or f'risk-{position}'
+    digest = hashlib.sha1(basis.encode('utf-8')).hexdigest()[:10]
+    return f'rk_{digest}'
 
 
 def _normalize_scorecard_payload(payload):
@@ -1138,6 +1177,7 @@ def _normalize_scorecard_payload(payload):
             cleaned = _clean_scorecard_text(item)
             if cleaned:
                 risk_items.append({
+                    'id': _risk_identity(cleaned, len(risk_items)),
                     'risk': cleaned,
                     'probability': None,
                     'impact_dollars': None,
@@ -1171,6 +1211,11 @@ def _normalize_scorecard_payload(payload):
             continue
         risk_items.append({
             **item,
+            # A stable key so a presentation override can address one risk.
+            # Derived from the ORIGINAL text, which system truth never changes,
+            # so an edited description still resolves to the same risk and a
+            # reordered register does not reassign anyone's edits.
+            'id': _risk_identity(risk_text, len(risk_items)),
             'risk': risk_text,
             'probability': probability,
             'impact_dollars': impact_raw,
@@ -1256,14 +1301,29 @@ def _normalize_scorecard_payload(payload):
     if isinstance(source_meta, dict):
         conversation_turns = _safe_int(source_meta.get('conversation_turns')) or 0
 
-    # Prefer deriving confidence from the LLM's own per-dimension confidence labels
-    # (high/medium/low/assumed) — that is the real signal of how grounded the score
-    # is, and it varies card-to-card. The old turn-count heuristic bucketed to a few
-    # fixed values (e.g. 10+25+0+20 = a sticky 55%), which is why every batch card
-    # looked the same. Fall back to the heuristic only when there are no dimensions.
+    # Carry forward the weight map the score was built from. _recompute_jaspen_score
+    # stores it; scorecards written before that existed have none, and fall back to
+    # the rubric when the thread carries one.
+    scoring_weights = source.get('scoring_weights')
+    if not isinstance(scoring_weights, dict) or not scoring_weights:
+        rubric = source.get('rubric') if isinstance(source.get('rubric'), dict) else {}
+        criteria = rubric.get('criteria') if isinstance(rubric.get('criteria'), list) else []
+        scoring_weights = {
+            str(c.get('key')): _safe_float(c.get('weight'))
+            for c in criteria
+            if isinstance(c, dict) and c.get('key') and _safe_float(c.get('weight')) is not None
+        }
+    normalized['scoring_weights'] = scoring_weights or {}
+
+    # Prefer deriving confidence from the per-dimension confidence labels
+    # (high/medium/low/assumed), weighted by the rubric. That is the real signal of
+    # how grounded the score is, and it varies card-to-card. The old turn-count
+    # heuristic bucketed to a few fixed values (e.g. 10+25+0+20 = a sticky 55%),
+    # which is why every batch card looked the same. Fall back to the heuristic only
+    # when there are no dimensions to read.
     dimension_confidence_pct = _data_confidence_from_dimensions(
         normalized.get('dimensions'),
-        conversation_turns=conversation_turns,
+        normalized['scoring_weights'],
     )
     if dimension_confidence_pct is not None:
         confidence_pct = dimension_confidence_pct
@@ -1279,6 +1339,20 @@ def _normalize_scorecard_payload(payload):
             ),
         )
     normalized['data_confidence'] = int(confidence_pct)
+
+    # Decision Confidence and Assumption Exposure for this card. Recomputed here
+    # rather than trusted from storage so a card loaded from an older write, or
+    # edited since it was scored, reports a split that matches what it currently
+    # shows. Absent when there are no weighted dimensions to measure.
+    profile = evidence_profile(
+        normalized.get('dimensions'),
+        normalized['scoring_weights'],
+        score=_safe_int(normalized.get('jaspen_score')),
+    )
+    if profile:
+        normalized['evidence_profile'] = profile
+    elif isinstance(source.get('evidence_profile'), dict):
+        normalized['evidence_profile'] = source['evidence_profile']
 
     score_value = _safe_int(normalized.get('jaspen_score')) or 0
     risks = normalized.get('top_risks') if isinstance(normalized.get('top_risks'), list) else []
@@ -1311,6 +1385,71 @@ def _normalize_scorecard_payload(payload):
     return normalized
 
 
+def _risk_patch_handles(risk):
+    """Every handle a patch might use to name this risk.
+
+    Both an id AND the description are indexed, not one or the other. A stored
+    risk usually carries an id while a model rewriting it refers to it by text,
+    so keying on the id alone meant the patch matched nothing and the risk was
+    treated as new, which is the data loss this exists to prevent.
+    """
+    if not isinstance(risk, dict):
+        return []
+    handles = []
+    for field in ('id', 'risk_id'):
+        value = str(risk.get(field) or '').strip()
+        if value:
+            handles.append(value)
+    text = str(risk.get('risk') or risk.get('text') or '').strip().casefold()
+    if text:
+        handles.append(text)
+    return handles
+
+
+def _merge_risk_list(base_risks, patched_risks):
+    """Apply a risk patch field by field instead of replacing the register.
+
+    A risk carries narrative (the description, the mitigation) alongside
+    structured findings: probability, impact_dollars, impact_category,
+    mitigation_cost, residual_risk. An edit almost always concerns the
+    narrative, and a model rewriting one sentence rarely restates the numbers
+    it was not asked about.
+
+    Replacing the list wholesale therefore destroyed whatever the patch did not
+    mention, and silently: a reworded risk came back with its impact and
+    residual level gone, and the register then rendered blank positions that
+    read as "not assessed" rather than "lost in an edit".
+
+    Fields the patch DOES set still win, including numeric ones. The guard is
+    against dropping data, not against the agent changing it.
+    """
+    base_by_handle = {}
+    for risk in (base_risks if isinstance(base_risks, list) else []):
+        for handle in _risk_patch_handles(risk):
+            base_by_handle.setdefault(handle, risk)
+
+    merged_rows = []
+    for patched in patched_risks:
+        if not isinstance(patched, dict):
+            merged_rows.append(patched)
+            continue
+        original = next(
+            (base_by_handle[h] for h in _risk_patch_handles(patched) if h in base_by_handle),
+            None,
+        )
+        if not isinstance(original, dict):
+            merged_rows.append(patched)
+            continue
+        row = dict(original)
+        for field, value in patched.items():
+            # An explicit null is a deliberate clear; an absent key is not an
+            # instruction to erase anything.
+            if value is not None or field in patched:
+                row[field] = value
+        merged_rows.append(row)
+    return merged_rows
+
+
 def _merge_scorecard_patch(base_scorecard, patch):
     base = base_scorecard if isinstance(base_scorecard, dict) else {}
     update = patch if isinstance(patch, dict) else {}
@@ -1335,7 +1474,10 @@ def _merge_scorecard_patch(base_scorecard, patch):
     for key in editable_list_keys:
         value = update.get(key)
         if isinstance(value, list):
-            merged[key] = value
+            if key == 'top_risks':
+                merged[key] = _merge_risk_list(base.get(key), value)
+            else:
+                merged[key] = value
 
     for key in editable_scalar_keys:
         value = _clean_scorecard_text(update.get(key))
@@ -1521,6 +1663,38 @@ def _assert_scorecard_write_fresh(
             )
 
 
+def _decision_exposure_from_snapshots(snapshots):
+    """Whether any option's assumptions could change which one leads.
+
+    Reversal is a property of the option set, not of a scorecard, so it cannot
+    be attached during scoring: _recompute_jaspen_score sees one card at a time
+    and has no view of its peers. This is the first point where they are all in
+    hand together.
+
+    Computed here rather than in the browser on purpose. The rule for reversal
+    (a swing large enough to close the gap to the leader) lives once, in
+    app/decision_confidence.py, alongside the caps it depends on. A second
+    implementation in JavaScript would drift from it silently, and the claim it
+    supports is one the product cannot afford to get wrong.
+
+    Returns None with fewer than two options, since there is nothing to overtake.
+    """
+    cards = [s for s in (snapshots or []) if isinstance(s, dict)]
+    if len(cards) < 2:
+        return None
+    # Peers in a thread share one rubric, so the first card carrying weights
+    # speaks for all of them. Cards written before weights were persisted have
+    # none, and yield no exposure rather than a guess.
+    weights = next(
+        (c['scoring_weights'] for c in cards
+         if isinstance(c.get('scoring_weights'), dict) and c['scoring_weights']),
+        None,
+    )
+    if not weights:
+        return None
+    return decision_exposure(cards, weights)
+
+
 def _snapshot_meta_from_result(result_payload, thread_id, snapshot=None, deleted_snapshot_id=None):
     snapshot_state = _scorecard_snapshot_state(result_payload, thread_id) if isinstance(result_payload, dict) else None
     if not snapshot_state:
@@ -1529,12 +1703,15 @@ def _snapshot_meta_from_result(result_payload, thread_id, snapshot=None, deleted
             'deleted_snapshot_id': deleted_snapshot_id,
             'scorecard_snapshots': [],
             'selected_scorecard_id': None,
+            'decision_exposure': None,
         }
+    snapshots = snapshot_state.get('snapshots') or []
     return {
         'snapshot': snapshot,
         'deleted_snapshot_id': deleted_snapshot_id,
-        'scorecard_snapshots': snapshot_state.get('snapshots') or [],
+        'scorecard_snapshots': snapshots,
         'selected_scorecard_id': snapshot_state.get('selected_id'),
+        'decision_exposure': _decision_exposure_from_snapshots(snapshots),
     }
 
 
@@ -2304,7 +2481,12 @@ def _require_tool_access(user_id, tool_id, access='read'):
 # Confidence → max allowed dimension score. The model assigns a raw 0-100 and a
 # confidence; Python enforces the cap so an "assumed" dimension can never inflate
 # the score. Kept in lockstep with the cap rules stated in the scoring prompt.
-_CONFIDENCE_CAPS = {"high": 100, "medium": 75, "low": 60, "assumed": 45}
+#
+# Now sourced from app.decision_confidence, which is also what measures exposure
+# against these caps. Two copies of this table would let the caps enforced in
+# scoring drift from the caps used to report how much a decision rests on
+# assumption, and the second number would quietly stop describing the first.
+_CONFIDENCE_CAPS = CONFIDENCE_CAPS
 
 # component_scores is a flat mirror of four dimension scores — keep it in sync so
 # downstream readers that use component_scores see the same capped values.
@@ -2394,14 +2576,27 @@ def _recompute_jaspen_score(payload, weights):
         dim = dims.get(dim_key)
         if not isinstance(dim, dict):
             continue
+        # Prefer a raw_score already on the dimension. This function runs more
+        # than once over the same payload, and after the first pass "score"
+        # holds the CAPPED value. Reading it again would record a cap as though
+        # it were a judgment, and every exposure figure derived from it would
+        # silently collapse to zero.
         try:
-            raw_val = float(dim.get("score"))
+            raw_val = float(
+                dim["raw_score"] if dim.get("raw_score") is not None else dim.get("score")
+            )
         except (TypeError, ValueError):
             continue
         raw_val = max(0.0, min(100.0, raw_val))
         conf = str(dim.get("confidence") or "").strip().lower()
         cap = _CONFIDENCE_CAPS.get(conf, 100)
         capped = min(raw_val, cap)
+        # Keep the pre-cap judgment. The distance between it and the capped
+        # value is what an assumption is currently costing this option, which
+        # is the input to every Assumption Exposure figure downstream. The
+        # scorecard already showed a user "judged 80, capped at 45"; until now
+        # the 80 was discarded the moment it was displayed.
+        dim["raw_score"] = int(round(raw_val))
         # Write the capped value back so the dimension bar matches what fed the
         # score (otherwise the UI would show an uncapped bar above a capped total).
         dim["score"] = int(round(capped))
@@ -2428,6 +2623,26 @@ def _recompute_jaspen_score(payload, weights):
             if isinstance(dim, dict) and dim.get("score") is not None:
                 comp[comp_key] = dim["score"]
 
+    # Persist the weight map that produced this score. Only the two call sites
+    # inside the scoring pass know it (a rubric in custom mode, an objective
+    # preset in default mode); normalization, exports, and the workspace all
+    # run later without it. Storing it here means the evidence split is always
+    # measured against the weights the score was actually built from, not a
+    # guess reconstructed downstream.
+    payload["scoring_weights"] = {
+        str(k): float(v)
+        for k, v in (weights or {}).items()
+        if isinstance(dims.get(str(k)), dict) and _safe_float(v) is not None
+    }
+
+    # Decision Confidence for this option, computed from the same capped
+    # dimensions that produced the score. Reversal is deliberately absent here:
+    # it depends on the peer set, which this function cannot see. Callers that
+    # hold the peers add it via decision_confidence.decision_exposure.
+    profile = evidence_profile(dims, payload["scoring_weights"], score=score)
+    if profile:
+        payload["evidence_profile"] = profile
+
     return payload
 
 
@@ -2438,6 +2653,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         },
         "financial_viability": {
@@ -2445,6 +2661,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         },
         "execution_readiness": {
@@ -2452,6 +2669,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         },
         "strategic_alignment": {
@@ -2459,6 +2677,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         },
         "risk_profile": {
@@ -2466,6 +2685,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         },
         "evidence_quality": {
@@ -2473,6 +2693,7 @@ _DEFAULT_SCORECARD_DIMENSIONS_BLOCK = '''        "market_opportunity": {
             "confidence": "<high|medium|low|assumed>",
             "source": "<conversation|connector|inferred|assumed>",
             "rationale": "<1-2 sentences>",
+            "evidence": ["<verbatim quote from the input that supports this score>"],
             "what_would_improve": "<specific action or null if confidence is high>"
         }'''
 
@@ -2486,6 +2707,7 @@ def _generate_jaspen_scorecard(
     strategy_objective='balanced',
     rubric=None,
     return_usage=False,
+    evidence_corpus=None,
 ):
     """Run the existing LLM scoring flow and return parsed scorecard JSON.
 
@@ -2562,7 +2784,8 @@ def _generate_jaspen_scorecard(
                 f'            "confidence": "<high|medium|low|assumed>",\n'
                 f'            "source": "<conversation|connector|inferred|assumed>",\n'
                 f'            "rationale": "<1-2 sentences>",\n'
-                f'            "what_would_improve": "<specific action or null if confidence is high>"\n'
+                f'            "evidence": ["<verbatim quote from the input that supports this score>"],\n'
+            f'            "what_would_improve": "<specific action or null if confidence is high>"\n'
                 f'        }}'
             )
         dimensions_block = ",\n".join(_dim_snippets)
@@ -2614,6 +2837,30 @@ def _generate_jaspen_scorecard(
             "explain the gap in assumptions."
         )
 
+    # WHAT THE MODEL MAY QUOTE, AND WHAT A QUOTE IS CHECKED AGAINST.
+    #
+    # `project_description` is frequently a short summary written upstream: the
+    # chat tool's schema asks for a "concise description of the idea to score",
+    # so the words the user actually typed never reached this function. Quotes
+    # were then verified against that summary, so every genuine quote failed to
+    # match and was discarded. The visible result was evidence_references coming
+    # back empty and every dimension reading as "inferred", which looked like
+    # the model paraphrasing when it was really the wrong text being searched.
+    #
+    # `evidence_corpus` carries the user's own input. It is shown to the model
+    # so there is real language available to quote, and verification runs
+    # against the same text, so a quote counts only when it demonstrably
+    # appears in what the user provided.
+    corpus_text = str(evidence_corpus or "").strip()
+    verification_text = "\n\n".join(
+        t for t in (str(project_description or "").strip(), corpus_text) if t
+    )
+    source_material_section = (
+        "\nSource material (the user's own words, quote ONLY from here):\n"
+        f'"""\n{corpus_text}\n"""\n'
+        if corpus_text else ""
+    )
+
     system_prompt = (
         "You are a Jaspen strategy analyst specializing in commercialization strategy. "
         "Always respond with valid JSON only. Temperature is 0 — be deterministic and evidence-based."
@@ -2622,7 +2869,7 @@ def _generate_jaspen_scorecard(
 You are a Jaspen strategy analyst. Analyze the following initiative and return a comprehensive confidence-weighted scorecard.
 
 Project Description: {project_description}
-
+{source_material_section}
 {objective_section}
 
 Return a single valid JSON object only. No markdown fences, no commentary outside the JSON.
@@ -2633,6 +2880,7 @@ Rules:
 - For each dimension, assign a confidence level based on the QUALITY OF THE EVIDENCE, not how clearly it was stated: "high" = evidence Jaspen can itself see or check in this conversation (uploaded documents, connected data sources, or figures cross-checkable against material provided); "medium" = specific, concrete facts the user self-reported (exact salary, current rent, a signed offer's terms); "low" = the user's own estimates, predictions, or qualitative impressions ('promotion is possible', 'clients seem happy', 'we think it will appreciate'); "assumed" = anything you filled in yourself with no user input. A decision built entirely on uncorroborated self-report should rarely show "high" on any dimension — confident-sounding conversation is not corroboration. Self-reported specifics are respectable evidence (medium); they are not verified evidence (high).
 - For each dimension, identify the source: "conversation" (explicitly stated), "connector" (from connected data source), "inferred" (logical derivation), or "assumed" (industry/pattern-based).
 - For any dimension with confidence "low" or "assumed", populate what_would_improve with a specific, actionable suggestion.
+- EVIDENCE QUOTES: populate "evidence" with the exact passages from the input that support the score. Quote verbatim, do not paraphrase, and do not quote your own words back. If nothing in the input supports the score, return an empty list rather than inventing a quote. Every quote is checked against the input and silently discarded if it is not found there, so a fabricated one buys nothing and an accurate one becomes part of the record.
 - MISSING-VARIABLE PENALTY (critical): the score must reward how well-evidenced an idea is, not how good it sounds. Score only what THIS idea actually gives you — never borrow context from other ideas. When the inputs needed to judge a dimension are absent or only "assumed", that dimension's score MUST be depressed, not given the benefit of the doubt:
     - confidence "high"   → no penalty.
     - confidence "medium" → cap that dimension at 75.
@@ -2801,6 +3049,27 @@ The executive_summary must read like a concise leadership briefing. It should ne
     # demotes an unverified "high" to "medium" — never raises anything.
     parsed = _clamp_unverified_high_confidence_dimensions(parsed)
 
+    # Verify every passage the model claimed as evidence against the text it was
+    # actually shown. Quotes that cannot be found are discarded rather than
+    # stored, so `evidence_references` means "this text demonstrably exists in
+    # the input", not "the model said it did". A fabricated quote therefore buys
+    # the model nothing, and an accurate one becomes part of a record the user
+    # can inspect later.
+    #
+    # Deliberately does NOT feed scoring. References are provenance, not a
+    # scoring input: letting a judgment score higher for citing more would
+    # reward volume of quotation and reopen exactly the "best-argued case wins"
+    # failure the confidence caps exist to close.
+    try:
+        verified_count = attach_evidence_references(
+            parsed.get("dimensions"), verification_text,
+        )
+        if verified_count:
+            parsed["evidence_reference_count"] = verified_count
+    except Exception:
+        # Provenance is additive. A failure here must never cost a scorecard.
+        current_app.logger.exception("evidence reference capture failed")
+
     # Deterministic final step: recompute the score from the (capped) dimensions
     # in Python instead of trusting the model's arithmetic. `weights` is the
     # rubric weight map (custom mode) or the objective preset (default mode).
@@ -2808,7 +3077,36 @@ The executive_summary must read like a concise leadership briefing. It should ne
     return (scored, generation_usage) if return_usage else scored
 
 
-def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective='balanced',
+
+def _thread_user_corpus(user_id, thread_id, *, max_chars=20000):
+    """The user's own words in this thread, for evidence capture.
+
+    Only `user` turns. Quoting the assistant back would let the model cite its
+    own prose as evidence for its own score, which is the circularity the
+    verification step exists to prevent.
+    """
+    try:
+        from app.routes.sessions import load_user_sessions as _load
+        session = (_load(str(user_id)) or {}).get(thread_id)
+        if not isinstance(session, dict):
+            return ""
+        turns = session.get("chat_history")
+        if not isinstance(turns, list):
+            return ""
+        parts = [
+            str(t.get("content") or "").strip()
+            for t in turns
+            if isinstance(t, dict)
+            and str(t.get("role") or "").strip().lower() == "user"
+            and str(t.get("content") or "").strip()
+        ]
+        corpus = "\n\n".join(parts)
+        return corpus[-max_chars:] if len(corpus) > max_chars else corpus
+    except Exception:
+        return ""
+
+
+def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective='balanced', evidence_corpus=None,
                                model_selection=None, llm_model=None, return_usage=False):
     """Score MANY ideas in a SINGLE model pass — the 'build the Excel' approach.
 
@@ -2842,6 +3140,9 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
                 c_results, c_summary, c_usage = _generate_batch_scorecards(
                     client, chunk, rubric=rubric, strategy_objective=strategy_objective,
                     model_selection=model_selection, llm_model=llm_model, return_usage=True,
+                    # Carried into every chunk: a long batch would otherwise
+                    # lose evidence for every option past the first chunk.
+                    evidence_corpus=evidence_corpus,
                 )
             except Exception:
                 current_app.logger.exception(
@@ -2990,12 +3291,23 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         "not corroboration. Self-reported specifics are respectable evidence (medium); they are not verified evidence "
         "(high)."
     )
+    # The user's own words, so there is real language available to quote and a
+    # corpus for verification to search. Without it the batch scorer only ever
+    # saw the option names and one-line descriptions assembled upstream.
+    _corpus_text = str(evidence_corpus or "").strip()
+    _source_block = (
+        "SOURCE MATERIAL (the user's own words, quote ONLY from here):\n"
+        f'"""\n{_corpus_text}\n"""\n\n'
+        if _corpus_text else ""
+    )
+
     user_prompt = (
         f"Build a decision dossier scoring these {len(ideas)} options against the criteria below. {criteria_note}"
         f"{groups_note}"
         f"{objective_note}\n"
         f"CRITERIA (json key = meaning (weight)[group]):\n{criteria_block}\n\n"
         f"OPTIONS:\n{ideas_block}\n\n"
+        f"{_source_block}"
         "Return ONLY this JSON shape (no markdown, no commentary):\n"
         "{\n"
         '  "portfolio_summary": {\n'
@@ -3010,7 +3322,7 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         '      "strategic_rationale": "<2-3 sentence leadership read on this option>",\n'
         '      "dimensions": {\n'
         f'        // EXACTLY one entry for EACH key: {keys_csv}\n'
-        '        "<criterion_key>": { "score": <0-100>, "confidence": "<high|medium|low|assumed>", "rationale": "<one specific line: the put or take>" }\n'
+        '        "<criterion_key>": { "score": <0-100>, "confidence": "<high|medium|low|assumed>", "rationale": "<one specific line: the put or take>", "source": "<conversation|inferred|assumed>", "evidence": ["<verbatim quote from the source material that supports this score>"], "what_would_improve": "<specific action, or null if confidence is high>" }\n'
         "      },\n"
         '      "key_strengths": ["<top put>", "..."],\n'
         '      "key_considerations": ["<top take / risk / caveat>", "..."]\n'
@@ -3018,7 +3330,17 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         "    // ...one object per option, in the same order...\n"
         "  ]\n"
         "}\n"
-        "Every option MUST include every criterion key. Output JSON only."
+        "Every option MUST include every criterion key.\n"
+        "- EVIDENCE QUOTES: populate \"evidence\" with the exact passages from the source material that support the "
+        "score. Quote verbatim, do not paraphrase, and do not quote your own words back. If nothing in the source "
+        "supports the score, return an empty list rather than inventing a quote. Every quote is checked against the "
+        "source and silently discarded if it is not found there, so a fabricated one buys nothing and an accurate one "
+        "becomes part of the record.\n"
+        "- SOURCE: \"conversation\" when the user stated it, \"inferred\" when you reasoned it from what they said, "
+        "\"assumed\" when nothing in the input speaks to it.\n"
+        "- For any dimension with confidence \"low\" or \"assumed\", populate what_would_improve with a specific, "
+        "actionable suggestion naming the information that would resolve it.\n"
+        "Output JSON only."
     )
 
     text, _usage = _strategy_generate_reply(
@@ -3079,12 +3401,27 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
                 conf = "medium"
             if conf == "high" and not _batch_has_grounded_evidence:
                 conf = "medium"
+            # `source` and `what_would_improve` used to be hardcoded to
+            # "inferred" and None here, and `evidence` was dropped entirely.
+            # This is the scorer the product actually uses for a multi-option
+            # decision, so every card it produced reported that nothing the
+            # user said had been used, however much they had provided. Both now
+            # come from the scoring pass, on the same contract as the
+            # single-option scorer.
+            _source = str(d.get("source") or "").strip().lower()
+            if _source not in ("conversation", "connector", "inferred", "assumed"):
+                _source = "inferred"
+            _wwi = str(d.get("what_would_improve") or "").strip() or None
+            _evidence = d.get("evidence") if isinstance(d.get("evidence"), list) else []
             dims[key] = {
                 "score": score,
                 "confidence": conf,
-                "source": "inferred",
+                "source": _source,
                 "rationale": str(d.get("rationale") or "").strip(),
-                "what_would_improve": None,
+                "what_would_improve": _wwi,
+                # Claimed, not yet verified. attach_evidence_references checks
+                # each one against the source text below and discards the rest.
+                "evidence": _evidence,
                 "label": label_by_key.get(key, key),
                 "is_risk": bool(risk_by_key.get(key)),
                 "group": group_by_key.get(key),
@@ -3132,6 +3469,36 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
             js = float(scored.get("jaspen_score") or 0.0)
             tier = "Leading Candidate" if js >= 78 else "Secondary Candidate" if js >= 68 else "Monitor / Niche"
         scored["tier"] = tier
+
+        # Verify every claimed quote against the text the user actually
+        # provided, exactly as the single-option scorer does. Quotes that
+        # cannot be found are discarded rather than stored, so a reference
+        # means "this text demonstrably exists in the input".
+        #
+        # Deliberately does NOT feed scoring: references are provenance, not a
+        # scoring input. Letting a judgment score higher for citing more would
+        # reward volume of quotation.
+        try:
+            # Verify against the USER's words alone when we have them.
+            #
+            # The option description is written by the agent upstream, so
+            # including it let the model quote AI-authored text and have it
+            # pass as verified evidence. A live run proved this: "target
+            # 48-hour SLA compliance" verified cleanly and appears nowhere in
+            # anything the user typed. That is the circularity this check
+            # exists to stop, reintroduced by the checker itself.
+            #
+            # The description is used only when no corpus exists, which is the
+            # non-chat callers where the description IS the user's own input.
+            _verification_text = _corpus_text or str(idea.get('description') or '').strip()
+            if _verification_text:
+                _verified = attach_evidence_references(scored.get("dimensions"), _verification_text)
+                if _verified:
+                    scored["evidence_reference_count"] = _verified
+        except Exception:
+            # Provenance is additive. A failure here must never cost a card.
+            current_app.logger.exception("batch evidence reference capture failed")
+
         results.append(scored)
 
     return (results, portfolio_summary, _usage) if return_usage else (results, portfolio_summary)
@@ -6541,6 +6908,9 @@ def score_batch_queued(thread_id):
                 client, ideas_to_generate, rubric=rubric, strategy_objective=strategy_objective,
                 model_selection=model_selection, llm_model=model_selection['llm_model'],
                 return_usage=True,
+                # What the user actually said, so quotes have somewhere real to
+                # come from and verification has somewhere real to look.
+                evidence_corpus=_thread_user_corpus(user_id, thread_id),
             )
         except Exception as generation_error:
             _release_reserved_credits(user, reserved_credits)
@@ -8311,6 +8681,11 @@ def get_thread_bundle(thread_id):
             'current_scorecard': current_scorecard,
             'scorecard_snapshots': merged_snapshots,
             'peer_scorecards': merged_snapshots,
+            # Reversal across the option set. Every scorecard already carries
+            # its own evidence_profile, but none of them can see the peers, so
+            # the only claim that depends on the whole set has to be assembled
+            # here where they are all in hand.
+            'decision_exposure': _decision_exposure_from_snapshots(merged_snapshots),
             'selected_scorecard_id': selected_id,
             'scenarios': scenarios_list,
             'scenario_levers': scenario_levers,

@@ -1,0 +1,474 @@
+/* Decision Confidence report.
+   App palette: navy #161f3b, slate #5a6585, muted #8a93ad, rose #a0036c,
+   line #d6e9ef, plus the semantic set from RecordDecisionPanel.
+   Solid colours only, no gradients. */
+
+.dcc {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 4px 2px 8px;
+  text-align: left;
+}
+
+/* ── Layer 1: summary ─────────────────────────────────────────────────── */
+
+.dcc-head {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dcc-eyebrow {
+  margin: 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #a0036c;
+}
+
+.dcc-score-line {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.dcc-score-line strong {
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1;
+  color: #161f3b;
+  font-variant-numeric: tabular-nums;
+}
+
+.dcc-score-cat {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #5a6585;
+}
+
+.dcc-headline {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+  color: #5a6585;
+}
+
+.dcc-headline strong {
+  font-size: 19px;
+  font-weight: 700;
+  color: #161f3b;
+  font-variant-numeric: tabular-nums;
+}
+
+.dcc-sep { margin: 0 8px; color: #8a93ad; }
+
+/* One bar, two shares. Not a progress meter: the split is the finding. */
+.dcc-split {
+  display: flex;
+  height: 8px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: #eef1f6;
+}
+.dcc-split-backed { background: #0e6b3f; }
+.dcc-split-assumed { background: #f59e0b; }
+
+.dcc-basis {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #8a93ad;
+}
+
+/* The briefing. Prose, set at reading size, because this block is what gets
+   read aloud or pasted into a board pack. It is not a label/value list: that
+   shape made the summary read as the first rows of the detail rather than as
+   a standalone readout. */
+.dcc-briefing {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 16px 18px;
+  background: #f7fafc;
+  border-left: 3px solid #161f3b;
+}
+
+.dcc-briefing-label {
+  margin: 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: #8a93ad;
+}
+
+.dcc-briefing-lead {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #161f3b;
+}
+
+.dcc-briefing-body,
+.dcc-briefing-sensitivity {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #3f4a68;
+}
+
+.dcc-briefing-sensitivity { font-weight: 600; color: #161f3b; }
+.dcc-briefing-sensitivity.is-clear { color: #0e6b3f; }
+
+/* The one instruction in the whole report. Given the accent so a reader
+   skimming for "what do I do" lands on it. */
+.dcc-briefing-action {
+  margin: 3px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid #dfe6ef;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #161f3b;
+}
+
+.dcc-briefing-action-label {
+  display: block;
+  margin-bottom: 3px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #a0036c;
+}
+
+.dcc-briefing-also {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #8a93ad;
+}
+
+/* ── Layer 2: detail ──────────────────────────────────────────────────── */
+
+.dcc-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dcc-detail-head {
+  margin: 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #161f3b;
+}
+
+.dcc-criteria {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Severity shows as a left rule, so the register scans by seriousness without
+   the tier ever being named. */
+.dcc-criterion {
+  border: 1px solid #e6eaf2;
+  border-left-width: 3px;
+  border-left-color: #d6e9ef;
+  background: #fcfdfe;
+  padding: 13px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dcc-criterion-reversing { border-left-color: #dc2626; background: #fffcfc; }
+.dcc-criterion-material  { border-left-color: #f59e0b; background: #fffdfa; }
+.dcc-criterion-other     { border-left-color: #c9d4e4; }
+.dcc-criterion-none      { border-left-color: #d6e9ef; }
+
+.dcc-criterion-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dcc-criterion-name {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #161f3b;
+}
+
+.dcc-criterion-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: #8a93ad;
+}
+
+.dcc-criterion-swing { color: #5a6585; }
+
+.dcc-grade {
+  flex: 0 0 auto;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.dcc-grade-high    { color: #0e6b3f; background: #e3f5ea; border: 1px solid #10b981; }
+.dcc-grade-medium  { color: #0e6b3f; background: #eef7f1; border: 1px solid #a7d9bf; }
+.dcc-grade-low     { color: #8a5406; background: #fdf2dc; border: 1px solid #f59e0b; }
+.dcc-grade-assumed { color: #9f1f16; background: #fbe9e7; border: 1px solid #dc2626; }
+
+/* Three blocks, visually distinct on purpose. What Jaspen had, what is still
+   missing, and what the user should supply are three different things and were
+   previously collapsed into one sentence. */
+.dcc-block-label {
+  margin: 0 0 3px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.dcc-block-evidence    { color: #0e6b3f; }
+.dcc-block-basis       { color: #5a6585; }
+.dcc-block-unsupported { color: #8a5406; }
+.dcc-block-needed      { color: #1f5f9e; }
+
+.dcc-evidence-block,
+.dcc-basis-block,
+.dcc-unsupported-block,
+.dcc-needed-block {
+  padding-left: 10px;
+  border-left: 2px solid #e6eaf2;
+}
+/* Green, because this is the only block on the card whose contents were
+   verified rather than asserted. */
+.dcc-evidence-block { border-left-color: #10b981; }
+.dcc-unsupported-block { border-left-color: #f5d9a4; }
+.dcc-needed-block      { border-left-color: #9dc2e6; }
+
+.dcc-basis-source {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #161f3b;
+}
+
+.dcc-basis-text,
+.dcc-block-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #5a6585;
+}
+
+.dcc-basis-text.is-empty {
+  font-style: italic;
+  color: #8a93ad;
+}
+
+.dcc-criterion-consequence {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8a93ad;
+}
+
+/* The honesty note. Small, but it is what keeps "What Jaspen based this on"
+   from reading as an evidence trail the system does not keep. */
+.dcc-provenance-note {
+  margin: 2px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid #eef1f6;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8a93ad;
+}
+
+/* Verified evidence. The excerpt is quoted because it is the input's own
+   words, and the source line stays short: the exact locator lives on the
+   element as a data attribute for audit, not in the reading experience. */
+.dcc-evidence-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dcc-evidence-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dcc-evidence-excerpt {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #161f3b;
+}
+
+.dcc-evidence-excerpt::before { content: '\201C'; }
+.dcc-evidence-excerpt::after  { content: '\201D'; }
+
+.dcc-evidence-source {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: #0e6b3f;
+}
+
+/* ── Editing the narrative ───────────────────────────────────────────────
+   Wording is presentation. The score, grade and exposure are not reachable
+   from any control here, which is why an edit affordance can sit directly on
+   the assessment text without risking the finding underneath. */
+
+.dcc-basis-text.is-editable {
+  cursor: text;
+  border-radius: 3px;
+  margin: -2px -4px;
+  padding: 2px 4px;
+}
+.dcc-basis-text.is-editable:hover { background: #eef4fa; }
+
+/* Edited copy is marked rather than passed off as the system finding. */
+.dcc-edited-badge {
+  margin-left: 8px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a5406;
+  background: #fdf2dc;
+  border: 1px solid #f0c675;
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.dcc-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dcc-edit-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #161f3b;
+  padding: 8px 10px;
+  border: 1px solid #9dc2e6;
+  border-radius: 4px;
+  background: #fff;
+  resize: vertical;
+}
+.dcc-edit-input:focus { outline: 2px solid #a0036c; outline-offset: 1px; }
+
+.dcc-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dcc-edit-save,
+.dcc-edit-cancel,
+.dcc-restore {
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.dcc-edit-save {
+  background: #161f3b;
+  color: #fff;
+  border: 1px solid #161f3b;
+}
+.dcc-edit-cancel,
+.dcc-restore {
+  background: none;
+  border: 1px solid #d6e9ef;
+  color: #5a6585;
+}
+.dcc-edit-save:focus-visible,
+.dcc-edit-cancel:focus-visible,
+.dcc-restore:focus-visible { outline: 2px solid #a0036c; outline-offset: 2px; }
+
+/* The one thing a person needs to know before typing. */
+.dcc-edit-hint {
+  font-size: 11.5px;
+  color: #8a93ad;
+}
+
+.dcc-edited-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+
+.dcc-original summary {
+  font-size: 11.5px;
+  color: #1f5f9e;
+  cursor: pointer;
+}
+.dcc-original summary:focus-visible { outline: 2px solid #a0036c; outline-offset: 2px; }
+.dcc-original p {
+  margin: 5px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid #d6e9ef;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #5a6585;
+}
+
+/* The only editable text on the card, so it carries a real control rather
+   than relying on someone discovering that the paragraph is clickable. */
+.dcc-edit-open {
+  margin-left: 8px;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: #1f5f9e;
+  background: none;
+  border: 1px solid #c5dcf0;
+  border-radius: 3px;
+  padding: 1px 7px;
+  cursor: pointer;
+}
+.dcc-edit-open:hover { background: #eef4fa; border-color: #9dc2e6; }
+.dcc-edit-open:focus-visible { outline: 2px solid #a0036c; outline-offset: 2px; }

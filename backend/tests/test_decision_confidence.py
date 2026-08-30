@@ -1,0 +1,570 @@
+"""Decision Confidence and Assumption Exposure arithmetic.
+
+These are the numbers the product publishes as statements about a customer's
+decision, so the tests are written against the claims rather than the
+implementation: what the evidence split means, what makes an assumption
+material, and the boundary the reversal claim must not cross.
+"""
+
+from app.decision_confidence import (
+    CONFIDENCE_CAPS,
+    MATERIAL_SWING_POINTS,
+    SEVERITY_MATERIAL,
+    SEVERITY_NONE,
+    SEVERITY_OTHER,
+    SEVERITY_REVERSING,
+    criterion_entries,
+    decision_exposure,
+    evidence_profile,
+    evidence_ratio,
+    exposure_claims,
+)
+
+# app.routes.strategy binds the rate limiter at import time, so it cannot be
+# imported before create_app has run. conftest's autouse fixtures build the app
+# for every test, which makes an import inside the test body safe and matches
+# the convention in the rest of this suite.
+def _strategy():
+    from app.routes import strategy
+    return strategy
+
+
+def _dim(score, confidence, *, improve=None, label=None):
+    return {
+        "score": score,
+        "confidence": confidence,
+        "what_would_improve": improve,
+        "label": label,
+    }
+
+
+# --- the evidence split ------------------------------------------------------
+
+def test_evidence_ratio_is_weighted_not_averaged():
+    """A heavy assumed criterion must outweigh several light evidenced ones.
+
+    This is the whole reason the figure is publishable. An unweighted mean
+    would report the distribution of labels, not the state of the decision.
+    """
+    dimensions = {
+        "money": _dim(80, "assumed"),
+        "a": _dim(80, "high"),
+        "b": _dim(80, "high"),
+        "c": _dim(80, "high"),
+    }
+    weights = {"money": 0.70, "a": 0.10, "b": 0.10, "c": 0.10}
+
+    entries = criterion_entries(dimensions, weights)
+    # 30% of the weight is high-confidence, contributing fully. The 70%
+    # assumed criterion contributes nothing to the evidenced share.
+    assert evidence_ratio(entries) == 30
+
+    unweighted = {"money": 0.25, "a": 0.25, "b": 0.25, "c": 0.25}
+    assert evidence_ratio(criterion_entries(dimensions, unweighted)) == 75
+
+
+def test_split_always_sums_to_one_hundred():
+    profile = evidence_profile(
+        {"a": _dim(70, "medium"), "b": _dim(60, "low")},
+        {"a": 0.5, "b": 0.5},
+    )
+    assert profile["evidence_backed_pct"] + profile["assumption_dependent_pct"] == 100
+
+
+def test_unweighted_criteria_are_skipped_not_assumed_equal():
+    """A rubric that omits a dimension omitted it deliberately."""
+    entries = criterion_entries(
+        {"a": _dim(90, "high"), "ignored": _dim(10, "assumed")},
+        {"a": 1.0},
+    )
+    assert [e["key"] for e in entries] == ["a"]
+
+
+def test_profile_is_none_without_usable_dimensions():
+    assert evidence_profile({}, {"a": 1.0}) is None
+    assert evidence_profile({"a": _dim(50, "high")}, {}) is None
+
+
+# --- raw score preservation --------------------------------------------------
+
+def test_recompute_preserves_the_pre_cap_judgment():
+    payload = {"dimensions": {"fin": _dim(80, "assumed")}}
+    _strategy()._recompute_jaspen_score(payload, {"fin": 1.0})
+
+    dim = payload["dimensions"]["fin"]
+    assert dim["raw_score"] == 80, "the judgment must survive the cap"
+    assert dim["score"] == CONFIDENCE_CAPS["assumed"] == 45
+    assert payload["jaspen_score"] == 45
+
+
+def test_recompute_is_idempotent_and_does_not_eat_its_own_cap():
+    """Running twice must not record the cap as though it were a judgment.
+
+    This function runs more than once over the same payload. Reading "score"
+    on the second pass would set raw_score to 45, collapsing every exposure
+    figure derived from it to zero while looking perfectly healthy.
+    """
+    payload = {"dimensions": {"fin": _dim(80, "assumed")}}
+    _strategy()._recompute_jaspen_score(payload, {"fin": 1.0})
+    first = dict(payload["dimensions"]["fin"])
+
+    _strategy()._recompute_jaspen_score(payload, {"fin": 1.0})
+    second = payload["dimensions"]["fin"]
+
+    assert second["raw_score"] == first["raw_score"] == 80
+    assert second["score"] == first["score"] == 45
+    assert payload["evidence_profile"]["criteria"][0]["swing"] > 0
+
+
+def test_recompute_persists_the_weights_that_produced_the_score():
+    payload = {"dimensions": {"a": _dim(70, "high"), "b": _dim(70, "high")}}
+    _strategy()._recompute_jaspen_score(payload, {"a": 0.6, "b": 0.4, "absent": 0.9})
+
+    # Only weights whose dimension actually exists are persisted, so a
+    # downstream reader cannot normalise against a criterion that was
+    # never scored.
+    assert payload["scoring_weights"] == {"a": 0.6, "b": 0.4}
+
+
+# --- swing -------------------------------------------------------------------
+
+def test_swing_is_expressed_in_final_score_points():
+    """Swing must be comparable against the gap between two options."""
+    entries = criterion_entries(
+        {"fin": _dim(80, "assumed"), "ops": _dim(90, "high")},
+        {"fin": 0.5, "ops": 0.5},
+    )
+    fin = next(e for e in entries if e["key"] == "fin")
+    # Judged 80, capped at 45, carrying half the decision: 0.5 * 35 = 17.5
+    assert fin["swing"] == 17.5
+
+
+def test_evidenced_criteria_have_no_swing():
+    entries = criterion_entries({"ops": _dim(90, "high")}, {"ops": 1.0})
+    assert entries[0]["swing"] == 0
+    assert entries[0]["capped"] is False
+
+
+def test_missing_raw_score_yields_zero_swing_not_a_wrong_one():
+    """Scorecards written before raw_score existed must degrade honestly."""
+    legacy = {"fin": {"score": 45, "confidence": "assumed"}}
+    entries = criterion_entries(legacy, {"fin": 1.0})
+    assert entries[0]["swing"] == 0
+
+
+def test_register_is_ordered_by_power_to_change_the_answer():
+    profile = evidence_profile(
+        {
+            "small": _dim(90, "assumed"),
+            "big": _dim(95, "assumed"),
+            "solid": _dim(88, "high"),
+        },
+        {"small": 0.1, "big": 0.6, "solid": 0.3},
+    )
+    assert [e["key"] for e in profile["criteria"]] == ["big", "small", "solid"]
+
+
+# --- severity ----------------------------------------------------------------
+
+def test_material_when_the_swing_crosses_a_score_band():
+    # fin is judged 90 but assumed, so it contributes 45. With ops at 60 the
+    # option scores 52, which is Fair. Resolving fin adds 22.5 points and
+    # carries it to 74.5, which is Good. The decision gets described
+    # differently in the room, so the assumption is material.
+    profile = evidence_profile(
+        {"fin": _dim(90, "assumed"), "ops": _dim(60, "medium")},
+        {"fin": 0.5, "ops": 0.5},
+    )
+    assert profile["score"] == 52
+    fin = next(e for e in profile["criteria"] if e["key"] == "fin")
+    assert fin["swing"] == 22.5
+    assert fin["severity"] == SEVERITY_MATERIAL
+
+
+def test_material_on_swing_alone_without_crossing_a_band():
+    """Band crossing alone under-reports an option sitting mid-band.
+
+    fin carries a quarter of the decision and 8.75 points of exposure, but
+    the option starts at 68 and lands at 76.75, still inside Good. Judged on
+    band crossing alone this reads as immaterial, which is the wrong answer
+    for a quarter of a decision resting on an assumption.
+    """
+    profile = evidence_profile(
+        {
+            "market": _dim(88, "high"),
+            "fin": _dim(80, "assumed"),
+            "ops": _dim(74, "medium"),
+            "ev": _dim(60, "low"),
+        },
+        {"market": 0.30, "fin": 0.25, "ops": 0.25, "ev": 0.20},
+    )
+    assert profile["score"] == 68
+    fin = next(e for e in profile["criteria"] if e["key"] == "fin")
+    assert fin["swing"] == 8.75
+    assert fin["severity"] == SEVERITY_MATERIAL
+
+
+def test_material_threshold_boundary_is_inclusive():
+    # Judged 65 at low confidence caps to 60, so a criterion carrying the whole
+    # decision swings exactly the threshold. At the boundary it counts.
+    profile = evidence_profile({"only": _dim(65, "low")}, {"only": 1.0})
+    entry = profile["criteria"][0]
+    assert entry["swing"] == MATERIAL_SWING_POINTS
+    assert entry["severity"] == SEVERITY_MATERIAL
+
+
+def test_other_exposure_is_real_but_below_the_threshold():
+    """Sub-threshold exposure is still exposure, and is not called minor."""
+    profile = evidence_profile(
+        {"tiny": _dim(50, "assumed"), "ops": _dim(95, "high")},
+        {"tiny": 0.02, "ops": 0.98},
+    )
+    tiny = next(e for e in profile["criteria"] if e["key"] == "tiny")
+    assert 0 < tiny["swing"] < MATERIAL_SWING_POINTS
+    assert tiny["severity"] == SEVERITY_OTHER
+
+
+def test_zero_swing_never_claims_the_evidence_is_strong():
+    """A judgment landing on its own cap moves nothing, but is still weak.
+
+    Evidence quality judged 60 at low confidence caps to 60, so resolving it
+    would not move the score. That is an absence of score exposure, not a
+    presence of evidence, and it can still be worth resolving.
+    """
+    from app.decision_confidence import SEVERITY_LABELS
+
+    profile = evidence_profile(
+        {"ev": _dim(60, "low", improve="Attach the customer research")},
+        {"ev": 1.0},
+    )
+    entry = profile["criteria"][0]
+    assert entry["swing"] == 0
+    assert entry["severity"] == SEVERITY_NONE
+    assert entry["evidenced"] is False
+    assert entry["resolvable"] is True
+    assert SEVERITY_LABELS[SEVERITY_NONE] == "No score exposure"
+
+
+def test_evidenced_criteria_carry_no_exposure_tier_at_all():
+    """A criterion its evidence supports is not an assumption to list.
+
+    Separated from `other` so the workspace can drop these rows instead of
+    filing them under assumption exposure, which would overstate what the
+    decision actually depends on.
+    """
+    profile = evidence_profile(
+        {"ops": _dim(90, "high"), "fin": _dim(80, "assumed")},
+        {"ops": 0.5, "fin": 0.5},
+    )
+    ops = next(e for e in profile["criteria"] if e["key"] == "ops")
+    assert ops["severity"] == SEVERITY_NONE
+    assert profile["counts"]["other"] == 0
+
+
+def test_reversal_requires_a_peer_to_overtake():
+    """Without a leader to pass, reversal is not a claim we can make."""
+    dimensions = {"fin": _dim(100, "assumed"), "ops": _dim(60, "high")}
+    weights = {"fin": 0.5, "ops": 0.5}
+
+    alone = evidence_profile(dimensions, weights)
+    assert all(e["severity"] != SEVERITY_REVERSING for e in alone["criteria"])
+
+    trailing = evidence_profile(dimensions, weights, leader_score=60)
+    assert any(e["severity"] == SEVERITY_REVERSING for e in trailing["criteria"])
+
+
+def test_reversing_is_not_double_counted_as_material():
+    """Tiers are exclusive, so surfaces get one escalating count each."""
+    profile = evidence_profile(
+        {"fin": _dim(100, "assumed"), "ops": _dim(60, "high")},
+        {"fin": 0.5, "ops": 0.5},
+        leader_score=60,
+    )
+    counts = profile["counts"]
+    assert counts["reversing"] == 1
+    assert counts["material"] == 0
+    assert counts["material_or_higher"] == 1
+
+
+def test_the_leader_cannot_reverse_itself():
+    """Caps only lower a score, so gaining points never unseats the leader.
+
+    Guards the scope limit at the top of decision_confidence: this module
+    models upside only, and must never imply it evaluated the downside.
+    """
+    profile = evidence_profile(
+        {"fin": _dim(100, "assumed")},
+        {"fin": 1.0},
+        score=90,
+        leader_score=40,
+    )
+    assert all(e["severity"] != SEVERITY_REVERSING for e in profile["criteria"])
+
+
+# --- resolvability -----------------------------------------------------------
+
+def test_resolvable_requires_a_named_next_step():
+    profile = evidence_profile(
+        {
+            "actionable": _dim(80, "assumed", improve="Upload the signed term sheet"),
+            "stuck": _dim(80, "assumed"),
+        },
+        {"actionable": 0.5, "stuck": 0.5},
+    )
+    by_key = {e["key"]: e for e in profile["criteria"]}
+    assert by_key["actionable"]["resolvable"] is True
+    assert by_key["actionable"]["resolution"] == "Upload the signed term sheet"
+    assert by_key["stuck"]["resolvable"] is False
+
+
+def test_source_and_rationale_pass_through_unchanged():
+    """Both are recorded by scoring. Neither is derived or embellished here."""
+    entries = criterion_entries(
+        {"fin": {
+            "score": 80, "confidence": "medium", "label": "Financial viability",
+            "source": "Connector", "rationale": "Unit economics come from the connected ledger.",
+        }},
+        {"fin": 1.0},
+    )
+    assert entries[0]["source"] == "connector"
+    assert entries[0]["rationale"] == "Unit economics come from the connected ledger."
+
+
+def test_missing_source_and_rationale_are_none_not_invented():
+    """A card with no recorded reasoning must not grow one.
+
+    Guards the provenance limit: absent reasoning is reported as absent, never
+    filled with a plausible sentence.
+    """
+    entries = criterion_entries(
+        {"fin": {"score": 80, "confidence": "assumed"}}, {"fin": 1.0},
+    )
+    assert entries[0]["source"] is None
+    assert entries[0]["rationale"] is None
+
+
+def test_evidenced_criteria_are_never_listed_as_resolvable():
+    """Nothing to resolve on a criterion that already has strong evidence."""
+    profile = evidence_profile(
+        {"ops": _dim(90, "high", improve="Refresh the capacity model")},
+        {"ops": 1.0},
+    )
+    assert profile["criteria"][0]["resolvable"] is False
+
+
+# --- claims ------------------------------------------------------------------
+
+def test_a_clean_decision_says_so_rather_than_falling_silent():
+    """The healthy case is a finding, not an absence of one.
+
+    A well-evidenced option previously produced no claims at all, so the card
+    showed a ratio and then nothing. That reads as an incomplete analysis
+    rather than as good news, and it lands on the user who did the work.
+    """
+    profile = evidence_profile({"ops": _dim(90, "high")}, {"ops": 1.0})
+    claims = exposure_claims(profile)
+
+    assert [c["kind"] for c in claims] == ["clear"]
+    assert claims[0]["text"] == (
+        "No assumption currently carries enough weight to materially change the score."
+    )
+
+
+def test_the_clear_claim_says_only_what_was_computed():
+    """It speaks about score movement, never about the decision being sound."""
+    profile = evidence_profile({"ops": _dim(90, "high")}, {"ops": 1.0})
+    text = exposure_claims(profile)[0]["text"].lower()
+
+    assert "weight" in text and "change the score" in text
+    for overclaim in ("sound", "safe", "complete", "no risk", "confident"):
+        assert overclaim not in text
+
+
+def test_the_clear_claim_disappears_once_something_is_material():
+    profile = evidence_profile(
+        {"fin": _dim(90, "assumed"), "ops": _dim(60, "medium")},
+        {"fin": 0.5, "ops": 0.5},
+    )
+    kinds = [c["kind"] for c in exposure_claims(profile)]
+    assert "clear" not in kinds
+    assert "material" in kinds
+
+
+def test_sub_threshold_exposure_alone_still_counts_as_clear():
+    """"Other" exposure is real but not material, so the clear claim stands.
+
+    Saying nothing is material while a 0.3 point item exists is accurate: the
+    claim is about materiality, not about the absence of any exposure at all.
+    """
+    profile = evidence_profile(
+        {"tiny": _dim(50, "assumed"), "ops": _dim(95, "high")},
+        {"tiny": 0.02, "ops": 0.98},
+    )
+    assert profile["counts"]["other"] == 1
+    assert [c["kind"] for c in exposure_claims(profile)] == ["clear"]
+
+
+def test_claims_are_singular_and_plural_correctly():
+    profile = evidence_profile(
+        {"fin": _dim(90, "assumed", improve="Attach the model"), "ops": _dim(60, "medium")},
+        {"fin": 0.5, "ops": 0.5},
+    )
+    texts = [c["text"] for c in exposure_claims(profile)]
+    assert "1 assumption could materially change the score" in texts
+    assert "1 gap can be resolved before you commit" in texts
+
+
+# --- the executive summary ---------------------------------------------------
+
+def _summary(dimensions, weights, **kwargs):
+    from app.decision_confidence import decision_summary
+    return decision_summary(evidence_profile(dimensions, weights), **kwargs)
+
+
+def test_summary_answers_the_decision_not_the_criteria():
+    """It is a readout, not a condensed copy of the detail below it."""
+    summary = _summary(
+        {"fin": _dim(90, "assumed", improve="Attach the cost model"),
+         "ops": _dim(60, "medium")},
+        {"fin": 0.5, "ops": 0.5},
+        score=52, score_category="Fair",
+    )
+    assert summary["verdict"] == "Scores 52 of 100, rated Fair."
+    # The score and the evidence-backed share are different numbers, and the
+    # summary must never let them read as the same one. 52 is what the option
+    # scored; 38 is how much of the weighted decision stands on evidence.
+    assert "38% of the weighted decision rests on evidence" in summary["confidence"]
+    assert "The remaining 62% depends on assumptions" in summary["confidence"]
+    assert summary["next_step"].startswith("fin:") or "Attach the cost model" in summary["next_step"]
+    assert "materially change the score" in summary["sensitivity"]
+
+
+def test_summary_says_where_the_exposure_sits():
+    """45% assumption-dependence spread evenly is a different problem from all
+    of it sitting in one heavy criterion, and only the second is quickly fixed.
+    """
+    concentrated = _summary(
+        {"big": _dim(95, "assumed"), "ops": _dim(70, "medium")},
+        {"big": 0.7, "ops": 0.3},
+    )
+    assert "Most of that exposure sits in one criterion" in concentrated["concentration"]
+
+    spread = _summary(
+        {"a": _dim(90, "assumed"), "b": _dim(90, "assumed"), "c": _dim(90, "assumed")},
+        {"a": 0.34, "b": 0.33, "c": 0.33},
+    )
+    assert "spread across 3 criteria" in spread["concentration"]
+
+
+def test_summary_states_standing_only_when_there_are_peers():
+    dimensions = {"fin": _dim(90, "assumed"), "ops": _dim(60, "medium")}
+    weights = {"fin": 0.5, "ops": 0.5}
+
+    alone = _summary(dimensions, weights, option_name="Only option")
+    assert "standing" not in alone
+
+    trailing = _summary(
+        dimensions, weights, option_name="Option B",
+        exposure={"leader": {"name": "Option A"},
+                  "challengers": [{"name": "Option B", "gap": 8}]},
+    )
+    assert "Trails Option A by 8 points" in trailing["standing"]
+
+    leading = _summary(
+        dimensions, weights, option_name="Option A",
+        exposure={"leader": {"name": "Option A"}, "challengers": []},
+    )
+    assert "Currently leads" in leading["standing"]
+
+
+def test_summary_omits_fields_rather_than_filling_them():
+    """A decision with nothing to resolve has no next step, not a vague one."""
+    summary = _summary({"ops": _dim(90, "high")}, {"ops": 1.0})
+    assert "next_step" not in summary
+    assert "concentration" not in summary
+    assert "Closing the remaining gaps would strengthen the record" in summary["sensitivity"]
+
+
+def test_summary_is_none_without_a_profile():
+    from app.decision_confidence import decision_summary
+    assert decision_summary(None) is None
+
+
+# --- cross-option exposure ---------------------------------------------------
+
+def test_decision_exposure_names_the_challenger_and_its_assumption():
+    weights = {"fin": 0.5, "ops": 0.5}
+    cards = [
+        {
+            "project_name": "Option A",
+            "jaspen_score": 80,
+            "dimensions": {"fin": _dim(80, "high"), "ops": _dim(80, "high")},
+        },
+        {
+            "project_name": "Option B",
+            "jaspen_score": 72,
+            "dimensions": {
+                "fin": _dim(100, "assumed", improve="Attach the pricing model"),
+                "ops": _dim(99, "high"),
+            },
+        },
+    ]
+
+    result = decision_exposure(cards, weights)
+    assert result["leader"]["name"] == "Option A"
+    assert result["could_change_leader"] is True
+    challenger = result["challengers"][0]
+    assert challenger["name"] == "Option B"
+    assert challenger["gap"] == 8
+    assert challenger["assumptions"][0]["resolution"] == "Attach the pricing model"
+
+
+def test_decision_exposure_reports_no_challenger_when_gaps_are_unbridgeable():
+    weights = {"fin": 1.0}
+    cards = [
+        {"project_name": "A", "jaspen_score": 95, "dimensions": {"fin": _dim(95, "high")}},
+        {"project_name": "B", "jaspen_score": 45, "dimensions": {"fin": _dim(50, "assumed")}},
+    ]
+    result = decision_exposure(cards, weights)
+    assert result["could_change_leader"] is False
+    assert result["challengers"] == []
+
+
+def test_decision_exposure_is_none_without_cards():
+    assert decision_exposure([], {"a": 1.0}) is None
+    assert decision_exposure(None, {"a": 1.0}) is None
+
+
+# --- data_confidence ---------------------------------------------------------
+
+def test_conversation_length_no_longer_raises_confidence():
+    """Talking more is not evidence.
+
+    The removed grounding bonus added up to +8 points for a longer
+    conversation, which let reported confidence rise with no new evidence
+    behind it. That is the failure the caps exist to prevent, so it cannot
+    live inside the number that reports on them.
+    """
+    dimensions = {"a": _dim(70, "medium"), "b": _dim(70, "medium")}
+    assert _strategy()._data_confidence_from_dimensions(dimensions) == 70
+
+
+def test_data_confidence_is_weighted_when_weights_are_available():
+    dimensions = {"heavy": _dim(80, "assumed"), "light": _dim(80, "high")}
+    weighted = _strategy()._data_confidence_from_dimensions(dimensions, {"heavy": 0.9, "light": 0.1})
+    unweighted = _strategy()._data_confidence_from_dimensions(dimensions)
+
+    # assumed=30, high=92. Weighted 0.9/0.1 sits near 36; the mean sits at 61.
+    assert weighted == 36
+    assert unweighted == 61
+    assert weighted < unweighted
+
+
+def test_data_confidence_falls_back_to_the_mean_without_weights():
+    dimensions = {"a": _dim(70, "high"), "b": _dim(70, "assumed")}
+    assert _strategy()._data_confidence_from_dimensions(dimensions, {}) == 61
+
+
+def test_data_confidence_is_none_without_readable_dimensions():
+    assert _strategy()._data_confidence_from_dimensions({}) is None
+    assert _strategy()._data_confidence_from_dimensions({"a": {"score": 50}}) is None

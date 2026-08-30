@@ -20,7 +20,7 @@ const PLANS = [
     seats: '1 seat',
     allowance: '300 credits/month',
     projectEstimate: THINKING_POWER_PROJECT_ESTIMATES.free,
-    tagline: 'Test Jaspen on a real decision.',
+    tagline: 'Run a confidence check on something you are weighing.',
     cta: 'Sign up',
     href: '/?auth=1',
     featured: false,
@@ -33,7 +33,7 @@ const PLANS = [
     seats: '1 seat',
     allowance: '1,000 credits/month',
     projectEstimate: THINKING_POWER_PROJECT_ESTIMATES.starter,
-    tagline: 'Keep going with light personal use.',
+    tagline: 'For the decisions you work through on your own.',
     cta: 'Start free',
     href: '/?auth=1',
     featured: false,
@@ -46,7 +46,7 @@ const PLANS = [
     seats: '1 seat',
     allowance: '7,000 credits/month',
     projectEstimate: THINKING_POWER_PROJECT_ESTIMATES.essential,
-    tagline: 'When the decision has real consequences, Essential is built for you.',
+    tagline: 'For consequential decisions where confidence needs to be grounded in evidence.',
     cta: 'Start Free',
     href: '/?auth=1',
     featured: true,
@@ -59,7 +59,7 @@ const PLANS = [
     seats: '3 seats included',
     allowance: '29,000 shared credits/month',
     projectEstimate: THINKING_POWER_PROJECT_ESTIMATES.team,
-    tagline: 'Align your team, execute with clarity.',
+    tagline: 'One shared rubric, so competing options can finally be compared.',
     cta: 'Start free',
     href: '/?auth=1',
     featured: false,
@@ -72,7 +72,7 @@ const PLANS = [
     seats: '5 seats included',
     allowance: '80,000 shared credits/month',
     projectEstimate: THINKING_POWER_PROJECT_ESTIMATES.business,
-    tagline: 'Bring a team together around clearer decisions, stronger execution, and reasoning that does not disappear when work changes hands.',
+    tagline: 'Decision confidence across a team, with the reasoning preserved when work changes hands.',
     cta: 'Start with Business',
     href: '/?auth=1',
     featured: false,
@@ -123,25 +123,35 @@ const FEATURES = [
 
 const ADVISORY_CTA_NOTE = 'Engagements are accepted based on fit, capacity, and decision readiness.';
 
+// Both offers are framed by what the buyer receives, not by how long anyone
+// spends. The previous copy led with "one 90-minute virtual Intensive", which
+// invited a reader to divide the fee by the hours and price a calendar. That is
+// the wrong unit for an offer whose whole premise is the consequence of the
+// decision, so session logistics moved to `logistics` and render below the
+// deliverables.
+//
+// The impact bands are guidance, not gates. "Best suited for" is deliberate
+// wording: a smaller decision carrying unusual complexity or exposure is still
+// worth taking, and the published figure is positioning rather than a
+// qualification rule.
 const ADVISORY_OFFERINGS = [
   {
     key: 'executive_decision_intensive',
     title: 'Executive Decision Intensive',
     price: '$25,000',
     qualifier: 'Flat fee',
-    description: 'For an executive or leadership team working through one consequential strategic decision.',
+    lead: 'Decision assurance before a consequential commitment.',
+    band: 'Best suited for decisions carrying roughly $10M or more in financial, strategic, or operational consequence.',
+    description: 'An independent review of a decision your team has already developed. Jaspen separates what is evidenced from what is assumed, and we pressure test what the recommendation is resting on, before resources are committed. Confirming the direction is a legitimate result. So is finding that it does not hold.',
+    includedLabel: 'You receive',
     included: [
-      'Jaspen access and AI capacity included during the engagement',
-      'One 90-minute virtual Executive Decision Intensive',
-      'Session facilitated by Jaspen’s Founder or a designated Customer Success Partner',
-      'Tailored preparation and information guidance before the session',
-      'Decision framing and prompt development',
-      'Assumption and evidence challenge',
-      'Risk, decision criteria, and tradeoff guidance',
-      'Interpretation of Jaspen analysis and recommendations',
-      'Executive-ready decision artifacts generated through Jaspen',
+      'An Evidence and Assumption Profile of the decision, showing what share of it is evidenced and what share is assumed',
+      'A ranked assumption register, each entry carrying its power to change the answer',
+      'The evidence that would resolve the top assumptions, and what obtaining it would take',
+      'A trade-off analysis across the options under consideration, on one shared rubric',
+      'A Decision Record your organization keeps, which updates as assumptions resolve',
     ],
-    delivery: 'This is a complete, structured decision engagement. Preparation, decision framing, evidence and assumption challenge, guided analysis, and executive-ready outputs are brought together to evaluate one consequential decision end-to-end.',
+    logistics: 'Delivered as one 90-minute virtual session facilitated by Jaspen’s Founder or a designated Customer Success Partner, with tailored preparation guidance beforehand. Jaspen access and AI capacity are included throughout the engagement.',
     engagement: 'executive_decision_intensive',
   },
   {
@@ -149,41 +159,49 @@ const ADVISORY_OFFERINGS = [
     title: 'Strategic Advisor Partnership',
     price: '$100,000',
     qualifier: 'Flat fee',
-    description: 'For organizations evaluating multiple high-value opportunities and deciding where leadership attention, capital, and organizational capacity can create the greatest value.',
-    includedIntro: 'Includes Jaspen access and AI capacity during the engagement, plus five Executive Decision Intensives with the full decision advisory process applied to each, along with:',
+    lead: 'Decision assurance across a planning or capital cycle.',
+    band: 'Best suited for multiple interconnected decisions, or a full planning or capital cycle, carrying roughly $50M or more in aggregate consequence.',
+    // The load-bearing sentence. Without it this reads as a volume discount on
+    // the Intensive, and a buyer comparing four Intensives against it has no
+    // reason to prefer this. Everything listed below is a property of the set
+    // of decisions, which is why a single engagement structurally cannot
+    // deliver any of it.
+    description: 'Five reviews is not the product. The product is what only appears across decisions: where one assumption underpins several initiatives, how much of your committed capital is evidenced rather than assumed, and whether your organization’s confidence is running ahead of its evidence.',
+    includedLabel: 'You receive',
+    includedIntro: 'Everything in the Intensive, applied across the cycle, plus:',
     included: [
-      'Ongoing strategic context carried across engagements',
-      'Cross-decision dependency and tradeoff analysis',
-      'Financial opportunity prioritization',
-      'Portfolio and initiative prioritization',
-      'Comparison of competing uses of capital and organizational capacity',
-      'Identification of where leadership attention may create the greatest value',
-      'Portfolio-level executive synthesis',
-      'One 90-minute Executive Portfolio Review',
+      'Shared assumptions traced across initiatives, so one failure is visible everywhere it lands',
+      'Aggregate assumption exposure across the portfolio, not decision by decision',
+      'Where confidence is running ahead of the evidence supporting it',
+      'One rubric applied across the cycle, so competing submissions are genuinely comparable',
+      'Sequencing guidance on what needs resolving before the organization commits further',
+      'Decision Records retained across the cycle, with outcomes tracked as they arrive',
     ],
-    delivery: 'Sessions are facilitated by Jaspen’s Founder or a designated Customer Success Partner, with strategic context carried forward to help leadership compare consequential decisions and determine where to place its bets across the portfolio.',
+    logistics: 'Delivered across five 90-minute virtual sessions and a portfolio review, facilitated by Jaspen’s Founder or a designated Customer Success Partner, with strategic context carried forward between them. Jaspen access and AI capacity are included throughout the engagement.',
     engagement: 'strategic_advisor_partnership',
     featured: true,
   },
 ];
 
+// Rows compare what the two engagements produce, not how they are staffed or
+// how long they run. The removed "Session duration" and "Executive Decision
+// Intensives: 1 / 5" rows were the load-bearing problem: a table that counts
+// sessions teaches a reader to divide the fee by the hours, which is the one
+// comparison neither offer should invite. Logistics live on the cards, below
+// the deliverables.
 const ADVISORY_COMPARISON = [
   { label: 'Investment',                      intensive: '$25,000 flat fee',                                              partnership: '$100,000 flat fee' },
-  { label: 'Best for',                        intensive: 'One consequential strategic decision',                          partnership: 'Multiple high-value decisions or priority areas' },
-  { label: 'Executive Decision Intensives',   intensive: '1',                                                             partnership: '5' },
-  { label: 'Session duration',                intensive: '90 minutes',                                                    partnership: '90 minutes each' },
-  { label: 'Delivery',                        intensive: 'Virtual',                                                       partnership: 'Virtual' },
+  { label: 'Best suited for',                 intensive: 'One consequential commitment, roughly $10M+ in consequence',    partnership: 'A planning or capital cycle, roughly $50M+ in aggregate' },
+  { label: 'Decision scope',                  intensive: 'One decision and the options under it',                         partnership: 'Every decision in the cycle, and the relationships between them' },
+  { label: 'Evidence and assumption profile', intensive: 'For the decision',                                              partnership: 'For each decision, and aggregated across the portfolio' },
+  { label: 'Assumption register',             intensive: 'Ranked by power to change the answer',                          partnership: 'Ranked, plus assumptions traced where they recur across initiatives' },
+  { label: 'Evidence roadmap',                intensive: 'What would resolve the top assumptions',                        partnership: 'What to resolve, and in what order, before committing further' },
+  { label: 'Recommendation sensitivity',      intensive: 'What could change the ranking of these options',                partnership: 'What could change the ranking within and across decisions' },
+  { label: 'Confidence calibration',          intensive: 'Not available from a single decision',                          partnership: 'Whether organizational confidence is running ahead of the evidence' },
+  { label: 'Shared rubric',                   intensive: 'Applied to this decision',                                      partnership: 'Applied across the cycle, so submissions are comparable' },
+  { label: 'Decision Records retained',       intensive: 'One, with outcomes tracked as they arrive',                     partnership: 'Across the cycle, with outcomes tracked as they arrive' },
   { label: 'AI-powered usage credits',        intensive: `300,000 (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})`,        partnership: `300,000 (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})` },
-  { label: 'Tailored preparation guidance',   intensive: 'Included',                                                      partnership: 'Included before each intensive' },
-  { label: 'Decision framing',                intensive: 'Included',                                                      partnership: 'Included' },
-  { label: 'Prompt development',              intensive: 'Included',                                                      partnership: 'Included' },
-  { label: 'Assumption challenge',            intensive: 'Included',                                                      partnership: 'Included' },
-  { label: 'Evidence and tradeoff guidance',  intensive: 'Included',                                                      partnership: 'Included' },
-  { label: 'Financial opportunity prioritization', intensive: 'Applied to the defined decision when relevant',            partnership: 'Included across the agreed decisions or priorities' },
-  { label: 'Portfolio prioritization',        intensive: 'Not included unless the defined decision is a portfolio decision', partnership: 'Included' },
-  { label: 'Executive-ready Jaspen artifacts', intensive: 'Included',                                                     partnership: 'Included' },
   { label: 'Facilitator',                     intensive: 'Founder or designated Customer Success Partner',                partnership: 'Founder or designated Customer Success Partner' },
-  { label: 'Direct checkout',                 intensive: 'No',                                                            partnership: 'No' },
   { label: 'Next step',                       intensive: 'Request a Consultation',                                        partnership: 'Request a Consultation' },
 ];
 
@@ -313,18 +331,31 @@ export default function PricingVariantB({ onOpenModal }) {
                 key={offering.key}
                 className={`pvb-card pvb-advisory-card${offering.featured ? ' is-featured' : ''}`}
               >
+                {/* Function first, then who it suits, then price. A reader who
+                    meets the fee before the function prices a calendar; one who
+                    meets the function first prices a decision. */}
                 <p className="pvb-card-name">{offering.title}</p>
+                <p className="pvb-advisory-function">{offering.lead}</p>
+                <p className="pvb-advisory-band">{offering.band}</p>
                 <p className="pvb-advisory-price">
                   <strong>{offering.price}</strong>
                   <span className="pvb-advisory-qualifier">{offering.qualifier}</span>
                 </p>
                 <p className="pvb-advisory-desc">{offering.description}</p>
-                <p className="pvb-advisory-included-label">Included</p>
-                {offering.includedIntro && <p className="pvb-advisory-desc">{offering.includedIntro}</p>}
+                <p className="pvb-advisory-included-label">{offering.includedLabel}</p>
+                {/* Sentence-case on purpose. The label style above is built for
+                    one or two words, and a full sentence set in uppercase is
+                    slower to read at exactly the point the reader is deciding. */}
+                {offering.includedIntro && (
+                  <p className="pvb-advisory-desc">{offering.includedIntro}</p>
+                )}
                 <ul className="pvb-advisory-list">
                   {offering.included.map(item => <li key={item}>{item}</li>)}
                 </ul>
-                <p className="pvb-advisory-delivery">{offering.delivery}</p>
+                {/* Logistics last, and visually quiet. How it is delivered is
+                    not what is being bought. */}
+                <p className="pvb-advisory-logistics-label">How it is delivered</p>
+                <p className="pvb-advisory-delivery">{offering.logistics}</p>
                 <button
                   type="button"
                   className={`pvb-card-cta jaspen-btn ${offering.featured ? 'jaspen-btn-primary' : 'jaspen-btn-outline'}`}

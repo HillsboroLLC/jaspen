@@ -12,15 +12,15 @@ export default function FAQSection() {
     {
       q: 'What is Jaspen, exactly?',
       a: <>
-        <p>Jaspen is a decision-intelligence tool. You paste your notes, emails, or data; it interviews you about the decision, scores your options against criteria you own, and turns the result into an execution plan.</p>
-        <p>The AI judges the evidence, but code does the math. That means the score is reproducible and every part of it is inspectable.</p>
+        <p>Jaspen is a decision confidence system. Bring a decision, a set of options, or a plan you are preparing to commit to. Jaspen separates evidenced inputs from assumed ones, tells you how much of the decision rests on each, identifies which assumptions could change the recommendation, and shows what evidence would resolve them.</p>
+        <p>The record of what you decided, and what happened afterwards, stays yours.</p>
       </>
     },
     {
       q: 'How is this different from ChatGPT, Claude, or Gemini?',
       a: <>
-        <p>A raw AI chat writes the numbers itself, so they shift when you re-ask or reword. Jaspen caps confidence to the evidence, computes every score in code, and shows the breakdown behind it. Same inputs, same answer, every time.</p>
-        <p>It is built to produce a decision you can defend, not a confident guess.</p>
+        <p>General AI will tell you your plan is strong. It will not tell you what your plan is resting on, because it has no way to grade the evidence behind an input. Assumed numbers and evidenced numbers look identical to it.</p>
+        <p>Jaspen grades every input, caps what thin evidence can contribute, computes the score in code rather than writing it, and shows the breakdown. Same inputs, same answer, every time.</p>
       </>
     },
     {

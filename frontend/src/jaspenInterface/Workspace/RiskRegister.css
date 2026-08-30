@@ -1,0 +1,219 @@
+/* Risk register.
+   App palette: navy #161f3b, slate #5a6585, muted #8a93ad, rose #a0036c,
+   line #d6e9ef, with the shared semantic set. Solid colours only. */
+
+.rr {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* The basis line. Small, but it is what stops "If mitigated: Low" being read
+   as "this risk is handled". */
+.rr-basis {
+  margin: 0 0 12px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #8a93ad;
+}
+
+.rr-empty {
+  margin: 0;
+  font-size: 13px;
+  font-style: italic;
+  color: #8a93ad;
+}
+
+.rr-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 11px;
+  border-left: 2px solid #d6e9ef;
+}
+
+.rr-risk {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #161f3b;
+}
+
+.rr-edited {
+  margin-left: 8px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a5406;
+  background: #fdf2dc;
+  border: 1px solid #f0c675;
+  border-radius: 3px;
+  padding: 1px 5px;
+  vertical-align: middle;
+}
+
+/* The position: likelihood, exposure, and what is left after mitigation.
+   Read as a row so two risks can be compared at a glance. */
+.rr-levels {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rr-level,
+.rr-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 8px;
+  border-radius: 3px;
+  border: 1px solid #e4e9f0;
+  background: #fbfcfe;
+  color: #161f3b;
+}
+
+.rr-level-label,
+.rr-metric-label {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a93ad;
+}
+
+/* Severity reads from the chip itself, so a High residual is visible without
+   reading the word. */
+.rr-level-high   { background: #fbe9e7; border-color: #dc2626; color: #9f1f16; }
+.rr-level-medium { background: #fdf2dc; border-color: #f59e0b; color: #8a5406; }
+.rr-level-low    { background: #e3f5ea; border-color: #10b981; color: #0e6b3f; }
+
+.rr-level-high .rr-level-label   { color: #9f1f16; }
+.rr-level-medium .rr-level-label { color: #8a5406; }
+.rr-level-low .rr-level-label    { color: #0e6b3f; }
+
+.rr-cat {
+  margin-left: 4px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8a93ad;
+}
+
+.rr-mitigation {
+  padding-left: 10px;
+  border-left: 2px solid #cfe3d6;
+}
+
+.rr-block-label {
+  margin: 0 0 3px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #0e6b3f;
+}
+
+.rr-block-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #5a6585;
+}
+
+/* What mitigation costs belongs next to the mitigation, not in a cost column
+   somewhere else: the trade is between this action and this price. */
+.rr-cost {
+  margin-left: 8px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: #0e6b3f;
+  white-space: nowrap;
+}
+
+.rr-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.rr-edit,
+.rr-restore,
+.rr-save,
+.rr-cancel {
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.rr-edit,
+.rr-restore,
+.rr-cancel {
+  background: none;
+  border: 1px solid #c5dcf0;
+  color: #1f5f9e;
+}
+
+.rr-save {
+  background: #161f3b;
+  border: 1px solid #161f3b;
+  color: #fff;
+}
+
+.rr-edit:hover,
+.rr-restore:hover,
+.rr-cancel:hover { background: #eef4fa; }
+
+.rr-edit:focus-visible,
+.rr-restore:focus-visible,
+.rr-save:focus-visible,
+.rr-cancel:focus-visible { outline: 2px solid #a0036c; outline-offset: 2px; }
+
+.rr-hint {
+  font-size: 11px;
+  color: #8a93ad;
+}
+
+.rr-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #161f3b;
+  padding: 7px 9px;
+  border: 1px solid #9dc2e6;
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.rr-input:focus { outline: 2px solid #a0036c; outline-offset: 1px; }
+
+.rr-original summary {
+  font-size: 11.5px;
+  color: #1f5f9e;
+  cursor: pointer;
+}
+
+.rr-original p {
+  margin: 5px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid #d6e9ef;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #5a6585;
+}
