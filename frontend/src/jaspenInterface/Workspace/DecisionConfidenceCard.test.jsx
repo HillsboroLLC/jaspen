@@ -127,7 +127,7 @@ describe('DecisionConfidenceCard', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(screen.getByText("Jaspen's assessment")).toBeInTheDocument();
       expect(screen.getByText('Still unsupported')).toBeInTheDocument();
-      expect(screen.getByText('Evidence needed')).toBeInTheDocument();
+      expect(screen.getByText('How to improve this')).toBeInTheDocument();
     });
 
     it('reports the weight, contribution and exposure for a criterion', () => {
@@ -363,5 +363,28 @@ describe('DecisionConfidenceCard', () => {
   it('renders nothing without a profile', () => {
     const { container } = render(<DecisionConfidenceCard profile={null} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  describe('the improvement action', () => {
+    // A criterion that shows an exposure figure with no way to act on it is a
+    // dead end: the reader is told the score could move and not told how.
+    it('falls back to an honest generic when scoring named no action', () => {
+      render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: null, confidence: 'assumed' })] })} />);
+      expect(screen.getByText('How to improve this')).toBeInTheDocument();
+      expect(
+        screen.getByText(/Nothing verifiable supports this yet/),
+      ).toBeInTheDocument();
+    });
+
+    it("prefers scoring's own suggestion over the fallback", () => {
+      render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: 'Connect NetSuite', confidence: 'assumed' })] })} />);
+      expect(screen.getByText('Connect NetSuite')).toBeInTheDocument();
+      expect(screen.queryByText(/Nothing verifiable supports this yet/)).toBeNull();
+    });
+
+    it('offers nothing to improve on a fully evidenced criterion', () => {
+      render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: null, confidence: 'high' })] })} />);
+      expect(screen.queryByText('How to improve this')).toBeNull();
+    });
   });
 });
