@@ -5075,6 +5075,40 @@ def _trigger_post_mutation_sync(user_id, thread_id, project_wbs):
     return {"status": "error", "connector_id": connector_id, "reason": reason}
 
 
+
+def _thread_user_corpus(user_id, thread_id, *, max_chars=20000):
+    """The user's own words in this thread, newest-last, for evidence capture.
+
+    Only `user` turns are included. Quoting the assistant back would let the
+    model cite its own prose as evidence for its own score, which is exactly
+    the circularity the verification step exists to prevent.
+    """
+    try:
+        sessions = load_user_sessions(str(user_id)) or {}
+        session = sessions.get(thread_id)
+        if not isinstance(session, dict):
+            return ""
+        turns = session.get("chat_history")
+        if not isinstance(turns, list):
+            return ""
+        parts = []
+        for turn in turns:
+            if not isinstance(turn, dict):
+                continue
+            if str(turn.get("role") or "").strip().lower() != "user":
+                continue
+            text = str(turn.get("content") or "").strip()
+            if text:
+                parts.append(text)
+        corpus = "\n\n".join(parts)
+        # Keep the most recent context when a thread runs long: the latest turns
+        # are the ones the current score is about.
+        return corpus[-max_chars:] if len(corpus) > max_chars else corpus
+    except Exception:
+        # Evidence capture is additive; never cost a scorecard over it.
+        return ""
+
+
 def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None):
     if not user:
         return _tool_error("User context missing.")
@@ -5403,6 +5437,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 strategy_objective=strategy_objective,
                 rubric=rubric,
                 return_usage=True,
+                # The user's own turns, not the summary this tool wrote. Without
+                # this the scorer only ever saw `idea_description` and every
+                # evidence quote was checked against a paraphrase, so all of
+                # them were discarded as unverifiable.
+                evidence_corpus=_thread_user_corpus(user_id, thread_id),
             )
         except Exception as generation_error:
             _release_reserved_credits(user, reserved_credits)
