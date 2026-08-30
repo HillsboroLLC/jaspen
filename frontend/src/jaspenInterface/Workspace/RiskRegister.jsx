@@ -31,10 +31,16 @@ const IMPACT_CATEGORY_LABELS = {
   execution_readiness: 'Execution',
 };
 
-// Money is shown at the precision a decision uses. Nobody allocates against
+// Money at the precision a decision uses. Nobody allocates against
 // $2,100,000.00, and the extra digits cost scanning speed.
+//
+// Missing is NOT zero, and an earlier version rendered both as "No cost".
+// Number('') is 0 in JavaScript, so an unrecorded mitigation cost claimed the
+// mitigation was free. A cost nobody has estimated and a cost of nothing are
+// different findings, and the free one is the rarer and more interesting.
 function money(value) {
-  const amount = Number(String(value ?? '').replace(/[^0-9.-]/g, ''));
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const amount = Number(String(value).replace(/[^0-9.-]/g, ''));
   if (!Number.isFinite(amount)) return null;
   if (amount === 0) return 'No cost';
   if (Math.abs(amount) >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}M`;
@@ -99,7 +105,7 @@ function RiskRow({ risk, editable, onEdit, onRestore }) {
             )}
           </span>
         )}
-        <Level value={risk.residual_risk} label="After mitigation" />
+        <Level value={risk.residual_risk} label="If mitigated" />
       </div>
 
       {(risk.mitigation || draft) && (
@@ -171,18 +177,33 @@ export default function RiskRegister({ risks, editable = false, onEdit, onRestor
     return <p className="rr-empty">No risks recorded for this decision.</p>;
   }
 
-  // Ordered by what survives mitigation, then by raw exposure. A register
-  // sorted by how alarming a risk sounds before mitigation puts the ones
-  // already handled at the top, which is the opposite of useful.
+  // Ordered by UNMITIGATED exposure: impact first, then likelihood.
+  //
+  // Residual was the primary sort and that was wrong. Nothing in the system
+  // records whether a mitigation has actually been carried out: scoring asks
+  // for a residual level and never defines it, and there is no mitigation
+  // status field anywhere. So residual is at best the expected level IF the
+  // plan is executed, and sorting by it silently demoted a $2.1M risk on the
+  // strength of a plan nobody has confirmed was started.
+  //
+  // Impact and likelihood are what is actually known, so they order the
+  // register. Residual is still shown, labelled as conditional.
   const ordered = [...items].sort((a, b) => {
-    const residual = (LEVEL_ORDER[b.residual_risk] || 0) - (LEVEL_ORDER[a.residual_risk] || 0);
-    if (residual) return residual;
     const impact = (Number(b.impact_numeric) || 0) - (Number(a.impact_numeric) || 0);
     if (impact) return impact;
-    return (LEVEL_ORDER[b.probability] || 0) - (LEVEL_ORDER[a.probability] || 0);
+    const likelihood = (LEVEL_ORDER[b.probability] || 0) - (LEVEL_ORDER[a.probability] || 0);
+    if (likelihood) return likelihood;
+    return (LEVEL_ORDER[b.residual_risk] || 0) - (LEVEL_ORDER[a.residual_risk] || 0);
   });
 
   return (
+    <>
+      {/* Says what the order means and what the residual level assumes.
+          Without it a reader takes "If mitigated: Low" for "this is handled". */}
+      <p className="rr-basis">
+        Ordered by unmitigated exposure. Residual assumes the mitigation is
+        carried out; Jaspen does not track whether it has been.
+      </p>
     <ul className="rr">
       {ordered.map((risk, index) => (
         <RiskRow
@@ -194,5 +215,6 @@ export default function RiskRegister({ risks, editable = false, onEdit, onRestor
         />
       ))}
     </ul>
+    </>
   );
 }

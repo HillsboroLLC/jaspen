@@ -1077,9 +1077,9 @@ def _pptx_bytes(scorecard, *, org=None, peers=None):
         risks = report.get("risks") or []
         if risks:
             slide = prs.slides.add_slide(prs.slide_layouts[6])
-            add_header(slide, "Risk register", "Ordered by what survives mitigation")
+            add_header(slide, "Risk register", "Ordered by unmitigated exposure")
             add_text(slide, "RISK", 0.65, 1.75, 8.0, 0.3, size=10, color=gray, bold=True)
-            add_text(slide, "AFTER MITIGATION", 8.9, 1.75, 2.0, 0.3, size=10, color=gray, bold=True)
+            add_text(slide, "IF MITIGATED", 8.9, 1.75, 2.0, 0.3, size=10, color=gray, bold=True)
             add_text(slide, "EXPOSURE", 11.1, 1.75, 1.6, 0.3, size=10, color=gray, bold=True)
             add_rule(slide, 0.65, 2.05, 12.0)
 
@@ -1099,9 +1099,12 @@ def _pptx_bytes(scorecard, *, org=None, peers=None):
                 add_rule(slide, 0.65, top + 0.9, 12.0, color=RGBColor(0xEF, 0xF1, 0xF6))
                 top += 1.05
 
+            footnotes = ["Residual assumes the mitigation is carried out; "
+                         "Jaspen does not track whether it has been."]
             if len(risks) > 5:
-                add_text(slide, f"{len(risks) - 5} further risks are in the full report.",
-                         0.65, top + 0.1, 12.0, 0.3, size=11, color=gray)
+                footnotes.append(f"{len(risks) - 5} further risks are in the full report.")
+            add_text(slide, "  ".join(footnotes), 0.65, top + 0.1, 12.0, 0.4,
+                     size=11, color=gray)
 
         # The provenance limit travels with the deck. A slide that showed
         # Jaspen's reasoning without it would read as a source citation to a

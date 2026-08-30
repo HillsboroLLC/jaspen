@@ -180,6 +180,17 @@ IMPACT_CATEGORY_LABELS = {
 _LEVEL_ORDER = {"High": 3, "Medium": 2, "Low": 1}
 
 
+
+def _amount(value):
+    """Numeric magnitude for ordering, or None when nothing was recorded."""
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return float(str(value).replace("$", "").replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+
+
 def _money(value):
     """Money at the precision a decision uses, or None."""
     try:
@@ -195,12 +206,24 @@ def _money(value):
     return f"${amount:.0f}"
 
 
-def build_risk_register(scorecard):
-    """The risks, ordered by what survives mitigation.
+RISK_ORDER_BASIS = (
+    "Ordered by unmitigated exposure. Residual assumes the mitigation is "
+    "carried out; Jaspen does not track whether it has been."
+)
 
-    Sorting by raw exposure would put the already-handled risks at the top,
-    which is the opposite of useful: the decision turns on what is left after
-    the mitigation, not on what the risk looked like before anyone acted.
+
+def build_risk_register(scorecard):
+    """The risks, ordered by UNMITIGATED exposure.
+
+    Residual was the primary sort and that was wrong. Nothing in the system
+    records whether a mitigation has been carried out: the scoring prompt asks
+    for a residual level without defining it, and no mitigation status field
+    exists anywhere. Residual is therefore the expected level IF the plan is
+    executed, and ordering by it silently demoted large risks on the strength
+    of plans nobody had confirmed were started.
+
+    Impact and likelihood are what is actually known, so they order the
+    register. Residual travels with each row, labelled as conditional.
     """
     risks = scorecard.get("top_risks") if isinstance(scorecard, dict) else None
     if not isinstance(risks, list):
@@ -219,6 +242,15 @@ def build_risk_register(scorecard):
             "risk": _text(item.get("risk")),
             "probability": item.get("probability"),
             "impact": _money(item.get("impact_dollars") or item.get("impact")),
+            # Derived here rather than read from the normalizer, which is the
+            # only place impact_numeric is set. A scorecard that has not been
+            # through it would otherwise sort every risk as zero exposure and
+            # the ordering would quietly stop meaning anything.
+            "impact_numeric": _amount(
+                item.get("impact_numeric")
+                if item.get("impact_numeric") is not None
+                else (item.get("impact_dollars") or item.get("impact"))
+            ),
             "impact_category": IMPACT_CATEGORY_LABELS.get(item.get("impact_category")),
             "mitigation": _text(item.get("mitigation")) or None,
             "mitigation_cost": _money(item.get("mitigation_cost")),
@@ -229,7 +261,8 @@ def build_risk_register(scorecard):
         })
 
     rows.sort(key=lambda r: (
-        -_LEVEL_ORDER.get(r.get("residual"), 0),
+        -(r.get("impact_numeric") or 0),
         -_LEVEL_ORDER.get(r.get("probability"), 0),
+        -_LEVEL_ORDER.get(r.get("residual"), 0),
     ))
     return rows
