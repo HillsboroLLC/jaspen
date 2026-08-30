@@ -181,14 +181,34 @@ def _with_risks(risks):
     return build_risk_register({"top_risks": risks})
 
 
-def test_the_register_orders_by_what_survives_mitigation():
-    """Sorting by raw exposure puts already-handled risks first, which is the
-    opposite of useful: the decision turns on what is left after acting."""
+def test_a_proposed_mitigation_never_demotes_a_large_risk():
+    """Nothing records whether a mitigation was carried out.
+
+    Residual is the expected level IF the plan is executed, so ordering by it
+    would demote a $5M risk on the strength of a plan nobody has confirmed was
+    started. Impact and likelihood are what is actually known.
+    """
     rows = _with_risks([
-        {**RISK, "risk": "Handled", "impact_dollars": 5000000, "residual_risk": "Low"},
-        {**RISK, "risk": "Live", "impact_dollars": 100000, "residual_risk": "High"},
+        {**RISK, "risk": "Small but live", "impact_dollars": 100000, "residual_risk": "High"},
+        {**RISK, "risk": "Large with a plan", "impact_dollars": 5000000, "residual_risk": "Low"},
     ])
-    assert [r["risk"] for r in rows] == ["Live", "Handled"]
+    assert [r["risk"] for r in rows] == ["Large with a plan", "Small but live"]
+
+
+def test_likelihood_breaks_ties_on_equal_impact():
+    rows = _with_risks([
+        {**RISK, "risk": "Unlikely", "impact_dollars": 500000, "probability": "Low"},
+        {**RISK, "risk": "Likely", "impact_dollars": 500000, "probability": "High"},
+    ])
+    assert [r["risk"] for r in rows] == ["Likely", "Unlikely"]
+
+
+def test_an_unrecorded_mitigation_cost_is_not_reported_as_free():
+    """Missing and zero are different findings, and free is the rarer one."""
+    unknown = _with_risks([{**RISK, "mitigation_cost": None}])
+    assert unknown[0]["mitigation_cost"] is None
+    free = _with_risks([{**RISK, "mitigation_cost": 0}])
+    assert free[0]["mitigation_cost"] == "No cost"
 
 
 def test_money_reads_at_decision_precision():
@@ -207,8 +227,16 @@ def test_every_captured_field_reaches_the_email():
     from app.decision_report_email import render_risks_html
     html = render_risks_html({"risks": _with_risks([RISK])})
     for fragment in ("Likelihood", "Medium", "Impact", "$2.1M", "Operational",
-                     "After mitigation", "Low", "Mitigation", "$180K to mitigate"):
+                     "If mitigated", "Low", "Mitigation", "$180K to mitigate"):
         assert fragment in html, fragment
+
+
+def test_the_email_says_what_the_residual_level_assumes():
+    """Without it, "If mitigated: Low" reads as "this risk is handled"."""
+    from app.decision_report_email import render_risks_html, render_risks_text
+    rows = _with_risks([RISK])
+    assert "does not track whether it has been" in render_risks_html({"risks": rows})
+    assert "does not track whether it has been" in render_risks_text({"risks": rows})
 
 
 def test_edited_risk_wording_is_marked_in_the_email():

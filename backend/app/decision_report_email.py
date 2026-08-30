@@ -21,6 +21,8 @@
 
 import html
 
+from .decision_report import RISK_ORDER_BASIS
+
 NAVY = "#161f3b"
 SLATE = "#5a6585"
 MUTED = "#8a93ad"
@@ -306,7 +308,7 @@ def _risk_html(risk):
         f'<p style="margin:0 0 6px;font:600 14px/1.45 Arial,sans-serif;color:{NAVY}">'
         f'{_esc(risk.get("risk") or "Untitled risk")}{edited}</p>'
         f'<div style="margin:0 0 2px">{chip("Likelihood", risk.get("probability"))}{impact}'
-        f'{chip("After mitigation", risk.get("residual"))}</div>'
+        f'{chip("If mitigated", risk.get("residual"))}</div>'
         f'{mitigation}</div></td></tr>'
     )
 
@@ -321,7 +323,7 @@ def render_risks_html(report):
         f'<h3 style="margin:24px 0 10px;font:700 11px/1.3 Arial,sans-serif;'
         f'letter-spacing:.09em;text-transform:uppercase;color:{NAVY}">Risk register</h3>'
         f'<p style="margin:0 0 12px;font:400 11px/1.4 Arial,sans-serif;color:{MUTED}">'
-        f'Ordered by what survives mitigation.</p>'
+        f'{_esc(RISK_ORDER_BASIS)}</p>'
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0">{rows}</table>'
     )
 
@@ -330,7 +332,7 @@ def render_risks_text(report):
     risks = (report or {}).get("risks") or []
     if not risks:
         return ""
-    lines = ["RISK REGISTER (ordered by what survives mitigation)"]
+    lines = ["RISK REGISTER", RISK_ORDER_BASIS]
     for risk in risks:
         lines.append("")
         lines.append(f'{risk.get("risk") or "Untitled risk"}{" [EDITED]" if risk.get("edited") else ""}')
@@ -343,7 +345,7 @@ def render_risks_text(report):
                 impact += f' ({risk["impact_category"]})'
             position.append(impact)
         if risk.get("residual"):
-            position.append(f'After mitigation {risk["residual"]}')
+            position.append(f'If mitigated {risk["residual"]}')
         if position:
             lines.append("  " + ", ".join(position))
         if risk.get("mitigation"):
