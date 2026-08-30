@@ -609,6 +609,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "Scorecards accumulate inline in the conversation — chat, chat, scorecard, chat, scorecard, etc. The idea the user has OPEN in the workspace is editable in place (see EDITING THE OPEN SCORECARD above). "
     "When the user proposes a genuinely NEW idea or a variation they want to keep alongside the original, call generate_scorecard (no rescore_scorecard_id). "
     "When the user asks to change the idea they're viewing, edit it in place: patch_scorecard for wording OR for renaming the title (pass the new title in `name`), or generate_scorecard with rescore_scorecard_id to re-score that same idea. "
+    "EDIT A CRITERION'S WORDING: when the user names a criterion (Strategic Fit, Risk Profile, Financial Return, any rubric criterion) and asks you to reword, clarify, expand or rewrite what it says, call patch_scorecard with `criterion_narrative` keyed by that criterion. This is the ONLY field that changes what a criterion card displays. Using add_blocks instead appends a stray section and leaves the criterion untouched, so the user is told the report changed while it visibly did not. Wording only; the score never moves. "
     "ADD A SECTION: when the user wants to ADD a new section/note/block to the open scorecard that isn't one of the standard fields (e.g. 'add a section on regulatory risk', 'add a go-to-market note', 'add a block about competitors'), call patch_scorecard with `add_blocks` — a list of {heading, body}. This appends a free-form section to the card and NEVER moves the score. "
     "FILL/UPDATE AN EXISTING SECTION: if the user asks you to populate or update a block they already created (e.g. a 'Mitigation' block), call patch_scorecard with `add_blocks` using the SAME heading — it updates that block in place rather than creating a duplicate. Do NOT fold that content into top_risks or other standard fields when the user clearly wants it in their named block. "
     "BRAND COLOR: when the user asks for their brand color or a custom accent (e.g. 'use our brand blue #0A66C2', 'make the scorecard match our colors', 'change the accent to green'), call patch_scorecard with `accent_color` as a #RRGGBB hex. If they name a color without a hex, pick a sensible hex for it. This recolors the live scorecard and its exports; it never moves the score. "
@@ -4797,6 +4798,21 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                             "type": "string",
                             "description": "Set the scorecard's brand accent color as a #RRGGBB hex (e.g. '#0A66C2'). Use when the user asks for their brand color / a custom color (e.g. 'use our blue #0A66C2', 'make it match our brand'). Applies to the live scorecard and exports; never moves the score.",
                         },
+                        "criterion_narrative": {
+                            "type": "object",
+                            "description": (
+                                "Rewrite how one or more CRITERION assessments read on the scorecard. "
+                                "Map the criterion to its new wording, e.g. {\"strategic_fit\": \"...\"}; "
+                                "the criterion key or its visible label both work. USE THIS whenever the "
+                                "user names a criterion and asks you to reword, clarify, expand, tighten "
+                                "or rewrite what it says (e.g. 'make Strategic Fit clearer', 'add detail "
+                                "to the Risk Profile write-up'). Do NOT use add_blocks for that: a new "
+                                "block leaves the criterion card unchanged and the user sees no edit. "
+                                "Changes wording only and never moves the score, grade or exposure; the "
+                                "original is preserved and the card is marked as edited."
+                            ),
+                            "additionalProperties": {"type": "string"},
+                        },
                         "add_blocks": {
                             "type": "array",
                             "description": "Add or update one or more free-form sections on the open scorecard (like adding a slide/section). Each is {heading, body}. To update a section the user already added, pass the same heading (case-insensitive) or its id; the block is updated in place instead of duplicated. Use when the user asks to add, fill, or update a section, note, or extra context that isn't an existing standard field. Never moves the score.",
@@ -5942,6 +5958,28 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     "body": body,
                 })
 
+        # CRITERION WORDING: rewrite how one criterion's assessment READS.
+        #
+        # This is the same presentation override a person writes by hand from
+        # the criterion card, and it must be written to the same place. Without
+        # it the agent had no way to touch a criterion at all: asked to reword
+        # "Strategic Fit" it fell back to add_blocks, appended a stray section,
+        # and reported success while the criterion card was unchanged. An agent
+        # saying it edited the report while the report disagrees is worse than
+        # one saying it cannot.
+        #
+        # Keys arrive as either the criterion key (strategic_fit) or its label
+        # ("Strategic Fit"), because the user names it the way they see it.
+        raw_narrative = tool_input.get("criterion_narrative")
+        new_narrative = {}
+        if isinstance(raw_narrative, dict):
+            for key, value in raw_narrative.items():
+                text = value.get("rationale") if isinstance(value, dict) else value
+                text = str(text or "").strip()
+                handle = str(key or "").strip()
+                if text and handle:
+                    new_narrative[handle] = text
+
         # ACCENT COLOR: set the scorecard's brand accent (#RRGGBB) on the open card.
         new_accent = ""
         _accent_raw = str(tool_input.get("accent_color") or tool_input.get("brand_color") or "").strip()
@@ -5951,7 +5989,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             if re.fullmatch(r"#[0-9a-fA-F]{6}", _accent_raw):
                 new_accent = _accent_raw.upper()
 
-        if not patch and not new_name and not new_blocks and not new_accent:
+        if not patch and not new_name and not new_blocks and not new_accent and not new_narrative:
             return _tool_error("No patchable scorecard fields provided.", code="no_fields")
 
         # The open idea wins; fall back to an explicit id, then the thread's
@@ -5995,6 +6033,42 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 _ova = dict(_ova) if isinstance(_ova, dict) else {}
                 _ova["accent_color"] = new_accent
                 merged["display_overrides"] = _ova
+            # Criterion wording -> display_overrides.criterion_narrative[key].
+            # applyCriterionNarrative in the workspace reads exactly this shape
+            # and keeps Jaspen's original for "restore", so an agent edit is
+            # marked and reversible in the same way a hand edit is.
+            if new_narrative:
+                _ovn = merged.get("display_overrides")
+                _ovn = dict(_ovn) if isinstance(_ovn, dict) else {}
+                narrative = _ovn.get("criterion_narrative")
+                narrative = dict(narrative) if isinstance(narrative, dict) else {}
+
+                # Resolve whatever the user called it to the real dimension key.
+                dims = merged.get("dimensions") if isinstance(merged.get("dimensions"), dict) else {}
+                by_handle = {}
+                for dim_key, dim in dims.items():
+                    by_handle[str(dim_key).strip().casefold()] = dim_key
+                    label = str((dim or {}).get("label") or "").strip().casefold()
+                    if label:
+                        by_handle.setdefault(label, dim_key)
+                    # "Strategic Fit" and "strategic_fit" should both land.
+                    by_handle.setdefault(str(dim_key).replace("_", " ").casefold(), dim_key)
+
+                for handle, text in new_narrative.items():
+                    resolved = by_handle.get(handle.strip().casefold())
+                    if not resolved:
+                        # Naming a criterion that does not exist must not
+                        # silently create a phantom one.
+                        continue
+                    narrative[resolved] = {
+                        "rationale": text,
+                        "edited_at": _iso_now(),
+                        "note": "Edited by Jaspen at your request",
+                    }
+                if narrative:
+                    _ovn["criterion_narrative"] = narrative
+                    merged["display_overrides"] = _ovn
+
             # Upsert free-form sections into display_overrides.custom_blocks
             # (read AFTER the rename so we don't clobber a title override).
             if new_blocks:
