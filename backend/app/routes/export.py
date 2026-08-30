@@ -1062,7 +1062,7 @@ def _pptx_bytes(scorecard, *, org=None, peers=None):
                          f'{criterion["grade_label"]}  •  {criterion["swing"]} points of exposure',
                          0.65, top + 0.42, 6.4, 0.32, size=12, color=gray)
                 if criterion.get("evidence_needed"):
-                    add_text(slide, f'Evidence needed: {criterion["evidence_needed"]}',
+                    add_text(slide, f'How to improve this: {criterion["evidence_needed"]}',
                              7.3, top, 5.4, 0.9, size=13, color=navy)
                 add_rule(slide, 0.65, top + 1.0, 12.0)
                 top += 1.25

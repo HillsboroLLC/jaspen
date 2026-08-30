@@ -1385,6 +1385,71 @@ def _normalize_scorecard_payload(payload):
     return normalized
 
 
+def _risk_patch_handles(risk):
+    """Every handle a patch might use to name this risk.
+
+    Both an id AND the description are indexed, not one or the other. A stored
+    risk usually carries an id while a model rewriting it refers to it by text,
+    so keying on the id alone meant the patch matched nothing and the risk was
+    treated as new, which is the data loss this exists to prevent.
+    """
+    if not isinstance(risk, dict):
+        return []
+    handles = []
+    for field in ('id', 'risk_id'):
+        value = str(risk.get(field) or '').strip()
+        if value:
+            handles.append(value)
+    text = str(risk.get('risk') or risk.get('text') or '').strip().casefold()
+    if text:
+        handles.append(text)
+    return handles
+
+
+def _merge_risk_list(base_risks, patched_risks):
+    """Apply a risk patch field by field instead of replacing the register.
+
+    A risk carries narrative (the description, the mitigation) alongside
+    structured findings: probability, impact_dollars, impact_category,
+    mitigation_cost, residual_risk. An edit almost always concerns the
+    narrative, and a model rewriting one sentence rarely restates the numbers
+    it was not asked about.
+
+    Replacing the list wholesale therefore destroyed whatever the patch did not
+    mention, and silently: a reworded risk came back with its impact and
+    residual level gone, and the register then rendered blank positions that
+    read as "not assessed" rather than "lost in an edit".
+
+    Fields the patch DOES set still win, including numeric ones. The guard is
+    against dropping data, not against the agent changing it.
+    """
+    base_by_handle = {}
+    for risk in (base_risks if isinstance(base_risks, list) else []):
+        for handle in _risk_patch_handles(risk):
+            base_by_handle.setdefault(handle, risk)
+
+    merged_rows = []
+    for patched in patched_risks:
+        if not isinstance(patched, dict):
+            merged_rows.append(patched)
+            continue
+        original = next(
+            (base_by_handle[h] for h in _risk_patch_handles(patched) if h in base_by_handle),
+            None,
+        )
+        if not isinstance(original, dict):
+            merged_rows.append(patched)
+            continue
+        row = dict(original)
+        for field, value in patched.items():
+            # An explicit null is a deliberate clear; an absent key is not an
+            # instruction to erase anything.
+            if value is not None or field in patched:
+                row[field] = value
+        merged_rows.append(row)
+    return merged_rows
+
+
 def _merge_scorecard_patch(base_scorecard, patch):
     base = base_scorecard if isinstance(base_scorecard, dict) else {}
     update = patch if isinstance(patch, dict) else {}
@@ -1409,7 +1474,10 @@ def _merge_scorecard_patch(base_scorecard, patch):
     for key in editable_list_keys:
         value = update.get(key)
         if isinstance(value, list):
-            merged[key] = value
+            if key == 'top_risks':
+                merged[key] = _merge_risk_list(base.get(key), value)
+            else:
+                merged[key] = value
 
     for key in editable_scalar_keys:
         value = _clean_scorecard_text(update.get(key))

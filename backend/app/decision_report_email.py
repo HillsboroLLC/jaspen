@@ -120,7 +120,7 @@ def _criterion_html(criterion):
     if criterion.get("evidence_needed"):
         parts.append(
             f'<div style="border-left:2px solid #9dc2e6;padding-left:10px">'
-            + _label("Evidence needed", BLUE)
+            + _label("How to improve this", BLUE)
             + f'<p style="margin:0;font:400 13px/1.55 Arial,sans-serif;color:{SLATE}">'
               f'{_esc(criterion["evidence_needed"])}</p></div>'
         )
@@ -244,7 +244,7 @@ def render_report_text(report):
         if criterion.get("unsupported"):
             lines.append(f'  Still unsupported: {criterion["unsupported"]}')
         if criterion.get("evidence_needed"):
-            lines.append(f'  Evidence needed: {criterion["evidence_needed"]}')
+            lines.append(f'  How to improve this: {criterion["evidence_needed"]}')
 
     lines += ["", report["provenance_note"]]
     return "\n".join(lines)

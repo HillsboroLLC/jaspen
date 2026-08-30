@@ -256,3 +256,25 @@ def test_no_risks_renders_nothing_rather_than_an_empty_heading():
     from app.decision_report_email import render_risks_html, render_risks_text
     assert render_risks_html({"risks": []}) == ""
     assert render_risks_text({"risks": []}) == ""
+# --- the improvement action travels ------------------------------------------
+
+def test_the_action_reaches_the_email_even_when_scoring_named_none():
+    """The point of the guidance is forwarding the report to whoever can close
+    the gap. An export that states the exposure and omits the ask cannot do it."""
+    report = build_report(_scorecard([_criterion(resolution=None, confidence="assumed")]))
+    assert report["criteria"][0]["evidence_needed"]
+    html = render_report_html(report)
+    assert "How to improve this" in html
+    assert "Nothing verifiable supports this yet" in html
+    assert "How to improve this" in render_report_text(report)
+
+
+def test_scoring_s_own_suggestion_wins_over_the_fallback():
+    report = build_report(_scorecard([_criterion(resolution="Connect NetSuite", confidence="assumed")]))
+    assert report["criteria"][0]["evidence_needed"] == "Connect NetSuite"
+    assert "Nothing verifiable supports this yet" not in render_report_html(report)
+
+
+def test_a_fully_evidenced_criterion_asks_for_nothing():
+    report = build_report(_scorecard([_criterion(resolution=None, confidence="high")]))
+    assert report["criteria"][0]["evidence_needed"] is None

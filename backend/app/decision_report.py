@@ -50,6 +50,23 @@ ASSESSMENT_BASIS = {
     "assumed": "No supporting input identified",
 }
 
+# What a person can do about a criterion when the scoring pass named nothing.
+# Mirrors FALLBACK_ACTION_BY_GRADE in DecisionConfidenceCard.jsx.
+#
+# This matters most OUTSIDE the workspace. The point of the guidance is that a
+# report can be forwarded to Finance, Ops or Procurement as "here is the
+# current analysis, get me these inputs and I will rerun it". An export that
+# states the exposure and omits the ask cannot do that job.
+#
+# Deliberately generic: a fallback naming a specific document would imply
+# Jaspen knew that document existed.
+FALLBACK_ACTION_BY_GRADE = {
+    "high": None,
+    "medium": "Share the source behind this, a document, export, or connected system, so it can be verified rather than taken as reported.",
+    "low": "Provide the underlying figures or documents for this criterion so more of it rests on evidence.",
+    "assumed": "Nothing verifiable supports this yet. Upload or connect the source that would establish it.",
+}
+
 UNSUPPORTED_BY_GRADE = {
     "high": None,
     "medium": "Self-reported rather than verified, so this contributes at most 75.",
@@ -141,7 +158,9 @@ def build_report(scorecard, *, peers=None):
             "assessment": entry.get("rationale"),
             "assessment_basis": ASSESSMENT_BASIS.get(entry.get("source")),
             "unsupported": UNSUPPORTED_BY_GRADE.get(grade),
-            "evidence_needed": entry.get("resolution"),
+            "evidence_needed": (
+                entry.get("resolution") or FALLBACK_ACTION_BY_GRADE.get(grade)
+            ),
             # Set when a person rewrote the wording. Exports must show this,
             # or an edited narrative would leave the building as though it
             # were the system's own finding.
