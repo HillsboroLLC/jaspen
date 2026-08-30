@@ -1318,6 +1318,51 @@ export default function JaspenWorkspace() {
         if (visibleCustomBlocks.length) {
           viewContext.custom_blocks = visibleCustomBlocks;
         }
+
+        // Everything else on the canvas. The agent could previously see the
+        // scorecard name, the score and any custom blocks, and nothing about
+        // the Decision Confidence report or the risk register even though both
+        // are on screen. So it answered about surfaces it could not see, and a
+        // request about "the risk profile" was carried out by rewriting
+        // top_risks, which is a different field on a different section.
+        viewContext.visible_sections = sectionLayout
+          .filter((section) => !section.collapsed)
+          .map((section) => (
+            section.key.startsWith(CRITERION_SECTION_PREFIX)
+              ? ((rendered?.evidence_profile?.criteria || []).find(
+                  (c) => c.key === section.key.slice(CRITERION_SECTION_PREFIX.length),
+                )?.label || section.label)
+              : section.label
+          ))
+          .filter(Boolean);
+
+        const profile = rendered?.evidence_profile;
+        if (profile) {
+          viewContext.decision_confidence = {
+            evidence_backed_pct: profile.evidence_backed_pct,
+            assumption_dependent_pct: profile.assumption_dependent_pct,
+            criteria: (profile.criteria || []).map((c) => ({
+              label: c.label,
+              grade: c.confidence,
+              weight_pct: Math.round((c.weight || 0) * 100),
+              swing: c.swing,
+              evidence_count: (c.evidence_references || []).length,
+              edited: Boolean(c._edited),
+            })),
+          };
+        }
+
+        const risks = Array.isArray(rendered?.top_risks) ? rendered.top_risks : [];
+        if (risks.length) {
+          viewContext.risk_register = risks.map((r) => ({
+            risk: r?.risk,
+            probability: r?.probability,
+            impact: r?.impact_dollars || r?.impact,
+            residual: r?.residual_risk,
+            mitigation: r?.mitigation,
+            edited: Boolean(r?._edited),
+          }));
+        }
       }
       if (isTradeoff) {
         // The same list the canvas renders — names + scores — so the agent

@@ -1256,6 +1256,58 @@ def _sanitize_view_context(raw_context):
     if active_scenario_id:
         cleaned["active_scenario_id"] = active_scenario_id[:120]
 
+    # The Decision Confidence report and the risk register are on screen and
+    # were invisible to the agent, so it answered about surfaces it could not
+    # see and edited the wrong field when a user named one of them. Both are
+    # allowlisted here because _sanitize_view_context drops anything it does
+    # not know, which is what made the omission silent.
+    sections = context.get("visible_sections")
+    if isinstance(sections, list):
+        cleaned_sections = [
+            str(item)[:80] for item in sections[:24] if str(item or "").strip()
+        ]
+        if cleaned_sections:
+            cleaned["visible_sections"] = cleaned_sections
+
+    confidence = context.get("decision_confidence")
+    if isinstance(confidence, dict):
+        criteria = []
+        for item in (confidence.get("criteria") or [])[:12]:
+            if not isinstance(item, dict):
+                continue
+            criteria.append({
+                "label": str(item.get("label") or "")[:80],
+                "grade": str(item.get("grade") or "")[:20],
+                "weight_pct": _safe_nonnegative_int(item.get("weight_pct")),
+                "swing": item.get("swing"),
+                "evidence_count": _safe_nonnegative_int(item.get("evidence_count")) or 0,
+                "edited": bool(item.get("edited")),
+            })
+        summary = {
+            "evidence_backed_pct": _safe_nonnegative_int(confidence.get("evidence_backed_pct")),
+            "assumption_dependent_pct": _safe_nonnegative_int(confidence.get("assumption_dependent_pct")),
+            "criteria": criteria,
+        }
+        if summary["evidence_backed_pct"] is not None or criteria:
+            cleaned["decision_confidence"] = summary
+
+    risks = context.get("risk_register")
+    if isinstance(risks, list):
+        cleaned_risks = []
+        for item in risks[:10]:
+            if not isinstance(item, dict):
+                continue
+            cleaned_risks.append({
+                "risk": str(item.get("risk") or "")[:300],
+                "probability": str(item.get("probability") or "")[:10] or None,
+                "impact": str(item.get("impact") or "")[:24] or None,
+                "residual": str(item.get("residual") or "")[:10] or None,
+                "mitigation": str(item.get("mitigation") or "")[:300] or None,
+                "edited": bool(item.get("edited")),
+            })
+        if cleaned_risks:
+            cleaned["risk_register"] = cleaned_risks
+
     wbs_summary = _sanitize_wbs_summary(context.get("wbs_summary"))
     if wbs_summary:
         cleaned["wbs_summary"] = wbs_summary
@@ -1355,6 +1407,77 @@ def _view_context_prompt_suffix(view_context):
             "act on it directly and NEVER ask which of the ideas they mean. "
             "Only ask for clarification if the user explicitly names a DIFFERENT idea than the one open. "
             "If multiple ideas exist in the thread, the on-screen one above always takes precedence."
+        )
+
+    sections = normalized.get("visible_sections")
+    if sections:
+        lines.append(f"- Sections currently on the canvas: {', '.join(sections)}.")
+
+    confidence = normalized.get("decision_confidence")
+    if confidence:
+        backed = confidence.get("evidence_backed_pct")
+        assumed = confidence.get("assumption_dependent_pct")
+        if backed is not None:
+            lines.append(
+                f"- Decision Confidence on screen: {backed}% evidence-backed, "
+                f"{assumed}% assumption-dependent. This is the share of the WEIGHTED "
+                "decision resting on evidence. It is NOT the score and NOT how sure "
+                "Jaspen is; never describe it as either."
+            )
+        for criterion in confidence.get("criteria") or []:
+            bits = [f'\"{criterion["label"]}\"']
+            if criterion.get("weight_pct") is not None:
+                bits.append(f'{criterion["weight_pct"]}% of the decision')
+            if criterion.get("grade"):
+                bits.append(f'evidence graded {criterion["grade"]}')
+            if criterion.get("swing"):
+                bits.append(f'{criterion["swing"]} points of exposure')
+            if criterion.get("evidence_count"):
+                bits.append(f'{criterion["evidence_count"]} verified evidence excerpt(s)')
+            if criterion.get("edited"):
+                bits.append("wording edited by the user")
+            lines.append(f"  - Criterion {', '.join(bits)}.")
+
+    risks = normalized.get("risk_register")
+    if risks:
+        lines.append("- Risk register on screen (Top Risks section):")
+        for risk in risks:
+            bits = []
+            if risk.get("probability"):
+                bits.append(f'likelihood {risk["probability"]}')
+            if risk.get("impact"):
+                bits.append(f'impact {risk["impact"]}')
+            if risk.get("residual"):
+                bits.append(f'residual if mitigated {risk["residual"]}')
+            if risk.get("edited"):
+                bits.append("wording edited by the user")
+            detail = f" ({'; '.join(bits)})" if bits else ""
+            lines.append(f'  - "{risk["risk"]}"{detail}')
+
+    if confidence or risks:
+        # The two surfaces a user most easily conflates, and the agent did too:
+        # a request about "the risk profile" was answered by rewriting
+        # top_risks, which is a different field on a different section.
+        lines.append(
+            "- IMPORTANT, two different things share the word risk. \"Risk profile\" is a "
+            "SCORED CRITERION inside the Decision Confidence report, with an evidence grade "
+            "and an assessment. \"Top Risks\" is the RISK REGISTER, a separate section listing "
+            "individual risks with likelihood, impact, mitigation and residual level. If the "
+            "user names one, act on that one, and ask which they mean only if genuinely "
+            "ambiguous."
+        )
+        lines.append(
+            "- What may and may not be changed here. Criterion assessments and risk/mitigation "
+            "wording are PRESENTATION and can be rewritten; the user can also edit them inline. "
+            "Scores, evidence grades, weights, exposure figures, likelihood, impact, costs and "
+            "residual levels are COMPUTED and must never be altered to make wording fit. If a "
+            "user asks for a number to change, explain that it follows from the evidence and "
+            "would need rescoring, and offer to rescore."
+        )
+        lines.append(
+            "- Verified evidence excerpts were located in the user's own input by code. "
+            "Jaspen's assessment is its own reasoning and is NOT a source citation, so never "
+            "present it as one or claim Jaspen can identify the document behind a judgment."
         )
 
     active_scenario_id = str(normalized.get("active_scenario_id") or "").strip()
