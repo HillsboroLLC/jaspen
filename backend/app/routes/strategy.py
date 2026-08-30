@@ -3077,7 +3077,36 @@ The executive_summary must read like a concise leadership briefing. It should ne
     return (scored, generation_usage) if return_usage else scored
 
 
-def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective='balanced',
+
+def _thread_user_corpus(user_id, thread_id, *, max_chars=20000):
+    """The user's own words in this thread, for evidence capture.
+
+    Only `user` turns. Quoting the assistant back would let the model cite its
+    own prose as evidence for its own score, which is the circularity the
+    verification step exists to prevent.
+    """
+    try:
+        from app.routes.sessions import load_user_sessions as _load
+        session = (_load(str(user_id)) or {}).get(thread_id)
+        if not isinstance(session, dict):
+            return ""
+        turns = session.get("chat_history")
+        if not isinstance(turns, list):
+            return ""
+        parts = [
+            str(t.get("content") or "").strip()
+            for t in turns
+            if isinstance(t, dict)
+            and str(t.get("role") or "").strip().lower() == "user"
+            and str(t.get("content") or "").strip()
+        ]
+        corpus = "\n\n".join(parts)
+        return corpus[-max_chars:] if len(corpus) > max_chars else corpus
+    except Exception:
+        return ""
+
+
+def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective='balanced', evidence_corpus=None,
                                model_selection=None, llm_model=None, return_usage=False):
     """Score MANY ideas in a SINGLE model pass — the 'build the Excel' approach.
 
@@ -3111,6 +3140,9 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
                 c_results, c_summary, c_usage = _generate_batch_scorecards(
                     client, chunk, rubric=rubric, strategy_objective=strategy_objective,
                     model_selection=model_selection, llm_model=llm_model, return_usage=True,
+                    # Carried into every chunk: a long batch would otherwise
+                    # lose evidence for every option past the first chunk.
+                    evidence_corpus=evidence_corpus,
                 )
             except Exception:
                 current_app.logger.exception(
@@ -3259,12 +3291,23 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         "not corroboration. Self-reported specifics are respectable evidence (medium); they are not verified evidence "
         "(high)."
     )
+    # The user's own words, so there is real language available to quote and a
+    # corpus for verification to search. Without it the batch scorer only ever
+    # saw the option names and one-line descriptions assembled upstream.
+    _corpus_text = str(evidence_corpus or "").strip()
+    _source_block = (
+        "SOURCE MATERIAL (the user's own words, quote ONLY from here):\n"
+        f'"""\n{_corpus_text}\n"""\n\n'
+        if _corpus_text else ""
+    )
+
     user_prompt = (
         f"Build a decision dossier scoring these {len(ideas)} options against the criteria below. {criteria_note}"
         f"{groups_note}"
         f"{objective_note}\n"
         f"CRITERIA (json key = meaning (weight)[group]):\n{criteria_block}\n\n"
         f"OPTIONS:\n{ideas_block}\n\n"
+        f"{_source_block}"
         "Return ONLY this JSON shape (no markdown, no commentary):\n"
         "{\n"
         '  "portfolio_summary": {\n'
@@ -3279,7 +3322,7 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         '      "strategic_rationale": "<2-3 sentence leadership read on this option>",\n'
         '      "dimensions": {\n'
         f'        // EXACTLY one entry for EACH key: {keys_csv}\n'
-        '        "<criterion_key>": { "score": <0-100>, "confidence": "<high|medium|low|assumed>", "rationale": "<one specific line: the put or take>" }\n'
+        '        "<criterion_key>": { "score": <0-100>, "confidence": "<high|medium|low|assumed>", "rationale": "<one specific line: the put or take>", "source": "<conversation|inferred|assumed>", "evidence": ["<verbatim quote from the source material that supports this score>"], "what_would_improve": "<specific action, or null if confidence is high>" }\n'
         "      },\n"
         '      "key_strengths": ["<top put>", "..."],\n'
         '      "key_considerations": ["<top take / risk / caveat>", "..."]\n'
@@ -3287,7 +3330,17 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         "    // ...one object per option, in the same order...\n"
         "  ]\n"
         "}\n"
-        "Every option MUST include every criterion key. Output JSON only."
+        "Every option MUST include every criterion key.\n"
+        "- EVIDENCE QUOTES: populate \"evidence\" with the exact passages from the source material that support the "
+        "score. Quote verbatim, do not paraphrase, and do not quote your own words back. If nothing in the source "
+        "supports the score, return an empty list rather than inventing a quote. Every quote is checked against the "
+        "source and silently discarded if it is not found there, so a fabricated one buys nothing and an accurate one "
+        "becomes part of the record.\n"
+        "- SOURCE: \"conversation\" when the user stated it, \"inferred\" when you reasoned it from what they said, "
+        "\"assumed\" when nothing in the input speaks to it.\n"
+        "- For any dimension with confidence \"low\" or \"assumed\", populate what_would_improve with a specific, "
+        "actionable suggestion naming the information that would resolve it.\n"
+        "Output JSON only."
     )
 
     text, _usage = _strategy_generate_reply(
@@ -3348,12 +3401,27 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
                 conf = "medium"
             if conf == "high" and not _batch_has_grounded_evidence:
                 conf = "medium"
+            # `source` and `what_would_improve` used to be hardcoded to
+            # "inferred" and None here, and `evidence` was dropped entirely.
+            # This is the scorer the product actually uses for a multi-option
+            # decision, so every card it produced reported that nothing the
+            # user said had been used, however much they had provided. Both now
+            # come from the scoring pass, on the same contract as the
+            # single-option scorer.
+            _source = str(d.get("source") or "").strip().lower()
+            if _source not in ("conversation", "connector", "inferred", "assumed"):
+                _source = "inferred"
+            _wwi = str(d.get("what_would_improve") or "").strip() or None
+            _evidence = d.get("evidence") if isinstance(d.get("evidence"), list) else []
             dims[key] = {
                 "score": score,
                 "confidence": conf,
-                "source": "inferred",
+                "source": _source,
                 "rationale": str(d.get("rationale") or "").strip(),
-                "what_would_improve": None,
+                "what_would_improve": _wwi,
+                # Claimed, not yet verified. attach_evidence_references checks
+                # each one against the source text below and discards the rest.
+                "evidence": _evidence,
                 "label": label_by_key.get(key, key),
                 "is_risk": bool(risk_by_key.get(key)),
                 "group": group_by_key.get(key),
@@ -3401,6 +3469,36 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
             js = float(scored.get("jaspen_score") or 0.0)
             tier = "Leading Candidate" if js >= 78 else "Secondary Candidate" if js >= 68 else "Monitor / Niche"
         scored["tier"] = tier
+
+        # Verify every claimed quote against the text the user actually
+        # provided, exactly as the single-option scorer does. Quotes that
+        # cannot be found are discarded rather than stored, so a reference
+        # means "this text demonstrably exists in the input".
+        #
+        # Deliberately does NOT feed scoring: references are provenance, not a
+        # scoring input. Letting a judgment score higher for citing more would
+        # reward volume of quotation.
+        try:
+            # Verify against the USER's words alone when we have them.
+            #
+            # The option description is written by the agent upstream, so
+            # including it let the model quote AI-authored text and have it
+            # pass as verified evidence. A live run proved this: "target
+            # 48-hour SLA compliance" verified cleanly and appears nowhere in
+            # anything the user typed. That is the circularity this check
+            # exists to stop, reintroduced by the checker itself.
+            #
+            # The description is used only when no corpus exists, which is the
+            # non-chat callers where the description IS the user's own input.
+            _verification_text = _corpus_text or str(idea.get('description') or '').strip()
+            if _verification_text:
+                _verified = attach_evidence_references(scored.get("dimensions"), _verification_text)
+                if _verified:
+                    scored["evidence_reference_count"] = _verified
+        except Exception:
+            # Provenance is additive. A failure here must never cost a card.
+            current_app.logger.exception("batch evidence reference capture failed")
+
         results.append(scored)
 
     return (results, portfolio_summary, _usage) if return_usage else (results, portfolio_summary)
@@ -6810,6 +6908,9 @@ def score_batch_queued(thread_id):
                 client, ideas_to_generate, rubric=rubric, strategy_objective=strategy_objective,
                 model_selection=model_selection, llm_model=model_selection['llm_model'],
                 return_usage=True,
+                # What the user actually said, so quotes have somewhere real to
+                # come from and verification has somewhere real to look.
+                evidence_corpus=_thread_user_corpus(user_id, thread_id),
             )
         except Exception as generation_error:
             _release_reserved_credits(user, reserved_credits)
