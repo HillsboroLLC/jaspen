@@ -192,17 +192,17 @@
   border-radius: 5px;
 }
 
-.hsw-conf--high {
+.hsw-conf--strong {
   background: #161f3b;
   color: #ffffff;
 }
 
-.hsw-conf--medium {
+.hsw-conf--moderate {
   background: rgba(22, 31, 59, 0.1);
   color: rgba(22, 31, 59, 0.7);
 }
 
-.hsw-conf--low {
+.hsw-conf--thin {
   background: rgba(22, 31, 59, 0.06);
   color: rgba(22, 31, 59, 0.55);
 }
@@ -240,13 +240,6 @@
 }
 
 /* the portion the cap removed: shown, but visibly "not counted" */
-.hsw-bar-lost {
-  position: absolute;
-  top: 0;
-  height: 100%;
-  background: rgba(160, 3, 108, 0.12);
-  border-left: 1px dashed rgba(160, 3, 108, 0.55);
-}
 
 .hsw-row-values {
   display: flex;
@@ -255,20 +248,9 @@
   margin-top: 8px;
 }
 
-.hsw-value-num {
-  font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", "Consolas", monospace;
-  font-size: 0.92rem;
-  font-weight: 700;
-  color: #161f3b;
-}
 
-.hsw-value-note {
-  font-size: 0.8rem;
-  color: #a0036c;
-  font-weight: 560;
-}
 
-.hsw-cap-callout {
+.hsw-gap-callout {
   margin: 22px 0 0;
   padding: 16px 18px;
   background: #ffffff;
@@ -281,12 +263,12 @@
   gap: 12px;
 }
 
-.hsw-cap-callout strong {
+.hsw-gap-callout strong {
   color: #a0036c;
   font-weight: 720;
 }
 
-.hsw-cap-icon {
+.hsw-gap-icon {
   margin-top: 3px;
   color: #a0036c;
   flex-shrink: 0;
@@ -301,4 +283,21 @@
   .hsw-summary { padding: 28px 24px; }
   .hsw-breakdown { padding: 22px 20px 24px; }
   .hsw-row-top { flex-wrap: wrap; }
+}
+
+/* The split is the headline finding: how much of this decision rests on
+   evidence. It replaces the worked arithmetic that used to sit here. */
+.hsw-summary-split {
+  margin: 14px 0 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  /* Sits on the dark summary card, so it takes the card's light scale.
+     The first version inherited the page's navy and vanished. */
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.hsw-summary-split strong {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
 }

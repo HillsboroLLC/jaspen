@@ -3,19 +3,22 @@ import './WhyJaspenBlock.css';
 
 // Combined color-block section that merges two short beats into one:
 //   Left: "Why not just ChatGPT?" the moat, three proofs.
-//   Right: "Your criteria" the rubric is yours, three steps.
+//   Right: "Your criteria" the criteria are yours, three steps.
 // Kept intentionally minimal: no cards, no panels inside panels.
 
+// Says what the reader GETS, never how it is produced. "Evidence-capped"
+// named the mechanism; a count of supported criteria is a spec sheet nobody
+// buys on. Both are replaced by the finding they deliver.
 const PROOFS = [
   { label: 'User-owned', text: 'Jaspen proposes; you own the criteria, weights, and decision.' },
-  { label: 'Evidence-capped', text: 'Confidence cannot outrun the evidence, and assumptions stay visible.' },
-  { label: 'Decomposed', text: 'Every score opens into evidence, weights, confidence, and reasoning.' },
+  { label: 'Evidence-aware', text: 'You see what rests on evidence and what still rests on assumption.' },
+  { label: 'Interrogable', text: 'Every score opens into the evidence and reasoning behind it.' },
 ];
 
 const STEPS = [
-  { title: 'Jaspen proposes', note: 'A sensible starter rubric, tuned to your objective.' },
-  { title: 'You adjust', note: 'Reweight, rename, or replace the criteria. Up to twelve.' },
-  { title: 'It stays yours', note: 'Data informs the scores. It never picks what matters.' },
+  { title: 'Start with what matters', note: 'Jaspen helps structure the criteria that should drive the decision.' },
+  { title: 'Refine it', note: 'Shape the criteria to your priorities, constraints and context.' },
+  { title: 'Make trade-offs explicit', note: 'Not every factor matters equally, and you can see how priorities influence the recommendation.' },
 ];
 
 export default function WhyJaspenBlock() {
@@ -52,10 +55,11 @@ export default function WhyJaspenBlock() {
         <div className="wjb-panel wjb-panel--light">
           <div className="wjb-content">
             <p className="wjb-eyebrow">Your criteria</p>
-            <h2 className="wjb-heading">The rubric is yours.</h2>
+            <h2 className="wjb-heading">The criteria are yours.</h2>
             <p className="wjb-sub">
-              Jaspen never decides what matters. It offers a starting point, then you shape it into
-              the criteria and weights that fit this decision.
+              Jaspen never decides what matters. It helps structure the criteria that should drive
+              the decision, then lets you refine them to reflect your priorities, constraints and
+              context.
             </p>
             <div className="wjb-points">
               {STEPS.map((s) => (

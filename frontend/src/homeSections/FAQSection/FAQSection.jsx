@@ -19,8 +19,8 @@ export default function FAQSection() {
     {
       q: 'How is this different from ChatGPT, Claude, or Gemini?',
       a: <>
-        <p>General AI will tell you your plan is strong. It will not tell you what your plan is resting on, because it has no way to grade the evidence behind an input. Assumed numbers and evidenced numbers look identical to it.</p>
-        <p>Jaspen grades every input, caps what thin evidence can contribute, computes the score in code rather than writing it, and shows the breakdown. Same inputs, same answer, every time.</p>
+        <p>General-purpose AI can help you think through a question. Jaspen is built to help you make a consequential decision.</p>
+        <p>It structures the decision, makes evidence and assumptions visible, surfaces what could change the answer, and preserves the reasoning behind the recommendation so the decision can be understood and revisited later.</p>
       </>
     },
     {
@@ -33,8 +33,8 @@ export default function FAQSection() {
     {
       q: 'Do I have to connect Salesforce, Snowflake, or Jira to use it?',
       a: <>
-        <p>No. Jaspen gives you the full methodology and an honest score with no connectors at all.</p>
-        <p>Connecting data does not unlock the product. It only raises confidence on the dimensions that data supports. You are never blocked from a decision for lack of a connector.</p>
+        <p>No. You can get decision value from Jaspen before connecting a single system.</p>
+        <p>Start with the information you already have. Jaspen helps you structure the decision, examine the evidence and assumptions behind it, and see what could strengthen the recommendation. Connecting data does not unlock the product, and you are never blocked from a decision for lack of a connector.</p>
       </>
     },
     {
