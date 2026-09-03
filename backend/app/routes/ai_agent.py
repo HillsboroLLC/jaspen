@@ -5131,6 +5131,16 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
     if not thread_id:
         return _tool_error("thread_id is required for mutation tools.", code="missing_thread")
 
+    # Freeze the intake baseline before the agent begins scoring
+    # (docs/DECISION_IMPACT_REPORT_SPEC.md §3.4). This is the agent's single
+    # chokepoint into scoring, which is why the whole conversational path costs
+    # one call here rather than a hook per tool. Best effort and idempotent: it
+    # cannot fail a tool, and a thread that also reaches a scoring route seals
+    # once, at whichever came first.
+    from ..decision_impact import SCORING_ENTRY_TOOLS, seal_baseline_on_analysis_start
+    if tool_name in SCORING_ENTRY_TOOLS:
+        seal_baseline_on_analysis_start(user, str(thread_id))
+
     plan_key = effective_plan_key(user, current_app.config)
     tool_input = tool_input if isinstance(tool_input, dict) else {}
 

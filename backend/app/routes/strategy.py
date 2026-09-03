@@ -3520,6 +3520,12 @@ def analyze_project():
         active_org_id = active_org.id if active_org else user.active_organization_id
 
         thread_id = data.get('thread_id') or request.headers.get('X-Session-ID')
+        if thread_id:
+            # Freeze the intake baseline before any analysis touches this
+            # thread (docs/DECISION_IMPACT_REPORT_SPEC.md §3.4). Best effort
+            # and idempotent — it cannot fail an analysis.
+            from ..decision_impact import seal_baseline_on_analysis_start
+            seal_baseline_on_analysis_start(user, str(thread_id))
         # Caller-provided name (request body) takes precedence; otherwise we
         # let the LLM-derived `name` field in analysis_result win further
         # below. `requested_name` distinguishes "user picked this" from
@@ -6726,6 +6732,12 @@ def score_next_queued(thread_id):
         if not isinstance(session, dict):
             return jsonify({'error': 'Thread not found'}), 404
 
+        # Freeze the intake baseline before any analysis touches this thread
+        # (docs/DECISION_IMPACT_REPORT_SPEC.md §3.4). Best effort and
+        # idempotent — it cannot fail an analysis.
+        from ..decision_impact import seal_baseline_on_analysis_start
+        seal_baseline_on_analysis_start(user, str(thread_id))
+
         queue = [
             q for q in (session.get('scorecard_queue') or [])
             if isinstance(q, dict) and str(q.get('name') or '').strip()
@@ -6826,6 +6838,12 @@ def score_batch_queued(thread_id):
         session_key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return jsonify({'error': 'Thread not found'}), 404
+
+        # Freeze the intake baseline before any analysis touches this thread
+        # (docs/DECISION_IMPACT_REPORT_SPEC.md §3.4). Best effort and
+        # idempotent — it cannot fail an analysis.
+        from ..decision_impact import seal_baseline_on_analysis_start
+        seal_baseline_on_analysis_start(user, str(thread_id))
 
         body = request.get_json(silent=True) or {}
         ideas = body.get('ideas') if isinstance(body.get('ideas'), list) else None

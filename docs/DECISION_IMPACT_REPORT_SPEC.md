@@ -806,8 +806,18 @@ exists so that this output is a correct result, not a bug.
 
 **Phase 1 — deterministic skeleton.** `decision_impact.py` assembler,
 `decision_baselines` table, capture and correction UI, measures from the two
-existing engines, verdict, workspace panel. No ledger, no model, no new analysis
-behaviour. This alone produces a real, defensible artifact.
+existing engines, verdict, workspace panel, and the seal at analysis start. No
+ledger, no model, no new analysis behaviour. This alone produces a real,
+defensible artifact.
+
+The seal is wired at four entry points, each a single call to
+`seal_baseline_on_analysis_start`: the `/analyze`, `/score-next` and
+`/score-batch` strategy routes, and `_execute_mutation_tool` in the agent —
+the one chokepoint the whole conversational path funnels through on its way to
+scoring. The call is idempotent, so the entry points need no knowledge of one
+another, and best-effort, so it can cost a report but never an analysis. The
+correction window's own guard (no writes once a thread has scored output) holds
+the content boundary regardless of whether the hook runs.
 
 **Phase 2 — the challenge ledger.** `decision_challenge_events` table; instrument
 existing call sites first. This is where the report stops being a diff and starts
@@ -824,7 +834,18 @@ guarantee language. The evidence layer is validated against real decisions first
 
 ## 13. Migration note
 
-Two new tables. The Alembic history currently has multiple heads and local dev
-provisions via `create_all` (see `docs/DEVELOPMENT.md`), so the head situation
-needs resolving before these migrations are authored, or they will land on an
-ambiguous base.
+Two new tables across the phases: `decision_baselines` (Phase 1) and
+`decision_challenge_events` (Phase 2).
+
+The Alembic history was checked before authoring: it resolves to a **single
+head**. The branch points in its past (`e4b2c1d9f7a3`, `f6e7d4c9b21a`,
+`b2f9a2d4c1ef`) were all merged, so there is no ambiguous base — an earlier
+draft of this note said otherwise and was out of date.
+
+`decision_baselines` is migration `c1a7f3d95b04`, on `b7e2d91a4c03`. Upgrade
+and downgrade are both exercised, and the resulting columns are checked against
+the model rather than assumed. One caveat for anyone testing locally: the
+migration chain cannot be replayed end-to-end on SQLite, because
+`8d92c7f4e1aa` alters constraints in a way SQLite does not support. That is
+pre-existing and unrelated; production is Postgres, and local dev provisions
+via `create_all` (see `docs/DEVELOPMENT.md`).

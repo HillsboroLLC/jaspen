@@ -32,6 +32,8 @@ import hashlib
 import json
 from datetime import datetime
 
+from flask import current_app
+
 from . import db
 from .decision_confidence import EVIDENCE_FACTOR
 from .intake_readiness import _active_readiness_version, _compute_readiness
@@ -472,6 +474,44 @@ def seal_baseline(user, thread_id, sealed_by=SEALED_BY_USER, epoch=1):
     baseline.sealed_by = sealed_by if sealed_by in (SEALED_BY_USER, SEALED_BY_ANALYSIS) else SEALED_BY_ANALYSIS
     db.session.commit()
     return baseline
+
+
+# The agent reaches scoring through _execute_mutation_tool. These are the tool
+# names that begin an analysis; everything else it can do (patching prose,
+# renaming, editing a plan) happens after one has already run.
+SCORING_ENTRY_TOOLS = frozenset({'generate_scorecard', 'queue_scorecards'})
+
+
+def seal_baseline_on_analysis_start(user, thread_id):
+    """Freeze the baseline at the moment analysis begins (spec §3.4).
+
+    Called from every entry point that can start scoring a thread. Idempotent,
+    so the entry points need no knowledge of each other and a thread that
+    reaches two of them seals once, at the first.
+
+    BEST EFFORT, DELIBERATELY. This must never be the reason an analysis fails.
+    A decision the user is waiting on matters more than a baseline row, and the
+    report already refuses to generate without a sealed baseline — so a failure
+    here costs a report, never an analysis. It is logged rather than raised.
+
+    The counterpart guard does the real work regardless of this hook: the
+    correction window rejects every write once the thread has scored output, so
+    a baseline cannot absorb post-analysis material even if this never runs.
+    """
+    if not user or not thread_id:
+        return None
+    try:
+        return seal_baseline(user, thread_id, sealed_by=SEALED_BY_ANALYSIS)
+    except Exception:  # noqa: BLE001 — see BEST EFFORT above
+        try:
+            db.session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        current_app.logger.warning(
+            'decision_impact: could not seal baseline at analysis start for thread %s',
+            thread_id, exc_info=True,
+        )
+        return None
 
 
 def verify_baseline_integrity(baseline):

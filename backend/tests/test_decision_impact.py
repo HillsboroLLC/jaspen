@@ -9,6 +9,7 @@ it, so these are written against the claims: what the baseline preserves, what
 may move a verdict, and what the report must refuse to say.
 """
 
+import ast
 import copy
 import pathlib
 
@@ -36,6 +37,7 @@ from app.decision_impact import (
     get_baseline,
     rederive_baseline_measures,
     seal_baseline,
+    seal_baseline_on_analysis_start,
     verify_baseline_integrity,
 )
 from app.models_decision_baseline import (
@@ -656,3 +658,109 @@ def test_at40_no_refund_or_guarantee_mechanics_on_this_branch():
         )
         for token in forbidden:
             assert token not in code, f'{path.name} references {token!r}'
+
+
+# ---------------------------------------------------------------------------
+# Sealing at the start of analysis (spec §3.4)
+# ---------------------------------------------------------------------------
+
+def _functions_calling(path, name):
+    """Enclosing function names for every call to `name` in a module.
+
+    Parsed rather than grepped so the wiring test asserts where the hook is
+    called, not merely that the string appears somewhere in the file.
+    """
+    tree = ast.parse(path.read_text())
+    found = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for inner in ast.walk(node):
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Name)
+                and inner.func.id == name
+            ):
+                found.add(node.name)
+    return found
+
+
+def test_every_scoring_entry_point_seals_the_baseline():
+    """The evidence chain has to be true in lifecycle, not just in content:
+    the seal belongs at the start of analysis, not whenever a report is read.
+
+    Four entry points can begin scoring a thread. Three are strategy routes;
+    the whole conversational path funnels through one agent chokepoint, which
+    is why it costs a single call rather than a hook per tool.
+    """
+    strategy = _functions_calling(
+        BACKEND / 'app' / 'routes' / 'strategy.py', 'seal_baseline_on_analysis_start',
+    )
+    assert strategy == {'analyze_project', 'score_next_queued', 'score_batch_queued'}
+
+    agent = _functions_calling(
+        BACKEND / 'app' / 'routes' / 'ai_agent.py', 'seal_baseline_on_analysis_start',
+    )
+    assert agent == {'_execute_mutation_tool'}
+
+
+def test_the_agent_hook_only_fires_on_tools_that_begin_scoring():
+    from app.decision_impact import SCORING_ENTRY_TOOLS
+
+    assert SCORING_ENTRY_TOOLS == {'generate_scorecard', 'queue_scorecards'}
+    # Editing prose or renaming a thread happens after an analysis has run and
+    # must not be treated as one beginning.
+    assert 'patch_scorecard' not in SCORING_ENTRY_TOOLS
+    assert 'rename_thread' not in SCORING_ENTRY_TOOLS
+
+
+def test_analysis_start_seals_an_untouched_thread(db, test_user):
+    _seed_thread(db, test_user)
+
+    baseline = seal_baseline_on_analysis_start(test_user, 'thread-impact')
+    assert baseline.is_sealed is True
+    assert baseline.sealed_by == SEALED_BY_ANALYSIS
+    assert baseline.content_hash
+
+
+def test_analysis_start_does_not_overwrite_a_user_confirmed_seal(db, test_user):
+    """A user who confirmed their baseline keeps that provenance on the record."""
+    _seed_thread(db, test_user)
+    capture_or_update_draft(test_user, 'thread-impact', structure=_structure())
+    confirmed = seal_baseline(test_user, 'thread-impact')
+
+    again = seal_baseline_on_analysis_start(test_user, 'thread-impact')
+    assert again.sealed_by == SEALED_BY_USER
+    assert again.sealed_at == confirmed.sealed_at
+
+
+def test_analysis_start_seals_only_once_across_entry_points(db, test_user):
+    """Entry points need no knowledge of each other."""
+    _seed_thread(db, test_user)
+    first = seal_baseline_on_analysis_start(test_user, 'thread-impact')
+    second = seal_baseline_on_analysis_start(test_user, 'thread-impact')
+    assert first.id == second.id
+    assert first.sealed_at == second.sealed_at
+    assert DecisionBaseline.query.filter_by(user_id=test_user.id).count() == 1
+
+
+def test_a_failed_seal_never_breaks_the_analysis(db, test_user, monkeypatch):
+    """Best effort, and it has to be actually best effort.
+
+    A decision the user is waiting on matters more than a baseline row. The
+    cost of a failure here is a report, never an analysis.
+    """
+    import app.decision_impact as impact
+
+    def _explode(*_args, **_kwargs):
+        raise RuntimeError('database is on fire')
+
+    monkeypatch.setattr(impact, 'seal_baseline', _explode)
+    _seed_thread(db, test_user)
+
+    assert impact.seal_baseline_on_analysis_start(test_user, 'thread-impact') is None
+
+
+def test_the_hook_ignores_a_missing_thread_or_user(db, test_user):
+    assert seal_baseline_on_analysis_start(test_user, None) is None
+    assert seal_baseline_on_analysis_start(None, 'thread-impact') is None

@@ -151,11 +151,16 @@ def seal(thread_id):
 def report(thread_id):
     """The Decision Impact Report.
 
-    Seals an unsealed baseline first when analysis has already produced output.
-    The correction window has closed by then in any case, so this changes
-    nothing about the content — it records the seal that should already have
-    happened at the analysis call site (see the deferred wiring note in the
-    spec's Phase 1 scope).
+    Analysis now seals the baseline at its own start (see
+    decision_impact.seal_baseline_on_analysis_start and its four call sites),
+    so a thread reaching this route is normally already sealed.
+
+    The lazy seal below is the backstop for threads whose analysis ran BEFORE
+    that hook existed. Those threads have scored output and no sealed row, and
+    refusing them a report forever would be worse than sealing late — the
+    correction window has long since closed for them, so the content is the
+    same either way. It is recorded honestly as `auto_on_analysis`, and the
+    seal timestamp is the only thing that is later than it should be.
     """
     user = _current_user()
     if not user:
