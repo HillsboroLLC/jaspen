@@ -119,12 +119,23 @@ MEASURES = {
     'B6': {'label': 'Exposures quantified',          'family': FAMILY_VERIFICATION, 'kind': KIND_COUNT,  'direction': 'up'},
 }
 
-# B4 and B5 are transitions, not stocks: they compare a specific baseline
-# assumption against its state at close, which needs per-item identity across
-# the boundary. That identity is what the challenge ledger provides, so these
-# two are honestly absent until Phase 2 rather than approximated.
-PHASE_2_MEASURES = ('B4', 'B5')
-PHASE_2_REASON = 'requires the challenge ledger (Phase 2)'
+# B4, B5 and B6 are LEDGER MEASURES: they count decision elements carrying a
+# recorded challenge or validation event, not stocks read off a scorecard.
+#
+# That is what makes them honest. "Assumptions validated" was previously
+# unmeasurable because a free-text assumption at intake and a rubric criterion
+# at close share no identity — the ledger supplies it by keying every event to
+# a stable criterion key, so a criterion challenged in one pass and resolved
+# three passes later is recognisably the same criterion.
+#
+# Their baseline value is a deterministic 0, and not by convention: before
+# Jaspen ran, Jaspen had resolved nothing, labelled nothing, and quantified
+# nothing. That is true by definition rather than assumed.
+LEDGER_MEASURES = {
+    'B4': 'assumption_resolved',
+    'B5': 'assumption_left_open',
+    'B6': 'exposure_quantified',
+}
 
 # How a user's own statement about a criterion at intake maps to an evidence
 # grade, so baseline B1 can be computed with the SAME arithmetic as closing B1
@@ -331,9 +342,6 @@ def derive_baseline_measures(submission_payload, *, readiness_spec=None):
         )
         measures['A4'] = _measure(len(_listed('risks')), basis, unconfirmed_reason)
         measures['A5'] = _measure(len(_listed('dependencies')), basis, unconfirmed_reason)
-        measures['B6'] = _measure(
-            sum(1 for c in criteria if c.get('quantified')), basis, unconfirmed_reason,
-        )
 
         if criteria:
             graded = [
@@ -355,10 +363,13 @@ def derive_baseline_measures(submission_payload, *, readiness_spec=None):
                 _grade_histogram([g for g, _ in graded]), basis, unconfirmed_reason,
             )
 
+    for measure_id in LEDGER_MEASURES:
+        # Nothing had been challenged, resolved or quantified by Jaspen before
+        # Jaspen ran. A deterministic zero, not an assumed one.
+        measures[measure_id] = _measure(0, BASIS_DETERMINISTIC)
+
     for measure_id in MEASURES:
-        if measure_id in PHASE_2_MEASURES:
-            measures[measure_id] = _not_measurable(PHASE_2_REASON)
-        elif measure_id not in measures:
+        if measure_id not in measures:
             measures[measure_id] = _not_measurable('not established at intake')
 
     return measures
@@ -669,19 +680,18 @@ def current_measures(user_id, thread_id):
             None if backed_pct is None else 100 - backed_pct, BASIS_DETERMINISTIC,
         )
         measures['B3'] = _measure(_grade_histogram([g for g, _ in graded]), BASIS_DETERMINISTIC)
-        measures['B6'] = _measure(
-            sum(
-                1 for key, dim in dimensions.items()
-                if isinstance(dim, dict) and (dim.get('score') is not None)
-            ),
-            BASIS_DETERMINISTIC,
-        )
     else:
-        for measure_id in ('B1', 'B2', 'B3', 'B6'):
+        for measure_id in ('B1', 'B2', 'B3'):
             measures[measure_id] = _not_measurable('no scored criteria in the closing analysis')
 
-    for measure_id in PHASE_2_MEASURES:
-        measures[measure_id] = _not_measurable(PHASE_2_REASON)
+    # Ledger measures: distinct decision elements carrying the event, never a
+    # row count. "How many criteria were resolved", not "how many times we said
+    # so" — a re-score that re-states a finding must not read as more work.
+    from .decision_ledger import targets_with_event
+    for measure_id, event_type in LEDGER_MEASURES.items():
+        measures[measure_id] = _measure(
+            len(targets_with_event(user_id, thread_id, event_type)), BASIS_DETERMINISTIC,
+        )
 
     return measures, {'leading_option': (leader or {}).get('name'), 'option_count': len(cards)}
 
@@ -754,14 +764,16 @@ def _movement(measure_id, before, after):
 
 
 def _user_visible_event_count(user_id, thread_id, epoch=1):
-    """User-visible challenge and validation events for this epoch.
+    """Recorded analytical work that may lift the attribution cap (spec §5.4).
 
-    Phase 1 has no ledger, so this is zero and the attribution cap in §5.4
-    always binds. That is the intended shape of Phase 1: we would rather
-    underclaim than credit Jaspen for development the user drove. Phase 2
-    replaces this body with a query and the cap stops binding on its own.
+    Only events the user could actually observe, and only types that represent
+    analysis rather than bookkeeping. The cap now lifts on its own for a thread
+    where Jaspen genuinely challenged something, and keeps binding for one
+    where it did not — which is the behaviour Phase 1 could only approximate by
+    binding always.
     """
-    return 0
+    from .decision_ledger import cap_qualifying_event_count
+    return cap_qualifying_event_count(user_id, thread_id, epoch)
 
 
 WITHHELD_REASONS = {
@@ -998,8 +1010,12 @@ def build_impact_report(user, thread_id, epoch=1):
     if not intact:
         raise ValueError(f'baseline integrity check failed: {problem}')
 
+    from .decision_ledger import counts_by_type, thread_events
+
     baseline_measures = baseline.measures if isinstance(baseline.measures, dict) else {}
     closing_measures, context = current_measures(user.id, thread_id)
+    all_events = thread_events(user.id, thread_id, epoch)
+    visible_events = [event for event in all_events if event.user_visible]
     impact = evaluate_impact(
         baseline_measures,
         closing_measures,
@@ -1031,14 +1047,14 @@ def build_impact_report(user, thread_id, epoch=1):
             'submission_ref': baseline.submission_ref(),
         },
         'activity': {
-            # Phase 1 has no ledger. Reported as an empty, explained section
-            # rather than omitted, so a reader can see that the absence is a
-            # stage of the build and not an absence of activity.
-            'counts_by_type': {},
-            'events': [],
-            'suppressed_non_visible': 0,
-            'available': False,
-            'reason': PHASE_2_REASON,
+            'counts_by_type': counts_by_type(user.id, thread_id, epoch),
+            # User-visible events only. One that nobody could observe did not
+            # challenge anyone, and listing it would pad the section that is
+            # supposed to be the evidence of intervention.
+            'events': [event.to_dict() for event in visible_events],
+            'suppressed_non_visible': len(all_events) - len(visible_events),
+            'available': True,
+            'reason': None,
         },
         'current': {
             'measured_at': datetime.utcnow().isoformat(),
@@ -1051,7 +1067,7 @@ def build_impact_report(user, thread_id, epoch=1):
             'generated_by': 'template',
             'grounded_in': {
                 'measures': [m['id'] for m in impact['moved']],
-                'events': [],
+                'events': [event.id for event in visible_events],
             },
             'model_id': None,
             'generated_at': datetime.utcnow().isoformat(),

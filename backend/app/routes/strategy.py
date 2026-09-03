@@ -3754,6 +3754,7 @@ def analyze_project():
         analysis['meta']['credits_remaining'] = remaining
         try:
             upsert_scorecard(
+                analysis_pass=True,   # a real scoring pass: may write ledger events
                 user_id=current_user_id,
                 thread_id=resolved_thread_id,
                 payload=analysis,
@@ -7018,6 +7019,7 @@ def score_batch_queued(thread_id):
 
             try:
                 upsert_scorecard(
+                    analysis_pass=True,   # a real scoring pass: may write ledger events
                     user_id=user_id,
                     thread_id=thread_id,
                     payload=scorecard,
@@ -7417,6 +7419,23 @@ def generate_ai_wbs(thread_id):
             # Key the plan under the canonical idea id so it's always registered
             # to the originating idea (never just the thread-level mirror).
             _store_thread_wbs(thread_data, canonical_scorecard_id, normalized_wbs)
+            # Dependencies Jaspen authored in a GENERATED plan (spec §4.3). The
+            # plan-editing routes deliberately do not call this: a dependency the
+            # user typed into their own plan is theirs, not a Jaspen finding.
+            # Never allowed to fail the request.
+            try:
+                from ..decision_ledger import record_generated_plan
+                record_generated_plan(
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    plan=normalized_wbs,
+                    organization_id=None,
+                )
+            except Exception:  # noqa: BLE001
+                current_app.logger.warning(
+                    'decision_ledger: could not record generated plan for thread %s',
+                    thread_id, exc_info=True,
+                )
             all_data[thread_id] = thread_data
             _save_scenarios(user_id, all_data)
             # Register the plan as a Session Artifact on the originating idea so

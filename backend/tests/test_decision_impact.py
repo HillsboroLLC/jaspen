@@ -31,6 +31,7 @@ from app.decision_impact import (
     canonical_json,
     capture_or_update_draft,
     content_digest,
+    current_measures,
     derive_baseline_measures,
     evaluate_impact,
     evidence_backed_pct_from_grades,
@@ -639,10 +640,11 @@ def test_the_report_carries_the_whole_contract(db, test_user):
     assert report['current']['leading_option'] == 'Option A'
     assert report['narrative']['generated_by'] == 'template'
     assert report['narrative']['model_id'] is None
-    # Phase 1 has no ledger, and says so rather than implying no activity.
-    assert report['activity']['available'] is False
-    assert report['impact']['attribution_cap_applied'] in (True, False)
-    assert report['impact']['verdict'] != VERDICT_MATERIAL  # the cap, in Phase 1
+    assert report['activity']['available'] is True
+    # These cards were written straight to the table, bypassing the scoring
+    # path, so no analytical work was recorded and the cap still binds.
+    assert report['activity']['counts_by_type'] == {}
+    assert report['impact']['verdict'] != VERDICT_MATERIAL
     assert 'not the quality of the decision' in report['provenance_note']
 
 
@@ -958,3 +960,134 @@ def test_at60_analysis_output_closes_the_correction_window(db, test_user):
 
     with pytest.raises(SealedBaselineError):
         capture_or_update_draft(test_user, 'thread-impact', structure=_structure())
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — what the ledger makes measurable (spec §4, §2.3)
+# ---------------------------------------------------------------------------
+
+def _score_through_the_real_path(db, user, thread_id, dimensions, *, run, weights=None):
+    """Persist a scorecard the way an analytical pass does.
+
+    Deliberately routed through upsert_scorecard rather than the ledger API:
+    the claim under test is that real scoring produces events, not that the
+    recorder works when called directly.
+    """
+    from app.scorecards import upsert_scorecard
+
+    upsert_scorecard(
+        user_id=user.id,
+        thread_id=thread_id,
+        payload={
+            'id': 'card-a',
+            'project_name': 'Option A',
+            'evaluation_id': run,
+            'jaspen_score': 78,
+            'dimensions': dimensions,
+            'scoring_weights': weights or {key: 1.0 for key in dimensions},
+        },
+        evaluation_id=run,
+        analysis_pass=True,
+    )
+    db.session.commit()
+
+
+def _dim(score, confidence, ask=None):
+    return {
+        'label': 'Cost', 'score': score, 'raw_score': score,
+        'confidence': confidence, 'what_would_improve': ask,
+    }
+
+
+def test_at67_b4_and_b5_are_measurable_without_inference(db, test_user):
+    """AT-67 The measures Phase 1 had to report as unavailable.
+
+    They were unmeasurable because a free-text assumption at intake and a
+    rubric criterion at close share no identity. The ledger supplies it: both
+    now count DISTINCT criteria carrying a recorded event, with no cross-
+    boundary matching and nothing inferred from prose.
+    """
+    rubric = {'criteria': [
+        {'key': 'cost', 'label': 'Cost', 'weight': 0.5},
+        {'key': 'risk', 'label': 'Risk', 'weight': 0.5},
+    ]}
+    _seed_thread(db, test_user, rubric=rubric)
+    capture_or_update_draft(test_user, 'thread-impact', structure=_structure())
+    seal_baseline(test_user, 'thread-impact')
+
+    _score_through_the_real_path(db, test_user, 'thread-impact', {
+        'cost': _dim(80, 'assumed', 'Share the FY25 spend export.'),
+        'risk': _dim(70, 'low', 'Provide the vendor SLA history.'),
+    }, run='run-1', weights={'cost': 0.5, 'risk': 0.5})
+
+    _score_through_the_real_path(db, test_user, 'thread-impact', {
+        'cost': _dim(80, 'high', None),
+        'risk': _dim(70, 'low', 'Still need the vendor SLA history.'),
+    }, run='run-2', weights={'cost': 0.5, 'risk': 0.5})
+
+    measures, _ = current_measures(test_user.id, 'thread-impact')
+
+    assert measures['B4']['value'] == 1        # cost: assumed -> high
+    assert measures['B4']['basis'] == BASIS_DETERMINISTIC
+    assert measures['B5']['value'] == 1        # risk: challenged, still open
+    assert measures['B4']['reason'] is None if 'reason' in measures['B4'] else True
+
+    # Baseline is a deterministic zero: before Jaspen ran, Jaspen had resolved
+    # nothing and labelled nothing.
+    baseline = get_baseline(test_user.id, 'thread-impact')
+    assert baseline.measures['B4'] == {'value': 0, 'basis': BASIS_DETERMINISTIC}
+    assert baseline.measures['B5'] == {'value': 0, 'basis': BASIS_DETERMINISTIC}
+
+
+def test_at68_recorded_work_lifts_the_attribution_cap(db, test_user):
+    """AT-68 The cap was never meant to bind forever — only until we could
+    tell Jaspen's work from the user's."""
+    rubric = {'criteria': [{'key': 'cost', 'label': 'Cost', 'weight': 1.0}]}
+    _seed_thread(db, test_user, rubric=rubric)
+    capture_or_update_draft(test_user, 'thread-impact', structure=_structure())
+    seal_baseline(test_user, 'thread-impact')
+
+    _score_through_the_real_path(
+        db, test_user, 'thread-impact',
+        {'cost': _dim(100, 'assumed', 'Share the FY25 spend export.')},
+        run='run-1',
+    )
+
+    report = build_impact_report(test_user, 'thread-impact')
+    assert report['activity']['counts_by_type']
+    assert report['impact']['user_visible_events'] > 0
+    assert report['impact']['attribution_cap_applied'] is False
+
+
+def test_at69_the_cap_still_binds_when_nothing_was_recorded(db, test_user):
+    """AT-69 The other half of AT-68: growth with no recorded analytical work
+    is still not claimed."""
+    impact = evaluate_impact(
+        _measure_set(A1=_m(1), A2=_m(1), A5=_m(0)),
+        _measure_set(A1=_m(5), A2=_m(8), A5=_m(4)),
+        user_visible_events=0,
+    )
+    assert impact['attribution_cap_applied'] is True
+    assert impact['verdict'] == VERDICT_LIMITED
+
+
+def test_at70_the_report_lists_only_observable_events(db, test_user):
+    """AT-70"""
+    from app.models_challenge_event import ChallengeEvent
+
+    rubric = {'criteria': [{'key': 'cost', 'label': 'Cost', 'weight': 1.0}]}
+    _seed_thread(db, test_user, rubric=rubric)
+    capture_or_update_draft(test_user, 'thread-impact', structure=_structure())
+    seal_baseline(test_user, 'thread-impact')
+    _score_through_the_real_path(
+        db, test_user, 'thread-impact',
+        {'cost': _dim(100, 'assumed', 'Share the export.')}, run='run-1',
+    )
+
+    hidden = ChallengeEvent.query.filter_by(user_id=test_user.id).first()
+    hidden.user_visible = False
+    db.session.commit()
+
+    report = build_impact_report(test_user, 'thread-impact')
+    assert report['activity']['suppressed_non_visible'] == 1
+    assert all(event['user_visible'] for event in report['activity']['events'])

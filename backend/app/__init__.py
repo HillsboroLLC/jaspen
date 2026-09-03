@@ -540,6 +540,7 @@ def create_app():
     from . import models_studio  # noqa: F401  register Studio tables with SQLAlchemy
     from . import models_decision_record  # noqa: F401  register DecisionRecord table with SQLAlchemy
     from . import models_decision_baseline  # noqa: F401  register DecisionBaseline table with SQLAlchemy
+    from . import models_challenge_event  # noqa: F401  register ChallengeEvent table with SQLAlchemy
 
     app.register_blueprint(auth_bp,      url_prefix='/api/v1/auth')
     app.register_blueprint(admin_bp,     url_prefix='/api/v1/admin')

@@ -119,9 +119,21 @@ close with the same recommendation and still show material impact.**
 | `B1` | `evidence_backed_pct` | `decision_confidence` | weighted % of the decision resting on evidence |
 | `B2` | `assumption_dependent_pct` | `decision_confidence` | complement of B1; reported, never independently thresholded |
 | `B3` | `criteria_grade_profile` | `decision_confidence` | histogram over `{high, medium, low, assumed}` |
-| `B4` | `assumptions_validated` | grade transition | baseline items graded `low`/`assumed` that now grade `medium` or better |
-| `B5` | `assumptions_open_labeled` | grade + record | items still unsupported **and** explicitly labeled as such in the record |
-| `B6` | `exposures_quantified` | `decision_confidence` swing | criteria carrying a computed numeric swing that had none at baseline |
+| `B4` | `assumptions_validated` | challenge ledger | distinct criteria carrying an `assumption_resolved` event |
+| `B5` | `assumptions_open_labeled` | challenge ledger | distinct criteria carrying an `assumption_left_open` event |
+| `B6` | `exposures_quantified` | challenge ledger | distinct criteria carrying an `exposure_quantified` event |
+
+`B4`, `B5` and `B6` are **ledger measures**. They were unmeasurable in Phase 1
+for a specific reason: a free-text assumption at intake and a rubric criterion
+at close share no identity, so no honest diff could connect them. The ledger
+supplies that identity by keying every event to a stable criterion key, and the
+measures become counts of *distinct criteria carrying a recorded event* — no
+cross-boundary matching, nothing inferred from prose.
+
+Their baseline value is a deterministic `0`, and not by convention: before
+Jaspen ran, Jaspen had resolved nothing, labelled nothing and quantified
+nothing. Counting distinct criteria rather than rows is what stops a re-score
+that re-states a finding from reading as more work.
 
 `B5` deserves a note: leaving an assumption open is not a failure, and the
 measure exists because *labeling* an unresolved assumption is itself a verified
@@ -402,65 +414,119 @@ Append-only table `decision_challenge_events`, keyed by
 ### 4.2 Event record
 
 ```
-event_id       uuid
+id             uuid
+user_id        str
 thread_id      str
 epoch          int
-seq            int          monotonic within (thread_id, epoch)
-occurred_at    datetime     UTC
+seq            int          monotonic within (user, thread, epoch)
+occurred_at    datetime     UTC — authoritative; seq is for rendering
 type           enum         see 4.3
-target_kind    enum         criterion | alternative | assumption | risk | dependency | weighting
-target_id      str          stable id, never a label
-origin         str          emitting subsystem, e.g. 'readiness', 'scorer', 'sidebar'
-user_visible   bool         was this actually surfaced to the user?
-derivation_id  str
-dedupe_key     str          unique
-payload        json         minimal deterministic detail; no prose
+target_kind    enum         criterion | dependency
+target_id      str          stable key, never a label
+target_label   str          for rendering only
+trigger        json         the deterministic state the event was derived from
+origin         str          emitting subsystem: 'scoring' | 'execution_plan'
+actor          enum         jaspen | user_confirmed | user_supplied
+user_visible   bool         could the user observe this intervention?
+derivation_id  str          the artifact whose write produced it
+dedupe_key     str          unique per (user, thread, epoch)
 ```
+
+Together these answer the six questions a ledger row has to answer: what
+happened (`type`), when (`occurred_at`), which decision element (`target_kind`
++ `target_id`), what state triggered it (`trigger`), whose work it was
+(`actor`), and whether anyone could see it (`user_visible`).
+
+`trigger` is what makes a row checkable rather than asserted — it carries the
+grade, the previous grade, the computed swing. `target_id` is a stable key
+rather than a label so a criterion challenged in one pass and resolved three
+passes later is recognisably the same criterion (§4.4).
 
 `user_visible` is not bookkeeping. An event the user never saw did not challenge
 anyone, and §5.4 caps the verdict on that basis.
 
 ### 4.3 Types
 
+Five, each with a real emitter. The draft taxonomy had fourteen; what survived
+contact with the call sites is below, and §4.5 says what did not and why.
+
 **Challenge events** — Jaspen pressed on something.
 
-| Type | Emitted when |
+| Type | Emitted when | Emitted from |
+| --- | --- | --- |
+| `evidence_requested` | a criterion was scored unevidenced (`low`/`assumed`) **and** a specific resolution ask was recorded against it | `upsert_scorecard`, analysis pass |
+| `assumption_left_open` | a criterion Jaspen already challenged was re-scored in a **new** pass, is still unevidenced, and Jaspen said so again | `upsert_scorecard`, analysis pass |
+| `exposure_quantified` | a criterion's uncertainty was converted into score points, at or above `MATERIAL_SWING_POINTS` | `upsert_scorecard`, analysis pass |
+| `dependency_surfaced` | an AI-generated execution plan declared a task dependency | plan generation only |
+
+**Validation events** — Jaspen confirmed something.
+
+| Type | Emitted when | Emitted from |
+| --- | --- | --- |
+| `assumption_resolved` | a criterion that previously graded `low`/`assumed` now grades `medium` or better | `upsert_scorecard`, analysis pass |
+
+`assumption_left_open` carries the spec's hardest requirement: it must mean
+Jaspen **made an unresolved uncertainty explicit**, not that a field stayed
+blank. Three conditions enforce that. The criterion must already carry an
+`evidence_requested` event — a criterion nobody ever challenged cannot reach
+this state however empty it is. A resolution ask must be present on this pass
+too, so Jaspen is saying it again rather than merely failing to. And the pass
+must be a genuinely new one (§4.4).
+
+### 4.4 Emission sites, and what is deliberately not one
+
+**`upsert_scorecard` is the single scoring chokepoint.** Ten call sites reach
+it; it is the only place holding both the previously persisted dimensions and
+the ones about to replace them, which is what makes a grade transition
+observable at all. Four of the five types come from there.
+
+**`analysis_pass` gates it, and defaults to `False`.** Only three of those ten
+call sites are analysis: `/analyze`, `/score-batch`, and the agent's
+`generate_scorecard` (which `/score-next` reuses). Renames, in-place prose
+edits, display overrides, legacy backfills and tombstones all reach the same
+function and none of them is analytical work. A default of `True` would have
+turned every backfill into evidence of thinking. A caller that forgets the flag
+under-reports, which is the safe direction.
+
+**A retry is not a new pass.** Each scoring run carries an `evaluation_id`; a
+replay of one carries the id already persisted. `assumption_left_open` requires
+the two to differ, because without that check re-executing an identical request
+would record "Jaspen re-examined this and it is still unsupported" when Jaspen
+did nothing of the kind. When either id is missing the answer is "cannot tell",
+and the event is skipped.
+
+**Plan dependencies come only from generation.** Seven call sites store a plan;
+two generate one. The five editing paths do not call the recorder, because a
+dependency the user typed into their own plan is theirs.
+
+**Nothing is inferred from prose.** No emitter reads a transcript, and none
+calls a model. A model may author the *wording* of a challenge — the product
+already has it write the "what would resolve this" line — but the event records
+the deterministic state (`grade`, `previous_grade`, `swing_points`) and the fact
+that an ask exists. The wording itself is never persisted as a ledger fact.
+
+### 4.5 The types that have no emitter, and why
+
+Three types from the original draft are **absent from the enum**, not merely
+unimplemented:
+
+| Type | Why there is no honest emitter |
 | --- | --- |
-| `evidence_requested` | Jaspen asked for the source behind a criterion or assumption |
-| `assumption_flagged` | an input was classified as assumption rather than evidence |
-| `weighting_challenged` | Jaspen questioned or proposed a change to a criterion weight |
-| `alternative_introduced` | an option absent from the sealed baseline was added |
-| `criterion_introduced` | a criterion absent from the sealed baseline was added |
-| `dependency_surfaced` | an execution dependency absent from the baseline was identified |
-| `risk_surfaced` | a risk absent from the baseline was identified |
-| `exposure_quantified` | a qualitative exposure was converted to a number |
+| `criterion_added` | `set_scoring_rubric` carries no authorship provenance, and its documented purpose is storing *the user's own* criteria. Attributing them to Jaspen would claim the user's thinking. |
+| `alternative_introduced` | Same problem. Nothing in the scoring tools records whether an option was the user's idea or Jaspen's, and a set difference against the baseline cannot tell "Jaspen proposed Denver" from "the user asked to add Denver". |
+| `weighting_challenged` | The product instructs the agent never to invent or alter a user's weights. There is no behaviour to record. |
 
-**Validation events** — Jaspen confirmed or closed out something.
+Adding any of them honestly would need a provenance field on the tool contract
+— a product change, and one where the model would be self-reporting its own
+authorship, which is close to the line §4.1 draws. It is deliberately not done
+here.
 
-| Type | Emitted when |
-| --- | --- |
-| `assumption_validated` | an assumption's grade rose to `medium` or better |
-| `assumption_unresolved` | analysis closed with the assumption unsupported and explicitly labeled |
-| `criterion_verified` | a criterion's basis was checked against a source or connected system |
+Four further draft types (`assumption_flagged`, `risk_surfaced`,
+`criterion_verified`, and the three response events) collapsed into the five
+above or had no distinct call site. `assumption_flagged` is not separable from
+`evidence_requested`: the same state transition produces both.
 
-**Response events** — what the user did about it.
-
-| Type | Emitted when |
-| --- | --- |
-| `user_supplied_evidence` | the user answered a request with a source |
-| `user_declined` | the user explicitly declined to supply it |
-| `user_deferred` | the request went unanswered at close |
-
-Response events carry no verdict weight. They exist so the report can be honest
-about who did what, and so a "what's still outstanding" view is possible later.
-
-### 4.4 Emission sites
-
-Several of these already occur in the product and simply are not recorded —
-readiness follow-up questions, the sidebar criterion edit path, the batch
-scorer's evidence contract. Phase 2 instruments existing call sites before adding
-any new behaviour. No event type ships without a real emitter; a type with no
-call site is removed from the enum rather than left aspirational (AT-27).
+---
 
 ---
 
@@ -520,11 +586,19 @@ of §1.2.
 | **Limited** | at least one measure moved, but neither route is satisfied |
 | **No material change** | no measure moved |
 
-**The attribution cap.** If the ledger contains zero `user_visible` challenge or
-validation events for the epoch, the verdict cannot exceed **Limited**,
-regardless of how far the measures moved. Growth with no recorded analytical work
-behind it may simply be a user who typed more, and we will not claim it. The cap
-must be stated in the report when applied, not applied silently.
+**The attribution cap.** If the ledger contains zero `user_visible`
+cap-qualifying events for the epoch, the verdict cannot exceed **Limited**,
+regardless of how far the measures moved. Growth with no recorded analytical
+work behind it may simply be a user who typed more, and we will not claim it.
+The cap must be stated in the report when applied, not applied silently.
+
+With the ledger in place the cap lifts on its own for a thread where Jaspen
+genuinely challenged something, and keeps binding for one where it did not —
+which is the behaviour Phase 1 could only approximate by binding always. Two
+filters decide it: `user_visible`, because an intervention nobody could observe
+did not challenge anyone; and `CAP_QUALIFYING_TYPES`, declared separately from
+the taxonomy so that a future bookkeeping event can enter the ledger without
+entering this count.
 
 ### 5.5 What the verdict describes
 
@@ -874,6 +948,30 @@ exists so that this output is a correct result, not a bug.
 - **AT-38** A measure whose baseline `basis` is `proposed_unconfirmed` cannot
   appear in `impact.moved`, and appears in `excluded_unconfirmed` instead.
 
+### The challenge ledger
+
+- **AT-61** `assumption_left_open` is reachable only for a criterion Jaspen
+  already challenged, in a new pass, where Jaspen flagged it again. A blank
+  field never reaches it.
+- **AT-62** `analysis_pass` defaults to `False`, and a plain
+  `upsert_scorecard` call writes no events.
+- **AT-62b** Exactly the three analysis call sites set it; backfill and
+  tombstone paths never do.
+- **AT-63** Only the two plan-generation paths record dependencies; the five
+  plan-editing paths do not.
+- **AT-64** The cap counts only `user_visible` events of cap-qualifying types.
+- **AT-64b** `CAP_QUALIFYING_TYPES` is declared separately from `EVENT_TYPES`.
+- **AT-65** A challenge and its later resolution resolve to the same
+  `target_id`, so the report can connect them rather than counting them twice.
+- **AT-66** No emitter reaches a model client, and no event persists model
+  prose — only the state and the fact an ask exists.
+- **AT-67** `B4` and `B5` are measurable from the ledger with no inference, and
+  their baseline is a deterministic zero.
+- **AT-68** Recorded, observable analytical work lifts the attribution cap.
+- **AT-69** With nothing recorded, the cap still binds.
+- **AT-70** The report lists only observable events and counts the rest under
+  `suppressed_non_visible`.
+
 ### Capture provenance
 
 - **AT-50** A baseline sealed before analysis records `contemporaneous` and no
@@ -950,10 +1048,11 @@ another, and best-effort, so it can cost a report but never an analysis. The
 correction window's own guard (no writes once a thread has scored output) holds
 the content boundary regardless of whether the hook runs.
 
-**Phase 2 — the challenge ledger.** `decision_challenge_events` table; instrument
-existing call sites first. This is where the report stops being a diff and starts
-being evidence of analytical work — and where the attribution cap in §5.4 stops
-binding.
+**Phase 2 — the challenge ledger.** *Done.* `decision_challenge_events`, five
+event types, instrumented at existing call sites only. This is where the report
+stops being a diff and starts being evidence of analytical work, where `B4`/`B5`
+become measurable, and where the attribution cap stops binding for threads that
+earned it.
 
 **Phase 3 — narrative and surfaces.** Contained model narrative with template
 fallback, plus email and PPTX renderers through the existing split.
@@ -977,6 +1076,10 @@ draft of this note said otherwise and was out of date.
 provenance (§3.8) follows in `d2b8e64af117`. Upgrade and downgrade are both
 exercised for each, and the resulting columns are checked against the model
 rather than assumed.
+
+`decision_challenge_events` is `e5c3f18d92ab`, on `d2b8e64af117`, and carries
+the unique constraint that makes ledger idempotence a database guarantee rather
+than a caller's good intentions.
 
 `d2b8e64af117` backfills every already-sealed row to `reconstructed` rather
 than letting it inherit the column default. Nothing about a row sealed by code
