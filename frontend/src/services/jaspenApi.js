@@ -89,6 +89,36 @@ export const jasApi = {
     });
   },
 
+  // Decision Impact — the intake baseline and the before/after report.
+  // See docs/DECISION_IMPACT_REPORT_SPEC.md. The baseline is write-once: the
+  // save and seal calls answer 409 once it is sealed, which is the correction
+  // window closing rather than an error to retry.
+  getDecisionBaseline(threadId) {
+    return httpJson(
+      `/api/v1/decision-impact/baseline/${encodeURIComponent(threadId)}`
+    );
+  },
+
+  saveDecisionBaseline(threadId, structure) {
+    return httpJson(
+      `/api/v1/decision-impact/baseline/${encodeURIComponent(threadId)}`,
+      { method: 'POST', body: { structure } }
+    );
+  },
+
+  sealDecisionBaseline(threadId) {
+    return httpJson(
+      `/api/v1/decision-impact/baseline/${encodeURIComponent(threadId)}/seal`,
+      { method: 'POST' }
+    );
+  },
+
+  getDecisionImpactReport(threadId) {
+    return httpJson(
+      `/api/v1/decision-impact/report/${encodeURIComponent(threadId)}`
+    );
+  },
+
   // Scenarios
   createScenario(threadId, { deltas, label, session_id }) {
     return httpJson(

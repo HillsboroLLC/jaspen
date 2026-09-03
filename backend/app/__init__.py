@@ -534,10 +534,12 @@ def create_app():
     from .routes.leads import leads_bp
     from .routes.promotions import promotions_bp
     from .routes.decision_records import decision_records_bp
+    from .routes.decision_impact import decision_impact_bp
     from .routes.decision_profile import decision_profile_bp
     from .routes.tools import tools_bp
     from . import models_studio  # noqa: F401  register Studio tables with SQLAlchemy
     from . import models_decision_record  # noqa: F401  register DecisionRecord table with SQLAlchemy
+    from . import models_decision_baseline  # noqa: F401  register DecisionBaseline table with SQLAlchemy
 
     app.register_blueprint(auth_bp,      url_prefix='/api/v1/auth')
     app.register_blueprint(admin_bp,     url_prefix='/api/v1/admin')
@@ -561,6 +563,7 @@ def create_app():
     app.register_blueprint(leads_bp, url_prefix='/api/v1/public')
     app.register_blueprint(promotions_bp, url_prefix='/api/v1/public/promotions')
     app.register_blueprint(decision_records_bp, url_prefix='/api/v1/decision-records')
+    app.register_blueprint(decision_impact_bp, url_prefix='/api/v1/decision-impact')
     app.register_blueprint(decision_profile_bp, url_prefix='/api/v1/decision-profile')
     app.register_blueprint(tools_bp, url_prefix='/api/v1/tools')
     app.add_url_rule(

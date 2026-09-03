@@ -1,0 +1,215 @@
+/* Intake receipt — "Here's what Jaspen received".
+   App palette: navy #161f3b, slate #5a6585, muted #8a93ad, rose #a0036c,
+   line #d6e9ef, ice #eff9fc. Solid colours only, no gradients. */
+
+.ir {
+  border: 1px solid #d6e9ef;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 18px 20px;
+  margin: 0 0 18px;
+  text-align: left;
+}
+
+.ir-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ir-eyebrow {
+  margin: 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #a0036c;
+}
+
+.ir-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: #161f3b;
+}
+
+.ir-counts {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ir-count {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid #d6e9ef;
+  border-radius: 8px;
+  background: #eff9fc;
+}
+
+/* A zero is a fact about the submission, not a failing, so it is quieter
+   rather than redder. */
+.ir-count-zero {
+  background: #ffffff;
+  border-color: #e6edf2;
+}
+
+.ir-count-n {
+  font-size: 15px;
+  font-weight: 700;
+  color: #161f3b;
+  font-variant-numeric: tabular-nums;
+}
+
+.ir-count-zero .ir-count-n {
+  color: #8a93ad;
+}
+
+.ir-count-label {
+  font-size: 12px;
+  color: #5a6585;
+}
+
+.ir-note {
+  margin: 14px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #5a6585;
+}
+
+.ir-toggle {
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: #a0036c;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.ir-form {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-top: 1px solid #d6e9ef;
+  padding-top: 16px;
+}
+
+.ir-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ir-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #161f3b;
+}
+
+.ir-field-hint {
+  font-size: 11px;
+  color: #8a93ad;
+}
+
+.ir-textarea {
+  margin-top: 4px;
+  width: 100%;
+  border: 1px solid #d6e9ef;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: #161f3b;
+  background: #ffffff;
+  resize: vertical;
+}
+
+.ir-textarea:focus {
+  outline: 2px solid #a0036c;
+  outline-offset: 1px;
+}
+
+.ir-criteria {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ir-criterion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid #e6edf2;
+  border-radius: 8px;
+  background: #eff9fc;
+}
+
+.ir-criterion-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #161f3b;
+  flex: 1 1 160px;
+}
+
+.ir-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #5a6585;
+  cursor: pointer;
+}
+
+.ir-error {
+  margin: 0;
+  font-size: 12px;
+  color: #a0036c;
+}
+
+.ir-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ir-save,
+.ir-confirm {
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ir-save {
+  border: 1px solid #d6e9ef;
+  background: #ffffff;
+  color: #5a6585;
+}
+
+.ir-confirm {
+  border: 1px solid #161f3b;
+  background: #161f3b;
+  color: #ffffff;
+}
+
+.ir-save:disabled,
+.ir-confirm:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

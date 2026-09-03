@@ -46,6 +46,7 @@ import {
 // Data / storage
 import { Jaspen, storage } from './JaspenClient';
 import EmailResultsButton from './EmailResultsButton';
+import IntakeReceipt from './IntakeReceipt';
 
 // Tab components
 import ScoreDashboard   from './ScoreDashboard';
@@ -13947,6 +13948,16 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <span>{error}</span>
                 </div>
               )}
+
+              {/* "Here's what Jaspen received" — the intake correction window.
+                  Above the conversation because it describes the submission,
+                  and it takes itself away once analysis produces a scorecard.
+                  It never blocks: skipping it still gets you an analysis, it
+                  just narrows what the impact report can later measure. */}
+              <IntakeReceipt
+                threadId={sessionId || currentSessionId}
+                analysisStarted={(scorecardSnapshots || []).length > 0}
+              />
 
 	              {displayMessages.map((m, idx) => (
 	                <div key={m.id || idx} className={`jas-message ${m.role === 'ai' ? 'ai' : 'user'}`}>
