@@ -994,6 +994,14 @@ def evaluate_impact(baseline_measures, closing_measures, *,
 # "What changed" — the deterministic template (spec §8)
 # ---------------------------------------------------------------------------
 
+# The intervention labels read as plurals, which is right for every count but
+# one. Spelled out rather than derived: two of the three are irregular.
+INTERVENTION_SINGULARS = {
+    'B4': 'assumption validated',
+    'B5': 'uncertainty made explicit',
+    'B6': 'exposure quantified',
+}
+
 VERDICT_OPENING = {
     VERDICT_MATERIAL: 'The decision record changed materially between submission and close.',
     VERDICT_LIMITED: 'The decision record changed between submission and close, within limits.',
@@ -1040,10 +1048,12 @@ def compose_narrative(impact, context):
 
     for intervention in impact.get('interventions', []):
         if intervention['qualifying']:
-            sentences.append(
-                f"Jaspen recorded {intervention['count']} "
-                f"{intervention['label'].lower()}."
-            )
+            label = intervention['label'].lower()
+            if intervention['count'] == 1:
+                # "1 uncertainties made explicit" reads as a bug to a customer,
+                # and this paragraph is quoted into rooms.
+                label = INTERVENTION_SINGULARS.get(intervention['id'], label)
+            sentences.append(f"Jaspen recorded {intervention['count']} {label}.")
 
     unmoved_labels = [entry['label'].lower() for entry in impact['unmoved'][:3]]
     if unmoved_labels:

@@ -50,6 +50,57 @@ FORBIDDEN_CLAIMS = (
     'you should',
 )
 
+# Causal and relational language, banned outright (spec §8).
+#
+# The subtler failure the numeral check cannot catch. Every fact in the input
+# is legitimate, so a model can stay perfectly within its figures and still
+# assert a RELATIONSHIP between two of them that nothing in the evidence
+# records: that the evidence request is why the grade rose, that quantifying an
+# exposure is what changed the recommendation, that validating assumptions
+# strengthened the decision.
+#
+# The ledger has no relational provenance. It records that Jaspen asked for a
+# source on `cost`, and separately that `cost` later graded `high`. It does not
+# record that the first caused the second, and in many threads it did not — the
+# user may have supplied the figure for their own reasons, or a re-score may
+# have moved it. A narrative asserting the link would be inventing the single
+# most valuable claim in the report.
+#
+# So the ban is unconditional today. It becomes conditional only if the ledger
+# ever carries explicit relational provenance, and not before.
+#
+# `improved` and `strengthened` are here rather than in FORBIDDEN_CLAIMS
+# because their problem is relational, not evaluative: "coverage improved"
+# smuggles in a judgment about cause where "coverage moved from 38 to 71"
+# states what happened. The house style already prefers the second.
+CAUSAL_TERMS = (
+    'because',
+    'therefore',
+    'which led to',
+    'led to',
+    'resulting in',
+    'resulted in',
+    'as a result',
+    'consequently',
+    'caused',
+    'causing',
+    'revealed',
+    'improved',
+    'strengthened',
+    'thereby',
+    'due to',
+    'owing to',
+    'thanks to',
+    'enabled',
+    'drove',
+    'driving',
+    'prompted',
+    'triggered',
+)
+
+# What to write instead: additive, factual, one thing at a time.
+PREFERRED_CONNECTIVES = ('also', 'during the analysis', 'the report recorded')
+
 MAX_NARRATIVE_CHARS = 1200
 
 SYSTEM_PROMPT = (
@@ -64,6 +115,16 @@ SYSTEM_PROMPT = (
     '- Never characterise what the user originally believed or thought. The '
     'input records what was submitted, not anyone\'s state of mind.\n'
     '- Never restate the verdict as your own judgment.\n'
+    '- Never assert that one thing caused, led to, produced or explained '
+    'another. The input records what changed and what Jaspen did; it does NOT '
+    'record any relationship between them. Do not write because, therefore, '
+    'which led to, resulting in, caused, revealed, improved or strengthened.\n'
+    '- Write additively instead: state each fact in its own sentence, and join '
+    'them with \'also\' or \'during the analysis\'. Where you attribute '
+    'something to the analysis, write that the report recorded it. Say a '
+    'figure \'moved from X to Y\', never that it \'improved\'.\n'
+    '- Never claim an intervention changed the recommendation, the confidence, '
+    'the readiness, an outcome, or any other measure.\n'
     '- Do not use headings, bullets or markdown. One paragraph, plain prose, '
     'at most six sentences.'
 )
@@ -118,6 +179,11 @@ def allowed_numbers(grounded):
         allowed |= _numbers_in(entry.get('value'))
     for work in grounded['work_jaspen_did']:
         allowed |= _numbers_in(work['count'])
+    # An option named "Renew 5 years" is a fact the narrative was handed, and
+    # its digits are part of the name rather than a claim. Found by the demo
+    # fixtures: the deterministic template names the leading option, so without
+    # this the template failed its own containment check.
+    allowed |= _numbers_in(grounded.get('leading_option'))
     # Counts of the lists themselves: "three measures were unchanged".
     for size in (
         len(grounded['state_changes']), len(grounded['unchanged']),
@@ -137,6 +203,12 @@ def passes_containment(text, grounded):
     for phrase in FORBIDDEN_CLAIMS:
         if phrase in lowered:
             return False, f'forbidden claim: {phrase!r}'
+
+    # Word-boundary matching, so 'enabled' is caught but 'tabled' is not, and a
+    # measure label containing a banned word cannot be tripped by accident.
+    for term in CAUSAL_TERMS:
+        if re.search(rf'(?<![a-z]){re.escape(term)}(?![a-z])', lowered):
+            return False, f'causal claim not supported by the evidence: {term!r}'
 
     permitted = allowed_numbers(grounded)
     for number in _numbers_in(body):

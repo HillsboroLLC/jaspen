@@ -850,12 +850,43 @@ thinking — the baseline records what was submitted, not what the user believed
 It may not assert that the decision or its outcome improved. It may not restate
 the verdict as its own judgment.
 
-**Enforcement**, mechanical and in two parts:
+**Enforcement**, mechanical and in three parts:
 
 1. Every numeral in the paragraph must appear in the input it was given.
 2. A published list of claims the report may never make — outcome claims
    (`better decision`, `more likely to succeed`), guarantee language, and
    first-person judgment — is checked for outright.
+3. **Causal and relational language is banned outright.** This is the subtler
+   failure the numeral check cannot catch: every fact can be legitimate while
+   the *relationship* asserted between two of them is invented.
+
+   The ledger has no relational provenance. It records that Jaspen asked for a
+   source on `cost`, and separately that `cost` later graded `high`. It does
+   not record that the first caused the second — and in many threads it did
+   not: the user may have supplied the figure for their own reasons, or a
+   re-score may have moved it. A narrative asserting the link would be
+   inventing the single most valuable claim in the report.
+
+   Banned: `because`, `therefore`, `which led to`, `resulting in`, `caused`,
+   `revealed`, `improved`, `strengthened`, and their close relatives, matched
+   on word boundaries. `improved` and `strengthened` are here rather than
+   under (2) because their problem is relational rather than evaluative:
+   "coverage improved" smuggles in a judgment about cause where "coverage moved
+   from 38 to 71" states what happened.
+
+   Preferred instead: `also`, `during the analysis`, `the report recorded`, and
+   separate factual sentences. The prompt says so explicitly — banning without
+   offering an alternative produces refusals rather than better prose.
+
+   The ban is **unconditional today**. It becomes conditional only if the
+   ledger ever carries explicit relational provenance, and not before.
+
+The narrative may never claim an intervention changed the recommendation, the
+confidence, the readiness, an outcome, or any other measure.
+
+**The deterministic template is held to the same rules** (AT-77d). A fallback
+that quietly used causal phrasing would make the constraint cosmetic, since the
+template is what most reports render.
 
 A narrative failing either check is **discarded, not repaired**: a
 half-corrected sentence is a sentence nobody verified. The deterministic
@@ -1065,6 +1096,14 @@ exists so that this output is a correct result, not a bug.
 
 ### The narrative
 
+- **AT-77** Causal constructions fail containment even when every figure in
+  them is legitimate.
+- **AT-77b** The same facts in additive construction pass.
+- **AT-77c** Word-boundary matching prevents false positives.
+- **AT-77d** The deterministic template satisfies containment for every
+  verdict.
+- **AT-77e** The prompt names the banned terms and the preferred alternatives.
+- **AT-77f** An option name containing a digit does not break the template.
 - **AT-74** An unverified baseline produces no comparative narrative, and the
   model is not called at all.
 - **AT-75** The measure path remains model-free.
@@ -1162,6 +1201,25 @@ into two more renderers that would then have to be changed in three places.
 
 **Out of scope, all phases:** refund mechanics, entitlement changes, public
 guarantee language. The evidence layer is validated against real decisions first.
+
+---
+
+## 12b. Seeing it work
+
+`backend/scripts/seed_impact_demo.py` builds three demo decisions in a local
+dev database and prints the verdict each produces. Same SQLite-only guard as
+`init_dev_db.py`; it never runs against a remote database, and it owns and
+rebuilds only its own three threads.
+
+| Thread | Shape | Verdict |
+| --- | --- | --- |
+| `impact-demo-thin` | one option, two criteria, nothing quantified | `material`, both routes |
+| `impact-demo-strong` | three options, five weighted criteria, leader unchanged | `material`, verification route only |
+| `impact-demo-quiet` | fully evidenced brief, one clean pass | `no_material_change` |
+
+The third is the one to check first. It is the case the methodology has to be
+able to report honestly, and it is what would quietly disappear if the demo
+data were written to flatter the product.
 
 ---
 

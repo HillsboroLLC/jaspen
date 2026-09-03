@@ -46,6 +46,7 @@ def _impact(**overrides):
         ],
         'not_applicable': [{'id': 'A5', 'label': 'Execution dependencies',
                             'reason': 'no implementation phase'}],
+        'excluded_unconfirmed': [],
         'attribution_cap_applied': False,
     }
     base.update(overrides)
@@ -226,3 +227,90 @@ def test_forbidden_claims_cover_the_outcome_language_the_spec_bans():
     lowered = ' '.join(FORBIDDEN_CLAIMS)
     for required in ('better decision', 'guarantee', 'succeed'):
         assert required in lowered
+
+
+# ---------------------------------------------------------------------------
+# Causality (spec §8)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize('sentence', [
+    'The evidence-backed share moved from 38 to 71 because Jaspen asked for the source.',
+    'Jaspen requested evidence; therefore the grade rose.',
+    'Asking for the export led to 3 assumptions being supported.',
+    'Jaspen challenged the criterion, resulting in a higher share.',
+    'The request caused the figure to move.',
+    'Analysis revealed that the basis was thin.',
+    'Evidence coverage improved from 38 to 71.',
+    'Validating 3 assumptions strengthened the basis.',
+])
+def test_at77_causal_language_fails_containment(sentence):
+    """AT-77 Every figure in these is legitimate. The RELATIONSHIP is not.
+
+    The ledger records that Jaspen asked for a source on a criterion, and
+    separately that the criterion later graded higher. It does not record that
+    the first caused the second — and asserting it would invent the single most
+    valuable claim in the report.
+    """
+    grounded = grounding(_impact(), CONTEXT)
+    ok, problem = passes_containment(sentence, grounded)
+    assert ok is False
+    assert 'causal claim' in problem
+
+
+def test_at77b_additive_construction_passes():
+    """AT-77b The same facts, stated without inventing a link between them."""
+    grounded = grounding(_impact(), CONTEXT)
+    ok, problem = passes_containment(
+        'The set of alternatives is unchanged at 2. During the analysis the '
+        'evidence-backed share moved from 38 to 71. Jaspen also recorded 3 '
+        'assumptions validated.',
+        grounded,
+    )
+    assert ok is True and problem is None
+
+
+def test_at77c_word_boundaries_prevent_false_positives():
+    """AT-77c A banned word inside an innocent one must not trip the check."""
+    grounded = grounding(_impact(), CONTEXT)
+    ok, problem = passes_containment(
+        'The 3 items were tabled and the count of 2 was unchanged.', grounded,
+    )
+    assert ok is True, problem
+
+
+def test_at77f_an_option_name_containing_a_digit_does_not_break_the_template():
+    """AT-77f Found by the demo fixtures: the template names the leading
+    option, so "Renew 5 years" put a digit in the paragraph that containment
+    had no record of. The name is a fact the narrative was handed."""
+    grounded = grounding(_impact(), {'leading_option': 'Renew 5 years'})
+    ok, problem = passes_containment(
+        'The leading option is Renew 5 years.', grounded,
+    )
+    assert ok is True, problem
+
+
+def test_at77d_the_deterministic_template_obeys_the_same_rule(app, db, test_user):
+    """AT-77d The fallback is held to the constraint it falls back to.
+
+    A template that quietly used causal phrasing would make the rule cosmetic:
+    most reports render the template.
+    """
+    from app.decision_impact import compose_narrative
+
+    for verdict in ('material', 'limited', 'no_material_change'):
+        for context in (CONTEXT, {'leading_option': 'Renew 5 years'}):
+            impact = _impact(verdict=verdict)
+            text = compose_narrative(impact, context)
+            ok, problem = passes_containment(text, grounding(impact, context))
+            assert ok is True, f'{verdict} / {context}: {problem}'
+
+
+def test_at77e_the_prompt_tells_the_model_what_to_write_instead():
+    """AT-77e Banning without an alternative just produces refusals."""
+    from app.decision_narrative import PREFERRED_CONNECTIVES, SYSTEM_PROMPT
+
+    lowered = SYSTEM_PROMPT.lower()
+    assert 'because' in lowered and 'therefore' in lowered
+    for preferred in PREFERRED_CONNECTIVES:
+        assert preferred in lowered
+    assert 'moved from' in lowered
