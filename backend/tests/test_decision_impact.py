@@ -38,9 +38,14 @@ from app.decision_impact import (
     rederive_baseline_measures,
     seal_baseline,
     seal_baseline_on_analysis_start,
+    VERDICT_UNVERIFIED,
     verify_baseline_integrity,
 )
 from app.models_decision_baseline import (
+    CAPTURE_CONTEMPORANEOUS,
+    CAPTURE_RECONSTRUCTED,
+    RECONSTRUCTED_LATE_SEAL,
+    RECONSTRUCTED_NO_CAPTURE,
     SEALED_BY_ANALYSIS,
     SEALED_BY_USER,
     DecisionBaseline,
@@ -119,7 +124,16 @@ def _seed_thread(db, user, thread_id='thread-impact', chat=None, rubric=None, ca
         payload=payload,
         scenarios_json={},
     ))
-    for card in (cards or []):
+    db.session.commit()
+    if cards:
+        _add_cards(db, user, thread_id, cards)
+
+
+def _add_cards(db, user, thread_id, cards):
+    """Analysis output arriving on a thread."""
+    from app.models import Scorecard
+
+    for card in cards:
         db.session.add(Scorecard(
             id=card['id'],
             user_id=user.id,
@@ -606,17 +620,20 @@ def test_the_report_carries_the_whole_contract(db, test_user):
         {'key': 'cost', 'label': 'Cost', 'weight': 0.6},
         {'key': 'risk', 'label': 'Risk', 'weight': 0.4},
     ]}
-    _seed_thread(db, test_user, rubric=rubric, cards=[
+    _seed_thread(db, test_user, rubric=rubric)
+    capture_or_update_draft(test_user, 'thread-impact', structure=_structure())
+    seal_baseline(test_user, 'thread-impact')
+    _add_cards(db, test_user, 'thread-impact', [
         _card('Option A', 82, {'cost': 'high', 'risk': 'medium'}),
         _card('Option B', 68, {'cost': 'low', 'risk': 'assumed'}),
     ])
-    capture_or_update_draft(test_user, 'thread-impact', structure=_structure())
-    seal_baseline(test_user, 'thread-impact')
 
     report = build_impact_report(test_user, 'thread-impact')
 
     assert report['schema_version'] == 1
     assert report['baseline']['sealed_by'] == SEALED_BY_USER
+    assert report['baseline']['capture'] == CAPTURE_CONTEMPORANEOUS
+    assert report['reconstruction_note'] is None
     assert report['baseline']['submission_ref']['turn_count'] >= 1
     assert 'submission_payload' not in report['baseline']
     assert report['current']['leading_option'] == 'Option A'
@@ -764,3 +781,180 @@ def test_a_failed_seal_never_breaks_the_analysis(db, test_user, monkeypatch):
 def test_the_hook_ignores_a_missing_thread_or_user(db, test_user):
     assert seal_baseline_on_analysis_start(test_user, None) is None
     assert seal_baseline_on_analysis_start(None, 'thread-impact') is None
+
+
+# ---------------------------------------------------------------------------
+# Capture provenance — contemporaneous versus reconstructed (spec §3.8, §5.6)
+# ---------------------------------------------------------------------------
+
+def test_at50_a_baseline_sealed_before_analysis_is_contemporaneous(db, test_user):
+    """AT-50"""
+    _seed_thread(db, test_user)
+    capture_or_update_draft(test_user, 'thread-impact', structure=_structure())
+    baseline = seal_baseline(test_user, 'thread-impact')
+
+    assert baseline.capture == CAPTURE_CONTEMPORANEOUS
+    assert baseline.capture_reason is None
+    assert baseline.is_contemporaneous is True
+
+
+def test_at51_a_thread_analyzed_before_any_capture_is_reconstructed(db, test_user):
+    """AT-51 The pre-feature thread, and the thread nobody captured."""
+    _seed_thread(db, test_user, cards=[_card('Option A', 80, {'cost': 'high'})])
+
+    baseline = seal_baseline(test_user, 'thread-impact', sealed_by=SEALED_BY_ANALYSIS)
+    assert baseline.capture == CAPTURE_RECONSTRUCTED
+    assert baseline.capture_reason == RECONSTRUCTED_NO_CAPTURE
+    assert baseline.is_contemporaneous is False
+
+
+def test_at52_a_draft_sealed_late_is_reconstructed_with_its_own_reason(db, test_user):
+    """AT-52 The hook failed, analysis ran anyway, the seal arrived after.
+
+    The draft's CONTENT is provably pre-analysis — the correction window
+    refuses writes once analysis starts. The lifecycle claim is what failed, so
+    it is recorded under its own reason rather than being flattened into the
+    pre-feature case. It is still not contemporaneous.
+    """
+    _seed_thread(db, test_user)
+    capture_or_update_draft(test_user, 'thread-impact', structure=_structure())
+    _add_cards(db, test_user, 'thread-impact', [_card('Option A', 80, {'cost': 'high'})])
+
+    baseline = seal_baseline(test_user, 'thread-impact', sealed_by=SEALED_BY_ANALYSIS)
+    assert baseline.capture == CAPTURE_RECONSTRUCTED
+    assert baseline.capture_reason == RECONSTRUCTED_LATE_SEAL
+    assert baseline.is_contemporaneous is False
+
+
+def test_at53_a_failed_hook_cannot_be_laundered_by_the_later_lazy_seal(db, test_user):
+    """AT-53 The whole point of this distinction.
+
+    The hook fails, analysis proceeds (correctly — it must never be blocked by
+    a baseline), and the report route later seals the thread. That later seal
+    must not produce something indistinguishable from a baseline captured in
+    time.
+    """
+    import app.decision_impact as impact
+
+    _seed_thread(db, test_user)
+    capture_or_update_draft(test_user, 'thread-impact', structure=_structure())
+
+    original = impact.seal_baseline
+    try:
+        impact.seal_baseline = lambda *a, **k: (_ for _ in ()).throw(RuntimeError('down'))
+        assert impact.seal_baseline_on_analysis_start(test_user, 'thread-impact') is None
+    finally:
+        impact.seal_baseline = original
+
+    _add_cards(db, test_user, 'thread-impact', [_card('Option A', 80, {'cost': 'high'})])
+    late = seal_baseline(test_user, 'thread-impact', sealed_by=SEALED_BY_ANALYSIS)
+
+    assert late.capture == CAPTURE_RECONSTRUCTED
+    assert late.is_contemporaneous is False
+
+
+def test_at54_capture_is_decided_by_the_thread_not_by_the_caller(db, test_user):
+    """AT-54 No argument, no override, no way to assert it from outside."""
+    import inspect as _inspect
+
+    signature = _inspect.signature(seal_baseline)
+    assert 'capture' not in signature.parameters
+    assert 'capture_reason' not in signature.parameters
+
+    _seed_thread(db, test_user, cards=[_card('Option A', 80, {'cost': 'high'})])
+    # Even the most confident caller gets the truth.
+    baseline = seal_baseline(test_user, 'thread-impact', sealed_by=SEALED_BY_USER)
+    assert baseline.capture == CAPTURE_RECONSTRUCTED
+
+
+def test_at55_a_reconstructed_baseline_yields_no_verdict(db, test_user):
+    """AT-55 Not material, not limited, not "no material change" — no comparison."""
+    impact = evaluate_impact(
+        _measure_set(A1=_m(1), A2=_m(1), A5=_m(0), B1=_m(10)),
+        _measure_set(A1=_m(9), A2=_m(9), A5=_m(9), B1=_m(95)),
+        user_visible_events=50,
+        capture=CAPTURE_RECONSTRUCTED,
+        capture_reason=RECONSTRUCTED_NO_CAPTURE,
+    )
+
+    assert impact['verdict'] == VERDICT_UNVERIFIED
+    assert impact['verified_comparison'] is False
+    assert impact['routes_satisfied'] == []
+    assert impact['withheld_reason']
+
+
+def test_at56_no_movements_are_published_for_a_reconstructed_baseline():
+    """AT-56 A figure on the page can be lifted out of its caveat, so there is
+    no figure. The comparison is withheld, not annotated."""
+    impact = evaluate_impact(
+        _measure_set(B1=_m(10)), _measure_set(B1=_m(95)),
+        user_visible_events=50,
+        capture=CAPTURE_RECONSTRUCTED,
+        capture_reason=RECONSTRUCTED_LATE_SEAL,
+    )
+    assert impact['moved'] == []
+    assert impact['unmoved'] == []
+    assert impact['not_applicable'] == []
+    assert impact['excluded_unconfirmed'] == []
+
+
+def test_at57_verified_comparison_is_the_eligibility_primitive():
+    """AT-57 One boolean any later gate keys off, stated as a fact about the
+    evidence rather than as a commercial term."""
+    verified = evaluate_impact(_measure_set(), _measure_set(), user_visible_events=1)
+    assert verified['verified_comparison'] is True
+
+    for reason in (RECONSTRUCTED_NO_CAPTURE, RECONSTRUCTED_LATE_SEAL):
+        withheld = evaluate_impact(
+            _measure_set(), _measure_set(), user_visible_events=1,
+            capture=CAPTURE_RECONSTRUCTED, capture_reason=reason,
+        )
+        assert withheld['verified_comparison'] is False
+
+
+def test_at58_the_report_qualifies_a_reconstructed_baseline(db, test_user):
+    """AT-58 It may never be presented as "what Jaspen received"."""
+    _seed_thread(db, test_user, cards=[_card('Option A', 80, {'cost': 'high'})])
+    seal_baseline(test_user, 'thread-impact', sealed_by=SEALED_BY_ANALYSIS)
+
+    report = build_impact_report(test_user, 'thread-impact')
+
+    assert report['baseline']['capture'] == CAPTURE_RECONSTRUCTED
+    assert report['baseline']['verified_comparison'] is False
+    assert report['impact']['verdict'] == VERDICT_UNVERIFIED
+    assert report['reconstruction_note']
+    assert 'not a record of what was originally submitted' in report['reconstruction_note']
+
+
+def test_at59_the_narrative_makes_no_comparison_claim_when_withheld(db, test_user):
+    """AT-59"""
+    from app.decision_impact import compose_narrative
+
+    impact = evaluate_impact(
+        _measure_set(B1=_m(10)), _measure_set(B1=_m(95)),
+        user_visible_events=50,
+        capture=CAPTURE_RECONSTRUCTED, capture_reason=RECONSTRUCTED_NO_CAPTURE,
+    )
+    narrative = compose_narrative(impact, {'leading_option': 'Option A'})
+
+    assert 'no verified starting point' in narrative
+    # No figures, because no comparison was made.
+    assert '95' not in narrative and '10' not in narrative
+
+
+def test_at60_analysis_output_closes_the_correction_window(db, test_user):
+    """AT-60 The scorecards table counts as analysis output.
+
+    Detecting it requires user_id and thread_id: without them the peer
+    collector falls back to the legacy session stores and answers False for a
+    fully analyzed thread, holding the window open long after it should shut.
+    """
+    _seed_thread(db, test_user)
+    capture_or_update_draft(test_user, 'thread-impact', structure=_structure())
+    _add_cards(db, test_user, 'thread-impact', [_card('Option A', 80, {'cost': 'high'})])
+
+    from app.decision_impact import analysis_has_started
+    assert analysis_has_started(test_user.id, 'thread-impact') is True
+
+    with pytest.raises(SealedBaselineError):
+        capture_or_update_draft(test_user, 'thread-impact', structure=_structure())

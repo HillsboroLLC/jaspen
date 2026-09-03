@@ -66,6 +66,40 @@ SEALED_BY_USER = 'user_confirmed'
 SEALED_BY_ANALYSIS = 'auto_on_analysis'
 SEALED_BY = (SEALED_BY_USER, SEALED_BY_ANALYSIS)
 
+# ── Capture provenance (spec §3.8) ───────────────────────────────────────
+#
+# `sealed_by` says WHO sealed. This says WHETHER THE SEAL WAS IN TIME, which is
+# a different question and the one that decides whether a Before/After
+# comparison means anything.
+#
+# The two must not be conflated. A baseline sealed `auto_on_analysis` at the
+# correct moment is trustworthy; one sealed `auto_on_analysis` afterwards is
+# not, and both carry the same `sealed_by`.
+CAPTURE_CONTEMPORANEOUS = 'contemporaneous'   # sealed before analysis began
+CAPTURE_RECONSTRUCTED = 'reconstructed'       # assembled after analysis began
+CAPTURE_MODES = (CAPTURE_CONTEMPORANEOUS, CAPTURE_RECONSTRUCTED)
+
+# Why a baseline is reconstructed. Derived at seal time from what is actually
+# on the row, never asserted by a caller.
+#
+#   RECONSTRUCTED_NO_CAPTURE   nothing was captured before analysis. The
+#                              submission payload is read from the thread AS IT
+#                              NOW STANDS, so it contains turns the user made
+#                              during and after analysis. It is not a before
+#                              state and must never be rendered as one.
+#   RECONSTRUCTED_LATE_SEAL    a draft WAS captured before analysis (and the
+#                              correction window refuses writes once analysis
+#                              starts, so its content is provably pre-analysis)
+#                              but the seal itself arrived late — the hook
+#                              failed, or never ran. The evidence is clean; the
+#                              lifecycle claim is not.
+#
+# The second is the strongest candidate for a future verified-reconstruction
+# path (spec §11 Q3). Until that path is defined and tested, both are treated
+# identically: no verified comparison.
+RECONSTRUCTED_NO_CAPTURE = 'no_baseline_before_analysis'
+RECONSTRUCTED_LATE_SEAL = 'draft_captured_before_analysis_sealed_late'
+
 
 class SealedBaselineError(RuntimeError):
     """Raised on any attempt to alter a baseline after it was sealed."""
@@ -106,6 +140,11 @@ class DecisionBaseline(db.Model):
     # ── Seal ─────────────────────────────────────────────────────────────
     sealed_at = db.Column(db.DateTime, nullable=True)
     sealed_by = db.Column(db.String(32), nullable=True)
+    # Whether the seal was in time. Defaults to the honest answer for a row
+    # that has not been sealed yet: nothing has been captured in time until it
+    # has. Set definitively at seal time from the thread's own analysis state.
+    capture = db.Column(db.String(32), nullable=False, default=CAPTURE_CONTEMPORANEOUS)
+    capture_reason = db.Column(db.String(64), nullable=True)
     # Component hashes, so a mismatch says WHICH half diverged. A single
     # combined hash would prove only that something did.
     submission_hash = db.Column(db.String(80), nullable=True)
@@ -128,6 +167,16 @@ class DecisionBaseline(db.Model):
     def is_sealed(self):
         return self.sealed_at is not None
 
+    @property
+    def is_contemporaneous(self):
+        """Can this baseline support a verified Before/After comparison?
+
+        Only a sealed baseline captured before analysis began. Everything else
+        — a late seal, a pre-feature thread, a thread whose hook failed — can
+        describe a state, but cannot establish what preceded the analysis.
+        """
+        return self.is_sealed and self.capture == CAPTURE_CONTEMPORANEOUS
+
     def to_dict(self, *, include_submission=False):
         """Serialized baseline.
 
@@ -143,6 +192,9 @@ class DecisionBaseline(db.Model):
             'sealed': self.is_sealed,
             'sealed_at': self.sealed_at.isoformat() if self.sealed_at else None,
             'sealed_by': self.sealed_by,
+            'capture': self.capture,
+            'capture_reason': self.capture_reason,
+            'verified_comparison': self.is_contemporaneous,
             'submission_hash': self.submission_hash,
             'measures_hash': self.measures_hash,
             'content_hash': self.content_hash,
@@ -181,7 +233,7 @@ _PROTECTED_AFTER_SEAL = (
     'user_id', 'thread_id', 'epoch',
     'submission_payload', 'measures',
     'submission_hash', 'measures_hash', 'content_hash',
-    'sealed_at', 'sealed_by',
+    'sealed_at', 'sealed_by', 'capture', 'capture_reason',
     'readiness_spec_version', 'methodology_version',
 )
 

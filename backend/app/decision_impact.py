@@ -41,8 +41,12 @@ from .models_decision_baseline import (
     BASIS_DETERMINISTIC,
     BASIS_PROPOSED_UNCONFIRMED,
     BASIS_USER_CONFIRMED,
+    CAPTURE_CONTEMPORANEOUS,
+    CAPTURE_RECONSTRUCTED,
     IMPACT_METHODOLOGY_VERSION,
     PREDICATE_ELIGIBLE_BASES,
+    RECONSTRUCTED_LATE_SEAL,
+    RECONSTRUCTED_NO_CAPTURE,
     SEALED_BY_ANALYSIS,
     SEALED_BY_USER,
     DecisionBaseline,
@@ -75,6 +79,12 @@ THRESHOLDS = {
 VERDICT_MATERIAL = 'material'
 VERDICT_LIMITED = 'limited'
 VERDICT_NONE = 'no_material_change'
+
+# The fourth state, and not a degree of the other three (spec §5.6). It says
+# the comparison could not be made, rather than that it was made and found
+# little. A reconstructed baseline reaches this and stops here: it can never
+# be promoted by measures, however far they moved.
+VERDICT_UNVERIFIED = 'unverified_baseline'
 
 FAMILY_STRUCTURE = 'A'
 FAMILY_VERIFICATION = 'B'
@@ -374,15 +384,27 @@ def get_baseline(user_id, thread_id, epoch=1):
     )
 
 
-def analysis_has_started(session, thread_data):
+def analysis_has_started(user_id, thread_id, session=None, thread_data=None):
     """Has this thread produced any scored analysis yet?
 
-    The correction window closes here. Whatever the seal timestamp says, a
-    baseline must never absorb material the user added after seeing what the
-    analysis produced — that is the one edit that could manufacture a delta.
+    Two things hang off this answer, so it has to be right in both directions.
+    It closes the correction window — a baseline must never absorb material the
+    user added after seeing what the analysis produced, which is the one edit
+    that could manufacture a delta. And it decides capture provenance: a seal
+    landing after this is true did not capture a before state.
+
+    `user_id` and `thread_id` are REQUIRED, and passing them is the whole point.
+    _collect_peer_scorecards falls back to the legacy session/scenario stores
+    when they are absent, and misses the `scorecards` table entirely — so the
+    parameterless form answers False for a fully analyzed thread, holding the
+    correction window open long after it should have shut.
     """
     from .decision_records import _collect_peer_scorecards
-    return bool(_collect_peer_scorecards(session or {}, thread_data or {}))
+    if session is None and thread_data is None:
+        session, thread_data = _thread_sources(user_id, thread_id)
+    return bool(_collect_peer_scorecards(
+        session or {}, thread_data or {}, user_id=user_id, thread_id=thread_id,
+    ))
 
 
 def capture_or_update_draft(user, thread_id, structure=None, epoch=1):
@@ -400,7 +422,7 @@ def capture_or_update_draft(user, thread_id, structure=None, epoch=1):
         raise SealedBaselineError(
             f'baseline for thread {thread_id} was sealed at {existing.sealed_at}'
         )
-    if analysis_has_started(session, thread_data):
+    if analysis_has_started(user.id, thread_id, session, thread_data):
         raise SealedBaselineError(
             'analysis has already produced output for this thread; '
             'the baseline can no longer be revised'
@@ -450,10 +472,32 @@ def seal_baseline(user, thread_id, sealed_by=SEALED_BY_USER, epoch=1):
     if baseline and baseline.is_sealed:
         return baseline
 
+    session, thread_data = _thread_sources(user.id, thread_id)
+    if session is None and not thread_data:
+        raise LookupError(f'No conversation found for thread {thread_id}')
+
+    # Capture provenance is decided HERE, from the thread's own state, and is
+    # never accepted from a caller. A seal that lands after analysis has
+    # already produced output did not capture a before state, whatever the
+    # caller believed it was doing.
+    started = analysis_has_started(user.id, thread_id, session, thread_data)
+    if not started:
+        capture, capture_reason = CAPTURE_CONTEMPORANEOUS, None
+    elif baseline is not None:
+        # A draft exists, and the correction window refuses writes once
+        # analysis starts — so this payload IS pre-analysis content. The seal
+        # is what arrived late. Recorded distinctly because it is the case a
+        # verified-reconstruction path could one day rescue; treated no
+        # differently until that path exists.
+        capture, capture_reason = CAPTURE_RECONSTRUCTED, RECONSTRUCTED_LATE_SEAL
+    else:
+        capture, capture_reason = CAPTURE_RECONSTRUCTED, RECONSTRUCTED_NO_CAPTURE
+
     if baseline is None:
-        session, thread_data = _thread_sources(user.id, thread_id)
-        if session is None and not thread_data:
-            raise LookupError(f'No conversation found for thread {thread_id}')
+        # Nothing was captured in time, so this payload is the thread AS IT NOW
+        # STANDS — including every turn the user made during and after
+        # analysis. It is recorded for transparency and marked reconstructed.
+        # It is not a before state and nothing may render it as one.
         submission_payload = build_submission_payload(session, None)
         baseline = DecisionBaseline(
             user_id=user.id,
@@ -472,6 +516,8 @@ def seal_baseline(user, thread_id, sealed_by=SEALED_BY_USER, epoch=1):
     baseline.content_hash = combined_digest(baseline.submission_payload, baseline.measures)
     baseline.sealed_at = datetime.utcnow()
     baseline.sealed_by = sealed_by if sealed_by in (SEALED_BY_USER, SEALED_BY_ANALYSIS) else SEALED_BY_ANALYSIS
+    baseline.capture = capture
+    baseline.capture_reason = capture_reason
     db.session.commit()
     return baseline
 
@@ -718,8 +764,60 @@ def _user_visible_event_count(user_id, thread_id, epoch=1):
     return 0
 
 
-def evaluate_impact(baseline_measures, closing_measures, *, user_visible_events=0):
-    """The verdict, and everything needed to recompute it by hand (spec §5)."""
+WITHHELD_REASONS = {
+    RECONSTRUCTED_NO_CAPTURE: (
+        'No baseline was captured before this decision was analyzed, so there is '
+        'no recorded starting point to compare against. What the thread contains '
+        'now includes everything said during and after the analysis.'
+    ),
+    RECONSTRUCTED_LATE_SEAL: (
+        'A baseline was captured before analysis but was not sealed until after '
+        'analysis had begun, so it cannot be verified as the state that preceded '
+        'the analysis.'
+    ),
+}
+
+
+def evaluate_impact(baseline_measures, closing_measures, *,
+                    user_visible_events=0,
+                    capture=CAPTURE_CONTEMPORANEOUS,
+                    capture_reason=None):
+    """The verdict, and everything needed to recompute it by hand (spec §5).
+
+    A RECONSTRUCTED baseline stops before any of this arithmetic (spec §5.6).
+    Not because the numbers would be unflattering, but because they would be
+    meaningless and would look exactly like the meaningful ones: a
+    reconstructed baseline is read from the thread as it stands after analysis,
+    so its "before" already contains the after. Comparing them would produce a
+    tidy, entirely fictional delta.
+
+    So no movements are computed and none are reported. Emitting them as a
+    "retrospective, caveat applies" section would leave a figure on the page
+    that a reader — or a later renderer, or an export — could lift out of its
+    caveat. The state at reconstruction is still published in the report; what
+    is withheld is the comparison, because there is nothing honest to compare.
+    """
+    if capture != CAPTURE_CONTEMPORANEOUS:
+        return {
+            'verdict': VERDICT_UNVERIFIED,
+            'verified_comparison': False,
+            'capture': capture,
+            'capture_reason': capture_reason,
+            'withheld_reason': WITHHELD_REASONS.get(
+                capture_reason,
+                'This baseline was not captured before analysis began.',
+            ),
+            'routes_satisfied': [],
+            'moved': [],
+            'unmoved': [],
+            'not_applicable': [],
+            'excluded_unconfirmed': [],
+            'attribution_cap_applied': False,
+            'user_visible_events': user_visible_events,
+            'thresholds': dict(THRESHOLDS),
+            'methodology_version': IMPACT_METHODOLOGY_VERSION,
+        }
+
     moved, unmoved, not_applicable, excluded_unconfirmed = [], [], [], []
 
     for measure_id, spec in MEASURES.items():
@@ -779,6 +877,13 @@ def evaluate_impact(baseline_measures, closing_measures, *, user_visible_events=
 
     return {
         'verdict': verdict,
+        # The comparison was made against a baseline captured in time. This is
+        # the flag any future eligibility question keys off; it is a fact about
+        # the evidence, not a commercial term.
+        'verified_comparison': True,
+        'capture': capture,
+        'capture_reason': capture_reason,
+        'withheld_reason': None,
         'routes_satisfied': routes,
         'moved': moved,
         'unmoved': unmoved,
@@ -799,6 +904,8 @@ VERDICT_OPENING = {
     VERDICT_MATERIAL: 'The decision record changed materially between submission and close.',
     VERDICT_LIMITED: 'The decision record changed between submission and close, within limits.',
     VERDICT_NONE: 'The decision closed in substantially the state it was submitted.',
+    VERDICT_UNVERIFIED: 'This decision has no verified starting point, so no before-and-after '
+                        'comparison can be made for it.',
 }
 
 
@@ -811,6 +918,16 @@ def compose_narrative(impact, context):
     reachable.
     """
     sentences = [VERDICT_OPENING[impact['verdict']]]
+
+    # An unverified baseline gets the reason and nothing else. Anything further
+    # would be prose about a comparison that was not made.
+    if impact['verdict'] == VERDICT_UNVERIFIED:
+        sentences.append(impact['withheld_reason'])
+        sentences.append(
+            'The current state of the decision is shown below and is accurate; '
+            'what is missing is the record of what preceded it.'
+        )
+        return ' '.join(sentences)
 
     if impact['moved']:
         for movement in impact['moved'][:4]:
@@ -860,6 +977,13 @@ PROVENANCE_NOTE = (
     'code from what was persisted; none was authored by a model.'
 )
 
+RECONSTRUCTED_NOTE = (
+    'This decision has no baseline captured before analysis began. The state '
+    'shown under Before was assembled afterwards, includes what was said during '
+    'and after the analysis, and is not a record of what was originally '
+    'submitted. No before-and-after comparison is made for this decision.'
+)
+
 
 def build_impact_report(user, thread_id, epoch=1):
     """The full report. Raises LookupError with no sealed baseline."""
@@ -880,6 +1004,8 @@ def build_impact_report(user, thread_id, epoch=1):
         baseline_measures,
         closing_measures,
         user_visible_events=_user_visible_event_count(user.id, thread_id, epoch),
+        capture=baseline.capture,
+        capture_reason=baseline.capture_reason,
     )
 
     return {
@@ -891,6 +1017,12 @@ def build_impact_report(user, thread_id, epoch=1):
         'baseline': {
             'sealed_at': baseline.sealed_at.isoformat(),
             'sealed_by': baseline.sealed_by,
+            # Whether this is a before state at all. Renderers key their
+            # heading off this: a reconstructed baseline may never be labelled
+            # "what Jaspen received" without qualification (spec §7.4).
+            'capture': baseline.capture,
+            'capture_reason': baseline.capture_reason,
+            'verified_comparison': baseline.is_contemporaneous,
             'submission_hash': baseline.submission_hash,
             'measures_hash': baseline.measures_hash,
             'content_hash': baseline.content_hash,
@@ -929,4 +1061,7 @@ def build_impact_report(user, thread_id, epoch=1):
             for measure_id, spec in MEASURES.items()
         },
         'provenance_note': PROVENANCE_NOTE,
+        'reconstruction_note': (
+            None if baseline.is_contemporaneous else RECONSTRUCTED_NOTE
+        ),
     }

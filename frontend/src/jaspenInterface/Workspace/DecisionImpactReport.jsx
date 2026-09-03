@@ -32,6 +32,9 @@ const VERDICT_LABELS = {
   material: 'Material change',
   limited: 'Limited change',
   no_material_change: 'No material change',
+  // Not a degree of the other three. The comparison could not be made, which
+  // is a different statement from "it was made and found little".
+  unverified_baseline: 'Baseline unavailable for verified impact comparison',
 };
 
 // "No material change" renders in the same visual weight as the others. It is
@@ -40,6 +43,7 @@ const VERDICT_CLASS = {
   material: 'dir-verdict-material',
   limited: 'dir-verdict-limited',
   no_material_change: 'dir-verdict-none',
+  unverified_baseline: 'dir-verdict-unverified',
 };
 
 const GRADE_ORDER = ['high', 'medium', 'low', 'assumed'];
@@ -110,20 +114,38 @@ export default function DecisionImpactReport({ threadId }) {
   const { report } = state;
   const { baseline, current, impact, activity, narrative, measure_catalog: catalog } = report;
 
+  // One flag decides every label on this page. A reconstructed baseline was
+  // assembled after analysis ran, so it contains the after inside the before —
+  // it may be shown, but never under a heading that claims it preceded
+  // anything (spec §7.4).
+  const verified = impact.verified_comparison;
+
   return (
     <section className="dir" aria-labelledby="dir-title">
       <header className="dir-head">
         <p className="dir-eyebrow">Decision impact</p>
-        <h3 className="dir-title" id="dir-title">What changed about this decision</h3>
+        <h3 className="dir-title" id="dir-title">
+          {verified ? 'What changed about this decision' : 'Decision record — current state'}
+        </h3>
+        {/* The qualification comes FIRST for a reconstructed baseline, above
+            anything a reader could mistake for a before state. */}
+        {report.reconstruction_note && (
+          <p className="dir-reconstructed">{report.reconstruction_note}</p>
+        )}
         <p className="dir-provenance">{report.provenance_note}</p>
       </header>
 
       {/* ── Before ─────────────────────────────────────────────────────── */}
       <div className="dir-block">
-        <h4 className="dir-block-title">Before Jaspen</h4>
+        <h4 className="dir-block-title">
+          {verified
+            ? 'Before Jaspen'
+            : 'Recorded after analysis — not a record of what was submitted'}
+        </h4>
         <p className="dir-block-note">
           Sealed {new Date(baseline.sealed_at).toLocaleDateString()}
           {baseline.sealed_by === 'user_confirmed' ? ', confirmed by you' : ', recorded at analysis'}
+          {verified ? '' : ` · ${baseline.capture_reason}`}
           {' · '}
           {baseline.submission_ref?.turn_count || 0} submitted{' '}
           {baseline.submission_ref?.turn_count === 1 ? 'message' : 'messages'}
@@ -158,7 +180,7 @@ export default function DecisionImpactReport({ threadId }) {
 
       {/* ── After ──────────────────────────────────────────────────────── */}
       <div className="dir-block">
-        <h4 className="dir-block-title">After Jaspen</h4>
+        <h4 className="dir-block-title">{verified ? 'After Jaspen' : 'Current state'}</h4>
         {current.leading_option && (
           <p className="dir-block-note">Leading option: {current.leading_option}</p>
         )}
@@ -171,6 +193,10 @@ export default function DecisionImpactReport({ threadId }) {
         <p className={`dir-verdict ${VERDICT_CLASS[impact.verdict]}`}>
           {VERDICT_LABELS[impact.verdict]}
         </p>
+
+        {impact.withheld_reason && (
+          <p className="dir-block-note">{impact.withheld_reason}</p>
+        )}
 
         {impact.attribution_cap_applied && (
           <p className="dir-block-note">
@@ -236,6 +262,10 @@ export default function DecisionImpactReport({ threadId }) {
           </>
         )}
 
+        {/* Thresholds are published so a reader can recompute the verdict.
+            There is no verdict to recompute when the comparison was withheld,
+            and printing them anyway would imply one was applied. */}
+        {verified && (
         <p className="dir-thresholds">
           Thresholds applied:{' '}
           {Object.entries(impact.thresholds)
@@ -244,6 +274,7 @@ export default function DecisionImpactReport({ threadId }) {
           {' · '}
           {impact.methodology_version}
         </p>
+        )}
       </div>
 
       {/* ── The narrative ──────────────────────────────────────────────── */}

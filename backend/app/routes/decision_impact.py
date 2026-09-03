@@ -172,7 +172,7 @@ def report(thread_id):
         session, thread_data = _thread_sources(user.id, thread_id)
         if session is None and not thread_data:
             return jsonify({'error': f'No conversation found for thread {thread_id}'}), 404
-        if not analysis_has_started(session, thread_data):
+        if not analysis_has_started(user.id, thread_id, session, thread_data):
             return jsonify({
                 'error': 'This decision has not been analyzed yet, so there is nothing to '
                          'compare the baseline against.',

@@ -331,6 +331,50 @@ never included in Ring 2 library derivations, and never enters the Ring 3
 evaluation corpus, unless the record's existing consent flags independently allow
 it. A Ring 2 export must carry the measures without the raw submission (AT-19).
 
+### 3.8 Capture provenance — was the seal in time?
+
+`sealed_by` records **who** sealed. It cannot record **whether the seal was in
+time**, and those are different questions with different consequences. A
+baseline sealed `auto_on_analysis` at the correct moment is trustworthy; one
+sealed `auto_on_analysis` an hour later is not, and both carry the same
+`sealed_by`. Every baseline therefore also carries `capture`:
+
+| `capture` | Meaning |
+| --- | --- |
+| `contemporaneous` | sealed **before** the first analysis mutation |
+| `reconstructed` | assembled **after** analysis had already begun |
+
+**Why this is not a formality.** When no baseline was captured in time, the
+seal reads the submission from the thread *as it now stands* — which by then
+contains every turn the user made during and after the analysis. The "before"
+literally includes the after. Comparing the two would produce a tidy,
+confident, entirely fictional delta, and it would look exactly like a real one.
+
+Three things reach `reconstructed`: a thread analyzed before this feature
+existed, a thread whose analysis-start hook failed, and a thread that never had
+a baseline taken. Two reasons distinguish what we know:
+
+| `capture_reason` | Meaning |
+| --- | --- |
+| `no_baseline_before_analysis` | nothing was captured in time; the payload is post-analysis content |
+| `draft_captured_before_analysis_sealed_late` | a draft **was** captured before analysis — and the correction window refuses writes once analysis starts, so its content is provably pre-analysis — but the seal arrived late |
+
+The second is materially better evidence than the first and is recorded
+separately for that reason. It is nonetheless treated identically today: not
+contemporaneous, no verified comparison. It is the strongest candidate for a
+future verified-reconstruction path (§11 Q3), and until that path is defined
+and tested, the conservative reading stands.
+
+**Capture is decided by the thread, never asserted by a caller.** It is
+computed at seal time from whether the thread has produced scored output.
+`seal_baseline()` takes no `capture` argument, and there is no override.
+
+**A failed capture is never laundered by a later seal.** The lazy seal in the
+report route exists so that pre-feature threads still get a record, and it
+always produces `reconstructed`. Analysis itself must never be blocked by a
+baseline failure — a decision the user is waiting on matters more than a row —
+so the honest outcome of a failed capture is a report that says the comparison
+cannot be made, not an analysis that did not run.
 ---
 
 ## 4. Event taxonomy — the challenge ledger
@@ -489,6 +533,34 @@ prospects, the recommendation's correctness, or the value delivered. Report
 renderers must carry this scope note (§6, `provenance_note`) exactly as
 `decision_report.py` carries its own two limits.
 
+### 5.6 The fourth state: `unverified_baseline`
+
+A `reconstructed` baseline (§3.8) stops before the predicate runs entirely.
+
+| Verdict | Condition |
+| --- | --- |
+| **Unverified baseline** | `capture` is not `contemporaneous` |
+
+This is **not a fourth degree** of change. `No material change` says a
+comparison was made and found little; `unverified_baseline` says no comparison
+could be made. Conflating them would be the more damaging error, because one is
+a finding and the other is an absence.
+
+It is terminal. No quantity of measured movement promotes it, the attribution
+cap does not apply to it (there is nothing to cap), and `routes_satisfied` is
+empty rather than reporting routes that "would have" fired.
+
+**No movements are published for it at all** — `moved`, `unmoved`,
+`not_applicable` and `excluded_unconfirmed` are all empty. A caveated figure is
+still a figure: a reader, a later renderer, or an export can lift it out of its
+caveat, and the number would be fictional. The state at reconstruction is still
+published under `current` and under a qualified heading; what is withheld is
+the comparison, because there is nothing honest to compare.
+
+**`verified_comparison`** is the boolean that carries this. It is a fact about
+the evidence — "was this compared against a baseline captured in time" — not a
+commercial term, and it is deliberately phrased that way so a later eligibility
+question can key off it without this branch containing any eligibility logic.
 ---
 
 ## 6. Report schema
@@ -509,7 +581,10 @@ same structure. Shape is the caller's job.
 
   "baseline": {                        // Before Jaspen
     "sealed_at": "…",
-    "sealed_by": "user_confirmed",
+    "sealed_by": "user_confirmed",       // who sealed
+    "capture": "contemporaneous",        // whether the seal was in time (§3.8)
+    "capture_reason": null,
+    "verified_comparison": true,
     "submission_hash": "sha256:…",
     "measures_hash": "sha256:…",
     "content_hash": "sha256:…",
@@ -539,7 +614,11 @@ same structure. Shape is the caller's job.
   },
 
   "impact": {                          // Decision impact
-    "verdict": "material",             // material | limited | no_material_change
+    "verdict": "material",             // material | limited | no_material_change | unverified_baseline
+    "verified_comparison": true,       // false ⇒ every list below is empty (§5.6)
+    "capture": "contemporaneous",
+    "capture_reason": null,
+    "withheld_reason": null,           // set when the comparison was not made
     "routes_satisfied": ["verification"],
     "moved":          [ { "id": "B1", "from": 38, "to": 71, "delta": 33, "threshold": "STRONG_PP" } ],
     "unmoved":        [ { "id": "A1", "value": 2 } ],
@@ -557,7 +636,8 @@ same structure. Shape is the caller's job.
     "generated_at": "…"
   },
 
-  "provenance_note": "This report describes the state of the decision record…"
+  "provenance_note": "This report describes the state of the decision record…",
+  "reconstruction_note": null          // set when capture is not contemporaneous
 }
 ```
 
@@ -599,6 +679,20 @@ detail; it may not omit `unmoved` or the verdict's scope note.
   about the decision or its likely outcome.
 - `No material change` renders plainly, in the same visual weight as the other
   verdicts. It is not softened, buried, or accompanied by consolation copy.
+
+### 7.4 Rendering a reconstructed baseline
+
+A reconstructed baseline may be shown. It may never be labelled as a before
+state.
+
+- The **Before Jaspen** heading is replaced, not annotated. A qualifier beneath
+  a heading that already made the claim does not undo the claim.
+- The reconstruction note renders **above** every section it qualifies, not as
+  a footnote below them.
+- Thresholds are not printed. They exist so a reader can recompute the verdict,
+  and printing them where no verdict was reached implies one was applied.
+- `Baseline unavailable for verified impact comparison` renders at the same
+  visual weight as the other verdicts.
 
 ---
 
@@ -780,6 +874,36 @@ exists so that this output is a correct result, not a bug.
 - **AT-38** A measure whose baseline `basis` is `proposed_unconfirmed` cannot
   appear in `impact.moved`, and appears in `excluded_unconfirmed` instead.
 
+### Capture provenance
+
+- **AT-50** A baseline sealed before analysis records `contemporaneous` and no
+  reason.
+- **AT-51** A thread analyzed with no prior capture records `reconstructed` /
+  `no_baseline_before_analysis`.
+- **AT-52** A draft captured before analysis but sealed after records
+  `reconstructed` / `draft_captured_before_analysis_sealed_late`, and is still
+  not contemporaneous.
+- **AT-53** *The load-bearing one:* a failed analysis-start hook followed by a
+  later lazy seal produces a `reconstructed` baseline. The failure cannot be
+  laundered by the seal that follows it.
+- **AT-54** `seal_baseline()` accepts no `capture` argument, and a caller
+  asserting `user_confirmed` on an already-analyzed thread still gets
+  `reconstructed`.
+- **AT-55** A reconstructed baseline returns `unverified_baseline` with
+  `verified_comparison: false` and empty `routes_satisfied`, no matter how far
+  the measures moved.
+- **AT-56** A reconstructed baseline publishes no movements at all: `moved`,
+  `unmoved`, `not_applicable` and `excluded_unconfirmed` are empty.
+- **AT-57** `verified_comparison` is `true` only for a contemporaneous
+  baseline, for every reconstruction reason.
+- **AT-58** The report carries `reconstruction_note` and never presents a
+  reconstructed baseline as what Jaspen received.
+- **AT-59** The withheld narrative states the reason and contains no figures.
+- **AT-60** Scored output in the `scorecards` table closes the correction
+  window. (Detecting it requires the peer collector's `user_id`/`thread_id`;
+  without them it falls back to the legacy session stores and answers `False`
+  for a fully analyzed thread.)
+
 ### Scope
 
 - **AT-40** No module on this branch references refunds, entitlements, billing,
@@ -796,6 +920,13 @@ exists so that this output is a correct result, not a bug.
   `STRONG_ASSUMPTIONS_VALIDATED = 3` are reasoned starting values, not measured
   ones. They should be reviewed against the first cohort of real reports before
   any external language depends on them.
+- **Q3 — A verified-reconstruction path.** For genuinely pre-feature threads,
+  immutable message history *might* allow a deterministic reconstruction of
+  exactly what existed before the first scoring event, which would turn some
+  `reconstructed` baselines into verified ones. That capability is **not
+  assumed to exist**. Nothing may depend on it until it is defined, built and
+  tested on its own terms. `draft_captured_before_analysis_sealed_late` is the
+  case most likely to be rescued by it.
 - **AT-31 as the honest check.** If real usage produces `no_material_change`
   almost never, that is more likely a predicate that is too easy to satisfy than
   a product that always works. Worth watching from the first week.
@@ -842,9 +973,16 @@ head**. The branch points in its past (`e4b2c1d9f7a3`, `f6e7d4c9b21a`,
 `b2f9a2d4c1ef`) were all merged, so there is no ambiguous base — an earlier
 draft of this note said otherwise and was out of date.
 
-`decision_baselines` is migration `c1a7f3d95b04`, on `b7e2d91a4c03`. Upgrade
-and downgrade are both exercised, and the resulting columns are checked against
-the model rather than assumed. One caveat for anyone testing locally: the
+`decision_baselines` is migration `c1a7f3d95b04`, on `b7e2d91a4c03`. Capture
+provenance (§3.8) follows in `d2b8e64af117`. Upgrade and downgrade are both
+exercised for each, and the resulting columns are checked against the model
+rather than assumed.
+
+`d2b8e64af117` backfills every already-sealed row to `reconstructed` rather
+than letting it inherit the column default. Nothing about a row sealed by code
+that had no concept of capture timing establishes that it preceded the
+analysis, and a wrongly-`contemporaneous` row is precisely the claim the column
+exists to prevent. One caveat for anyone testing locally: the
 migration chain cannot be replayed end-to-end on SQLite, because
 `8d92c7f4e1aa` alters constraints in a way SQLite does not support. That is
 pre-existing and unrelated; production is Postgres, and local dev provisions
