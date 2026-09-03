@@ -55,6 +55,7 @@ def app(tmp_path_factory):
         "APP_ENV",
         "ENV",
         "FLASK_ENV",
+        "DECISION_IMPACT_NARRATIVE",
     )}
 
     os.environ["DATABASE_URL"] = f"sqlite:///{db_file}"
@@ -67,6 +68,11 @@ def app(tmp_path_factory):
     os.environ["REQUIRE_EMAIL_VERIFICATION"] = "false"
     os.environ["RATELIMIT_STORAGE_URI"] = "memory://"
     os.environ["APP_ENV"] = "test"
+    # The impact report's "What changed" paragraph calls a model when one is
+    # configured. Tests must not reach the network, and the deterministic
+    # template is the behaviour worth asserting anyway — the model path has its
+    # own tests, with the call stubbed.
+    os.environ["DECISION_IMPACT_NARRATIVE"] = "off"
     os.environ.pop("ENV", None)
     os.environ.pop("FLASK_ENV", None)
 

@@ -376,3 +376,110 @@ def test_at66_no_model_output_becomes_a_ledger_fact():
     assert "'resolution_ask_recorded': True" in (
         BACKEND / 'app' / 'decision_ledger.py'
     ).read_text()
+
+
+# ---------------------------------------------------------------------------
+# Attribution cannot be inflated by repetition (spec §4.6, §5.4)
+# ---------------------------------------------------------------------------
+
+def test_at71_repeated_passes_on_the_same_unresolved_criterion_do_not_accumulate(db, test_user):
+    """AT-71 Six evaluation passes with one criterion unresolved throughout is
+    one challenge restated, not six challenges.
+
+    Every pass here is legitimate — a real re-evaluation with a new
+    evaluation_id, not a retry — which is exactly why the guard has to be
+    semantic rather than a retry check.
+    """
+    from app.decision_ledger import qualifying_interventions
+
+    previous = None
+    for run in range(1, 7):
+        payload = _payload(_dims(
+            cost=(80, 'assumed', f'Still need the spend export (pass {run}).'),
+        ), run=f'run-{run}')
+        _pass(db, test_user, previous, payload)
+        previous = payload
+
+    interventions = qualifying_interventions(test_user.id, 't-ledger')
+    # One ask, one "still open", one quantified exposure — on one criterion.
+    assert len(interventions) == cap_qualifying_event_count(test_user.id, 't-ledger')
+    assert {t for t, _ in interventions} <= {
+        EVENT_EVIDENCE_REQUESTED, EVENT_ASSUMPTION_LEFT_OPEN, EVENT_EXPOSURE_QUANTIFIED,
+    }
+    assert {target for _, target in interventions} == {'cost'}
+    # And it does not grow with the number of passes.
+    assert cap_qualifying_event_count(test_user.id, 't-ledger') <= 3
+
+
+def test_at71b_attribution_counts_distinct_interventions_not_rows(db, test_user):
+    """AT-71b The unit is (type, target). Three different contributions to one
+    criterion are three; the same contribution restated is one."""
+    from app.models_challenge_event import ChallengeEvent
+    from app.decision_ledger import qualifying_interventions
+
+    _pass(db, test_user, None, _payload(_dims(cost=(100, 'assumed', 'Share it.'))))
+
+    # A duplicate row that slipped past the dedupe key would still not count
+    # twice: the unit of attribution is the intervention, not the row.
+    row = ChallengeEvent.query.filter_by(
+        user_id=test_user.id, type=EVENT_EVIDENCE_REQUESTED,
+    ).first()
+    db.session.add(ChallengeEvent(
+        user_id=row.user_id, thread_id=row.thread_id, epoch=row.epoch, seq=999,
+        type=row.type, target_kind=row.target_kind, target_id=row.target_id,
+        origin=row.origin, actor=row.actor, trigger={}, user_visible=True,
+        dedupe_key=row.dedupe_key + ':duplicate',
+    ))
+    db.session.commit()
+
+    pairs = qualifying_interventions(test_user.id, 't-ledger')
+    assert ('evidence_requested', 'cost') in pairs
+    assert sum(1 for t, _ in pairs if t == EVENT_EVIDENCE_REQUESTED) == 1
+
+
+def test_at72_more_passes_cannot_promote_the_verdict(db, test_user):
+    """AT-72 The predicate reads distinct interventions, so re-running an
+    analysis on a stuck decision never talks its way to Material."""
+    from app.decision_impact import evaluate_impact
+
+    def _state(**over):
+        base = {
+            'A1': {'value': 2, 'basis': 'deterministic'},
+            'A2': {'value': 4, 'basis': 'deterministic'},
+            'A3': {'value': 4, 'basis': 'deterministic'},
+            'A4': {'value': 1, 'basis': 'deterministic'},
+            'A5': {'value': 0, 'basis': 'deterministic'},
+            'A6': {'value': 3, 'basis': 'deterministic'},
+            'B1': {'value': 40, 'basis': 'deterministic'},
+            'B2': {'value': 60, 'basis': 'deterministic'},
+            'B3': {'value': {'high': 0, 'medium': 0, 'low': 0, 'assumed': 4},
+                   'basis': 'deterministic'},
+            'B4': {'value': 0, 'basis': 'deterministic'},
+            'B5': {'value': 1, 'basis': 'deterministic'},
+            'B6': {'value': 1, 'basis': 'deterministic'},
+        }
+        base.update(over)
+        return base
+
+    # One criterion stuck open and quantified, however many passes ran.
+    impact = evaluate_impact(_state(), _state(), user_visible_events=25)
+    assert impact['verdict'] == 'limited'
+    assert 'verification' not in impact['routes_satisfied']
+
+
+def test_at73_an_intervention_never_appears_as_movement():
+    """AT-73 No Before means no delta. Interventions are reported as work."""
+    from app.decision_impact import evaluate_impact
+
+    before = {'B1': {'value': 40, 'basis': 'deterministic'}}
+    after = {
+        'B1': {'value': 40, 'basis': 'deterministic'},
+        'B4': {'value': 3, 'basis': 'deterministic'},
+    }
+    impact = evaluate_impact(before, after, user_visible_events=9)
+
+    assert 'B4' not in {m['id'] for m in impact['moved']}
+    assert 'B4' not in {m['id'] for m in impact['unmoved']}
+    assert 'B4' not in {m['id'] for m in impact['not_applicable']}
+    validated = next(i for i in impact['interventions'] if i['id'] == 'B4')
+    assert validated['count'] == 3 and validated['strong'] is True

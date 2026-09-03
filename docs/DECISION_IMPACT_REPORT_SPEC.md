@@ -168,6 +168,31 @@ measure *definitions* are identical on both sides — only the provenance differ
 byte-identical across runs, processes, and machines. No timestamps, ordering, or
 model output enter a measure value (AT-20).
 
+### 2.5 Two classes of measure
+
+| Class | Meaning | Reported as |
+| --- | --- | --- |
+| **state** | a property the decision genuinely has, at intake and at close | a Before/After movement |
+| **intervention** | something Jaspen did, or caused to become explicit, during the analysis | a count of work done |
+
+`A1`–`A6`, `B1`, `B2` and `B3` are state. `B4`, `B5` and `B6` are
+interventions.
+
+**An intervention has no Before, and must not be given one.** "Before Jaspen,
+Jaspen had resolved zero assumptions" is definitionally true and says nothing
+whatever about the decision the user brought. Rendering it as a `0 → 3` delta
+would dress a tautology as a measured improvement — and it would be the most
+flattering number on the page, which is exactly why the temptation has to be
+closed off in the contract rather than left to a renderer's judgment.
+
+So interventions are **absent from the baseline entirely** — not stored as
+zero — and they never enter `moved`, `unmoved` or `not_applicable`. They are
+published under `impact.interventions` and rendered in "What Jaspen examined,
+challenged, and validated", which is the section that is actually about what
+Jaspen did.
+
+They remain deterministic inputs to the predicate (§5.3). They are not demoted;
+they are correctly classified.
 ---
 
 ## 3. The baseline: capture, correction, sealing, immutability
@@ -528,6 +553,28 @@ above or had no distinct call site. `assumption_flagged` is not separable from
 
 ---
 
+### 4.6 Attribution is measured in distinct interventions, not rows
+
+Every count that can affect the attribution cap or a Material route is a count
+of distinct `(type, target_id)` pairs among user-visible, cap-qualifying
+events. Never a row count.
+
+The alternative rewards repetition. A decision re-scored six times, with the
+same criterion unresolved throughout, did not receive six challenges: it
+received one, restated. Counting rows would let ordinary, legitimate
+re-evaluation inflate both the cap and the routes without any additional
+thinking having happened — and the decisions most likely to be re-run are the
+ones going worst.
+
+The pair, rather than the target alone, is the right unit. Asking for evidence
+on a criterion, quantifying its exposure, and later resolving it are three
+genuinely different contributions to the same criterion; collapsing them would
+under-report real work.
+
+Today the dedupe keys already permit only one row per `(type, target)`, so the
+two counts coincide. The distinct-pair rule is stated and enforced separately
+anyway, because that coincidence is a property of the current keys and not
+something a future event type should be free to break.
 ---
 
 ## 5. The impact predicate
@@ -571,12 +618,28 @@ coverage are real, but a decision whose alternatives, criteria, and dependencies
 are all unchanged has not been structurally reshaped.
 
 **Route 2 — Verification.** Either:
-- at least one Family B measure moved by a strong margin — `B1` by
-  `STRONG_PP`, or `B4` reaching `STRONG_ASSUMPTIONS_VALIDATED`; **or**
-- at least two Family B measures moved beyond materiality.
+- a **strong** verification signal: `B1` moved by `STRONG_PP`, or `B4` reached
+  `STRONG_ASSUMPTIONS_VALIDATED`; **or**
+- at least **two** verification signals, of which at least one is a state
+  measure that moved.
 
-Route 2 requires no new structure whatsoever. This is deliberate and is the point
-of §1.2.
+A signal is a Family B state measure that moved, or a qualifying intervention.
+
+Route 2 requires no new structure whatsoever — three assumptions validated
+carries it alone, with every structural count unchanged. That is the point of
+§1.2.
+
+**Why the multi-signal branch requires a state measure.** Without that clause a
+single stuck criterion satisfies Route 2 by itself: one uncertainty labelled
+plus its own exposure quantified is two signals about the same unresolved
+thing. Calling that a material change to the decision would be the breadth
+version of the repetition inflation §4.6 rules out, and it would fire on
+exactly the decisions where Jaspen achieved least.
+
+**Interventions cannot be inflated by re-running an analysis.** Every
+intervention count is a count of distinct decision elements, derived from
+distinct `(type, target)` pairs in the ledger (§4.6). Six evaluation passes
+with one criterion unresolved throughout produce the same count as one.
 
 ### 5.4 Verdicts
 
@@ -787,9 +850,26 @@ thinking — the baseline records what was submitted, not what the user believed
 It may not assert that the decision or its outcome improved. It may not restate
 the verdict as its own judgment.
 
-**Enforcement.** Every numeral in the narrative must match a value in
-`grounded_in`. A narrative failing containment is discarded, not repaired, and
-the section falls back to the deterministic template (AT-26).
+**Enforcement**, mechanical and in two parts:
+
+1. Every numeral in the paragraph must appear in the input it was given.
+2. A published list of claims the report may never make — outcome claims
+   (`better decision`, `more likely to succeed`), guarantee language, and
+   first-person judgment — is checked for outright.
+
+A narrative failing either check is **discarded, not repaired**: a
+half-corrected sentence is a sentence nobody verified. The deterministic
+template renders instead (AT-26).
+
+**Separation.** The narrative lives in its own module. `decision_impact.py`
+stays provably model-free — a test asserts no model client is reachable from
+it — and the narrative receives the finished impact block and returns a
+string. It cannot alter a measure, a movement, an intervention count or a
+verdict.
+
+**An unverified baseline gets no comparative narrative.** The model is not even
+called: there is no comparison to explain, and prose about one would be the
+same fiction §5.6 refuses to publish in numbers (AT-74).
 
 **Availability.** The model is optional. With no model available the report
 renders in full with a templated `what_changed` and `generated_by: "template"`.
@@ -972,6 +1052,24 @@ exists so that this output is a correct result, not a bug.
 - **AT-70** The report lists only observable events and counts the rest under
   `suppressed_non_visible`.
 
+### Measure classes and attribution
+
+- **AT-71** Six legitimate evaluation passes with one criterion unresolved
+  throughout produce one challenge, not six.
+- **AT-71b** Attribution counts distinct `(type, target)` pairs, so a
+  duplicate row that slipped past the dedupe key still counts once.
+- **AT-72** More passes cannot promote a verdict.
+- **AT-73** An intervention never appears in `moved`, `unmoved` or
+  `not_applicable`.
+- **AT-67b** Interventions are absent from the baseline, not stored as zero.
+
+### The narrative
+
+- **AT-74** An unverified baseline produces no comparative narrative, and the
+  model is not called at all.
+- **AT-75** The measure path remains model-free.
+- **AT-76** The narrative cannot alter a measure or a verdict.
+
 ### Capture provenance
 
 - **AT-50** A baseline sealed before analysis records `contemporaneous` and no
@@ -1054,8 +1152,13 @@ stops being a diff and starts being evidence of analytical work, where `B4`/`B5`
 become measurable, and where the attribution cap stops binding for threads that
 earned it.
 
-**Phase 3 — narrative and surfaces.** Contained model narrative with template
-fallback, plus email and PPTX renderers through the existing split.
+**Phase 3 — narrative.** *Done for the workspace.* Contained model narrative
+with template fallback, in its own module.
+
+**Phase 3b — other surfaces.** Email and PPTX, through the existing renderer
+split. Deliberately not built yet: the workspace report is the product, and the
+customer-facing hierarchy should be judged in context before it is duplicated
+into two more renderers that would then have to be changed in three places.
 
 **Out of scope, all phases:** refund mechanics, entitlement changes, public
 guarantee language. The evidence layer is validated against real decisions first.

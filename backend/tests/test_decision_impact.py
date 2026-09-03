@@ -21,6 +21,7 @@ from app.decision_impact import (
     BASIS_USER_CONFIRMED,
     MATERIALITY_PP,
     MEASURES,
+    STATE_MEASURES,
     STRONG_PP,
     THRESHOLDS,
     VERDICT_LIMITED,
@@ -73,11 +74,15 @@ def _m(value, basis=BASIS_DETERMINISTIC, reason=None):
 
 
 def _measure_set(**overrides):
-    """A complete measure set. Anything not overridden sits still."""
+    """A complete measure set. Anything not overridden sits still.
+
+    Interventions default to zero work recorded: a fixture should have to ask
+    for Jaspen to have done something.
+    """
     base = {
         'A1': _m(2), 'A2': _m(5), 'A3': _m(5), 'A4': _m(1), 'A5': _m(0), 'A6': _m(3),
         'B1': _m(40), 'B2': _m(60), 'B3': _m({'high': 0, 'medium': 1, 'low': 2, 'assumed': 2}),
-        'B4': _m(None, reason='phase 2'), 'B5': _m(None, reason='phase 2'), 'B6': _m(0),
+        'B4': _m(0), 'B5': _m(0), 'B6': _m(0),
     }
     base.update(overrides)
     return base
@@ -218,7 +223,8 @@ def test_at25_b2_never_satisfies_a_movement_test():
 def test_at25b_every_baseline_measure_carries_a_basis():
     """AT-25b A measure without a basis is a write error, not a default."""
     measures = derive_baseline_measures(build_submission_payload(_session(), _structure()))
-    assert set(measures) == set(MEASURES)
+    # State measures only: an intervention has no Before (spec §2.5).
+    assert set(measures) == set(STATE_MEASURES)
     for measure_id, entry in measures.items():
         assert entry['basis'] in (
             BASIS_DETERMINISTIC, BASIS_USER_CONFIRMED, BASIS_PROPOSED_UNCONFIRMED,
@@ -270,8 +276,8 @@ def test_no_structure_means_no_invented_counts():
 def test_at31_golden_no_material_change():
     """AT-31 A well-prepared intake with minor movement returns no material
     change. This test guards spec §1.6 and may not be weakened."""
-    before = _measure_set(A1=_m(3), A2=_m(6), A3=_m(6), A4=_m(5), A5=_m(3), B1=_m(74), B6=_m(5))
-    after = _measure_set(A1=_m(3), A2=_m(6), A3=_m(6), A4=_m(5), A5=_m(3), B1=_m(77), B6=_m(5))
+    before = _measure_set(A1=_m(3), A2=_m(6), A3=_m(6), A4=_m(5), A5=_m(3), B1=_m(74))
+    after = _measure_set(A1=_m(3), A2=_m(6), A3=_m(6), A4=_m(5), A5=_m(3), B1=_m(77))
 
     impact = evaluate_impact(before, after, user_visible_events=12)
     assert impact['verdict'] == VERDICT_NONE
@@ -284,11 +290,12 @@ def test_at32_golden_same_recommendation_stronger_basis():
     verification route alone."""
     before = _measure_set(
         A1=_m(2), A2=_m(5), A3=_m(5), A4=_m(1), A5=_m(0),
-        B1=_m(38), B3=_m({'high': 0, 'medium': 1, 'low': 2, 'assumed': 2}), B6=_m(0),
+        B1=_m(38), B3=_m({'high': 0, 'medium': 1, 'low': 2, 'assumed': 2}),
     )
     after = _measure_set(
         A1=_m(2), A2=_m(5), A3=_m(5), A4=_m(3), A5=_m(2),
-        B1=_m(71), B3=_m({'high': 2, 'medium': 2, 'low': 1, 'assumed': 0}), B6=_m(4),
+        B1=_m(71), B3=_m({'high': 2, 'medium': 2, 'low': 1, 'assumed': 0}),
+        B4=_m(3), B6=_m(4),
     )
 
     impact = evaluate_impact(before, after, user_visible_events=9)
@@ -296,7 +303,12 @@ def test_at32_golden_same_recommendation_stronger_basis():
     assert 'verification' in impact['routes_satisfied']
 
     moved = {m['id'] for m in impact['moved']}
-    assert {'B1', 'B3', 'B6'}.issubset(moved)
+    assert {'B1', 'B3'}.issubset(moved)
+    # Interventions carry their own section and never appear as movement.
+    assert not {'B4', 'B5', 'B6'} & moved
+    assert not {'B4', 'B5', 'B6'} & {m['id'] for m in impact['unmoved']}
+    quantified = next(i for i in impact['interventions'] if i['id'] == 'B6')
+    assert quantified['count'] == 4 and quantified['qualifying'] is True
     # The alternatives and criteria did not move, and the report says so.
     assert {'A1', 'A2', 'A3'}.issubset({m['id'] for m in impact['unmoved']})
 
@@ -1032,11 +1044,13 @@ def test_at67_b4_and_b5_are_measurable_without_inference(db, test_user):
     assert measures['B5']['value'] == 1        # risk: challenged, still open
     assert measures['B4']['reason'] is None if 'reason' in measures['B4'] else True
 
-    # Baseline is a deterministic zero: before Jaspen ran, Jaspen had resolved
-    # nothing and labelled nothing.
+    # And they are ABSENT from the baseline rather than recorded as zero.
+    # "Before Jaspen, Jaspen had resolved nothing" is a tautology, not a
+    # property of the decision the user brought (spec §2.5).
     baseline = get_baseline(test_user.id, 'thread-impact')
-    assert baseline.measures['B4'] == {'value': 0, 'basis': BASIS_DETERMINISTIC}
-    assert baseline.measures['B5'] == {'value': 0, 'basis': BASIS_DETERMINISTIC}
+    assert 'B4' not in baseline.measures
+    assert 'B5' not in baseline.measures
+    assert 'B6' not in baseline.measures
 
 
 def test_at68_recorded_work_lifts_the_attribution_cap(db, test_user):

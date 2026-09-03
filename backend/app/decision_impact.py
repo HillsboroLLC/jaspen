@@ -89,6 +89,24 @@ VERDICT_UNVERIFIED = 'unverified_baseline'
 FAMILY_STRUCTURE = 'A'
 FAMILY_VERIFICATION = 'B'
 
+# ---------------------------------------------------------------------------
+# Two classes of measure, and the distinction is not cosmetic (spec §2.5)
+#
+#   state         a property the decision genuinely HAS, at intake and at
+#                 close. Comparable across the two, because both readings
+#                 describe the same kind of thing.
+#   intervention  something Jaspen DID, or caused to become explicit, during
+#                 the analysis. It has no Before.
+#
+# "Before Jaspen, Jaspen had resolved zero assumptions" is definitionally true
+# and says nothing about the decision the user brought. Presenting it as a
+# 0 → 3 delta would dress a tautology up as a measured improvement, and it
+# would be the most flattering number on the page. Interventions are reported
+# as counts of work done, never as movement.
+# ---------------------------------------------------------------------------
+CLASS_STATE = 'state'
+CLASS_INTERVENTION = 'intervention'
+
 KIND_COUNT = 'count'
 KIND_PCT = 'pct'
 KIND_GRADES = 'grades'
@@ -105,18 +123,33 @@ ROUTE_1_QUALIFYING = ('A1', 'A2', 'A5')
 # can decide at read time which way a measure ought to point.
 # ---------------------------------------------------------------------------
 MEASURES = {
-    'A1': {'label': 'Alternatives evaluated',        'family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up'},
-    'A2': {'label': 'Decision criteria defined',     'family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up'},
-    'A3': {'label': 'Criteria explicitly weighted',  'family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up'},
-    'A4': {'label': 'Risks documented',              'family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up'},
-    'A5': {'label': 'Execution dependencies',        'family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up'},
-    'A6': {'label': 'Readiness categories addressed','family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up'},
-    'B1': {'label': 'Evidence-backed share',         'family': FAMILY_VERIFICATION, 'kind': KIND_PCT,    'direction': 'up'},
-    'B2': {'label': 'Assumption-dependent share',    'family': FAMILY_VERIFICATION, 'kind': KIND_PCT,    'direction': 'down'},
-    'B3': {'label': 'Criteria evidence grades',      'family': FAMILY_VERIFICATION, 'kind': KIND_GRADES, 'direction': 'up'},
-    'B4': {'label': 'Assumptions validated',         'family': FAMILY_VERIFICATION, 'kind': KIND_COUNT,  'direction': 'up'},
-    'B5': {'label': 'Assumptions open and labelled', 'family': FAMILY_VERIFICATION, 'kind': KIND_COUNT,  'direction': 'up'},
-    'B6': {'label': 'Exposures quantified',          'family': FAMILY_VERIFICATION, 'kind': KIND_COUNT,  'direction': 'up'},
+    'A1': {'label': 'Alternatives evaluated',        'family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up',   'class': CLASS_STATE},
+    'A2': {'label': 'Decision criteria defined',     'family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up',   'class': CLASS_STATE},
+    'A3': {'label': 'Criteria explicitly weighted',  'family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up',   'class': CLASS_STATE},
+    'A4': {'label': 'Risks documented',              'family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up',   'class': CLASS_STATE},
+    'A5': {'label': 'Execution dependencies',        'family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up',   'class': CLASS_STATE},
+    'A6': {'label': 'Readiness categories addressed','family': FAMILY_STRUCTURE,    'kind': KIND_COUNT,  'direction': 'up',   'class': CLASS_STATE},
+    'B1': {'label': 'Evidence-backed share',         'family': FAMILY_VERIFICATION, 'kind': KIND_PCT,    'direction': 'up',   'class': CLASS_STATE},
+    'B2': {'label': 'Assumption-dependent share',    'family': FAMILY_VERIFICATION, 'kind': KIND_PCT,    'direction': 'down', 'class': CLASS_STATE},
+    'B3': {'label': 'Criteria evidence grades',      'family': FAMILY_VERIFICATION, 'kind': KIND_GRADES, 'direction': 'up',   'class': CLASS_STATE},
+    # Interventions. Counts of work Jaspen did, never deltas.
+    'B4': {'label': 'Assumptions validated',         'family': FAMILY_VERIFICATION, 'kind': KIND_COUNT,  'direction': 'up',   'class': CLASS_INTERVENTION},
+    'B5': {'label': 'Uncertainties made explicit',   'family': FAMILY_VERIFICATION, 'kind': KIND_COUNT,  'direction': 'up',   'class': CLASS_INTERVENTION},
+    'B6': {'label': 'Exposures quantified',          'family': FAMILY_VERIFICATION, 'kind': KIND_COUNT,  'direction': 'up',   'class': CLASS_INTERVENTION},
+}
+
+STATE_MEASURES = tuple(k for k, v in MEASURES.items() if v['class'] == CLASS_STATE)
+INTERVENTION_MEASURES = tuple(k for k, v in MEASURES.items() if v['class'] == CLASS_INTERVENTION)
+
+# What each intervention must reach to count as substantive, and what it must
+# reach to carry a verification route on its own. `None` for strong means the
+# intervention can contribute alongside others but never satisfies a route by
+# itself: labelling one uncertainty is real work and is not, alone, a material
+# change to a decision.
+INTERVENTION_THRESHOLDS = {
+    'B4': {'qualifying': 1, 'strong': STRONG_ASSUMPTIONS_VALIDATED},
+    'B5': {'qualifying': 1, 'strong': None},
+    'B6': {'qualifying': 1, 'strong': None},
 }
 
 # B4, B5 and B6 are LEDGER MEASURES: they count decision elements carrying a
@@ -363,12 +396,12 @@ def derive_baseline_measures(submission_payload, *, readiness_spec=None):
                 _grade_histogram([g for g, _ in graded]), basis, unconfirmed_reason,
             )
 
-    for measure_id in LEDGER_MEASURES:
-        # Nothing had been challenged, resolved or quantified by Jaspen before
-        # Jaspen ran. A deterministic zero, not an assumed one.
-        measures[measure_id] = _measure(0, BASIS_DETERMINISTIC)
-
-    for measure_id in MEASURES:
+    # Intervention measures are deliberately ABSENT from the baseline rather
+    # than recorded as zero. A zero here would be true and useless: it says
+    # Jaspen had not acted before Jaspen acted, which is not a property of the
+    # decision the user brought and must never render as the Before half of a
+    # delta (spec §2.5).
+    for measure_id in STATE_MEASURES:
         if measure_id not in measures:
             measures[measure_id] = _not_measurable('not established at intake')
 
@@ -822,6 +855,7 @@ def evaluate_impact(baseline_measures, closing_measures, *,
             'routes_satisfied': [],
             'moved': [],
             'unmoved': [],
+            'interventions': [],
             'not_applicable': [],
             'excluded_unconfirmed': [],
             'attribution_cap_applied': False,
@@ -832,7 +866,10 @@ def evaluate_impact(baseline_measures, closing_measures, *,
 
     moved, unmoved, not_applicable, excluded_unconfirmed = [], [], [], []
 
-    for measure_id, spec in MEASURES.items():
+    # State measures only. Interventions are handled below and never enter
+    # moved/unmoved, because there is no Before for them to have moved from.
+    for measure_id in STATE_MEASURES:
+        spec = MEASURES[measure_id]
         before = baseline_measures.get(measure_id) or _not_measurable('absent from baseline')
         after = closing_measures.get(measure_id) or _not_measurable('absent from closing state')
 
@@ -861,19 +898,60 @@ def evaluate_impact(baseline_measures, closing_measures, *,
                 'from': before['value'], 'to': after['value'],
             })
 
+    # Interventions: reported as work done, with a threshold each. They can
+    # carry the verification route, but never as a delta.
+    interventions = []
+    for measure_id in INTERVENTION_MEASURES:
+        entry = closing_measures.get(measure_id) or {}
+        value = _int_or_zero(entry.get('value'))
+        limits = INTERVENTION_THRESHOLDS[measure_id]
+        strong_at = limits['strong']
+        interventions.append({
+            'id': measure_id,
+            'label': MEASURES[measure_id]['label'],
+            'family': MEASURES[measure_id]['family'],
+            'count': value,
+            'qualifying': value >= limits['qualifying'],
+            'strong': bool(strong_at is not None and value >= strong_at),
+            'threshold': limits['qualifying'],
+            'strong_threshold': strong_at,
+        })
+
     moved_ids = {m['id'] for m in moved}
     family_a = [m for m in moved if m['family'] == FAMILY_STRUCTURE]
     family_b = [m for m in moved if m['family'] == FAMILY_VERIFICATION]
+    qualifying_interventions = [i for i in interventions if i['qualifying']]
+
+    # Verification signals of both kinds, counted once each. An intervention
+    # counts once however many passes restated it, because the count behind it
+    # is already distinct criteria rather than ledger rows.
+    verification_signals = len(family_b) + len(qualifying_interventions)
+    strong_verification = (
+        any(m['strong'] for m in family_b)
+        or any(i['strong'] for i in interventions)
+    )
+
+    # The multi-signal route needs at least one measured STATE change. Without
+    # that clause a single stuck criterion satisfies it on its own — one
+    # uncertainty labelled plus its exposure quantified is two signals about
+    # the same unresolved thing, and calling that a material change to the
+    # decision would be the breadth version of the repetition inflation the
+    # distinct-intervention count already rules out.
+    #
+    # Verification-only impact still reaches Material on its own merits: three
+    # assumptions validated (B4 strong) carries the route with no state change
+    # at all, which is the "same recommendation, stronger basis" case.
+    multi_signal = verification_signals >= 2 and bool(family_b)
 
     routes = []
     if len(family_a) >= 2 and moved_ids.intersection(ROUTE_1_QUALIFYING):
         routes.append('structural')
-    if any(m['strong'] for m in family_b) or len(family_b) >= 2:
+    if strong_verification or multi_signal:
         routes.append('verification')
 
     if routes:
         verdict = VERDICT_MATERIAL
-    elif moved:
+    elif moved or qualifying_interventions:
         verdict = VERDICT_LIMITED
     else:
         verdict = VERDICT_NONE
@@ -899,6 +977,10 @@ def evaluate_impact(baseline_measures, closing_measures, *,
         'routes_satisfied': routes,
         'moved': moved,
         'unmoved': unmoved,
+        # Reported separately from moved/unmoved throughout, so no renderer can
+        # accidentally present work Jaspen did as a property of the decision
+        # that changed.
+        'interventions': interventions,
         'not_applicable': not_applicable,
         'excluded_unconfirmed': excluded_unconfirmed,
         'attribution_cap_applied': cap_applied,
@@ -955,6 +1037,13 @@ def compose_narrative(impact, context):
                 sentences.append(
                     f"{movement['label']} went from {movement['from']} to {movement['to']}."
                 )
+
+    for intervention in impact.get('interventions', []):
+        if intervention['qualifying']:
+            sentences.append(
+                f"Jaspen recorded {intervention['count']} "
+                f"{intervention['label'].lower()}."
+            )
 
     unmoved_labels = [entry['label'].lower() for entry in impact['unmoved'][:3]]
     if unmoved_labels:
@@ -1024,6 +1113,13 @@ def build_impact_report(user, thread_id, epoch=1):
         capture_reason=baseline.capture_reason,
     )
 
+    # The narrative is composed last and from the finished impact block, so it
+    # can only ever describe what the rest of the report already established.
+    from .decision_narrative import compose as compose_what_changed
+    narrative_text, generated_by, model_id = compose_what_changed(
+        impact, context, template=compose_narrative(impact, context),
+    )
+
     return {
         'schema_version': IMPACT_SCHEMA_VERSION,
         'methodology_version': IMPACT_METHODOLOGY_VERSION,
@@ -1063,17 +1159,23 @@ def build_impact_report(user, thread_id, epoch=1):
         },
         'impact': impact,
         'narrative': {
-            'what_changed': compose_narrative(impact, context),
-            'generated_by': 'template',
+            'what_changed': narrative_text,
+            'generated_by': generated_by,
             'grounded_in': {
-                'measures': [m['id'] for m in impact['moved']],
+                'measures': (
+                    [m['id'] for m in impact['moved']]
+                    + [i['id'] for i in impact['interventions'] if i['qualifying']]
+                ),
                 'events': [event.id for event in visible_events],
             },
-            'model_id': None,
+            'model_id': model_id,
             'generated_at': datetime.utcnow().isoformat(),
         },
         'measure_catalog': {
-            measure_id: {'label': spec['label'], 'family': spec['family'], 'kind': spec['kind']}
+            measure_id: {
+                'label': spec['label'], 'family': spec['family'],
+                'kind': spec['kind'], 'class': spec['class'],
+            }
             for measure_id, spec in MEASURES.items()
         },
         'provenance_note': PROVENANCE_NOTE,

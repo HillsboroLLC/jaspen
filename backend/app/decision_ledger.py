@@ -89,20 +89,39 @@ def targets_with_event(user_id, thread_id, event_type, epoch=1):
     return {row[0] for row in rows if row[0]}
 
 
-def cap_qualifying_event_count(user_id, thread_id, epoch=1):
-    """Events that may lift the attribution cap (spec §5.4).
+def qualifying_interventions(user_id, thread_id, epoch=1):
+    """Distinct analytical interventions, as (type, target) pairs.
 
-    Two filters, both load-bearing. `user_visible` — an intervention nobody
-    could observe did not challenge anyone. `CAP_QUALIFYING_TYPES` — so that a
-    future bookkeeping event can enter the ledger without entering this count.
+    NOT a row count. Attribution is measured in distinct interventions because
+    the alternative rewards repetition: a decision re-scored six times, with
+    the same criterion unresolved throughout, did not receive six challenges.
+    It received one, restated. Counting rows would let ordinary re-evaluation
+    inflate both the attribution cap and the Material routes without any
+    additional thinking having happened.
+
+    The pair, rather than the target alone, is the right unit. Asking for
+    evidence on a criterion, quantifying its exposure, and later resolving it
+    are three genuinely different contributions to the same criterion, and
+    collapsing them to one would under-report real work.
+
+    Two filters on what may count at all. `user_visible` — an intervention
+    nobody could observe did not challenge anyone. `CAP_QUALIFYING_TYPES` — so
+    a future bookkeeping event can enter the ledger without entering this
+    count.
     """
-    return (
-        ChallengeEvent.query
+    rows = (
+        db.session.query(ChallengeEvent.type, ChallengeEvent.target_id)
         .filter_by(user_id=str(user_id), thread_id=str(thread_id), epoch=int(epoch))
         .filter(ChallengeEvent.user_visible.is_(True))
         .filter(ChallengeEvent.type.in_(tuple(CAP_QUALIFYING_TYPES)))
-        .count()
+        .all()
     )
+    return {(row[0], row[1]) for row in rows}
+
+
+def cap_qualifying_event_count(user_id, thread_id, epoch=1):
+    """How much distinct analytical work is on record (spec §5.4)."""
+    return len(qualifying_interventions(user_id, thread_id, epoch))
 
 
 def counts_by_type(user_id, thread_id, epoch=1):

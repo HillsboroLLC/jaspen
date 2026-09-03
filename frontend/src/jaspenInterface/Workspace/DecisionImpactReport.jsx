@@ -58,9 +58,16 @@ function formatValue(value) {
   return String(value);
 }
 
+// Only decision-state measures belong in Before/After. An intervention is
+// something Jaspen DID; it has no Before, and rendering it beside measures
+// that do would invite the reader to treat it as a delta (spec §2.5).
 function StateList({ measures, catalog }) {
   const rows = Object.entries(measures || {}).filter(
-    ([, entry]) => entry && entry.value !== null && entry.value !== undefined
+    ([id, entry]) =>
+      entry &&
+      entry.value !== null &&
+      entry.value !== undefined &&
+      (catalog?.[id]?.class ?? 'state') === 'state'
   );
   if (!rows.length) {
     return <p className="dir-empty">Nothing was established at this point.</p>;
@@ -119,6 +126,8 @@ export default function DecisionImpactReport({ threadId }) {
   // it may be shown, but never under a heading that claims it preceded
   // anything (spec §7.4).
   const verified = impact.verified_comparison;
+  // Counts of work Jaspen did. Never movement, so never in the delta lists.
+  const interventions = (impact.interventions || []).filter((entry) => entry.qualifying);
 
   return (
     <section className="dir" aria-labelledby="dir-title">
@@ -159,6 +168,21 @@ export default function DecisionImpactReport({ threadId }) {
       {/* ── What Jaspen examined ───────────────────────────────────────── */}
       <div className="dir-block">
         <h4 className="dir-block-title">What Jaspen examined, challenged, and validated</h4>
+
+        {/* Interventions live here rather than in Before/After: this is the
+            section that is actually about what Jaspen did. */}
+        {interventions.length > 0 && (
+          <ul className="dir-state">
+            {interventions.map((entry) => (
+              <li key={entry.id} className="dir-state-row">
+                <span className="dir-state-label">{entry.label}</span>
+                <span className="dir-state-value">{entry.count}</span>
+                {entry.strong && <span className="dir-state-basis">substantive</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+
         {activity?.available ? (
           <ul className="dir-activity">
             {Object.entries(activity.counts_by_type || {}).map(([type, count]) => (
