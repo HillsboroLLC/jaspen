@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import JaspenNav from './JaspenNav';
 import WorkWithJaspenCanvas from './WorkWithJaspenCanvas';
 import InteractiveDecisionHero from './InteractiveDecisionHero';
+import CommercialPathwayStrip from './CommercialPathwayStrip';
 import PricingVariantB from './PricingVariantB';
 import FlowIllustrated from './FlowIllustrated';
 import BeforeAfter from './BeforeAfter';
@@ -398,6 +399,15 @@ export default function HomePage() {
 
         {/* ========== HOW THE SCORE WORKS (trust) ========== */}
         <HowScoreWorks />
+
+        {/* ========== COMMERCIAL PATHWAY STRIP ========== */}
+        {/* Connective tissue, not a section. The free tools above and the plans
+            below are the same product at different depths, and nothing on the
+            page said so before pricing started quoting numbers. Sits directly
+            above PricingVariantB and shares its background; .pvb-section is
+            sticky, so this hands off underneath the table as the reader
+            scrolls rather than competing with it. */}
+        <CommercialPathwayStrip />
 
         {/* ========== PRICING — Comparison Table ========== */}
         <PricingVariantB onOpenModal={openAuthModal} />
