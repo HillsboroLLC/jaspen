@@ -237,15 +237,19 @@ def test_baseline_evidence_share_uses_the_same_arithmetic_as_the_closing_measure
     from app.decision_confidence import criterion_entries, evidence_ratio
 
     dimensions = {
-        'cost': {'label': 'Cost', 'score': 80, 'confidence': 'high'},
+        'cost': {'label': 'Cost', 'score': 80, 'confidence': 'high', 'evidence_references': [
+            {'excerpt': 'Signed invoices show the current cost.', 'evidence_role': 'support'},
+        ]},
         'risk': {'label': 'Risk', 'score': 60, 'confidence': 'assumed'},
-        'speed': {'label': 'Speed', 'score': 70, 'confidence': 'medium'},
+        'speed': {'label': 'Speed', 'score': 70, 'confidence': 'medium', 'evidence_references': [
+            {'excerpt': 'The dated delivery plan specifies twelve weeks.', 'evidence_role': 'support'},
+        ]},
     }
     weights = {'cost': 0.5, 'risk': 0.3, 'speed': 0.2}
 
     from_engine = evidence_ratio(criterion_entries(dimensions, weights))
     from_grades = evidence_backed_pct_from_grades([
-        ('high', 0.5), ('assumed', 0.3), ('medium', 0.2),
+        ('high', 0.5, True), ('assumed', 0.3, False), ('medium', 0.2, True),
     ])
     assert from_grades == from_engine
 

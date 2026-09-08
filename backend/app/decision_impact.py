@@ -35,7 +35,7 @@ from datetime import datetime
 from flask import current_app
 
 from . import db
-from .decision_confidence import EVIDENCE_FACTOR
+from .decision_confidence import EVIDENCE_FACTOR, criterion_entries, evidence_ratio
 from .intake_readiness import _active_readiness_version, _compute_readiness
 from .models_decision_baseline import (
     BASIS_DETERMINISTIC,
@@ -226,18 +226,22 @@ def _int_or_zero(value):
 def evidence_backed_pct_from_grades(graded_weights):
     """Weighted share of decision weight standing on evidence, 0-100.
 
-    `graded_weights` is [(grade, weight), ...]. This is deliberately the same
-    arithmetic as decision_confidence.evidence_ratio() — the same
-    EVIDENCE_FACTOR table over the same normalized weights — expressed over
-    grades alone so it can also be applied at intake, where no criterion has a
-    score yet and criterion_entries() would therefore reject every row.
-    Equivalence with evidence_ratio() is held by test, not by comment.
+    `graded_weights` is [(grade, weight, has_verified_support), ...]. Intake has
+    no criterion score yet, so it cannot use criterion_entries(), but it must
+    still honor the same rule: a confidence label alone never creates evidence.
     """
-    usable = [(g, float(w)) for g, w in graded_weights if w is not None and float(w) > 0]
-    total = sum(w for _, w in usable)
+    usable = [
+        (g, float(w), bool(supported))
+        for g, w, supported in graded_weights
+        if w is not None and float(w) > 0
+    ]
+    total = sum(w for _, w, _ in usable)
     if not usable or total <= 0:
         return None
-    backed = sum((w / total) * EVIDENCE_FACTOR.get(g, 0.0) for g, w in usable)
+    backed = sum(
+        (w / total) * EVIDENCE_FACTOR.get(g, 0.0)
+        for g, w, supported in usable if supported
+    )
     return int(round(max(0.0, min(1.0, backed)) * 100))
 
 
@@ -384,6 +388,7 @@ def derive_baseline_measures(submission_payload, *, readiness_spec=None):
                     # a stated convention, not a measurement: it is what the
                     # user implied by naming criteria without ranking them.
                     c.get('weight') if c.get('weight') is not None else 1.0,
+                    bool(c.get('backed_by_source')),
                 )
                 for c in criteria
             ]
@@ -393,7 +398,7 @@ def derive_baseline_measures(submission_payload, *, readiness_spec=None):
                 None if backed_pct is None else 100 - backed_pct, basis, unconfirmed_reason,
             )
             measures['B3'] = _measure(
-                _grade_histogram([g for g, _ in graded]), basis, unconfirmed_reason,
+                _grade_histogram([g for g, _, _ in graded]), basis, unconfirmed_reason,
             )
 
     # Intervention measures are deliberately ABSENT from the baseline rather
@@ -699,20 +704,17 @@ def current_measures(user_id, thread_id):
         str(c.get('key')): c.get('weight')
         for c in criteria if c.get('key') and c.get('weight') is not None
     }
-    graded = [
-        (
-            str((dim or {}).get('confidence') or 'assumed').lower(),
-            weights.get(key, 1.0),
-        )
-        for key, dim in dimensions.items() if isinstance(dim, dict)
-    ]
-    if graded:
-        backed_pct = evidence_backed_pct_from_grades(graded)
+    entries = criterion_entries(dimensions, weights)
+    if entries:
+        backed_pct = evidence_ratio(entries)
         measures['B1'] = _measure(backed_pct, BASIS_DETERMINISTIC)
         measures['B2'] = _measure(
             None if backed_pct is None else 100 - backed_pct, BASIS_DETERMINISTIC,
         )
-        measures['B3'] = _measure(_grade_histogram([g for g, _ in graded]), BASIS_DETERMINISTIC)
+        measures['B3'] = _measure(
+            _grade_histogram([entry['confidence'] for entry in entries]),
+            BASIS_DETERMINISTIC,
+        )
     else:
         for measure_id in ('B1', 'B2', 'B3'):
             measures[measure_id] = _not_measurable('no scored criteria in the closing analysis')

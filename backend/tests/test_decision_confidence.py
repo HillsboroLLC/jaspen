@@ -29,12 +29,16 @@ def _strategy():
     return strategy
 
 
-def _dim(score, confidence, *, improve=None, label=None):
+def _dim(score, confidence, *, improve=None, label=None, evidence=None):
+    references = evidence
+    if references is None and confidence in {"high", "medium"}:
+        references = [{"excerpt": "A concrete operating result was supplied."}]
     return {
         "score": score,
         "confidence": confidence,
         "what_would_improve": improve,
         "label": label,
+        "evidence_references": references or [],
     }
 
 
@@ -83,6 +87,59 @@ def test_unweighted_criteria_are_skipped_not_assumed_equal():
 def test_profile_is_none_without_usable_dimensions():
     assert evidence_profile({}, {"a": 1.0}) is None
     assert evidence_profile({"a": _dim(50, "high")}, {}) is None
+
+
+def test_confidence_label_without_verified_reference_does_not_create_coverage():
+    entries = criterion_entries(
+        {"a": _dim(90, "high", evidence=[]), "b": _dim(80, "medium", evidence=[])},
+        {"a": 0.6, "b": 0.4},
+    )
+    assert evidence_ratio(entries) == 0
+    assert all(entry["evidenced"] is False for entry in entries)
+
+
+def test_explicit_gap_reference_remains_visible_but_does_not_support_case():
+    gap = {
+        "excerpt": "I have no data on implementation capacity.",
+        "evidence_role": "gap",
+    }
+    entry = criterion_entries(
+        {"ops": _dim(75, "medium", evidence=[gap])},
+        {"ops": 1.0},
+    )[0]
+    assert entry["evidence_references"] == [gap]
+    assert entry["supporting_evidence_references"] == []
+    assert entry["evidenced"] is False
+    assert entry["evidence_factor"] == 0
+
+
+def test_legacy_stored_support_role_is_reclassified_from_the_excerpt():
+    entry = criterion_entries(
+        {
+            "lease_risk": _dim(65, "medium", evidence=[{
+                "excerpt": "Nobody has reviewed the lease for an exit clause.",
+                "evidence_role": "support",
+            }])
+        },
+        {"lease_risk": 1.0},
+    )[0]
+
+    assert entry["evidence_references"][0]["evidence_role"] == "gap"
+    assert entry["supporting_evidence_references"] == []
+    assert entry["evidenced"] is False
+
+
+def test_evidence_quality_meta_dimension_is_excluded_from_coverage_denominator():
+    profile = evidence_profile(
+        {
+            "financial_viability": _dim(70, "medium"),
+            "evidence_quality": _dim(20, "assumed"),
+        },
+        {"financial_viability": 0.8, "evidence_quality": 0.2},
+    )
+    assert profile["evidence_backed_pct"] == 100
+    assert profile["counts"]["total"] == 1
+    assert profile["counts"]["evidenced"] == 1
 
 
 # --- raw score preservation --------------------------------------------------
@@ -432,9 +489,10 @@ def test_summary_answers_the_decision_not_the_criteria():
     assert summary["verdict"] == "Scores 52 of 100, rated Fair."
     # The score and the evidence-backed share are different numbers, and the
     # summary must never let them read as the same one. 52 is what the option
-    # scored; 38 is how much of the weighted decision stands on evidence.
-    assert "38% of the weighted decision rests on evidence" in summary["confidence"]
-    assert "The remaining 62% depends on assumptions" in summary["confidence"]
+    # scored; 50 is how much of the weighted decision stands on verified,
+    # affirmative support.
+    assert "50% of the weighted decision rests on evidence" in summary["confidence"]
+    assert "The remaining 50% depends on assumptions" in summary["confidence"]
     assert summary["next_step"].startswith("fin:") or "Attach the cost model" in summary["next_step"]
     assert "materially change the score" in summary["sensitivity"]
 

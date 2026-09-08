@@ -18,7 +18,7 @@ from app.decision_confidence import (
     decision_summary,
     evidence_profile,
 )
-from app.evidence_references import attach_evidence_references
+from app.evidence_references import attach_evidence_references, reference_supports_decision
 from app.models import Scorecard, UsageEvent, User
 from app.scorecards import (
     COMPARISON_SESSION_LIMIT_MESSAGE,
@@ -186,6 +186,13 @@ STRATEGY_OBJECTIVE_ALIASES = {
     'growth': 'growth',
     'revenue': 'growth',
     'expansion': 'growth',
+}
+
+_OBJECTIVE_DIMENSION_WEIGHTS = {
+    "cost":      {"market_opportunity": 0.12, "financial_viability": 0.25, "execution_readiness": 0.20, "strategic_alignment": 0.15, "risk_profile": 0.20, "evidence_quality": 0.08},
+    "growth":    {"market_opportunity": 0.25, "financial_viability": 0.18, "execution_readiness": 0.20, "strategic_alignment": 0.15, "risk_profile": 0.12, "evidence_quality": 0.10},
+    "speed":     {"market_opportunity": 0.10, "financial_viability": 0.18, "execution_readiness": 0.28, "strategic_alignment": 0.18, "risk_profile": 0.18, "evidence_quality": 0.08},
+    "balanced":  {"market_opportunity": 0.18, "financial_viability": 0.20, "execution_readiness": 0.18, "strategic_alignment": 0.16, "risk_profile": 0.16, "evidence_quality": 0.12},
 }
 
 
@@ -1351,6 +1358,11 @@ def _normalize_scorecard_payload(payload):
     )
     if profile:
         normalized['evidence_profile'] = profile
+        # Rebuild on read as well as on write. Legacy scorecards and records
+        # loaded after a guardrail improvement must not display stale model
+        # prose that contradicts the current deterministic arithmetic.
+        normalized['executive_summary'] = _deterministic_executive_summary(normalized)
+        normalized['section_provenance']['executive_summary'] = 'deterministic'
     elif isinstance(source.get('evidence_profile'), dict):
         normalized['evidence_profile'] = source['evidence_profile']
 
@@ -2553,6 +2565,169 @@ def _clamp_unverified_high_confidence_dimensions(payload):
     return payload
 
 
+def _calibrate_confidence_to_verified_evidence(payload):
+    """Prevent a model-selected confidence label from creating evidence.
+
+    Medium/high confidence is allowed only when at least one affirmative quote
+    survived deterministic verification. A user's explicit admission of a gap
+    can support a low score, but it is not evidence *for* the decision case.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    dims = payload.get("dimensions")
+    if not isinstance(dims, dict):
+        return payload
+    for dim in dims.values():
+        if not isinstance(dim, dict):
+            continue
+        grade = str(dim.get("confidence") or "").strip().lower()
+        if grade not in {"high", "medium"}:
+            continue
+        references = dim.get("evidence_references") if isinstance(dim.get("evidence_references"), list) else []
+        if any(reference_supports_decision(ref) for ref in references):
+            continue
+        # A located gap is still useful evidence about what is unknown, so it
+        # receives low confidence. With no located passage at all, the
+        # judgment is an inference/assumption and receives the strictest cap.
+        dim["confidence"] = "low" if references else "assumed"
+    return payload
+
+
+_MODEL_NUMERIC_GROUPS = {
+    "financial_impact": (
+        "ebitda_at_risk", "potential_loss", "roi_opportunity",
+        "projected_ebitda", "time_to_market_impact",
+    ),
+    "before_after_financials": (),
+    "investment_analysis": (
+        "total_investment_required", "expected_annual_return",
+        "payback_period", "cost_of_inaction",
+    ),
+    "npv_irr_analysis": (
+        "npv_3_year", "irr", "discount_rate_used", "break_even_month",
+    ),
+    "valuation": ("enterprise_value", "multiple", "comparable_range"),
+}
+
+
+def _remove_unverified_model_numbers(payload):
+    """Clear factual-looking model numbers that have no field-level source.
+
+    Dimension scores are explicitly Jaspen judgments and remain. Financial
+    outputs and risk/mitigation amounts look like observed facts, but the
+    current schema has no evidence pointer for those fields. Until it does,
+    retaining a plausible number would be fabricating precision.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    for group, fields in _MODEL_NUMERIC_GROUPS.items():
+        value = payload.get(group)
+        if not isinstance(value, dict):
+            continue
+        if group == "before_after_financials":
+            for side in ("before", "after"):
+                if isinstance(value.get(side), dict):
+                    for key in list(value[side]):
+                        if key == "_numeric" and isinstance(value[side][key], dict):
+                            value[side][key] = {metric: None for metric in value[side][key]}
+                        else:
+                            value[side][key] = None
+            continue
+        for key in fields:
+            if key in value:
+                value[key] = None
+            if isinstance(value.get("_numeric"), dict) and key in value["_numeric"]:
+                value["_numeric"][key] = None
+
+    for risk in payload.get("top_risks") if isinstance(payload.get("top_risks"), list) else []:
+        if not isinstance(risk, dict):
+            continue
+        risk["impact_dollars"] = None
+        risk["impact"] = None
+        risk["impact_numeric"] = None
+        risk["mitigation_cost"] = None
+        risk["mitigation_cost_numeric"] = None
+
+    framework = payload.get("decision_framework")
+    if isinstance(framework, dict):
+        framework["confidence_level"] = None
+        if isinstance(framework.get("_numeric"), dict):
+            framework["_numeric"]["confidence_level"] = None
+        framework["downside_scenario"] = None
+        framework["upside_scenario"] = None
+
+    for rec in payload.get("recommendations") if isinstance(payload.get("recommendations"), list) else []:
+        if isinstance(rec, dict):
+            # Quantified impact requires its own evidence/calculation record.
+            rec["expected_impact"] = None
+    return payload
+
+
+_SUMMARY_LABELS = {
+    "market_opportunity": "market opportunity",
+    "financial_viability": "cost efficiency",
+    "execution_readiness": "execution readiness",
+    "strategic_alignment": "strategic fit",
+    "risk_profile": "execution risk",
+    "evidence_quality": "evidence quality",
+}
+
+
+def _deterministic_executive_summary(payload):
+    """Build the leadership readout only from persisted, computed fields."""
+    if not isinstance(payload, dict):
+        return None
+    score = _safe_int(payload.get("jaspen_score"))
+    profile = payload.get("evidence_profile") if isinstance(payload.get("evidence_profile"), dict) else {}
+    criteria = [
+        item for item in profile.get("criteria", [])
+        if isinstance(item, dict) and item.get("coverage_eligible", True)
+    ]
+    if score is None or not criteria:
+        return None
+    name = _clean_scorecard_text(payload.get("name") or payload.get("project_name")) or "This option"
+    backed = _safe_int(profile.get("evidence_backed_pct")) or 0
+    assumed = 100 - backed
+    strongest = max(criteria, key=lambda item: _safe_int(item.get("score")) or 0)
+    weakest = min(criteria, key=lambda item: _safe_int(item.get("score")) or 0)
+    strongest_key = strongest.get("key")
+    weakest_key = weakest.get("key")
+    strongest_label = _clean_scorecard_text(strongest.get("label"))
+    weakest_label = _clean_scorecard_text(weakest.get("label"))
+    if not strongest_label or strongest_label == strongest_key:
+        strongest_label = _SUMMARY_LABELS.get(strongest_key, strongest_key)
+    if not weakest_label or weakest_label == weakest_key:
+        weakest_label = _SUMMARY_LABELS.get(weakest_key, weakest_key)
+    parts = [
+        f"{name} scores {score}/100 based on the information currently available.",
+        f"{backed}% of the weighted decision criteria is supported by verified input passages; the remaining {assumed}% is assumption-dependent.",
+        f"{strongest_label.capitalize()} is currently the highest-scoring dimension; {weakest_label} is the lowest-scoring.",
+    ]
+    action_entry = next(
+        (
+            item for item in sorted(criteria, key=lambda item: -(item.get("weight") or 0))
+            if not item.get("evidenced") and _clean_scorecard_text(item.get("resolution"))
+        ),
+        weakest,
+    )
+    next_step = _clean_scorecard_text(action_entry.get("resolution"))
+    if next_step:
+        parts.append(f"Before committing, {next_step[0].lower() + next_step[1:] if len(next_step) > 1 else next_step.lower()}")
+    parts.append("This score describes the support for the decision case, not the probability of a successful outcome.")
+    return " ".join(parts)
+
+
+def _evidence_verification_text(project_description, evidence_corpus):
+    """Prefer the user's own words over an upstream generated summary.
+
+    A concise project description may have been written by the assistant. When
+    the original user corpus exists, accepting a quote found only in that
+    summary would let Jaspen cite its own paraphrase back as user evidence.
+    """
+    corpus = str(evidence_corpus or "").strip()
+    return corpus or str(project_description or "").strip()
+
+
 def _recompute_jaspen_score(payload, weights):
     """Make scoring deterministic: same dimensions + objective → same score.
 
@@ -2729,13 +2904,10 @@ def _generate_jaspen_scorecard(
         model_selection = {**model_selection, 'llm_model': _scoring_model}
 
     # Objective-based dimension weights
-    _DIM_WEIGHTS = {
-        "cost_optimization":  {"market_opportunity": 0.12, "financial_viability": 0.25, "execution_readiness": 0.20, "strategic_alignment": 0.15, "risk_profile": 0.20, "evidence_quality": 0.08},
-        "growth":             {"market_opportunity": 0.25, "financial_viability": 0.18, "execution_readiness": 0.20, "strategic_alignment": 0.15, "risk_profile": 0.12, "evidence_quality": 0.10},
-        "operational":        {"market_opportunity": 0.10, "financial_viability": 0.18, "execution_readiness": 0.28, "strategic_alignment": 0.18, "risk_profile": 0.18, "evidence_quality": 0.08},
-        "innovation":         {"market_opportunity": 0.22, "financial_viability": 0.15, "execution_readiness": 0.18, "strategic_alignment": 0.20, "risk_profile": 0.15, "evidence_quality": 0.10},
-        "balanced":           {"market_opportunity": 0.18, "financial_viability": 0.20, "execution_readiness": 0.18, "strategic_alignment": 0.16, "risk_profile": 0.16, "evidence_quality": 0.12},
-    }
+    # Keys intentionally match STRATEGY_OBJECTIVE_OPTIONS and
+    # _normalize_strategy_objective. The earlier cost_optimization / operational
+    # names were unreachable, causing cost and speed requests to fall back to
+    # balanced weights without warning.
     obj_key = _normalize_strategy_objective(strategy_objective) or "balanced"
 
     # --- Mode resolution: user-defined rubric (CUSTOM) vs built-in dimensions (DEFAULT) ---
@@ -2812,7 +2984,9 @@ def _generate_jaspen_scorecard(
             if any(c["key"] == "evidence_quality" for c in rubric_criteria) else ""
         )
     else:
-        weights = _DIM_WEIGHTS.get(obj_key, _DIM_WEIGHTS["balanced"])
+        weights = _OBJECTIVE_DIMENSION_WEIGHTS.get(
+            obj_key, _OBJECTIVE_DIMENSION_WEIGHTS["balanced"],
+        )
         weights_note = " | ".join(f"{k}: {int(v*100)}%" for k, v in weights.items())
         score_ref_count = 6
         objective_section = (
@@ -2852,9 +3026,7 @@ def _generate_jaspen_scorecard(
     # against the same text, so a quote counts only when it demonstrably
     # appears in what the user provided.
     corpus_text = str(evidence_corpus or "").strip()
-    verification_text = "\n\n".join(
-        t for t in (str(project_description or "").strip(), corpus_text) if t
-    )
+    verification_text = _evidence_verification_text(project_description, corpus_text)
     source_material_section = (
         "\nSource material (the user's own words, quote ONLY from here):\n"
         f'"""\n{corpus_text}\n"""\n'
@@ -3044,11 +3216,6 @@ The executive_summary must read like a concise leadership briefing. It should ne
                     dim["label"] = c.get("label") or c["key"]
                     dim["is_risk"] = bool(c.get("is_risk"))
 
-    # Enforce evidence-grade calibration in code before the cap arithmetic runs
-    # (Art. 7: caps are enforced in code, not requested in prompts). Only ever
-    # demotes an unverified "high" to "medium" — never raises anything.
-    parsed = _clamp_unverified_high_confidence_dimensions(parsed)
-
     # Verify every passage the model claimed as evidence against the text it was
     # actually shown. Quotes that cannot be found are discarded rather than
     # stored, so `evidence_references` means "this text demonstrably exists in
@@ -3056,10 +3223,9 @@ The executive_summary must read like a concise leadership briefing. It should ne
     # the model nothing, and an accurate one becomes part of a record the user
     # can inspect later.
     #
-    # Deliberately does NOT feed scoring. References are provenance, not a
-    # scoring input: letting a judgment score higher for citing more would
-    # reward volume of quotation and reopen exactly the "best-argued case wins"
-    # failure the confidence caps exist to close.
+    # References do not add points for volume. They do, however, determine the
+    # maximum confidence a model judgment may retain: no verified affirmative
+    # passage means no medium/high confidence and no evidence-coverage credit.
     try:
         verified_count = attach_evidence_references(
             parsed.get("dimensions"), verification_text,
@@ -3070,10 +3236,26 @@ The executive_summary must read like a concise leadership briefing. It should ne
         # Provenance is additive. A failure here must never cost a scorecard.
         current_app.logger.exception("evidence reference capture failed")
 
+    # Confidence cannot create its own evidence. First apply the existing
+    # high-confidence ceiling, then require a verified affirmative passage for
+    # every medium/high grade. These guards only demote; they never raise a
+    # model judgment.
+    parsed = _clamp_unverified_high_confidence_dimensions(parsed)
+    parsed = _calibrate_confidence_to_verified_evidence(parsed)
+
+    # The current schema cannot trace model-generated financial/risk numbers
+    # to a specific source field or deterministic calculation. Do not publish
+    # them as if it could.
+    parsed = _remove_unverified_model_numbers(parsed)
+
     # Deterministic final step: recompute the score from the (capped) dimensions
     # in Python instead of trusting the model's arithmetic. `weights` is the
     # rubric weight map (custom mode) or the objective preset (default mode).
     scored = _recompute_jaspen_score(parsed, weights)
+    scored["executive_summary"] = _deterministic_executive_summary(scored)
+    if not isinstance(scored.get("section_provenance"), dict):
+        scored["section_provenance"] = {}
+    scored["section_provenance"]["executive_summary"] = "deterministic"
     return (scored, generation_usage) if return_usage else scored
 
 
@@ -3450,7 +3632,27 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         }
         if custom_mode:
             payload["rubric"] = rubric
+
+        # Establish provenance before confidence and score arithmetic. The
+        # former order recomputed first and attached references afterward,
+        # allowing the model's confidence labels to determine coverage before
+        # any claimed quote had been checked.
+        _verification_text = _corpus_text or str(idea.get('description') or '').strip()
+        if _verification_text:
+            try:
+                _verified = attach_evidence_references(payload.get("dimensions"), _verification_text)
+                if _verified:
+                    payload["evidence_reference_count"] = _verified
+            except Exception:
+                current_app.logger.exception("batch evidence reference capture failed")
+        payload = _clamp_unverified_high_confidence_dimensions(payload)
+        payload = _calibrate_confidence_to_verified_evidence(payload)
+        payload = _remove_unverified_model_numbers(payload)
         scored = _recompute_jaspen_score(payload, weights)
+        scored["executive_summary"] = _deterministic_executive_summary(scored)
+        if not isinstance(scored.get("section_provenance"), dict):
+            scored["section_provenance"] = {}
+        scored["section_provenance"]["executive_summary"] = "deterministic"
 
         # Deterministic per-group sub-scores from the (capped) dimension scores.
         if has_groups:
@@ -3469,35 +3671,6 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
             js = float(scored.get("jaspen_score") or 0.0)
             tier = "Leading Candidate" if js >= 78 else "Secondary Candidate" if js >= 68 else "Monitor / Niche"
         scored["tier"] = tier
-
-        # Verify every claimed quote against the text the user actually
-        # provided, exactly as the single-option scorer does. Quotes that
-        # cannot be found are discarded rather than stored, so a reference
-        # means "this text demonstrably exists in the input".
-        #
-        # Deliberately does NOT feed scoring: references are provenance, not a
-        # scoring input. Letting a judgment score higher for citing more would
-        # reward volume of quotation.
-        try:
-            # Verify against the USER's words alone when we have them.
-            #
-            # The option description is written by the agent upstream, so
-            # including it let the model quote AI-authored text and have it
-            # pass as verified evidence. A live run proved this: "target
-            # 48-hour SLA compliance" verified cleanly and appears nowhere in
-            # anything the user typed. That is the circularity this check
-            # exists to stop, reintroduced by the checker itself.
-            #
-            # The description is used only when no corpus exists, which is the
-            # non-chat callers where the description IS the user's own input.
-            _verification_text = _corpus_text or str(idea.get('description') or '').strip()
-            if _verification_text:
-                _verified = attach_evidence_references(scored.get("dimensions"), _verification_text)
-                if _verified:
-                    scored["evidence_reference_count"] = _verified
-        except Exception:
-            # Provenance is additive. A failure here must never cost a card.
-            current_app.logger.exception("batch evidence reference capture failed")
 
         results.append(scored)
 

@@ -66,6 +66,42 @@ MAX_EXCERPT_CHARS = 600
 # a handful of passages is not being evidenced, it is being justified.
 MAX_REFERENCES_PER_CRITERION = 5
 
+# A verified quote can establish either support or a gap. Both belong in the
+# record, but only the former may increase the published evidence-coverage
+# percentage. Otherwise statements such as "I have no data" perversely make a
+# decision look better evidenced merely because the model quoted them exactly.
+_GAP_PATTERNS = (
+    r"\b(?:i|we)\s+(?:think|believe|assume|expect|guess|hope)\b",
+    r"\b(?:assuming|assumption|gut\s+feel|my\s+gut|unknown|unverified|unvalidated|untested|unscoped)\b",
+    r"\b(?:have|has|had|do|does|did)\s+not\b",
+    r"\b(?:haven't|hasn't|hadn't|don't|doesn't|didn't)\b",
+    r"\bno\s+(?:reliable\s+|actual\s+|supporting\s+|independent\s+)?(?:data|evidence|analysis|research|validation|test|testing|scope|estimate|plan|study|forecast|review|quote|pricing)\b",
+    r"\bno\s+(?:[a-z-]+\s+){0,3}(?:study|forecast|review|analysis|estimate|plan)\b",
+    r"\bnobody\s+(?:has\s+)?(?:checked|confirmed|validated|tested|scoped|estimated|reviewed|priced)\b",
+)
+
+
+def evidence_role(excerpt):
+    """Classify a verified passage as affirmative support or an exposed gap.
+
+    This is intentionally conservative and deterministic. It does not attempt
+    sentiment analysis; it only catches explicit uncertainty and absence
+    language that must never be counted as evidence *for* the decision case.
+    """
+    text = _text(excerpt).lower()
+    if not text:
+        return "gap"
+    return "gap" if any(re.search(pattern, text) for pattern in _GAP_PATTERNS) else "support"
+
+
+def reference_supports_decision(reference):
+    if not isinstance(reference, dict):
+        return False
+    role = str(reference.get("evidence_role") or "").strip().lower()
+    if role in {"support", "gap"}:
+        return role == "support"
+    return evidence_role(reference.get("excerpt")) == "support"
+
 
 def _now():
     return datetime.utcnow().isoformat()
@@ -188,6 +224,7 @@ def conversation_reference(excerpt, source, *, criterion=None):
             "captured_at": _now(),
             # The SOURCE's wording, not the model's restatement of it.
             "excerpt": verbatim,
+            "evidence_role": evidence_role(verbatim),
             "locator": {
                 "message_index": index,
                 "role": "user",
@@ -219,6 +256,7 @@ def attachment_reference(excerpt, *, attachment_id, filename,
         "criterion": criterion,
         "captured_at": _now(),
         "excerpt": excerpt,
+        "evidence_role": evidence_role(excerpt),
         "locator": {
             "attachment_id": str(attachment_id),
             "filename": _text(filename) or None,
@@ -250,6 +288,7 @@ def connector_reference(observed_value, *, system, object_name=None,
         "criterion": criterion,
         "captured_at": _now(),
         "excerpt": observed,
+        "evidence_role": evidence_role(observed),
         "locator": {
             "system": _text(system).lower(),
             "object": _text(object_name) or None,

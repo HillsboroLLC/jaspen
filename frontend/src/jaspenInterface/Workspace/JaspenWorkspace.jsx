@@ -75,7 +75,7 @@ const _GENERIC_TITLE_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-
 // an answer to it. Locked for the same reason the score is: it is computed, not
 // authored, so it must not be editable as prose.
 const DEFAULT_SCORECARD_SECTIONS = [
-  { key: 'score',      label: 'Score',                cols: 4, locked: true,  x: 0, y: 0,  w: 12, h: 4 },
+  { key: 'score',      label: 'Decision Case Strength', cols: 4, locked: true, x: 0, y: 0, w: 12, h: 4 },
   // Holds the briefing only. The criterion detail moved into its own generated
   // sections so each can be resized and reordered, which makes this block much
   // shorter than when it carried the whole report. Auto-sizing grows it if a
@@ -1127,7 +1127,13 @@ export default function JaspenWorkspace() {
 
   const score = Number(rendered?.jaspen_score || 0);
   const ringColor = rendered?._accent_color || '#a0036c';
-  const category = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk';
+  const category = score >= 80
+    ? 'Well supported'
+    : score >= 60
+      ? 'Promising — validate gaps'
+      : score >= 40
+        ? 'Not ready to commit'
+        : 'Insufficient support';
 
   // Recommended scenario (first recommendation that has actionable text)
   const recs = Array.isArray(rendered?.recommendations) ? rendered.recommendations : [];
@@ -2534,8 +2540,8 @@ export default function JaspenWorkspace() {
                           </div>
                           <div>
                             <div style={{ fontSize:11, fontWeight:600, color:ringColor, letterSpacing:'0.06em', textTransform:'uppercase' }}>{category}</div>
-                            <div style={{ fontSize:18, fontWeight:600, color:'#0f172a', marginTop:4 }}>Strategy scorecard</div>
-                            <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>Locked · scores reflect Jaspen's analysis. Open chat to rescore.</div>
+                            <div style={{ fontSize:18, fontWeight:600, color:'#0f172a', marginTop:4 }}>Decision Case Strength</div>
+                            <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>Support for the current case · not outcome probability</div>
                           </div>
                         </div>
                       )}

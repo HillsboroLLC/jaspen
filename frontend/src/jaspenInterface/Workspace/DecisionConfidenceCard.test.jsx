@@ -63,7 +63,7 @@ describe('DecisionConfidenceCard', () => {
     it('says what the ratio measures so it is not read as certainty', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(
-        screen.getByText('Evidence-backed share of the weighted decision'),
+        screen.getByText('Verified-support share of weighted decision criteria'),
       ).toBeInTheDocument();
     });
 
@@ -183,6 +183,24 @@ describe('DecisionConfidenceCard', () => {
       expect(screen.getByText('How to improve this')).toBeInTheDocument();
     });
 
+    it('never calls a gap-only criterion moderate evidence', () => {
+      const gapOnly = criterion({
+        confidence: 'medium',
+        evidenced: false,
+        supporting_evidence_references: [],
+        evidence_references: [{
+          id: 'gap-1',
+          excerpt: 'Nobody has reviewed the lease for an exit clause.',
+          evidence_role: 'gap',
+        }],
+      });
+      render(<DecisionConfidenceCard profile={profile({ criteria: [gapOnly] })} />);
+
+      expect(screen.getAllByText('No verified support').length).toBeGreaterThan(0);
+      expect(screen.queryByText('Moderate evidence')).not.toBeInTheDocument();
+      expect(screen.getByText('No affirmative verified input supports this criterion yet.')).toBeInTheDocument();
+    });
+
     it('reports the weight, contribution and exposure for a criterion', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(screen.getByText('25% of the decision')).toBeInTheDocument();
@@ -224,12 +242,12 @@ describe('DecisionConfidenceCard', () => {
       // passage, not that the passage is evidence. On a thin criterion it is
       // often the user saying they have none.
       expect(screen.queryByText('Evidence used')).not.toBeInTheDocument();
-      expect(screen.getByText('What this rests on')).toBeInTheDocument();
+      expect(screen.getByText('Verified input passages')).toBeInTheDocument();
       // Twice: once in the summary ledger, once in the criterion detail.
       expect(
         screen.getAllByText('paying roughly $40,000 a month in carrier penalties'),
       ).toHaveLength(2);
-      expect(screen.getByText('From your input')).toBeInTheDocument();
+      expect(screen.getByText(/From your input · supports this dimension/)).toBeInTheDocument();
       // Offsets are provenance, not reading material.
       expect(screen.queryByText(/chars 89/)).not.toBeInTheDocument();
       expect(screen.queryByText(/message 0/)).not.toBeInTheDocument();
@@ -250,7 +268,7 @@ describe('DecisionConfidenceCard', () => {
         id: 'ev_2', kind: 'attachment', excerpt: 'Penalty accrual: $40,000/mo',
         locator: { filename: 'Cost Model.xlsx', location: { sheet: 'Assumptions', cell: 'F18' } },
       }])} />);
-      expect(screen.getByText('Cost Model.xlsx · Assumptions · F18')).toBeInTheDocument();
+      expect(screen.getByText(/Cost Model\.xlsx · Assumptions · F18 · supports this dimension/)).toBeInTheDocument();
     });
 
     it('shows when connector evidence was retrieved', () => {
@@ -261,7 +279,7 @@ describe('DecisionConfidenceCard', () => {
         locator: { system: 'netsuite', field: 'monthly_penalty', retrieved_at: '2026-08-29T10:00:00' },
       }])} />);
       expect(
-        screen.getByText('NETSUITE · monthly_penalty · retrieved 2026-08-29'),
+        screen.getByText(/NETSUITE · monthly_penalty · retrieved 2026-08-29 · supports this dimension/),
       ).toBeInTheDocument();
     });
 
@@ -278,7 +296,7 @@ describe('DecisionConfidenceCard', () => {
     it('labels the basis as reasoning, never as an evidence record', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(
-        screen.getByText(/nothing here should be read as a source citation or an audit trail/),
+        screen.getByText(/They do not independently prove that the source statement is true/),
       ).toBeInTheDocument();
     });
 
@@ -436,7 +454,7 @@ describe('DecisionConfidenceCard', () => {
 
     it("prefers scoring's own suggestion over the fallback", () => {
       render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: 'Connect NetSuite', confidence: 'assumed' })] })} />);
-      expect(screen.getByText('Connect NetSuite')).toBeInTheDocument();
+      expect(screen.getAllByText('Connect NetSuite')).toHaveLength(2);
       expect(screen.queryByText(/Nothing verifiable supports this yet/)).toBeNull();
     });
 
