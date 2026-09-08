@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { createAnalytics } from '../../tools/shared/createAnalytics';
 import EnterpriseInvestmentCalculator from './EnterpriseInvestmentCalculator';
 import ExecutivePartnershipRequest from './ExecutivePartnershipRequest';
+import AdvisoryDecisionCalculator from './AdvisoryDecisionCalculator';
 import {
   LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT,
   THINKING_POWER_PROJECT_ESTIMATES,
@@ -381,6 +382,8 @@ export default function PricingVariantB({ onOpenModal }) {
             Approved travel, lodging, transportation, meals, and related expenses are billed
             separately and are not included in the flat fee.
           </p>
+
+          <AdvisoryDecisionCalculator />
 
           <div className="pvb-compare-accordion">
             <button

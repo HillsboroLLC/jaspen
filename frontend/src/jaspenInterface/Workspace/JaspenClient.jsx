@@ -86,6 +86,7 @@ export const endpoints = {
   requestEmailAssets: (threadId) => `${API_BASE}/api/v1/email-assets/threads/${encodeURIComponent(threadId)}`,
   emailAssetStatus: (deliveryId) => `${API_BASE}/api/v1/email-assets/${encodeURIComponent(deliveryId)}`,
   scorecardAssistant: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/scorecard-assistant`,
+  acceptedExposures: (threadId) => `${API_BASE}/api/v1/decision-records/from-thread/${encodeURIComponent(threadId)}/accepted-exposures`,
   executionAssistant: (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/execution-assistant`,
   appendMessages:     (threadId) => `${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}/messages`,
   batchIdeasUpload: `${API_BASE}/api/v1/ai-agent/batch-ideas/upload`,
@@ -1013,6 +1014,16 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     }
     const data = await res.json();
     return (data && typeof data.display_overrides === 'object') ? data.display_overrides : {};
+  },
+
+  async getAcceptedExposures(threadId) {
+    if (!threadId) throw new Error('threadId is required');
+    return getJSON(endpoints.acceptedExposures(threadId), { withSid: true });
+  },
+
+  async acceptExposure(threadId, exposure) {
+    if (!threadId) throw new Error('threadId is required');
+    return postJSON(endpoints.acceptedExposures(threadId), exposure, { withSid: true });
   },
 
   // ---------- Streaming ----------

@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, within, fireEvent } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import DecisionConfidenceCard from './DecisionConfidenceCard';
 
 function criterion(overrides = {}) {
@@ -108,6 +108,53 @@ describe('DecisionConfidenceCard', () => {
   });
 
   describe('the detail layer', () => {
+    it('requires an explicit action and sends only the optional note with the exposure row', async () => {
+      const onAcceptExposure = jest.fn().mockResolvedValue({ id: 'accepted-1' });
+      render(
+        <DecisionConfidenceCard
+          profile={profile()}
+          onAcceptExposure={onAcceptExposure}
+        />,
+      );
+
+      expect(onAcceptExposure).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Accept this exposure' }));
+      expect(screen.getByText(/understand this exposure remains unresolved/i)).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText('Optional note'), {
+        target: { value: 'Proceed while Finance validates the quote.' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Record accepted exposure' }));
+
+      await waitFor(() => expect(onAcceptExposure).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'fin', swing: 8.75 }),
+        'Proceed while Finance validates the quote.',
+      ));
+    });
+
+    it('shows who accepted an exposure, when, and their note', () => {
+      render(
+        <DecisionConfidenceCard
+          profile={profile()}
+          optionName="Phased automation"
+          onAcceptExposure={jest.fn()}
+          acceptedExposures={[{
+            id: 'accepted-1',
+            accepted_at: '2026-09-08T14:00:00Z',
+            accepted_by: { name: 'Lydia Bailey', email: 'lydia@example.com' },
+            note: 'Proceed with a validation checkpoint.',
+            exposure: {
+              kind: 'criterion',
+              option_name: 'Phased automation',
+              target_key: 'fin',
+            },
+          }]}
+        />,
+      );
+
+      expect(screen.getByText('Accepted by Lydia Bailey')).toBeInTheDocument();
+      expect(screen.getByText('Proceed with a validation checkpoint.')).toBeInTheDocument();
+    });
+
     it('shows every weighted criterion, none of it collapsed', () => {
       const many = profile({
         criteria: [

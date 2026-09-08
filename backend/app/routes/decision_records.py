@@ -18,6 +18,7 @@ from ..decision_records import (
     append_lesson,
     set_library_consent,
     set_status,
+    accept_exposure,
 )
 
 decision_records_bp = Blueprint('decision_records', __name__)
@@ -179,3 +180,44 @@ def update_consent(record_id):
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     return jsonify({'record': record.to_dict()})
+
+
+@decision_records_bp.route('/from-thread/<thread_id>/accepted-exposures', methods=['GET'])
+@jwt_required()
+def list_accepted_exposures(thread_id):
+    user = _current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    record = (
+        DecisionRecord.query
+        .filter_by(user_id=user.id, thread_id=str(thread_id))
+        .order_by(DecisionRecord.created_at.desc())
+        .first()
+    )
+    entries = record.accepted_exposures if record and isinstance(record.accepted_exposures, list) else []
+    return jsonify({'accepted_exposures': entries})
+
+
+@decision_records_bp.route('/from-thread/<thread_id>/accepted-exposures', methods=['POST'])
+@jwt_required()
+def add_accepted_exposure(thread_id):
+    """Record an explicit human attestation against current server-side data."""
+    user = _current_user()
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    data = request.get_json(silent=True) or {}
+    try:
+        record, _ = create_or_refresh_record(user, thread_id)
+        entry, created = accept_exposure(
+            record,
+            user,
+            kind=str(data.get('kind') or '').strip().lower(),
+            option_name=str(data.get('option_name') or '').strip(),
+            target_key=str(data.get('target_key') or '').strip(),
+            note=data.get('note'),
+        )
+    except LookupError as exc:
+        return jsonify({'error': str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    return jsonify({'accepted_exposure': entry, 'created': created}), 201 if created else 200

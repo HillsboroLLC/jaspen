@@ -374,6 +374,33 @@
   padding-left: 10px;
   border-left: 2px solid #e6eaf2;
 }
+
+.dcc-acceptance {
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid #d9dce6;
+  border-radius: 9px;
+  background: #fafbfc;
+}
+.dcc-acceptance-record { display: grid; gap: 3px; margin-top: 7px; color: #334155; }
+.dcc-acceptance-record strong { font-size: 0.84rem; color: #161f3b; }
+.dcc-acceptance-record span { font-size: 0.75rem; color: #64748b; }
+.dcc-acceptance-record p { margin: 5px 0 0; font-size: 0.82rem; line-height: 1.45; }
+.dcc-accept-open {
+  margin-top: 9px;
+  padding: 7px 10px;
+  border: 1px solid #a0036c;
+  border-radius: 7px;
+  background: #fff;
+  color: #8a025e;
+  font: 700 0.78rem/1.2 inherit;
+  cursor: pointer;
+}
+.dcc-accept-form { margin-top: 8px; }
+.dcc-accept-form > p { margin: 0 0 9px; color: #475569; font-size: 0.8rem; line-height: 1.45; }
+.dcc-accept-form label { display: grid; gap: 5px; color: #334155; font-size: 0.76rem; font-weight: 700; }
+.dcc-accept-form textarea { resize: vertical; padding: 8px; border: 1px solid #cbd5e1; border-radius: 7px; font: inherit; }
+.dcc-accept-error { margin: 7px 0 0; color: #b42318; font-size: 0.78rem; }
 /* Green, because this is the only block on the card whose contents were
    verified rather than asserted. */
 .dcc-evidence-block { border-left-color: #10b981; }

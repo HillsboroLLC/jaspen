@@ -58,8 +58,10 @@ function Level({ value, label }) {
   );
 }
 
-function RiskRow({ risk, editable, onEdit, onRestore }) {
+function RiskRow({ risk, editable, onEdit, onRestore, acceptance, onAcceptExposure }) {
   const [draft, setDraft] = useState(null);
+  const [acceptanceNote, setAcceptanceNote] = useState(null);
+  const [acceptanceState, setAcceptanceState] = useState({ saving: false, error: '' });
   const impact = money(risk.impact_dollars ?? risk.impact);
   const mitigationCost = money(risk.mitigation_cost);
 
@@ -167,11 +169,56 @@ function RiskRow({ risk, editable, onEdit, onRestore }) {
           )}
         </div>
       )}
+
+      {risk.residual_risk && onAcceptExposure && (
+        <div className="rr-acceptance">
+          <p className="rr-block-label">Consciously accepted residual exposure</p>
+          {acceptance && (
+            <div className="rr-acceptance-record" role="status">
+              <strong>Accepted by {acceptance.accepted_by?.name || acceptance.accepted_by?.email || 'a user'}</strong>
+              <span>{new Date(acceptance.accepted_at).toLocaleString()}</span>
+              {acceptance.note && <p>{acceptance.note}</p>}
+            </div>
+          )}
+          {acceptanceNote === null ? (
+            <button type="button" className="rr-accept" onClick={() => setAcceptanceNote('')}>
+              {acceptance ? 'Accept the current residual exposure again' : 'Accept residual exposure'}
+            </button>
+          ) : (
+            <div className="rr-accept-form">
+              <p>This records that you understand this exposure remains after the stated mitigation and choose to accept it.</p>
+              <label>Optional note<textarea rows={2} maxLength={1000} value={acceptanceNote} onChange={(event) => setAcceptanceNote(event.target.value)} /></label>
+              <div className="rr-actions">
+                <button
+                  type="button"
+                  className="rr-save"
+                  disabled={acceptanceState.saving}
+                  onClick={async () => {
+                    setAcceptanceState({ saving: true, error: '' });
+                    try {
+                      await onAcceptExposure(risk, acceptanceNote);
+                      setAcceptanceNote(null);
+                      setAcceptanceState({ saving: false, error: '' });
+                    } catch (error) {
+                      setAcceptanceState({ saving: false, error: error?.message || 'Could not record acceptance.' });
+                    }
+                  }}
+                >{acceptanceState.saving ? 'Recording…' : 'Record accepted exposure'}</button>
+                <button type="button" className="rr-cancel" onClick={() => setAcceptanceNote(null)}>Cancel</button>
+              </div>
+              {acceptanceState.error && <p className="rr-accept-error" role="alert">{acceptanceState.error}</p>}
+            </div>
+          )}
+        </div>
+      )}
     </li>
   );
 }
 
-export default function RiskRegister({ risks, editable = false, onEdit, onRestore }) {
+export default function RiskRegister({
+  risks, editable = false, onEdit, onRestore,
+  optionName, acceptedExposures = [], onAcceptExposure,
+}) {
   const items = Array.isArray(risks) ? risks.filter(Boolean) : [];
   if (!items.length) {
     return <p className="rr-empty">No risks recorded for this decision.</p>;
@@ -212,6 +259,12 @@ export default function RiskRegister({ risks, editable = false, onEdit, onRestor
           editable={editable}
           onEdit={onEdit}
           onRestore={onRestore}
+          acceptance={[...acceptedExposures].reverse().find((item) => (
+            item?.exposure?.kind === 'risk'
+            && item?.exposure?.target_key === risk.id
+            && (!optionName || item?.exposure?.option_name === optionName || item?.exposure?.option_id === optionName)
+          ))}
+          onAcceptExposure={onAcceptExposure}
         />
       ))}
     </ul>

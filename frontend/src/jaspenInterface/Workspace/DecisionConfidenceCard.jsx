@@ -173,8 +173,13 @@ function evidenceSource(reference) {
   return 'From your input';
 }
 
-function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) {
+function CriterionRow({
+  entry, onEditNarrative, onRestoreNarrative, editable,
+  acceptance, onAcceptExposure,
+}) {
   const [draft, setDraft] = useState(null);
+  const [acceptanceNote, setAcceptanceNote] = useState(null);
+  const [acceptanceState, setAcceptanceState] = useState({ saving: false, error: '' });
   const unsupported = UNSUPPORTED_BY_GRADE[entry.confidence];
   // Scoring's own suggestion when it made one, otherwise an honest generic.
   const action = entry.resolution || FALLBACK_ACTION_BY_GRADE[entry.confidence] || null;
@@ -350,6 +355,69 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
           <p className="dcc-block-text">{action}</p>
         </div>
       )}
+
+      {(entry.swing > 0 || entry.evidenced === false) && onAcceptExposure && (
+        <div className="dcc-acceptance">
+          <p className="dcc-block-label">Consciously accepted exposure</p>
+          {acceptance && (
+            <div className="dcc-acceptance-record" role="status">
+              <strong>
+                Accepted by {acceptance.accepted_by?.name || acceptance.accepted_by?.email || 'a user'}
+              </strong>
+              <span>{new Date(acceptance.accepted_at).toLocaleString()}</span>
+              {acceptance.note && <p>{acceptance.note}</p>}
+            </div>
+          )}
+          {acceptanceNote === null ? (
+            <button
+              type="button"
+              className="dcc-accept-open"
+              onClick={() => setAcceptanceNote('')}
+            >
+              {acceptance ? 'Accept the current exposure again' : 'Accept this exposure'}
+            </button>
+          ) : (
+            <div className="dcc-accept-form">
+              <p>
+                This records that you understand this exposure remains unresolved and
+                choose to proceed while consciously accepting it.
+              </p>
+              <label>
+                Optional note
+                <textarea
+                  rows={2}
+                  maxLength={1000}
+                  value={acceptanceNote}
+                  onChange={(event) => setAcceptanceNote(event.target.value)}
+                />
+              </label>
+              <div className="dcc-edit-actions">
+                <button
+                  type="button"
+                  className="dcc-edit-save"
+                  disabled={acceptanceState.saving}
+                  onClick={async () => {
+                    setAcceptanceState({ saving: true, error: '' });
+                    try {
+                      await onAcceptExposure(entry, acceptanceNote);
+                      setAcceptanceNote(null);
+                      setAcceptanceState({ saving: false, error: '' });
+                    } catch (error) {
+                      setAcceptanceState({ saving: false, error: error?.message || 'Could not record acceptance.' });
+                    }
+                  }}
+                >
+                  {acceptanceState.saving ? 'Recording…' : 'Record accepted exposure'}
+                </button>
+                <button type="button" className="dcc-edit-cancel" onClick={() => setAcceptanceNote(null)}>
+                  Cancel
+                </button>
+              </div>
+              {acceptanceState.error && <p className="dcc-accept-error" role="alert">{acceptanceState.error}</p>}
+            </div>
+          )}
+        </div>
+      )}
     </li>
   );
 }
@@ -357,6 +425,7 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
 export default function DecisionConfidenceCard({
   profile, exposure, optionName, summary,
   onEditNarrative, onRestoreNarrative, editable = false,
+  acceptedExposures = [], onAcceptExposure,
   // Which half to render. The report is split across canvas sections so each
   // criterion can be resized and reordered on its own, which means this
   // component is mounted once for the briefing and once per criterion rather
@@ -390,6 +459,11 @@ export default function DecisionConfidenceCard({
   const primaryClaim = claims[0] || null;
   const secondaryClaims = claims.slice(1);
   const isClear = primaryClaim?.kind === 'clear';
+  const acceptanceFor = (entry) => [...acceptedExposures].reverse().find((item) => (
+    item?.exposure?.kind === 'criterion'
+    && item?.exposure?.target_key === entry.key
+    && (!optionName || item?.exposure?.option_name === optionName || item?.exposure?.option_id === optionName)
+  ));
 
   // One criterion, rendered into its own section.
   if (only === 'criterion') {
@@ -403,6 +477,8 @@ export default function DecisionConfidenceCard({
             editable={editable}
             onEditNarrative={onEditNarrative}
             onRestoreNarrative={onRestoreNarrative}
+            acceptance={acceptanceFor(entry)}
+            onAcceptExposure={onAcceptExposure}
           />
         </ul>
       </section>
@@ -562,6 +638,8 @@ export default function DecisionConfidenceCard({
                 editable={editable}
                 onEditNarrative={onEditNarrative}
                 onRestoreNarrative={onRestoreNarrative}
+                acceptance={acceptanceFor(entry)}
+                onAcceptExposure={onAcceptExposure}
               />
             ))}
           </ul>

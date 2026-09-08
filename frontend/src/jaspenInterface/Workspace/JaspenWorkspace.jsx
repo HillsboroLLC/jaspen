@@ -885,6 +885,49 @@ export default function JaspenWorkspace() {
   // travels with the bundle instead. Null with fewer than two options, which
   // is correct: there is nothing to overtake.
   const decisionExposure = bundle?.decision_exposure || null;
+  const [acceptedExposures, setAcceptedExposures] = useState([]);
+
+  useEffect(() => {
+    if (!threadId || !isScorecard) return undefined;
+    let cancelled = false;
+    Jaspen.getAcceptedExposures(threadId)
+      .then((data) => {
+        if (!cancelled) setAcceptedExposures(
+          Array.isArray(data?.accepted_exposures) ? data.accepted_exposures : [],
+        );
+      })
+      .catch(() => { if (!cancelled) setAcceptedExposures([]); });
+    return () => { cancelled = true; };
+  }, [threadId, isScorecard]);
+
+  const acceptCriterionExposure = useCallback(async (entry, note) => {
+    const data = await Jaspen.acceptExposure(threadId, {
+      kind: 'criterion',
+      option_name: scorecardId,
+      target_key: entry.key,
+      note,
+    });
+    const accepted = data?.accepted_exposure;
+    if (accepted) {
+      setAcceptedExposures((current) => (
+        current.some((item) => item?.id === accepted.id) ? current : [...current, accepted]
+      ));
+    }
+    return accepted;
+  }, [threadId, scorecardId]);
+
+  const acceptRiskExposure = useCallback(async (risk, note) => {
+    const data = await Jaspen.acceptExposure(threadId, {
+      kind: 'risk', option_name: scorecardId, target_key: risk.id, note,
+    });
+    const accepted = data?.accepted_exposure;
+    if (accepted) {
+      setAcceptedExposures((current) => (
+        current.some((item) => item?.id === accepted.id) ? current : [...current, accepted]
+      ));
+    }
+    return accepted;
+  }, [threadId, scorecardId]);
 
   // Section sizing is predicted from content, not measured after render. An
   // earlier version measured each section and wrote a height back into the
@@ -905,6 +948,7 @@ export default function JaspenWorkspace() {
     if ((entry.evidence_references || []).length) rows += 1;
     if (entry.confidence !== 'high') rows += 1;
     if (entry.resolution) rows += 2;
+    if (entry.swing > 0 || entry.evidenced === false) rows += 5;
     return Math.max(4, rows);
   }
 
@@ -2507,6 +2551,7 @@ export default function JaspenWorkspace() {
                           exposure={decisionExposure}
                           optionName={rendered?.project_name || null}
                           summary={decisionExposure?.summaries?.[rendered?.project_name] || null}
+                          acceptedExposures={acceptedExposures}
                         />
                       )}
 
@@ -2515,9 +2560,12 @@ export default function JaspenWorkspace() {
                           only="criterion"
                           criterionKey={section.key.slice(CRITERION_SECTION_PREFIX.length)}
                           profile={rendered?.evidence_profile || null}
+                          optionName={rendered?.project_name || scorecardId}
                           editable
                           onEditNarrative={setCriterionNarrative}
                           onRestoreNarrative={restoreCriterionNarrative}
+                          acceptedExposures={acceptedExposures}
+                          onAcceptExposure={acceptCriterionExposure}
                         />
                       )}
 
@@ -2556,6 +2604,9 @@ export default function JaspenWorkspace() {
                           editable
                           onEdit={setRiskNarrative}
                           onRestore={restoreRiskNarrative}
+                          optionName={rendered?.project_name || scorecardId}
+                          acceptedExposures={acceptedExposures}
+                          onAcceptExposure={acceptRiskExposure}
                         />
                       )}
 

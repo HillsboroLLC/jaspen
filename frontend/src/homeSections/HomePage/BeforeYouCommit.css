@@ -58,7 +58,7 @@
 .byc-heading {
   grid-column: 1 / 7;
   grid-row: 2;
-  margin: 0 0 40px;
+  margin: 0 0 16px;
   text-wrap: balance;
   font-size: clamp(1.45rem, 2.4vw, 2rem);
   font-weight: 720;
@@ -67,12 +67,22 @@
   color: #ffffff;
 }
 
+.byc-explainer {
+  grid-column: 1 / 7;
+  grid-row: 3;
+  margin: 0 0 34px;
+  max-width: 640px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.98rem;
+  line-height: 1.62;
+}
+
 /* Five items, one utterance. No rule, no bullets, no icons: the repeated stem
    is what binds them, and anything added here would give them a weight the
    composition is trying to take away. */
 .byc-moments {
   grid-column: 1 / 6;
-  grid-row: 3;
+  grid-row: 4;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -100,8 +110,16 @@
    moment the run finishes. */
 .byc-turn {
   grid-column: 7 / 13;
-  grid-row: 3;
+  grid-row: 4;
   align-self: end;
+}
+
+.byc-turn-support {
+  margin: 16px 0 0;
+  max-width: 520px;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 0.94rem;
+  line-height: 1.55;
 }
 
 .byc-turn-line {
@@ -189,6 +207,7 @@
 
   .byc-eyebrow,
   .byc-heading,
+  .byc-explainer,
   .byc-moments,
   .byc-turn {
     grid-column: 1 / -1;

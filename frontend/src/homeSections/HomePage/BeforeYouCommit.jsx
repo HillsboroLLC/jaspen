@@ -67,8 +67,13 @@ export default function BeforeYouCommit() {
       <div className="byc-inner">
         <p className="byc-eyebrow">Before you commit</p>
         <h2 className="byc-heading">
-          Decisions are easiest to challenge while they can still change.
+          See where the plan is exposed before the commitment makes it expensive.
         </h2>
+        <p className="byc-explainer">
+          Ambitious projects can go over budget, stall, or stop when something important
+          surfaces too late. Jaspen helps make weak assumptions, evidence gaps, and blind
+          spots visible early, while there is still time to strengthen the plan.
+        </p>
 
         <ul className="byc-moments">
           {MOMENTS.map((moment) => (
@@ -85,7 +90,11 @@ export default function BeforeYouCommit() {
             a scale nothing else on this section competes with, and the only
             thing beneath it is the way out. */}
         <div className="byc-turn">
-          <p className="byc-turn-line">Before everyone agrees.</p>
+          <p className="byc-turn-line">Know what remains exposed.</p>
+          <p className="byc-turn-support">
+            You cannot eliminate every unknown. You can avoid carrying more exposure than
+            necessary and consciously accept what remains.
+          </p>
           <button type="button" className="byc-action" onClick={runItThroughJaspen}>
             <span>Run it through Jaspen first.</span>
             <i className="fa-solid fa-arrow-right" aria-hidden="true" />
