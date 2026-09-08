@@ -1,4 +1,4 @@
-"""Turn the RANK THEM homepage promotion on or off.
+"""Turn the pressure-test homepage promotion on or off.
 
 The admin API does this too, but that needs a token and a hand-built request.
 This is the same write, as one command:

@@ -29,7 +29,7 @@ function deferredJson(body) {
 }
 
 const ACTIVE_PROMOTION = {
-  promotion: { active: true, headline: 'RANK THEM', campaign_path: '/limited-time/project-prioritization' },
+  promotion: { active: true, campaign_path: '/limited-time/project-prioritization' },
 };
 
 function renderModal() {
@@ -41,7 +41,7 @@ async function settle() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 }
 
-describe('RANK THEM promotion modal', () => {
+describe('pressure-test promotion modal', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     mockUser = null;
@@ -64,7 +64,9 @@ describe('RANK THEM promotion modal', () => {
     await act(async () => { jest.advanceTimersByTime(12000); });
 
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /RANK THEM/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /PRESSURE-TEST THE PLAN/i })).toBeInTheDocument();
+    expect(screen.getByText(/expose the assumptions, blind spots, and weak points/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pressure-test my decision' })).toBeInTheDocument();
   });
 
   it('never appears for someone who already bought the offer, even when billing answers last', async () => {
