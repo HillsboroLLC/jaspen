@@ -47,12 +47,17 @@ function profile(overrides = {}) {
 
 describe('DecisionConfidenceCard', () => {
   describe('the summary layer', () => {
-    it('leads with the score and the evidence split', () => {
-      render(<DecisionConfidenceCard profile={profile()} score={66} scoreCategory="Good" />);
-      expect(screen.getByText('66')).toBeInTheDocument();
-      expect(screen.getByText('Good')).toBeInTheDocument();
+    it('leads with the evidence split', () => {
+      render(<DecisionConfidenceCard profile={profile()} summary={summary()} />);
       expect(screen.getByText('55%')).toBeInTheDocument();
       expect(screen.getByText('45%')).toBeInTheDocument();
+    });
+
+    it('never shows the option score, which rates the idea rather than the evidence', () => {
+      render(<DecisionConfidenceCard profile={profile()} summary={summary()} />);
+      expect(screen.queryByText('66')).not.toBeInTheDocument();
+      expect(screen.queryByText('Good')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Scores 66 of 100/)).not.toBeInTheDocument();
     });
 
     it('says what the ratio measures so it is not read as certainty', () => {
@@ -69,7 +74,8 @@ describe('DecisionConfidenceCard', () => {
       const briefing = container.querySelector('.dcc-briefing');
       expect(briefing).toBeInTheDocument();
       // Continuous prose, so it can be quoted straight into a room.
-      expect(briefing.textContent).toContain('Scores 66 of 100, rated Good.');
+      // The option's rating is not part of the confidence briefing.
+      expect(briefing.textContent).not.toContain('Scores 66 of 100');
       expect(briefing.textContent).toContain('Trails Consolidate the Reno hub by 8 points');
       expect(briefing.textContent).toContain('55% of the weighted decision rests on evidence');
       expect(briefing.textContent).toContain('Most of that exposure sits in one criterion');
@@ -167,10 +173,15 @@ describe('DecisionConfidenceCard', () => {
         locator: { message_index: 0, role: 'user', start: 89, end: 140 },
       }])} />);
 
-      expect(screen.getByText('Evidence used')).toBeInTheDocument();
+      // Never "Evidence used": a stored reference proves Jaspen read the
+      // passage, not that the passage is evidence. On a thin criterion it is
+      // often the user saying they have none.
+      expect(screen.queryByText('Evidence used')).not.toBeInTheDocument();
+      expect(screen.getByText('What this rests on')).toBeInTheDocument();
+      // Twice: once in the summary ledger, once in the criterion detail.
       expect(
-        screen.getByText('paying roughly $40,000 a month in carrier penalties'),
-      ).toBeInTheDocument();
+        screen.getAllByText('paying roughly $40,000 a month in carrier penalties'),
+      ).toHaveLength(2);
       expect(screen.getByText('From your input')).toBeInTheDocument();
       // Offsets are provenance, not reading material.
       expect(screen.queryByText(/chars 89/)).not.toBeInTheDocument();

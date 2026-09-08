@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import JaspenNav from './JaspenNav';
 import WorkWithJaspenCanvas from './WorkWithJaspenCanvas';
 import InteractiveDecisionHero from './InteractiveDecisionHero';
+import BeforeYouCommit from './BeforeYouCommit';
 import CommercialPathwayStrip from './CommercialPathwayStrip';
 import PricingVariantB from './PricingVariantB';
 import FlowIllustrated from './FlowIllustrated';
@@ -377,6 +378,13 @@ export default function HomePage() {
           <InteractiveDecisionHero onOpenModal={openAuthModal} onContextChange={setHeroContext} />
         </div>
         <div className="hero-curtain-spacer" ref={spacerRef} aria-hidden="true" />
+
+        {/* ========== BEFORE YOU COMMIT ========== */}
+        {/* The curtain: the hero pins and this is the section that slides up
+            over it, which is why it carries its own opaque background and
+            z-index. It also takes the .jaspen-live-wave overlay onto its own
+            bottom padding instead of the hero's. */}
+        <BeforeYouCommit />
 
         {/* ========== WORK WITH JASPEN CANVAS (with "This is Jaspen" beside it) ========== */}
         <div id="jaspen-live">

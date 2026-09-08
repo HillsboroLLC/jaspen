@@ -1,0 +1,221 @@
+/* Before You Commit — the curtain section between the hero and the tan canvas.
+   Site palette only (navy #161f3b, lightened magenta #e774b4 for accents on
+   navy, white), no gradients, no emojis. Follows the navy-surface conventions
+   the other navy blocks already established. */
+
+.byc {
+  /* Opaque and above the pinned hero, so this is what slides over it. */
+  position: relative;
+  z-index: 2;
+  background: #161f3b;
+  /* Bottom padding must clear .jaspen-live-wave, which paints over the 88px
+     directly above #jaspen-live. Keep this above 88px at every width. */
+  padding: 104px 40px 116px;
+}
+
+/* The organic leading edge. Painted into the space ABOVE the section box, so
+   the visible top boundary is the curve rather than the box. Above the curve is
+   transparent and the pinned hero shows through; below it is navy, continuous
+   with the section, which is what makes this read as a surface sweeping over
+   the hero instead of a band sitting under it. */
+.byc-curtain {
+  position: absolute;
+  top: -120px;
+  left: 0;
+  width: 100%;
+  height: 120px;
+  display: block;
+  pointer-events: none;
+}
+
+/* ── Composition ───────────────────────────────────────────────────────────
+   Deliberately asymmetric. The thesis and the five ordinary moments hold the
+   left; the right is empty until the bottom, where the one line that changes
+   the cost of disagreeing sits with the way out beneath it.
+
+   The emptiness is the argument, so nothing fills it. Rows 1 and 2 leave
+   columns 7-12 open, and that column is where the curtain's navy is deepest —
+   the negative space starts above the section and comes down into it. */
+.byc-inner {
+  max-width: 1140px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: 56px;
+}
+
+.byc-eyebrow {
+  grid-column: 1 / 7;
+  grid-row: 1;
+  margin: 0 0 18px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #e774b4;
+}
+
+.byc-heading {
+  grid-column: 1 / 7;
+  grid-row: 2;
+  margin: 0 0 40px;
+  text-wrap: balance;
+  font-size: clamp(1.45rem, 2.4vw, 2rem);
+  font-weight: 720;
+  letter-spacing: -0.01em;
+  line-height: 1.16;
+  color: #ffffff;
+}
+
+/* Five items, one utterance. No rule, no bullets, no icons: the repeated stem
+   is what binds them, and anything added here would give them a weight the
+   composition is trying to take away. */
+.byc-moments {
+  grid-column: 1 / 6;
+  grid-row: 3;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.byc-moment {
+  font-size: clamp(0.98rem, 1.3vw, 1.1rem);
+  font-weight: 500;
+  line-height: 1.42;
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.byc-moment + .byc-moment {
+  margin-top: 7px;
+}
+
+/* Set back so the eye reads the repetition as rhythm and lands on the clause
+   that actually changes. */
+.byc-stem {
+  color: rgba(255, 255, 255, 0.42);
+  font-weight: 450;
+}
+
+/* Bottom-aligned to the end of the five, so the eye crosses the gap at the
+   moment the run finishes. */
+.byc-turn {
+  grid-column: 7 / 13;
+  grid-row: 3;
+  align-self: end;
+}
+
+.byc-turn-line {
+  margin: 0;
+  text-wrap: balance;
+  font-size: clamp(2.05rem, 4.4vw, 3.4rem);
+  font-weight: 760;
+  letter-spacing: -0.025em;
+  line-height: 1.03;
+  color: #ffffff;
+}
+
+/* The intervention, immediately before the commitment and the only thing
+   under it. Editorial rather than a chip, but it is an action and has to look
+   like one without a container to say so — hence all four affordances at once:
+   the accent colour nothing else on this section uses, a permanent underline,
+   the same arrow the hero's actions use, and a 44px target. */
+.byc-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  margin-top: 26px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: clamp(1.02rem, 1.4vw, 1.18rem);
+  font-weight: 650;
+  color: #e774b4;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 7px;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.byc-action i {
+  font-size: 0.86em;
+  transition: transform 0.15s ease;
+}
+
+.byc-action:hover {
+  color: #ffffff;
+}
+
+.byc-action:hover i {
+  transform: translateX(4px);
+}
+
+.byc-action:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 6px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .byc-action,
+  .byc-action i {
+    transition: none;
+  }
+  .byc-action:hover i {
+    transform: none;
+  }
+}
+
+/* ── Below the split ───────────────────────────────────────────────────────
+   The two-column composition is a desktop idea. Narrow, it becomes one column
+   in the same reading order, and the hierarchy carries the distinction on its
+   own: the five stay quiet, the turn stays large, the action stays under it. */
+@media (max-width: 900px) {
+  .byc {
+    padding: 76px 24px 124px;
+  }
+
+  .byc-curtain {
+    top: -76px;
+    height: 76px;
+  }
+
+  .byc-inner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .byc-eyebrow,
+  .byc-heading,
+  .byc-moments,
+  .byc-turn {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  .byc-heading {
+    margin-bottom: 30px;
+  }
+
+  /* The gap the eye crossed sideways on desktop becomes a vertical one. */
+  .byc-turn {
+    margin-top: 40px;
+  }
+}
+
+@media (max-width: 520px) {
+  .byc {
+    padding: 60px 20px 120px;
+  }
+
+  .byc-curtain {
+    top: -56px;
+    height: 56px;
+  }
+
+  .byc-turn {
+    margin-top: 34px;
+  }
+}

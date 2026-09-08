@@ -149,26 +149,39 @@ def test_evidence_baseline_is_none_when_the_spec_does_not_measure_it():
 
 # --- claims ------------------------------------------------------------------
 
-def test_the_cap_consequence_claim_describes_the_mechanism_not_a_prediction():
+def test_the_implication_claim_describes_the_finding_not_a_prediction():
     """The grade is a model judgment made after scoring, which this cannot make.
 
     The claim must describe what Jaspen does with ungrounded input, never
     assert what a criterion will be graded.
     """
     check = build_confidence_check(_readiness(THIN))
-    cap_claims = [c for c in check["claims"] if c["kind"] == "cap_consequence"]
-    assert len(cap_claims) == 1
+    claims = [c for c in check["claims"] if c["kind"] == "implication"]
+    assert len(claims) == 1
 
-    text = cap_claims[0]["text"]
-    assert str(ASSUMED_CAP) in text
-    assert "is graded assumed" in text
+    text = claims[0]["text"]
+    assert "marked as an assumption" in text
     assert "will be graded" not in text
 
 
-def test_the_cap_claim_is_absent_once_a_source_is_supplied():
+def test_the_public_claim_never_publishes_the_contribution_ceiling():
+    """This text is shown to anonymous visitors, so it is public copy.
+
+    It used to interpolate the real ceiling for an assumed judgment, putting an
+    engine constant on a pre-signup surface. The earlier version of this test
+    asserted that number was PRESENT, which pinned the leak in place.
+    """
+    check = build_confidence_check(_readiness(THIN))
+    for claim in check["claims"]:
+        assert str(ASSUMED_CAP) not in claim["text"]
+        assert "ceiling" not in claim["text"].lower()
+        assert "cap" not in claim["text"].lower()
+
+
+def test_the_implication_claim_is_absent_once_a_source_is_supplied():
     check = build_confidence_check(_readiness(GROUNDED))
     kinds = {c["kind"] for c in check["claims"]}
-    assert "cap_consequence" not in kinds
+    assert "implication" not in kinds
 
 
 def test_blocking_claim_is_singular_and_plural_correctly():

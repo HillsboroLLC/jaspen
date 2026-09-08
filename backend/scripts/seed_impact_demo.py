@@ -85,7 +85,7 @@ def _session(user, thread_id, name, turns, rubric=None, objective='balanced'):
     db.session.commit()
 
 
-def _score(user, thread_id, card_id, project_name, score, dimensions, weights, run):
+def _score(user, thread_id, card_id, project_name, score, dimensions, weights, run, rubric):
     upsert_scorecard(
         user_id=user.id,
         thread_id=thread_id,
@@ -98,6 +98,12 @@ def _score(user, thread_id, card_id, project_name, score, dimensions, weights, r
             'executive_summary': f'{project_name} assessed against the thread rubric.',
             'dimensions': dimensions,
             'scoring_weights': weights,
+            # REQUIRED, not decoration. renderScorecardCard reads
+            # result.rubric.criteria to know which dimensions this card actually
+            # has. Without it the chat card falls back to Jaspen's six built-in
+            # dimension keys, finds none of them in `dimensions`, and renders
+            # every bar at 0.0/10 — real analysis displayed as if nothing scored.
+            'rubric': rubric,
             'top_risks': [],
             'assumptions': [],
         },
@@ -123,6 +129,12 @@ def _wipe(user):
 def seed_thin(user):
     thread_id = 'impact-demo-thin'
     weights = {'cost': 0.3, 'risk': 0.25, 'speed': 0.25, 'capability': 0.2}
+    rubric = _rubric(
+        ('cost', 'Total cost of ownership', 0.30),
+        ('risk', 'Delivery risk', 0.25),
+        ('speed', 'Time to benefit', 0.25),
+        ('capability', 'Operational capability', 0.20),
+    )
     _session(
         user, thread_id, 'Warehouse automation — thin brief',
         [
@@ -130,12 +142,7 @@ def seed_thin(user):
             'keep climbing and I think automation is the answer. Budget is '
             'roughly 2.4M. I want to move this year.',
         ],
-        rubric=_rubric(
-            ('cost', 'Total cost of ownership', 0.30),
-            ('risk', 'Delivery risk', 0.25),
-            ('speed', 'Time to benefit', 0.25),
-            ('capability', 'Operational capability', 0.20),
-        ),
+        rubric=rubric,
         objective='cost',
     )
 
@@ -167,19 +174,19 @@ def seed_thin(user):
         'capability': _dim('Operational capability', 66, 'assumed',
                            'Provide the current pick-rate data.'),
     }
-    _score(user, thread_id, 'demo-thin-a', 'Full automation', 74, first, weights, 'run-1')
+    _score(user, thread_id, 'demo-thin-a', 'Full automation', 74, first, weights, 'run-1', rubric)
     _score(user, thread_id, 'demo-thin-b', 'Phased automation', 71, {
         'cost': _dim('Total cost of ownership', 79, 'low', 'Share the phase-one quote.'),
         'risk': _dim('Delivery risk', 82, 'medium'),
         'speed': _dim('Time to benefit', 64, 'assumed', 'Confirm the phase-one date.'),
         'capability': _dim('Operational capability', 70, 'low', 'Provide pick-rate data.'),
-    }, weights, 'run-1')
+    }, weights, 'run-1', rubric)
     _score(user, thread_id, 'demo-thin-c', 'Status quo with overtime', 58, {
         'cost': _dim('Total cost of ownership', 55, 'high'),
         'risk': _dim('Delivery risk', 90, 'high'),
         'speed': _dim('Time to benefit', 40, 'medium'),
         'capability': _dim('Operational capability', 45, 'medium'),
-    }, weights, 'run-1')
+    }, weights, 'run-1', rubric)
 
     # A second pass after the user supplies evidence.
     _score(user, thread_id, 'demo-thin-a', 'Full automation', 77, {
@@ -188,7 +195,7 @@ def seed_thin(user):
         'speed': _dim('Time to benefit', 70, 'medium'),
         'capability': _dim('Operational capability', 66, 'assumed',
                            'Still need the current pick-rate data.'),
-    }, weights, 'run-2')
+    }, weights, 'run-2', rubric)
 
     _add_plan(user, thread_id, 'demo-thin-a')
     return thread_id
@@ -201,6 +208,13 @@ def seed_thin(user):
 def seed_strong(user):
     thread_id = 'impact-demo-strong'
     weights = {'cost': 0.2, 'risk': 0.2, 'fit': 0.2, 'speed': 0.2, 'support': 0.2}
+    rubric = _rubric(
+        ('cost', 'Landed cost', 0.20),
+        ('risk', 'Delivery risk', 0.20),
+        ('fit', 'Network fit', 0.20),
+        ('speed', 'Transition speed', 0.20),
+        ('support', 'Support model', 0.20),
+    )
     _session(
         user, thread_id, 'Vendor consolidation — prepared brief',
         [
@@ -210,13 +224,7 @@ def seed_strong(user):
             'support model 20%. Current spend is 8.1M across the three. Meridian '
             'quoted 7.3M, Alder 7.6M. I am leaning Meridian.',
         ],
-        rubric=_rubric(
-            ('cost', 'Landed cost', 0.20),
-            ('risk', 'Delivery risk', 0.20),
-            ('fit', 'Network fit', 0.20),
-            ('speed', 'Transition speed', 0.20),
-            ('support', 'Support model', 0.20),
-        ),
+        rubric=rubric,
         objective='cost',
     )
 
@@ -252,21 +260,21 @@ def seed_strong(user):
                       'Confirm the cutover window with operations.'),
         'support': _dim('Support model', 80, 'medium'),
     }
-    _score(user, thread_id, 'demo-strong-a', 'Meridian', 76, first, weights, 'run-1')
+    _score(user, thread_id, 'demo-strong-a', 'Meridian', 76, first, weights, 'run-1', rubric)
     _score(user, thread_id, 'demo-strong-b', 'Alder', 71, {
         'cost': _dim('Landed cost', 78, 'high'),
         'risk': _dim('Delivery risk', 74, 'assumed', 'Share on-time history.'),
         'fit': _dim('Network fit', 66, 'assumed', 'Provide coverage map.'),
         'speed': _dim('Transition speed', 70, 'low', 'Confirm cutover window.'),
         'support': _dim('Support model', 68, 'medium'),
-    }, weights, 'run-1')
+    }, weights, 'run-1', rubric)
     _score(user, thread_id, 'demo-strong-c', 'Keep current split', 61, {
         'cost': _dim('Landed cost', 50, 'high'),
         'risk': _dim('Delivery risk', 82, 'high'),
         'fit': _dim('Network fit', 70, 'medium'),
         'speed': _dim('Transition speed', 95, 'high'),
         'support': _dim('Support model', 55, 'medium'),
-    }, weights, 'run-1')
+    }, weights, 'run-1', rubric)
 
     # Second pass: three assumptions become evidence-backed. Same options, same
     # criteria, same leader — a materially better-founded version of the same
@@ -277,7 +285,7 @@ def seed_strong(user):
         'fit': _dim('Network fit', 76, 'high'),
         'speed': _dim('Transition speed', 68, 'medium'),
         'support': _dim('Support model', 80, 'medium'),
-    }, weights, 'run-2')
+    }, weights, 'run-2', rubric)
 
     _add_plan(user, thread_id, 'demo-strong-a')
     return thread_id
@@ -290,6 +298,11 @@ def seed_strong(user):
 def seed_quiet(user):
     thread_id = 'impact-demo-quiet'
     weights = {'cost': 0.34, 'risk': 0.33, 'speed': 0.33}
+    rubric = _rubric(
+        ('cost', 'Occupancy cost', 0.34),
+        ('risk', 'Disruption risk', 0.33),
+        ('speed', 'Time to occupy', 0.33),
+    )
     _session(
         user, thread_id, 'Office lease renewal — well prepared',
         [
@@ -298,11 +311,7 @@ def seed_quiet(user):
             'Criteria are cost, disruption risk and speed, weighted evenly. I have '
             'the broker comparables, the fit-out quote and headcount plan.',
         ],
-        rubric=_rubric(
-            ('cost', 'Occupancy cost', 0.34),
-            ('risk', 'Disruption risk', 0.33),
-            ('speed', 'Time to occupy', 0.33),
-        ),
+        rubric=rubric,
     )
 
     capture_or_update_draft(user, thread_id, structure={
@@ -334,7 +343,7 @@ def seed_quiet(user):
             'cost': _dim('Occupancy cost', cost, 'high'),
             'risk': _dim('Disruption risk', risk, 'high'),
             'speed': _dim('Time to occupy', speed, 'high'),
-        }, weights, 'run-1')
+        }, weights, 'run-1', rubric)
 
     return thread_id
 

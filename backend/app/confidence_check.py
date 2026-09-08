@@ -228,13 +228,20 @@ def check_claims(coverage, gaps, baseline):
 
     if baseline and baseline["ungrounded"]:
         claims.append({
-            "kind": "cap_consequence",
+            # Named for what the reader learns, not for the mechanism that
+            # produces it. This text is shown to anonymous visitors, so it is
+            # public copy and follows the site rule: expose the questions
+            # Jaspen answers, never the mechanics it uses to answer them.
+            # It previously interpolated the real contribution ceiling for an
+            # assumed judgment, publishing an engine constant on a pre-signup
+            # surface.
+            "kind": "implication",
             "text": (
-                "Nothing here is traceable to a source yet. In Jaspen a judgment "
-                "with nothing verifiable behind it is graded assumed, and an "
-                f"assumed judgment contributes at most {ASSUMED_CAP} out of 100 "
-                "however strong the case sounds. Better evidence raises that "
-                "ceiling. A better argument does not."
+                "Nothing here is traceable to a source yet. A judgment with "
+                "nothing verifiable behind it is marked as an assumption "
+                "rather than counted as a finding, however strong the case "
+                "sounds. Better evidence changes that. A better argument "
+                "does not."
             ),
         })
 

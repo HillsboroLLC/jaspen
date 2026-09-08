@@ -24,7 +24,7 @@
 // carry most of what makes this credible to a skeptical reader, and they
 // render at the same weight as the movements.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { jasApi } from '../../services/jaspenApi';
 import './DecisionImpactReport.css';
 
@@ -87,8 +87,24 @@ function StateList({ measures, catalog }) {
   );
 }
 
-export default function DecisionImpactReport({ threadId }) {
+export default function DecisionImpactReport({ threadId, onMeasure }) {
   const [state, setState] = useState({ status: 'idle', report: null, error: null });
+  const rootRef = useRef(null);
+
+  // The card self-fetches, so the canvas cannot estimate its height from props
+  // the way it does for the risk register. It reports its own instead: the
+  // report's length varies a lot between a decision that changed and one that
+  // did not, and a fixed height either clips the first or leaves a dead band
+  // under the second.
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof onMeasure !== 'function') return undefined;
+    const report = () => onMeasure(el.scrollHeight);
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [onMeasure, state.status, state.report]);
 
   useEffect(() => {
     let cancelled = false;
@@ -128,9 +144,10 @@ export default function DecisionImpactReport({ threadId }) {
   const verified = impact.verified_comparison;
   // Counts of work Jaspen did. Never movement, so never in the delta lists.
   const interventions = (impact.interventions || []).filter((entry) => entry.qualifying);
+  const hasActivity = Object.keys(activity?.counts_by_type || {}).length > 0;
 
   return (
-    <section className="dir" aria-labelledby="dir-title">
+    <section className="dir" ref={rootRef} aria-labelledby="dir-title">
       <header className="dir-head">
         <p className="dir-eyebrow">Decision impact</p>
         <h3 className="dir-title" id="dir-title">
@@ -144,72 +161,100 @@ export default function DecisionImpactReport({ threadId }) {
         <p className="dir-provenance">{report.provenance_note}</p>
       </header>
 
-      {/* ── Before ─────────────────────────────────────────────────────── */}
-      <div className="dir-block">
-        <h4 className="dir-block-title">
-          {verified
-            ? 'Before Jaspen'
-            : 'Recorded after analysis — not a record of what was submitted'}
-        </h4>
-        <p className="dir-block-note">
-          Sealed {new Date(baseline.sealed_at).toLocaleDateString()}
-          {baseline.sealed_by === 'user_confirmed' ? ', confirmed by you' : ', recorded at analysis'}
-          {verified ? '' : ` · ${baseline.capture_reason}`}
-          {' · '}
-          {baseline.submission_ref?.turn_count || 0} submitted{' '}
-          {baseline.submission_ref?.turn_count === 1 ? 'message' : 'messages'}
-          {baseline.submission_ref?.attachment_count
-            ? ` · ${baseline.submission_ref.attachment_count} attached`
-            : ''}
-        </p>
-        <StateList measures={baseline.measures} catalog={catalog} />
-      </div>
+      {verified ? (
+        /* The three columns ARE the argument: what you brought, what Jaspen
+           put to it, and what moved as a result. Stacked, a reader has to hold
+           the first column in their head to judge the third. Side by side they
+           can check it. */
+        <div className="dir-triptych">
+          <section className="dir-panel">
+            <h4 className="dir-block-title">What you provided</h4>
+            <p className="dir-block-note">
+              Sealed {new Date(baseline.sealed_at).toLocaleDateString()}
+              {baseline.sealed_by === 'user_confirmed' ? ', confirmed by you' : ', recorded at analysis'}
+              {' · '}
+              {baseline.submission_ref?.turn_count || 0} submitted{' '}
+              {baseline.submission_ref?.turn_count === 1 ? 'message' : 'messages'}
+              {baseline.submission_ref?.attachment_count
+                ? ` · ${baseline.submission_ref.attachment_count} attached`
+                : ''}
+            </p>
+            <StateList measures={baseline.measures} catalog={catalog} />
+          </section>
 
-      {/* ── What Jaspen examined ───────────────────────────────────────── */}
-      <div className="dir-block">
-        <h4 className="dir-block-title">What Jaspen examined, challenged, and validated</h4>
+          <section className="dir-panel">
+            <h4 className="dir-block-title">What Jaspen challenged</h4>
+            {interventions.length === 0 && !activity?.available && (
+              <p className="dir-block-note">
+                No challenge or validation activity is recorded for this decision
+                ({activity?.reason}). Nothing below is attributed to Jaspen.
+              </p>
+            )}
+            {/* Keyed off recorded ACTIVITY, not off the intervention measures.
+                Evidence requests are the commonest challenge Jaspen makes and
+                are not one of the intervention measures, so testing those alone
+                printed "no challenge" directly above "3 evidence requested". */}
+            {interventions.length === 0 && activity?.available && !hasActivity && (
+              <p className="dir-block-note">
+                Jaspen recorded no challenge to this decision.
+              </p>
+            )}
+            {interventions.length > 0 && (
+              <ul className="dir-state">
+                {interventions.map((entry) => (
+                  <li key={entry.id} className="dir-state-row">
+                    <span className="dir-state-label">{entry.label}</span>
+                    <span className="dir-state-value">{entry.count}</span>
+                    {entry.strong && <span className="dir-state-basis">substantive</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {activity?.available && Object.keys(activity.counts_by_type || {}).length > 0 && (
+              <ul className="dir-activity">
+                {Object.entries(activity.counts_by_type).map(([type, count]) => (
+                  <li key={type}>
+                    <strong>{count}</strong> {type.replace(/_/g, ' ')}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
-        {/* Interventions live here rather than in Before/After: this is the
-            section that is actually about what Jaspen did. */}
-        {interventions.length > 0 && (
-          <ul className="dir-state">
-            {interventions.map((entry) => (
-              <li key={entry.id} className="dir-state-row">
-                <span className="dir-state-label">{entry.label}</span>
-                <span className="dir-state-value">{entry.count}</span>
-                {entry.strong && <span className="dir-state-basis">substantive</span>}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {activity?.available ? (
-          <ul className="dir-activity">
-            {Object.entries(activity.counts_by_type || {}).map(([type, count]) => (
-              <li key={type}>
-                <strong>{count}</strong> {type.replace(/_/g, ' ')}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          // Stated rather than omitted: this is a stage of the build, not a
-          // finding that nothing happened.
+          <section className="dir-panel">
+            <h4 className="dir-block-title">What changed after</h4>
+            {current.leading_option && (
+              <p className="dir-block-note">Leading option: {current.leading_option}</p>
+            )}
+            {impact.moved.length === 0 ? (
+              <p className="dir-block-note">
+                No measure moved beyond the thresholds below.
+              </p>
+            ) : (
+              <ul className="dir-deltas">
+                {impact.moved.map((movement) => (
+                  <li key={movement.id} className="dir-delta dir-delta-stacked">
+                    <span className="dir-delta-label">{movement.label}</span>
+                    <span className="dir-delta-figures">
+                      {formatValue(movement.from)} → {formatValue(movement.to)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      ) : (
+        <div className="dir-block">
+          <h4 className="dir-block-title">
+            Recorded after analysis — not a record of what was submitted
+          </h4>
           <p className="dir-block-note">
-            Challenge and validation activity is not yet recorded for this decision
-            ({activity?.reason}). Until it is, this report does not attribute any
-            change to Jaspen.
+            Sealed {new Date(baseline.sealed_at).toLocaleDateString()} · {baseline.capture_reason}
           </p>
-        )}
-      </div>
-
-      {/* ── After ──────────────────────────────────────────────────────── */}
-      <div className="dir-block">
-        <h4 className="dir-block-title">{verified ? 'After Jaspen' : 'Current state'}</h4>
-        {current.leading_option && (
-          <p className="dir-block-note">Leading option: {current.leading_option}</p>
-        )}
-        <StateList measures={current.measures} catalog={catalog} />
-      </div>
+          <StateList measures={current.measures} catalog={catalog} />
+        </div>
+      )}
 
       {/* ── The verdict ────────────────────────────────────────────────── */}
       <div className="dir-block">
@@ -227,23 +272,6 @@ export default function DecisionImpactReport({ threadId }) {
             Held at limited: no recorded challenge or validation activity, so the change
             below is reported without attributing it to Jaspen.
           </p>
-        )}
-
-        {impact.moved.length > 0 && (
-          <>
-            <h5 className="dir-sub">What moved</h5>
-            <ul className="dir-deltas">
-              {impact.moved.map((movement) => (
-                <li key={movement.id} className="dir-delta">
-                  <span className="dir-delta-label">{movement.label}</span>
-                  <span className="dir-delta-figures">
-                    {formatValue(movement.from)} → {formatValue(movement.to)}
-                  </span>
-                  <span className="dir-delta-threshold">{movement.threshold}</span>
-                </li>
-              ))}
-            </ul>
-          </>
         )}
 
         {impact.unmoved.length > 0 && (
@@ -275,7 +303,10 @@ export default function DecisionImpactReport({ threadId }) {
 
         {impact.not_applicable.length > 0 && (
           <>
-            <h5 className="dir-sub">Out of scope for this decision</h5>
+            {/* Not "out of scope": these are measures with nothing to compare,
+                and the reason says which kind. Calling an uncaptured measure
+                out of scope tells the reader the facet did not apply. */}
+            <h5 className="dir-sub">Not compared</h5>
             <ul className="dir-reasons">
               {impact.not_applicable.map((entry) => (
                 <li key={entry.id}>

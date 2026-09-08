@@ -23,6 +23,7 @@ import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import TradeoffView from './TradeoffView';
 import DecisionConfidenceCard from './DecisionConfidenceCard';
+import DecisionImpactReport from './DecisionImpactReport';
 import RiskRegister from './RiskRegister';
 import './JaspenWorkspace.css';
 import ChoicePrompt, { parseChoicePrompt } from './ChoicePrompt';
@@ -85,6 +86,12 @@ const DEFAULT_SCORECARD_SECTIONS = [
   { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 17, w: 12, h: 8 },
   { key: 'risks',      label: 'Top Risks',            cols: 4, locked: false, x: 0, y: 25, w: 12, h: 8 },
   { key: 'scenario',   label: 'Recommended Scenario', cols: 4, locked: true,  x: 0, y: 33, w: 12, h: 6 },
+  // Last, deliberately. Every block above answers "what does the analysis
+  // say"; this one answers "what did the analysis change", which is only a
+  // meaningful question once the reader has seen the analysis. Locked for the
+  // same reason as the score and the confidence report: it is computed, not
+  // authored, and must not be editable as prose.
+  { key: 'impact',     label: 'Decision Impact',      cols: 4, locked: true,  x: 0, y: 39, w: 12, h: 12 },
 ];
 
 // The canvas arrangement the user drags into place. Persisted in TWO places on
@@ -942,6 +949,16 @@ export default function JaspenWorkspace() {
 
   // The briefing alone, so it is short.
   const confidenceRows = 8;
+
+  // Reported by the Decision Impact card itself (see its onMeasure). Converted
+  // to grid rows with the grid's own rowHeight/margin, plus two rows for the
+  // section's header and padding. A height the user drags still wins: hUser is
+  // checked before this is consulted.
+  const [impactRows, setImpactRows] = useState(12);
+  const measureImpact = useCallback((px) => {
+    const rows = Math.min(60, Math.max(8, Math.ceil((px + 16) / 44) + 2));
+    setImpactRows((prev) => (prev === rows ? prev : rows));
+  }, []);
 
   // The risk register, sized from what it renders. Each risk carries a
   // description, a row of levels, and usually a mitigation, so a register is
@@ -2259,6 +2276,7 @@ export default function JaspenWorkspace() {
                 if (!s.hUser) {
                   if (s.key === 'confidence') computed = confidenceRows;
                   else if (s.key === 'risks') computed = riskRows;
+                  else if (s.key === 'impact') computed = impactRows;
                 }
                 return {
                   i: s.key,
@@ -2478,14 +2496,16 @@ export default function JaspenWorkspace() {
                         </div>
                       )}
 
+                      {section.key === 'impact' && (
+                        <DecisionImpactReport threadId={threadId} onMeasure={measureImpact} />
+                      )}
+
                       {section.key === 'confidence' && (
                         <DecisionConfidenceCard
                           only="summary"
                           profile={rendered?.evidence_profile || null}
                           exposure={decisionExposure}
                           optionName={rendered?.project_name || null}
-                          score={score}
-                          scoreCategory={category}
                           summary={decisionExposure?.summaries?.[rendered?.project_name] || null}
                         />
                       )}

@@ -51,6 +51,43 @@
 import React, { useState } from 'react';
 import './DecisionConfidenceCard.css';
 
+// The built-in scoring pass returns dimensions with no `label`, so
+// criterion_entries falls back to the raw key and the whole report renders
+// `financial_viability` at a customer. These are the names the rest of the
+// product already uses for the same six keys (see _DIMENSION_LABELS in
+// JaspenWorkspace and the fallback list in JaspenChat), so a reader sees one
+// vocabulary wherever a criterion is named.
+const BUILT_IN_CRITERION_LABELS = {
+  strategic_alignment: 'Strategic fit',
+  financial_viability: 'Cost efficiency',
+  execution_readiness: 'Time-to-value',
+  risk_profile: 'Execution risk',
+  market_opportunity: 'Market opportunity',
+  evidence_quality: 'Evidence quality',
+};
+
+/** The criterion's name as a person should read it. A custom rubric supplies
+ *  its own label and always wins; the built-in six are named above; anything
+ *  else is de-slugged rather than shown raw. */
+function criterionLabel(entry) {
+  if (!entry) return '';
+  const own = String(entry.label || '').trim();
+  const key = String(entry.key || '');
+  if (own && own !== key) return own;
+  return (
+    BUILT_IN_CRITERION_LABELS[key]
+    || key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  );
+}
+
+// `evidence_quality` is a META dimension: it assesses how good the user's
+// evidence IS, rather than being something the decision rests on. Its passages
+// are the user talking ABOUT their evidence ("I have the quotes", "Honestly I
+// have no data on this"), which is correct for what it measures and wrong
+// beside Cost efficiency in a list of what the decision stands on. Held out of
+// that split and reported on its own.
+const META_CRITERIA = new Set(['evidence_quality']);
+
 const GRADE_LABELS = {
   high: 'Strong evidence',
   medium: 'Moderate evidence',
@@ -147,7 +184,7 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
   return (
     <li className={`dcc-criterion dcc-criterion-${entry.severity}`}>
       <div className="dcc-criterion-head">
-        <span className="dcc-criterion-name">{entry.label}</span>
+        <span className="dcc-criterion-name">{criterionLabel(entry)}</span>
         <span className={`dcc-grade dcc-grade-${entry.confidence}`}>
           {GRADE_LABELS[entry.confidence] || entry.confidence}
         </span>
@@ -174,7 +211,14 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
           undo the entire point of verifying them. */}
       {references.length > 0 && (
         <div className="dcc-evidence-block">
-          <p className="dcc-block-label dcc-block-evidence">Evidence used</p>
+          {/* NOT "Evidence used". evidence_references verifies PROVENANCE —
+              that this passage demonstrably exists in the input and the scoring
+              pass named it — never that the passage is evidence. On a thin
+              criterion the passage is often the user saying they have none
+              ("that's my gut"), and heading it "Evidence used" turns an
+              anti-hallucination record into an evidentiary claim. The grade
+              beside it carries the weight; this block only says what was read. */}
+          <p className="dcc-block-label dcc-block-evidence">What this rests on</p>
           <ul className="dcc-evidence-list">
             {references.map((reference) => (
               <li key={reference.id} data-evidence-locator={JSON.stringify(reference.locator)}>
@@ -228,7 +272,7 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
               rows={3}
               autoFocus
               onChange={(event) => setDraft(event.target.value)}
-              aria-label={`Assessment for ${entry.label}`}
+              aria-label={`Assessment for ${criterionLabel(entry)}`}
             />
             <div className="dcc-edit-actions">
               <button
@@ -311,7 +355,7 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
 }
 
 export default function DecisionConfidenceCard({
-  profile, exposure, optionName, score, scoreCategory, summary,
+  profile, exposure, optionName, summary,
   onEditNarrative, onRestoreNarrative, editable = false,
   // Which half to render. The report is split across canvas sections so each
   // criterion can be resized and reordered on its own, which means this
@@ -325,6 +369,24 @@ export default function DecisionConfidenceCard({
   const assumed = profile.assumption_dependent_pct;
   const claims = Array.isArray(profile.claims) ? profile.claims : [];
   const criteria = profile.criteria || [];
+
+  // What was actually located in the input, and what is carrying weight on
+  // nothing. `evidence_references` is the only verified provenance the system
+  // keeps — everything else on this card is Jaspen's own reasoning — so the
+  // left column is built from those and nothing else.
+  // Grouped by CRITERION, not pooled by passage. A verified passage is not the
+  // same thing as evidence — evidence_references only proves Jaspen read the
+  // text — so counting passages and calling the total "evidence you provided"
+  // put "that's my gut" into an evidence list. What a criterion stands on is
+  // decided by its grade, and that is what these two columns split on.
+  const passagesFor = (entry) =>
+    (Array.isArray(entry.evidence_references) ? entry.evidence_references : [])
+      .map((ref) => String(ref?.excerpt || ref?.text || '').trim())
+      .filter(Boolean);
+  const decisionCriteria = criteria.filter((entry) => !META_CRITERIA.has(entry.key));
+  const evidenced = decisionCriteria.filter((entry) => entry.evidenced);
+  const assumedCriteria = decisionCriteria.filter((entry) => !entry.evidenced);
+  const evidenceQuality = criteria.find((entry) => entry.key === 'evidence_quality') || null;
   const primaryClaim = claims[0] || null;
   const secondaryClaims = claims.slice(1);
   const isClear = primaryClaim?.kind === 'clear';
@@ -334,7 +396,7 @@ export default function DecisionConfidenceCard({
     const entry = criteria.find((c) => c.key === criterionKey);
     if (!entry) return null;
     return (
-      <section className="dcc dcc-single" aria-label={`${entry.label} detail`}>
+      <section className="dcc dcc-single" aria-label={`${criterionLabel(entry)} detail`}>
         <ul className="dcc-criteria">
           <CriterionRow
             entry={entry}
@@ -355,13 +417,12 @@ export default function DecisionConfidenceCard({
       <header className="dcc-head">
         <p className="dcc-eyebrow">Decision Confidence</p>
 
-        {Number.isFinite(score) && (
-          <p className="dcc-score-line">
-            <strong>{score}</strong>
-            {scoreCategory && <span className="dcc-score-cat">{scoreCategory}</span>}
-          </p>
-        )}
-
+        {/* NO OVERALL SCORE HERE, deliberately. The Jaspen score rates the
+            OPTION — whether this is a good thing to do. This card rates the
+            EVIDENCE — how much of that rating stands on anything. Leading the
+            confidence report with the score made the two read as one number,
+            so a thin 78 looked like a confident 78. The split below is the
+            only headline this card gets. */}
         <p className="dcc-headline">
           <strong>{backed}%</strong> evidence-backed
           <span className="dcc-sep" aria-hidden="true">·</span>
@@ -373,6 +434,85 @@ export default function DecisionConfidenceCard({
           <span className="dcc-split-assumed" style={{ width: `${assumed}%` }} />
         </div>
         <p className="dcc-basis">Evidence-backed share of the weighted decision</p>
+
+        {/* Reported on its own line, not in the split below: this is Jaspen's
+            read on the QUALITY of what was brought, not one of the things the
+            decision rests on. */}
+        {evidenceQuality && (
+          <p className="dcc-meta-line">
+            <span className="dcc-meta-label">Evidence quality</span>
+            <span className={`dcc-grade dcc-grade-${evidenceQuality.confidence}`}>
+              {GRADE_LABELS[evidenceQuality.confidence] || evidenceQuality.confidence}
+            </span>
+            <span className="dcc-meta-note">Jaspen&rsquo;s read on what you brought</span>
+          </p>
+        )}
+
+        {/* The two sides of that bar, named. A percentage on its own tells a
+            reader how exposed they are without telling them to what, and the
+            per-criterion detail below is too long to answer it at a glance.
+            Split by GRADE, which is what the arithmetic actually uses. The
+            passage under each criterion is what Jaspen read, quoted — not a
+            claim that the passage is evidence. */}
+        {(evidenced.length > 0 || assumedCriteria.length > 0) && (
+          <div className="dcc-ledger">
+            <div className="dcc-ledger-col">
+              <p className="dcc-ledger-label dcc-ledger-label-evidence">
+                Standing on evidence ({evidenced.length})
+              </p>
+              {evidenced.length === 0 ? (
+                <p className="dcc-ledger-empty">
+                  No criterion in this decision stands on evidence.
+                </p>
+              ) : (
+                <ul className="dcc-ledger-list">
+                  {evidenced.map((entry) => (
+                    <li key={entry.key}>
+                      <span className="dcc-ledger-excerpt">{criterionLabel(entry)}</span>
+                      <span className="dcc-ledger-meta">
+                        {GRADE_LABELS[entry.confidence] || entry.confidence}
+                        {' · '}
+                        {Math.round((entry.weight || 0) * 100)}% of the decision
+                      </span>
+                      {passagesFor(entry).slice(0, 2).map((excerpt) => (
+                        <span className="dcc-ledger-quote" key={excerpt}>{excerpt}</span>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="dcc-ledger-col">
+              <p className="dcc-ledger-label dcc-ledger-label-assumed">
+                Assumed ({assumedCriteria.length})
+              </p>
+              {assumedCriteria.length === 0 ? (
+                <p className="dcc-ledger-empty">
+                  Every criterion rests on something.
+                </p>
+              ) : (
+                <ul className="dcc-ledger-list">
+                  {assumedCriteria.map((entry) => (
+                    <li key={entry.key}>
+                      <span className="dcc-ledger-excerpt">{criterionLabel(entry)}</span>
+                      <span className="dcc-ledger-meta">
+                        {GRADE_LABELS[entry.confidence] || entry.confidence}
+                        {' · '}
+                        {Math.round((entry.weight || 0) * 100)}% of the decision
+                      </span>
+                      {/* Shown on purpose: seeing what you actually said is the
+                          fastest way to understand why it is not evidence. */}
+                      {passagesFor(entry).slice(0, 2).map((excerpt) => (
+                        <span className="dcc-ledger-quote" key={excerpt}>{excerpt}</span>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* A briefing, not the first rows of the detail. It reads as continuous
@@ -383,10 +523,14 @@ export default function DecisionConfidenceCard({
       {summary && (
         <div className="dcc-briefing">
           <p className="dcc-briefing-label">Summary</p>
-          <p className="dcc-briefing-lead">
-            {summary.verdict} {summary.standing}
-          </p>
-          <p className="dcc-briefing-body">
+          {/* summary.verdict is dropped for the same reason: it opens
+              "Scores 66 of 100", which is the option's rating, not this
+              report's finding. Standing leads when there is a peer set;
+              otherwise the evidence sentence does. */}
+          {summary.standing && (
+            <p className="dcc-briefing-lead">{summary.standing}</p>
+          )}
+          <p className={summary.standing ? 'dcc-briefing-body' : 'dcc-briefing-lead'}>
             {summary.confidence} {summary.concentration}
           </p>
           <p className={`dcc-briefing-sensitivity${isClear ? ' is-clear' : ''}`}>

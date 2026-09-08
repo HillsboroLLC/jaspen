@@ -8,7 +8,6 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faChevronDown, faDownload, faGripVertical, faPencil, faPrint, faRedo, faSpinner, faTimes, faUndo } from '@fortawesome/free-solid-svg-icons';
 import { ScoreDashboardSkeleton } from '../../shared/components/SkeletonLoader';
 import DecisionConfidenceCard from './DecisionConfidenceCard';
-import DecisionImpactReport from './DecisionImpactReport';
 import './ScoreDashboard.css';
 
 const DEFAULT_CARD_LAYOUT = {
@@ -27,7 +26,6 @@ const DEFAULT_CARD_LAYOUT = {
   valuation: { colSpan: 4, rowSpan: 1 },
   insights: { colSpan: 4, rowSpan: 1 },
   assumptions: { colSpan: 4, rowSpan: 1 },
-  impact: { colSpan: 4, rowSpan: 2 },
 };
 
 const DEFAULT_CARD_ORDER = [
@@ -656,16 +654,6 @@ export default function ScoreDashboard({
           optionName={result.project_name || null}
         />
       ),
-    },
-    {
-      // Last, deliberately. Every card above answers "what does the analysis
-      // say"; this one answers "what did the analysis change", which is only
-      // a meaningful question once the reader has seen the analysis.
-      key: 'impact',
-      title: 'Decision Impact',
-      populated: Boolean(threadBundleId),
-      priority: 9,
-      render: () => <DecisionImpactReport threadId={threadBundleId} />,
     },
     {
       key: 'executive',
@@ -1312,7 +1300,6 @@ export default function ScoreDashboard({
     scoreLabel,
     scoreRatingClass,
     aiInsights,
-    threadBundleId,
     toggleCategoryRow,
     valuation,
   ]);
