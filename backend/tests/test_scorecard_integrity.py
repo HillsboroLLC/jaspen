@@ -69,6 +69,36 @@ def test_unverified_model_numbers_are_removed_but_dimension_judgments_remain():
     assert payload["recommendations"][0]["expected_impact"] is None
 
 
+def test_unverified_numeric_prose_is_removed_but_supported_figures_remain():
+    strategy = _strategy()
+    payload = {
+        "dimensions": {
+            "financial_viability": {
+                "rationale": "The proposal states rent is $42,000. A 15% overrun is likely.",
+                "what_would_improve": "Validate the estimate with 3 vendor quotes.",
+            },
+        },
+        "top_risks": [{
+            "risk": "Rent is $42,000 per month. Failure could cost $500,000.",
+            "mitigation": "Review the signed proposal before committing.",
+        }],
+        "recommendations": [{"action": "Run a 6-week pilot.", "timeline": "6 weeks"}],
+    }
+    strategy._remove_unverified_model_numbers(
+        payload,
+        source_text="The signed proposal lists monthly rent of $42,000.",
+    )
+    assert payload["dimensions"]["financial_viability"]["rationale"] == "The proposal states rent is $42,000."
+    assert payload["dimensions"]["financial_viability"]["what_would_improve"] == (
+        "Numeric detail omitted because it was not supported by the supplied evidence."
+    )
+    assert payload["top_risks"][0]["risk"] == "Rent is $42,000 per month."
+    assert payload["top_risks"][0]["mitigation"] == "Review the signed proposal before committing."
+    assert payload["recommendations"][0]["action"] == (
+        "Numeric detail omitted because it was not supported by the supplied evidence."
+    )
+
+
 def test_executive_summary_is_derived_from_computed_score_and_coverage():
     strategy = _strategy()
     payload = {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import DecisionConfidenceCard from './DecisionConfidenceCard';
 
 function criterion(overrides = {}) {
@@ -108,27 +108,10 @@ describe('DecisionConfidenceCard', () => {
   });
 
   describe('the detail layer', () => {
-    it('requires an explicit action and sends only the optional note with the exposure row', async () => {
-      const onAcceptExposure = jest.fn().mockResolvedValue({ id: 'accepted-1' });
-      render(
-        <DecisionConfidenceCard
-          profile={profile()}
-          onAcceptExposure={onAcceptExposure}
-        />,
-      );
-
-      expect(onAcceptExposure).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole('button', { name: 'Accept this exposure' }));
-      expect(screen.getByText(/understand this exposure remains unresolved/i)).toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText('Optional note'), {
-        target: { value: 'Proceed while Finance validates the quote.' },
-      });
-      fireEvent.click(screen.getByRole('button', { name: 'Record accepted exposure' }));
-
-      await waitFor(() => expect(onAcceptExposure).toHaveBeenCalledWith(
-        expect.objectContaining({ key: 'fin', swing: 8.75 }),
-        'Proceed while Finance validates the quote.',
-      ));
+    it('does not repeat acceptance controls on every criterion', () => {
+      render(<DecisionConfidenceCard profile={profile()} />);
+      expect(screen.queryByRole('button', { name: /accept this exposure/i })).not.toBeInTheDocument();
+      expect(screen.queryByText('Consciously accepted exposure')).not.toBeInTheDocument();
     });
 
     it('shows who accepted an exposure, when, and their note', () => {
@@ -136,7 +119,6 @@ describe('DecisionConfidenceCard', () => {
         <DecisionConfidenceCard
           profile={profile()}
           optionName="Phased automation"
-          onAcceptExposure={jest.fn()}
           acceptedExposures={[{
             id: 'accepted-1',
             accepted_at: '2026-09-08T14:00:00Z',
@@ -155,7 +137,7 @@ describe('DecisionConfidenceCard', () => {
       expect(screen.getByText('Proceed with a validation checkpoint.')).toBeInTheDocument();
     });
 
-    it('shows every weighted criterion, none of it collapsed', () => {
+    it('shows every weighted criterion as a compact drill-down', () => {
       const many = profile({
         criteria: [
           criterion(),
@@ -172,6 +154,7 @@ describe('DecisionConfidenceCard', () => {
       expect(detail.getByText('Financial viability')).toBeInTheDocument();
       expect(detail.getByText('Execution readiness')).toBeInTheDocument();
       expect(detail.getByText('Market opportunity')).toBeInTheDocument();
+      expect(screen.getAllByText('View evidence & reasoning')).toHaveLength(3);
       // The old "Show N criteria" affordance is gone.
       expect(screen.queryByRole('button', { name: /show \d+ criteri/i })).not.toBeInTheDocument();
     });
@@ -180,7 +163,7 @@ describe('DecisionConfidenceCard', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(screen.getByText("Jaspen's assessment")).toBeInTheDocument();
       expect(screen.getByText('Still unsupported')).toBeInTheDocument();
-      expect(screen.getByText('How to improve this')).toBeInTheDocument();
+      expect(screen.getAllByText('Strengthen it:').length).toBeGreaterThan(0);
     });
 
     it('never calls a gap-only criterion moderate evidence', () => {
@@ -204,7 +187,7 @@ describe('DecisionConfidenceCard', () => {
     it('reports the weight, contribution and exposure for a criterion', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(screen.getByText('25% of the decision')).toBeInTheDocument();
-      expect(screen.getByText('contributes 45')).toBeInTheDocument();
+      expect(screen.getByText('criterion score 45/100')).toBeInTheDocument();
       expect(screen.getByText('8.8 points of exposure')).toBeInTheDocument();
     });
 
@@ -368,7 +351,7 @@ describe('DecisionConfidenceCard', () => {
     it('marks edited copy rather than passing it off as the system finding', () => {
       render(<DecisionConfidenceCard profile={edited()} />);
       expect(screen.getByText('Edited')).toBeInTheDocument();
-      expect(screen.getByText('Ops confirmed this verbally on 12 Aug.')).toBeInTheDocument();
+      expect(screen.getAllByText('Ops confirmed this verbally on 12 Aug.')).toHaveLength(2);
     });
 
     it('keeps Jaspen\'s original wording recoverable', () => {
@@ -394,8 +377,8 @@ describe('DecisionConfidenceCard', () => {
     });
 
     it('tells the writer what an edit does not change', () => {
-      render(<DecisionConfidenceCard profile={profile()} editable onEditNarrative={jest.fn()} />);
-      fireEvent.click(screen.getByText(/The penalty figure was described/));
+      const { container } = render(<DecisionConfidenceCard profile={profile()} editable onEditNarrative={jest.fn()} />);
+      fireEvent.click(container.querySelector('.dcc-basis-text'));
       expect(
         screen.getByText('Wording only. This does not change the score, grade, or exposure.'),
       ).toBeInTheDocument();
@@ -446,7 +429,7 @@ describe('DecisionConfidenceCard', () => {
     // dead end: the reader is told the score could move and not told how.
     it('falls back to an honest generic when scoring named no action', () => {
       render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: null, confidence: 'assumed' })] })} />);
-      expect(screen.getByText('How to improve this')).toBeInTheDocument();
+      expect(screen.getAllByText('Strengthen it:').length).toBeGreaterThan(0);
       expect(
         screen.getByText(/Nothing verifiable supports this yet/),
       ).toBeInTheDocument();
@@ -460,7 +443,7 @@ describe('DecisionConfidenceCard', () => {
 
     it('offers nothing to improve on a fully evidenced criterion', () => {
       render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: null, confidence: 'high' })] })} />);
-      expect(screen.queryByText('How to improve this')).toBeNull();
+      expect(screen.queryByText('Strengthen it:')).toBeNull();
     });
   });
 });

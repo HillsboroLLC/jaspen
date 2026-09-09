@@ -2610,7 +2610,45 @@ _MODEL_NUMERIC_GROUPS = {
 }
 
 
-def _remove_unverified_model_numbers(payload):
+_NARRATIVE_NUMBER_RE = re.compile(r"(?<![A-Za-z])(?:[$£€]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%|\s*[–—-]\s*(?:[$£€]\s*)?\d[\d,]*(?:\.\d+)?(?:\s*%)?)?")
+
+
+def _numeric_fingerprint(value):
+    return re.sub(r"[^0-9.]", "", str(value or ""))
+
+
+def _remove_unverified_numeric_sentences(text, source_text):
+    """Remove model prose sentences containing figures absent from the source.
+
+    This is intentionally sentence-level. Rewriting an unsupported number into
+    softer prose would still preserve a fabricated claim; dropping only the
+    affected sentence keeps the surrounding, non-numeric assessment intact.
+    """
+    cleaned = _clean_scorecard_text(text)
+    if not cleaned or source_text is None:
+        return cleaned
+    source_fingerprints = {
+        _numeric_fingerprint(match.group())
+        for match in _NARRATIVE_NUMBER_RE.finditer(str(source_text or ""))
+    }
+    sentences = re.split(r"(?<=[.!?])\s+|\n+", cleaned)
+    kept = []
+    removed = False
+    for sentence in sentences:
+        claims = [_numeric_fingerprint(match.group()) for match in _NARRATIVE_NUMBER_RE.finditer(sentence)]
+        if claims and any(claim not in source_fingerprints for claim in claims):
+            removed = True
+            continue
+        if sentence.strip():
+            kept.append(sentence.strip())
+    if kept:
+        return " ".join(kept)
+    if removed:
+        return "Numeric detail omitted because it was not supported by the supplied evidence."
+    return cleaned
+
+
+def _remove_unverified_model_numbers(payload, *, source_text=None):
     """Clear factual-looking model numbers that have no field-level source.
 
     Dimension scores are explicitly Jaspen judgments and remain. Financial
@@ -2647,6 +2685,9 @@ def _remove_unverified_model_numbers(payload):
         risk["impact_numeric"] = None
         risk["mitigation_cost"] = None
         risk["mitigation_cost_numeric"] = None
+        if source_text is not None:
+            risk["risk"] = _remove_unverified_numeric_sentences(risk.get("risk"), source_text)
+            risk["mitigation"] = _remove_unverified_numeric_sentences(risk.get("mitigation"), source_text)
 
     framework = payload.get("decision_framework")
     if isinstance(framework, dict):
@@ -2660,6 +2701,22 @@ def _remove_unverified_model_numbers(payload):
         if isinstance(rec, dict):
             # Quantified impact requires its own evidence/calculation record.
             rec["expected_impact"] = None
+            if source_text is not None:
+                rec["action"] = _remove_unverified_numeric_sentences(rec.get("action"), source_text)
+                rec["timeline"] = _remove_unverified_numeric_sentences(rec.get("timeline"), source_text)
+
+    if source_text is not None:
+        for dim in payload.get("dimensions", {}).values() if isinstance(payload.get("dimensions"), dict) else []:
+            if isinstance(dim, dict):
+                dim["rationale"] = _remove_unverified_numeric_sentences(dim.get("rationale"), source_text)
+                dim["what_would_improve"] = _remove_unverified_numeric_sentences(dim.get("what_would_improve"), source_text)
+        for field in ("key_insights", "assumptions"):
+            if isinstance(payload.get(field), list):
+                payload[field] = [
+                    _remove_unverified_numeric_sentences(item, source_text)
+                    for item in payload[field]
+                    if _clean_scorecard_text(item)
+                ]
     return payload
 
 
@@ -3049,6 +3106,7 @@ Return a single valid JSON object only. No markdown fences, no commentary outsid
 Rules:
 - Use null only when information is genuinely absent — never invent data.
 - Every numeric field must be an actual number, not prose ("18" not "significant").
+- NUMERIC CLAIMS IN PROSE: a number may appear in a rationale, risk, mitigation, insight, recommendation, or other narrative field only when that exact figure appears in the user's source material above. Never create a plausible example, range, benchmark, timeframe, percentage, threshold, or dollar amount. When the source material does not provide the figure, describe what must be measured or validated without supplying a number.
 - For each dimension, assign a confidence level based on the QUALITY OF THE EVIDENCE, not how clearly it was stated: "high" = evidence Jaspen can itself see or check in this conversation (uploaded documents, connected data sources, or figures cross-checkable against material provided); "medium" = specific, concrete facts the user self-reported (exact salary, current rent, a signed offer's terms); "low" = the user's own estimates, predictions, or qualitative impressions ('promotion is possible', 'clients seem happy', 'we think it will appreciate'); "assumed" = anything you filled in yourself with no user input. A decision built entirely on uncorroborated self-report should rarely show "high" on any dimension — confident-sounding conversation is not corroboration. Self-reported specifics are respectable evidence (medium); they are not verified evidence (high).
 - For each dimension, identify the source: "conversation" (explicitly stated), "connector" (from connected data source), "inferred" (logical derivation), or "assumed" (industry/pattern-based).
 - For any dimension with confidence "low" or "assumed", populate what_would_improve with a specific, actionable suggestion.
@@ -3246,7 +3304,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
     # The current schema cannot trace model-generated financial/risk numbers
     # to a specific source field or deterministic calculation. Do not publish
     # them as if it could.
-    parsed = _remove_unverified_model_numbers(parsed)
+    parsed = _remove_unverified_model_numbers(parsed, source_text=verification_text)
 
     # Deterministic final step: recompute the score from the (capped) dimensions
     # in Python instead of trusting the model's arithmetic. `weights` is the

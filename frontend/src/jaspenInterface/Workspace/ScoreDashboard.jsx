@@ -644,7 +644,7 @@ export default function ScoreDashboard({
       // the next question after "what is it", and every other card on this
       // dashboard assumes an answer to it.
       key: 'confidence',
-      title: 'Decision Confidence',
+      title: 'Evidence Confidence',
       populated: Boolean(evidenceProfile),
       priority: 0.5,
       render: () => (
@@ -935,7 +935,7 @@ export default function ScoreDashboard({
     },
     {
       key: 'risks',
-      title: 'Top Risks',
+      title: 'Where the Plan Is Exposed',
       populated: risks.length > 0,
       priority: 7,
       render: () => (

@@ -112,7 +112,7 @@ function RiskRow({ risk, editable, onEdit, onRestore, acceptance, onAcceptExposu
 
       {(risk.mitigation || draft) && (
         <div className="rr-mitigation">
-          <p className="rr-block-label">Mitigation</p>
+          <p className="rr-block-label">What can be done before commitment</p>
           {draft ? (
             <textarea
               className="rr-input"

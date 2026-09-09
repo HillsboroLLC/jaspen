@@ -189,6 +189,12 @@
   color: #8a93ad;
 }
 
+.dcc-drilldown-cue {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: #8a93ad;
+}
+
 @media (max-width: 780px) {
   .dcc-ledger { grid-template-columns: minmax(0, 1fr); }
 }
@@ -350,6 +356,51 @@
 .dcc-grade-medium  { color: #0e6b3f; background: #eef7f1; border: 1px solid #a7d9bf; }
 .dcc-grade-low     { color: #8a5406; background: #fdf2dc; border: 1px solid #f59e0b; }
 .dcc-grade-assumed { color: #9f1f16; background: #fbe9e7; border: 1px solid #dc2626; }
+.dcc-grade-unsupported { color: #9f1f16; background: #fbe9e7; border: 1px solid #dc2626; }
+
+.dcc-criterion-brief {
+  display: grid;
+  gap: 5px;
+  padding: 11px 12px;
+  border-left: 3px solid #f59e0b;
+  background: #fffaf0;
+}
+
+.dcc-criterion-brief.is-supported {
+  border-left-color: #10b981;
+  background: #f3fbf6;
+}
+
+.dcc-criterion-strengthen {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.dcc-drilldown {
+  border-top: 1px solid #e6eaf2;
+  padding-top: 8px;
+}
+
+.dcc-drilldown > summary {
+  cursor: pointer;
+  color: #1f5f9e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dcc-drilldown > summary:focus-visible {
+  outline: 2px solid #a0036c;
+  outline-offset: 3px;
+}
+
+.dcc-drilldown-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 11px;
+}
 
 /* Three blocks, visually distinct on purpose. What Jaspen had, what is still
    missing, and what the user should supply are three different things and were

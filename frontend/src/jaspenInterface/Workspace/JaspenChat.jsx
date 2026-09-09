@@ -2893,12 +2893,12 @@ const renderScorecardCard = (result, opts = {}) => {
         </div>
       )}
 
-      {/* Two-col bottom: Top Risks | Recommended */}
+      {/* Two-col bottom: Where the plan is exposed | Recommended */}
       {(risks.length > 0 || recommendedScenario) && (
         <div className="jas-scorecard-bottom-cols">
           {risks.length > 0 && (
             <div>
-              <p className="jas-scorecard-bottom-col-label">Top Risks</p>
+              <p className="jas-scorecard-bottom-col-label">Where the Plan Is Exposed</p>
               {risks.slice(0, 3).map((r, i) => (
                 <p key={i} className="jas-scorecard-risk-item">
                   · {typeof r === 'string' ? r : (r.risk || r.text || String(r))}
@@ -9680,7 +9680,7 @@ const handleSaveStarter = async () => {
 
         {risks.length > 0 && (
           <div className="jas-mini-risks">
-            <div className="jas-mini-section-title">Top Risks</div>
+            <div className="jas-mini-section-title">Where the Plan Is Exposed</div>
             <ul className="jas-mini-risklist">
               {risks.slice(0, 3).map((r, i) => (
                 <li key={i}>{String(r)}</li>

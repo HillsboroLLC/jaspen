@@ -92,7 +92,7 @@ Production values live **only** in the DigitalOcean server's `.env`
 
 - Dev DB: `backend/instance/jaspen_dev.db` (SQLite, gitignored). Delete it and
   re-run `python scripts/init_dev_db.py` for a clean slate — it's disposable.
-- **Alembic history: single head** (`b7e2d91a4c03`), verified 2026-08-23 with
+- **Alembic history: single head** (`a6c9e2d4f7b1`), verified 2026-09-09 with
   `flask db heads`. `flask db upgrade` is unambiguous, and the production
   deploy runs it (`.github/workflows/deploy.yml`). The multiple-head tangle
   described in `docs/NEXT_STEPS.md` C13 has since been resolved. Keep it that

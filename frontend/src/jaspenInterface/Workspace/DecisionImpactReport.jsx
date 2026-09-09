@@ -1,9 +1,9 @@
 // The Decision Impact Report — what changed about a decision between the
 // moment it was submitted and the moment the analysis closed.
 //
-// Specification: docs/DECISION_IMPACT_REPORT_SPEC.md. Five sections, in the
-// order the spec fixes: Before, what Jaspen examined, After, the impact
-// verdict, and the narrative.
+// Specification: docs/DECISION_IMPACT_REPORT_SPEC.md. The executive result is
+// presented first; the complete Before / challenge / After comparison and the
+// published methodology remain available as an audit drill-down.
 //
 // WHAT THIS PANEL MAY AND MAY NOT SAY
 //
@@ -19,10 +19,10 @@
 // a customer forwards, which is the whole failure the assembler exists to
 // prevent.
 //
-// WHAT DID NOT MOVE IS NOT OPTIONAL CHROME. A report listing only improvements
-// is a highlight reel. `unmoved`, `not_applicable` and `excluded_unconfirmed`
-// carry most of what makes this credible to a skeptical reader, and they
-// render at the same weight as the movements.
+// WHAT DID NOT MOVE IS NOT DISCARDED. A report listing only improvements is a
+// highlight reel. `unmoved`, `not_applicable` and `excluded_unconfirmed` carry
+// most of what makes this credible to a skeptical reader, and remain intact in
+// the audit drill-down rather than competing with the executive answer.
 
 import React, { useEffect, useRef, useState } from 'react';
 import { jasApi } from '../../services/jaspenApi';
@@ -161,6 +161,31 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
         <p className="dir-provenance">{report.provenance_note}</p>
       </header>
 
+      <div className="dir-executive">
+        <div className="dir-executive-head">
+          <h4 className="dir-block-title">
+            {verified ? 'What changed in the decision' : 'What the current record shows'}
+          </h4>
+          <p className={`dir-verdict ${VERDICT_CLASS[impact.verdict]}`}>
+            {VERDICT_LABELS[impact.verdict]}
+          </p>
+        </div>
+        {impact.withheld_reason && (
+          <p className="dir-block-note">{impact.withheld_reason}</p>
+        )}
+        {impact.attribution_cap_applied && (
+          <p className="dir-block-note">
+            Held at limited: no recorded challenge or validation activity, so the change
+            is reported without attributing it to Jaspen.
+          </p>
+        )}
+        <p className="dir-narrative">{narrative.what_changed}</p>
+      </div>
+
+      <details className="dir-audit">
+        <summary>View comparison and methodology</summary>
+        <div className="dir-audit-body">
+
       {verified ? (
         /* The three columns ARE the argument: what you brought, what Jaspen
            put to it, and what moved as a result. Stacked, a reader has to hold
@@ -256,23 +281,8 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
         </div>
       )}
 
-      {/* ── The verdict ────────────────────────────────────────────────── */}
       <div className="dir-block">
-        <h4 className="dir-block-title">Decision impact</h4>
-        <p className={`dir-verdict ${VERDICT_CLASS[impact.verdict]}`}>
-          {VERDICT_LABELS[impact.verdict]}
-        </p>
-
-        {impact.withheld_reason && (
-          <p className="dir-block-note">{impact.withheld_reason}</p>
-        )}
-
-        {impact.attribution_cap_applied && (
-          <p className="dir-block-note">
-            Held at limited: no recorded challenge or validation activity, so the change
-            below is reported without attributing it to Jaspen.
-          </p>
-        )}
+        <h4 className="dir-block-title">Comparison details</h4>
 
         {impact.unmoved.length > 0 && (
           <>
@@ -331,12 +341,8 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
         </p>
         )}
       </div>
-
-      {/* ── The narrative ──────────────────────────────────────────────── */}
-      <div className="dir-block">
-        <h4 className="dir-block-title">What changed</h4>
-        <p className="dir-narrative">{narrative.what_changed}</p>
-      </div>
+        </div>
+      </details>
     </section>
   );
 }

@@ -81,10 +81,10 @@ const DEFAULT_SCORECARD_SECTIONS = [
   // shorter than when it carried the whole report. Auto-sizing grows it if a
   // decision produces a longer summary; it never shrinks, so a size a user has
   // chosen is theirs to keep.
-  { key: 'confidence', label: 'Decision Confidence',  cols: 4, locked: true,  x: 0, y: 4,  w: 12, h: 8 },
+  { key: 'confidence', label: 'Evidence Confidence',  cols: 4, locked: true,  x: 0, y: 4,  w: 12, h: 7 },
   { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 12, w: 12, h: 5 },
   { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 17, w: 12, h: 8 },
-  { key: 'risks',      label: 'Top Risks',            cols: 4, locked: false, x: 0, y: 25, w: 12, h: 8 },
+  { key: 'risks',      label: 'Where the Plan Is Exposed', cols: 4, locked: false, x: 0, y: 25, w: 12, h: 8 },
   { key: 'scenario',   label: 'Recommended Scenario', cols: 4, locked: true,  x: 0, y: 33, w: 12, h: 6 },
   // Last, deliberately. Every block above answers "what does the analysis
   // say"; this one answers "what did the analysis change", which is only a
@@ -899,22 +899,6 @@ export default function JaspenWorkspace() {
       .catch(() => { if (!cancelled) setAcceptedExposures([]); });
     return () => { cancelled = true; };
   }, [threadId, isScorecard]);
-
-  const acceptCriterionExposure = useCallback(async (entry, note) => {
-    const data = await Jaspen.acceptExposure(threadId, {
-      kind: 'criterion',
-      option_name: scorecardId,
-      target_key: entry.key,
-      note,
-    });
-    const accepted = data?.accepted_exposure;
-    if (accepted) {
-      setAcceptedExposures((current) => (
-        current.some((item) => item?.id === accepted.id) ? current : [...current, accepted]
-      ));
-    }
-    return accepted;
-  }, [threadId, scorecardId]);
 
   const acceptRiskExposure = useCallback(async (risk, note) => {
     const data = await Jaspen.acceptExposure(threadId, {
@@ -2571,7 +2555,6 @@ export default function JaspenWorkspace() {
                           onEditNarrative={setCriterionNarrative}
                           onRestoreNarrative={restoreCriterionNarrative}
                           acceptedExposures={acceptedExposures}
-                          onAcceptExposure={acceptCriterionExposure}
                         />
                       )}
 

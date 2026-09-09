@@ -168,6 +168,13 @@ function pointsLabel(swing) {
   return `${rounded} ${rounded === 1 ? 'point' : 'points'}`;
 }
 
+function firstSentence(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const match = text.match(/^.*?[.!?](?:\s|$)/);
+  return (match ? match[0] : text).trim();
+}
+
 // A concise, human source for a verified reference. The exact locator stays on
 // the element as a data attribute for inspection and audit, but raw offsets
 // like "message 0 · chars 89-140" are implementation detail and do not belong
@@ -192,11 +199,9 @@ function evidenceSource(reference) {
 
 function CriterionRow({
   entry, onEditNarrative, onRestoreNarrative, editable,
-  acceptance, onAcceptExposure,
+  acceptance,
 }) {
   const [draft, setDraft] = useState(null);
-  const [acceptanceNote, setAcceptanceNote] = useState(null);
-  const [acceptanceState, setAcceptanceState] = useState({ saving: false, error: '' });
   const unsupported = supportingReferenceCount(entry) === 0
     ? 'No affirmative verified input supports this criterion yet.'
     : UNSUPPORTED_BY_GRADE[entry.confidence];
@@ -209,7 +214,7 @@ function CriterionRow({
     <li className={`dcc-criterion dcc-criterion-${entry.severity}`}>
       <div className="dcc-criterion-head">
         <span className="dcc-criterion-name">{criterionLabel(entry)}</span>
-        <span className={`dcc-grade dcc-grade-${entry.confidence}`}>
+        <span className={`dcc-grade dcc-grade-${supportingReferenceCount(entry) === 0 ? 'unsupported' : entry.confidence}`}>
           {evidenceGradeLabel(entry)}
         </span>
       </div>
@@ -217,7 +222,7 @@ function CriterionRow({
       <div className="dcc-criterion-meta">
         <span>{Math.round(entry.weight * 100)}% of the decision</span>
         <span aria-hidden="true">·</span>
-        <span>contributes {entry.score}</span>
+        <span>criterion score {entry.score}/100</span>
         {entry.swing > 0 && (
           <>
             <span aria-hidden="true">·</span>
@@ -227,6 +232,24 @@ function CriterionRow({
           </>
         )}
       </div>
+
+      <div className={`dcc-criterion-brief${entry.evidenced ? ' is-supported' : ' is-exposed'}`}>
+        <p className="dcc-block-label">
+          {entry.evidenced ? 'What is strong' : 'Exposure'}
+        </p>
+        <p className="dcc-block-text">
+          {firstSentence(entry.rationale) || unsupported || 'No assessment was recorded for this criterion.'}
+        </p>
+        {action && (
+          <p className="dcc-criterion-strengthen">
+            <strong>Strengthen it:</strong> {action}
+          </p>
+        )}
+      </div>
+
+      <details className="dcc-drilldown">
+        <summary>View evidence &amp; reasoning</summary>
+        <div className="dcc-drilldown-body">
 
       {/* Verified evidence, above the assessment on purpose. These excerpts
           were located in the input by deterministic code, so they outrank the
@@ -372,75 +395,20 @@ function CriterionRow({
         {SEVERITY_CONSEQUENCE[entry.severity]}
       </p>
 
-      {action && (
-        <div className="dcc-needed-block">
-          <p className="dcc-block-label dcc-block-needed">How to improve this</p>
-          <p className="dcc-block-text">{action}</p>
+      {acceptance && (
+        <div className="dcc-acceptance dcc-acceptance-history" role="status">
+          <p className="dcc-block-label">Previously accepted exposure</p>
+          <div className="dcc-acceptance-record">
+            <strong>
+              Accepted by {acceptance.accepted_by?.name || acceptance.accepted_by?.email || 'a user'}
+            </strong>
+            <span>{new Date(acceptance.accepted_at).toLocaleString()}</span>
+            {acceptance.note && <p>{acceptance.note}</p>}
+          </div>
         </div>
       )}
-
-      {(entry.swing > 0 || entry.evidenced === false) && onAcceptExposure && (
-        <div className="dcc-acceptance">
-          <p className="dcc-block-label">Consciously accepted exposure</p>
-          {acceptance && (
-            <div className="dcc-acceptance-record" role="status">
-              <strong>
-                Accepted by {acceptance.accepted_by?.name || acceptance.accepted_by?.email || 'a user'}
-              </strong>
-              <span>{new Date(acceptance.accepted_at).toLocaleString()}</span>
-              {acceptance.note && <p>{acceptance.note}</p>}
-            </div>
-          )}
-          {acceptanceNote === null ? (
-            <button
-              type="button"
-              className="dcc-accept-open"
-              onClick={() => setAcceptanceNote('')}
-            >
-              {acceptance ? 'Accept the current exposure again' : 'Accept this exposure'}
-            </button>
-          ) : (
-            <div className="dcc-accept-form">
-              <p>
-                This records that you understand this exposure remains unresolved and
-                choose to proceed while consciously accepting it.
-              </p>
-              <label>
-                Optional note
-                <textarea
-                  rows={2}
-                  maxLength={1000}
-                  value={acceptanceNote}
-                  onChange={(event) => setAcceptanceNote(event.target.value)}
-                />
-              </label>
-              <div className="dcc-edit-actions">
-                <button
-                  type="button"
-                  className="dcc-edit-save"
-                  disabled={acceptanceState.saving}
-                  onClick={async () => {
-                    setAcceptanceState({ saving: true, error: '' });
-                    try {
-                      await onAcceptExposure(entry, acceptanceNote);
-                      setAcceptanceNote(null);
-                      setAcceptanceState({ saving: false, error: '' });
-                    } catch (error) {
-                      setAcceptanceState({ saving: false, error: error?.message || 'Could not record acceptance.' });
-                    }
-                  }}
-                >
-                  {acceptanceState.saving ? 'Recording…' : 'Record accepted exposure'}
-                </button>
-                <button type="button" className="dcc-edit-cancel" onClick={() => setAcceptanceNote(null)}>
-                  Cancel
-                </button>
-              </div>
-              {acceptanceState.error && <p className="dcc-accept-error" role="alert">{acceptanceState.error}</p>}
-            </div>
-          )}
         </div>
-      )}
+      </details>
     </li>
   );
 }
@@ -448,7 +416,7 @@ function CriterionRow({
 export default function DecisionConfidenceCard({
   profile, exposure, optionName, summary,
   onEditNarrative, onRestoreNarrative, editable = false,
-  acceptedExposures = [], onAcceptExposure,
+  acceptedExposures = [],
   // Which half to render. The report is split across canvas sections so each
   // criterion can be resized and reordered on its own, which means this
   // component is mounted once for the briefing and once per criterion rather
@@ -480,6 +448,12 @@ export default function DecisionConfidenceCard({
   const decisionCriteria = criteria.filter((entry) => !META_CRITERIA.has(entry.key));
   const evidenced = decisionCriteria.filter((entry) => entry.evidenced);
   const assumedCriteria = decisionCriteria.filter((entry) => !entry.evidenced);
+  const strongestSupport = [...evidenced]
+    .sort((a, b) => (b.weight || 0) - (a.weight || 0))
+    .slice(0, 3);
+  const biggestExposure = [...assumedCriteria]
+    .sort((a, b) => (b.swing || 0) - (a.swing || 0) || (b.weight || 0) - (a.weight || 0))
+    .slice(0, 3);
   const evidenceQuality = criteria.find((entry) => entry.key === 'evidence_quality') || null;
   const primaryClaim = claims[0] || null;
   const secondaryClaims = claims.slice(1);
@@ -503,7 +477,6 @@ export default function DecisionConfidenceCard({
             onEditNarrative={onEditNarrative}
             onRestoreNarrative={onRestoreNarrative}
             acceptance={acceptanceFor(entry)}
-            onAcceptExposure={onAcceptExposure}
           />
         </ul>
       </section>
@@ -516,7 +489,7 @@ export default function DecisionConfidenceCard({
     <section className="dcc" aria-label="Decision confidence report">
       {/* ── Layer 1: the summary ─────────────────────────────────────────── */}
       <header className="dcc-head">
-        <p className="dcc-eyebrow">Decision Confidence</p>
+        <p className="dcc-eyebrow">Evidence Confidence</p>
 
         {/* NO OVERALL SCORE HERE, deliberately. The Jaspen score rates the
             OPTION — whether this is a good thing to do. This card rates the
@@ -542,7 +515,7 @@ export default function DecisionConfidenceCard({
         {evidenceQuality && (
           <p className="dcc-meta-line">
             <span className="dcc-meta-label">Evidence quality</span>
-            <span className={`dcc-grade dcc-grade-${evidenceQuality.confidence}`}>
+            <span className={`dcc-grade dcc-grade-${supportingReferenceCount(evidenceQuality) === 0 ? 'unsupported' : evidenceQuality.confidence}`}>
               {GRADE_LABELS[evidenceQuality.confidence] || evidenceQuality.confidence}
             </span>
             <span className="dcc-meta-note">Jaspen&rsquo;s read on what you brought</span>
@@ -558,7 +531,7 @@ export default function DecisionConfidenceCard({
           <div className="dcc-ledger">
             <div className="dcc-ledger-col">
               <p className="dcc-ledger-label dcc-ledger-label-evidence">
-                Supported dimensions ({evidenced.length} of {decisionCriteria.length})
+                Strongest support
               </p>
               {evidenced.length === 0 ? (
                 <p className="dcc-ledger-empty">
@@ -566,7 +539,7 @@ export default function DecisionConfidenceCard({
                 </p>
               ) : (
                 <ul className="dcc-ledger-list">
-                  {evidenced.map((entry) => (
+                  {strongestSupport.map((entry) => (
                     <li key={entry.key}>
                       <span className="dcc-ledger-excerpt">{criterionLabel(entry)}</span>
                       <span className="dcc-ledger-meta">
@@ -574,7 +547,7 @@ export default function DecisionConfidenceCard({
                         {' · '}
                         {Math.round((entry.weight || 0) * 100)}% of the decision
                       </span>
-                      {passagesFor(entry, { supportOnly: true }).slice(0, 2).map((excerpt) => (
+                      {passagesFor(entry, { supportOnly: true }).slice(0, 1).map((excerpt) => (
                         <span className="dcc-ledger-quote" key={excerpt}>{excerpt}</span>
                       ))}
                     </li>
@@ -585,7 +558,7 @@ export default function DecisionConfidenceCard({
 
             <div className="dcc-ledger-col">
               <p className="dcc-ledger-label dcc-ledger-label-assumed">
-                Assumption-dependent dimensions ({assumedCriteria.length} of {decisionCriteria.length})
+                Biggest exposure
               </p>
               {assumedCriteria.length === 0 ? (
                 <p className="dcc-ledger-empty">
@@ -593,7 +566,7 @@ export default function DecisionConfidenceCard({
                 </p>
               ) : (
                 <ul className="dcc-ledger-list">
-                  {assumedCriteria.map((entry) => (
+                  {biggestExposure.map((entry) => (
                     <li key={entry.key}>
                       <span className="dcc-ledger-excerpt">{criterionLabel(entry)}</span>
                       <span className="dcc-ledger-meta">
@@ -603,7 +576,7 @@ export default function DecisionConfidenceCard({
                       </span>
                       {/* Shown on purpose: seeing what you actually said is the
                           fastest way to understand why it is not evidence. */}
-                      {passagesFor(entry).slice(0, 2).map((excerpt) => (
+                      {passagesFor(entry).slice(0, 1).map((excerpt) => (
                         <span className="dcc-ledger-quote" key={excerpt}>{excerpt}</span>
                       ))}
                       {entry.resolution && (
@@ -618,6 +591,9 @@ export default function DecisionConfidenceCard({
             </div>
           </div>
         )}
+        <p className="dcc-drilldown-cue">
+          Full evidence, gaps, and reasoning are available in the dimension details below.
+        </p>
       </header>
 
       {/* A briefing, not the first rows of the detail. It reads as continuous
@@ -668,7 +644,6 @@ export default function DecisionConfidenceCard({
                 onEditNarrative={onEditNarrative}
                 onRestoreNarrative={onRestoreNarrative}
                 acceptance={acceptanceFor(entry)}
-                onAcceptExposure={onAcceptExposure}
               />
             ))}
           </ul>
