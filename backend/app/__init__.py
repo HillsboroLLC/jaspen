@@ -537,6 +537,7 @@ def create_app():
     from .routes.decision_impact import decision_impact_bp
     from .routes.decision_profile import decision_profile_bp
     from .routes.tools import tools_bp
+    from .routes.outreach_intelligence import outreach_intelligence_bp
     from . import models_studio  # noqa: F401  register Studio tables with SQLAlchemy
     from . import models_decision_record  # noqa: F401  register DecisionRecord table with SQLAlchemy
     from . import models_decision_baseline  # noqa: F401  register DecisionBaseline table with SQLAlchemy
@@ -567,6 +568,7 @@ def create_app():
     app.register_blueprint(decision_impact_bp, url_prefix='/api/v1/decision-impact')
     app.register_blueprint(decision_profile_bp, url_prefix='/api/v1/decision-profile')
     app.register_blueprint(tools_bp, url_prefix='/api/v1/tools')
+    app.register_blueprint(outreach_intelligence_bp, url_prefix='/api/v1/outreach-intelligence')
     app.add_url_rule(
         '/api/v1/ai-agent/analyze',
         endpoint='ai_agent_analyze',
