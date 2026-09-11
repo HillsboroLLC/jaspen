@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WEB_URL="${1:-https://www.jaspen.ai}"
+WEB_URL="${1:-https://jaspen.ai}"
 API_URL="${2:-https://api.jaspen.ai}"
 
 fail() {
@@ -19,13 +19,13 @@ web_status="$(curl -sS -o /dev/null -w '%{http_code}' "${WEB_URL}")"
 web_html="$(curl -sS "${WEB_URL}")"
 echo "${web_html}" | grep -q '/static/js/main\.' || fail "web root does not look like deployed SPA bundle"
 
-billing_status="$(curl -sS -o /dev/null -w '%{http_code}' "${API_URL}/api/billing/status")"
-[[ "${billing_status}" == "401" ]] || fail "/api/billing/status returned ${billing_status}, expected 401 for unauthenticated probe"
+billing_status="$(curl -sS -o /dev/null -w '%{http_code}' "${API_URL}/api/v1/billing/status")"
+[[ "${billing_status}" == "401" ]] || fail "/api/v1/billing/status returned ${billing_status}, expected 401 for unauthenticated probe"
 
-admin_caps_status="$(curl -sS -o /dev/null -w '%{http_code}' "${API_URL}/api/admin/capabilities")"
+admin_caps_status="$(curl -sS -o /dev/null -w '%{http_code}' "${API_URL}/api/v1/admin/capabilities")"
 if [[ "${admin_caps_status}" == "404" ]]; then
-  fail "/api/admin/capabilities returned 404 (backend is older than frontend/admin contract)"
+  fail "/api/v1/admin/capabilities returned 404 (backend is older than frontend/admin contract)"
 fi
-[[ "${admin_caps_status}" == "401" ]] || fail "/api/admin/capabilities returned ${admin_caps_status}, expected 401 for unauthenticated probe"
+[[ "${admin_caps_status}" == "401" ]] || fail "/api/v1/admin/capabilities returned ${admin_caps_status}, expected 401 for unauthenticated probe"
 
 echo "Smoke checks passed."
