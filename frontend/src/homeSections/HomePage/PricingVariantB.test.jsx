@@ -100,7 +100,7 @@ describe('Advisory Partnerships tab', () => {
     render(<PricingVariantB onOpenModal={onOpenModal} />);
     await openAdvisory(user);
 
-    const ctas = screen.getAllByRole('button', { name: /request consideration/i });
+    const ctas = screen.getAllByRole('button', { name: 'Request Consideration', exact: true });
     expect(ctas).toHaveLength(2);
 
     await user.click(ctas[0]);
@@ -109,7 +109,7 @@ describe('Advisory Partnerships tab', () => {
 
     await user.click(within(dialog).getByRole('button', { name: /close request form/i }));
 
-    await user.click(screen.getAllByRole('button', { name: /request consideration/i })[1]);
+    await user.click(screen.getAllByRole('button', { name: 'Request Consideration', exact: true })[1]);
     const secondDialog = screen.getByRole('dialog', { name: /executive partnership request/i });
     expect(within(secondDialog).getByRole('radio', { name: /Strategic Advisor Partnership \(\$100,000\)/ })).toBeChecked();
 
@@ -123,8 +123,9 @@ describe('Advisory Partnerships tab', () => {
 
     await openAdvisory(user);
 
-    expect(screen.getByRole('heading', { name: /Strategic decisions deserve more than software alone/i })).toBeInTheDocument();
-    expect(screen.getByText(/delivered through structured virtual working sessions/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /See where the decision is exposed before you commit/i })).toBeInTheDocument();
+    expect(screen.getByText(/combine structured working sessions with Jaspen’s decision-confidence workflow/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/A Jaspen Customer Success Partner to challenge assumptions/i)).toHaveLength(2);
     expect(screen.getByText(/In-person facilitation may be considered when appropriate/i)).toBeInTheDocument();
 
     const panel = screen.getByRole('tabpanel');
@@ -139,13 +140,18 @@ describe('Advisory Partnerships tab', () => {
 
     await openAdvisory(user);
 
-    const capacity = screen.getByRole('complementary', { name: /limited advisory capacity/i });
-    expect(capacity).toHaveTextContent(/limited number of advisory engagements each quarter/i);
-    expect(capacity).toHaveTextContent(/level of attention, rigor, and executive support/i);
-    expect(capacity).toHaveTextContent(/review potential competitive conflicts/i);
-    expect(capacity).toHaveTextContent(/confidentiality or competitive sensitivity/i);
-    expect(capacity).toHaveTextContent(/subject to fit, timing, and conflict review/i);
-
+    const capacity = screen.getByRole('complementary', { name: /limited quarterly openings/i });
+    expect(capacity).toHaveTextContent(/limited quarterly openings/i);
+    expect(capacity).toHaveTextContent(/limited capacity/i);
+    expect(capacity.querySelector('strong')).toHaveTextContent(/each quarter/i);
+    expect(capacity).toHaveTextContent(/protect depth, rigor, and attention/i);
+    expect(capacity).toHaveTextContent(/conflict of interest/i);
+    expect(capacity).toHaveTextContent(/competitive and confidentiality conflicts/i);
+    expect(capacity).toHaveTextContent(/decline or defer an engagement/i);
+    expect(capacity).toHaveTextContent(/fit & timing/i);
+    expect(capacity).toHaveTextContent(/make sure we will work well together/i);
+    expect(capacity).toHaveTextContent(/decline an engagement that is not a fit/i);
+    expect(capacity).toHaveTextContent(/defer it to a time when capacity is right/i);
     const firstOffer = screen
       .getByText('Executive Decision Intensive', { selector: '.pvb-card-name' })
       .closest('.pvb-advisory-card');

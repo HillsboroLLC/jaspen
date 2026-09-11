@@ -340,41 +340,59 @@
   line-height: 1.65;
   color: #4f5d75;
 }
-.pvb-advisory-disclosure {
-  margin: 0;
-  padding: 12px 18px;
-  border-left: 3px solid #e1ddd5;
-  background: #f3f1ed;
-  border-radius: 0 10px 10px 0;
-  text-align: left;
-  font-size: 0.85rem;
-  line-height: 1.6;
-  color: #5f687a;
-}
 .pvb-advisory-capacity {
-  margin: 22px 0 0;
-  padding: 18px 20px;
-  border: 1px solid #eadfe6;
+  margin: 26px 0 0;
+  text-align: left;
+}
+.pvb-advisory-capacity .pvb-advisory-capacity-heading {
+  margin: 0;
+  color: #161f3b;
+  font-size: clamp(1.35rem, 2.5vw, 1.8rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  text-align: center;
+}
+.pvb-advisory-capacity-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 24px;
+}
+.pvb-advisory-capacity-item {
+  position: relative;
+  padding: 28px 18px 18px;
+  border: 1px solid #e1ddd5;
   border-radius: 10px;
   background: #fff;
-  text-align: left;
 }
-.pvb-advisory-capacity h4 {
-  margin: 0 0 10px;
-  color: #161f3b;
-  font-size: 0.96rem;
+.pvb-advisory-capacity-item .pvb-advisory-capacity-pill {
+  position: absolute;
+  top: 0;
+  left: 16px;
+  max-width: calc(100% - 32px);
+  margin: 0;
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: #161f3b;
+  color: #fff;
+  font-size: 0.7rem;
   font-weight: 800;
+  letter-spacing: 0.07em;
+  line-height: 1;
+  text-transform: uppercase;
+  transform: translateY(-50%);
 }
-.pvb-advisory-capacity p {
+.pvb-advisory-capacity-item p {
   margin: 0;
   color: #4f5d75;
-  font-size: 0.85rem;
-  line-height: 1.62;
+  font-size: 0.84rem;
+  line-height: 1.55;
 }
-.pvb-advisory-capacity p + p {
-  margin-top: 9px;
+.pvb-advisory-capacity-item strong {
+  color: #161f3b;
+  font-weight: 850;
 }
-
 .pvb-advisory-cards {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -689,6 +707,7 @@
   .pvb-cards-row.is-business { grid-template-columns: 1fr; }
   .pvb-plan-layout.is-business { grid-template-columns: 1fr; }
   .pvb-advisory-cards { grid-template-columns: 1fr; }
+  .pvb-advisory-capacity-grid { grid-template-columns: 1fr; }
   .pvb-enterprise-intro { align-items: flex-start; flex-direction: column; }
   .pvb-compare-header { flex-direction: column; align-items: flex-start; }
 }
@@ -698,5 +717,4 @@
   .pvb-cards-row.is-individuals { grid-template-columns: minmax(0, 1fr); gap: 18px; }
   .pvb-card { min-width: 0; padding: 24px 20px; }
   .pvb-advisory-card { padding: 24px 20px; }
-  .pvb-advisory-disclosure { padding: 12px 14px; }
 }
