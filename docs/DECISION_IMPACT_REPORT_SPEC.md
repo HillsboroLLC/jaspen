@@ -767,7 +767,7 @@ same structure. Shape is the caller's job.
 
   "narrative": {                       // What changed
     "what_changed": "…",
-    "generated_by": "model",           // model | template | null
+    "generated_by": "template",        // deterministic report narrative
     "grounded_in": { "measures": ["B1","B3","B4"], "events": ["evt_…"] },
     "model_id": "…",
     "generated_at": "…"
@@ -835,14 +835,16 @@ state.
 
 ## 8. Narrative rules — "What changed"
 
-This is the only section a model writes, and it operates under containment.
+This section is assembled deterministically from the same computed measures and
+user-visible ledger counts returned elsewhere in the report. Opening or
+refreshing a report does not invoke a model.
 
-**Input.** The model receives *only* the computed measure deltas and the
-user-visible ledger events. It does not receive the transcript, the scorecards,
-or the recommendation prose.
+**Input.** The template receives *only* the computed measure deltas, the
+user-visible ledger counts, and the already-computed leading option. It does not
+receive the transcript, scorecards, or recommendation prose.
 
-**Task.** Explain, in continuous prose, the deltas it was given, including the
-shift in rationale where the recorded criteria and weightings show one.
+**Task.** Tell the before/challenge/after story in continuous prose without
+creating a causal relationship the ledger does not record.
 
 **Prohibitions.** It may not introduce any fact, count, cause, risk, or
 conclusion absent from its input. It may not characterise the user's original
@@ -888,23 +890,19 @@ confidence, the readiness, an outcome, or any other measure.
 that quietly used causal phrasing would make the constraint cosmetic, since the
 template is what most reports render.
 
-A narrative failing either check is **discarded, not repaired**: a
-half-corrected sentence is a sentence nobody verified. The deterministic
-template renders instead (AT-26).
+A narrative is assembled only after the impact and activity blocks are final.
+It cannot alter a measure, movement, intervention count, or verdict. The same
+`activity_counts` object is returned to the UI and passed to the narrative, so
+the story cannot say that no analytical work occurred while the audit trail
+lists recorded challenges.
 
-**Separation.** The narrative lives in its own module. `decision_impact.py`
-stays provably model-free — a test asserts no model client is reachable from
-it — and the narrative receives the finished impact block and returns a
-string. It cannot alter a measure, a movement, an intervention count or a
-verdict.
+**An unverified baseline gets no comparative narrative.** There is no
+comparison to explain, and prose about one would be the same fiction §5.6
+refuses to publish in numbers (AT-74).
 
-**An unverified baseline gets no comparative narrative.** The model is not even
-called: there is no comparison to explain, and prose about one would be the
-same fiction §5.6 refuses to publish in numbers (AT-74).
-
-**Availability.** The model is optional. With no model available the report
-renders in full with a templated `what_changed` and `generated_by: "template"`.
-The evidence layer never depends on a model being reachable.
+**Availability and cost.** The report renders in full with
+`generated_by: "template"`. The evidence layer never depends on a model being
+reachable, and reading the report never creates model usage.
 
 ---
 
@@ -1191,8 +1189,12 @@ stops being a diff and starts being evidence of analytical work, where `B4`/`B5`
 become measurable, and where the attribution cap stops binding for threads that
 earned it.
 
-**Phase 3 — narrative.** *Done for the workspace.* Contained model narrative
-with template fallback, in its own module.
+**Phase 3 — narrative.** *Done for the workspace.* The published narrative is
+deterministic and assembled from the final impact block and the exact ledger
+counts returned to the UI. The earlier contained-model experiment remains
+isolated in `decision_narrative.py` for tests and reference, but report assembly
+does not call it; opening a report cannot spend model credits or produce a
+different account of the same record.
 
 **Phase 3b — other surfaces.** Email and PPTX, through the existing renderer
 split. Deliberately not built yet: the workspace report is the product, and the

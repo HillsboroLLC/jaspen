@@ -3,7 +3,9 @@
 # The Decision Impact Report — what changed about a decision between the moment
 # it was submitted and the moment the analysis closed.
 # Specification: docs/DECISION_IMPACT_REPORT_SPEC.md. This module implements
-# Phase 1 of §12: the deterministic skeleton. No challenge ledger, no model.
+# The deterministic report assembly, including the challenge ledger. Opening a
+# report never calls a model: the story is generated from the same persisted
+# facts and computed measures that power the visible comparison.
 #
 # THE ONE RULE THIS MODULE EXISTS TO KEEP
 #
@@ -1004,6 +1006,16 @@ INTERVENTION_SINGULARS = {
     'B6': 'exposure quantified',
 }
 
+ACTIVITY_LABELS = {
+    'evidence_requested': ('request for supporting evidence', 'requests for supporting evidence'),
+    'assumption_resolved': ('assumption resolved', 'assumptions resolved'),
+    'assumption_left_open': ('assumption left open', 'assumptions left open'),
+    'exposure_quantified': ('exposure quantified', 'exposures quantified'),
+    'dependency_surfaced': ('dependency surfaced', 'dependencies surfaced'),
+}
+
+ACTIVITY_ORDER = tuple(ACTIVITY_LABELS)
+
 VERDICT_OPENING = {
     VERDICT_MATERIAL: 'The decision record changed materially between submission and close.',
     VERDICT_LIMITED: 'The decision record changed between submission and close, within limits.',
@@ -1016,10 +1028,9 @@ VERDICT_OPENING = {
 def compose_narrative(impact, context):
     """Prose assembled from computed values only.
 
-    Phase 1 renders the template. Phase 3 may hand the same deltas to a model,
-    under the containment rules in spec §8 — and this template stays as the
-    fallback, because the evidence layer must never depend on a model being
-    reachable.
+    This is the report's published story, not a fallback. It receives the same
+    activity counts, movements and closing context shown elsewhere in the
+    report so the prose cannot contradict the visible audit record.
     """
     sentences = [VERDICT_OPENING[impact['verdict']]]
 
@@ -1032,6 +1043,23 @@ def compose_narrative(impact, context):
             'what is missing is the record of what preceded it.'
         )
         return ' '.join(sentences)
+
+    activity_counts = context.get('activity_counts') or {}
+    activity_parts = []
+    ordered_types = list(ACTIVITY_ORDER) + sorted(
+        event_type for event_type in activity_counts if event_type not in ACTIVITY_LABELS
+    )
+    for event_type in ordered_types:
+        count = int(activity_counts.get(event_type) or 0)
+        if count <= 0:
+            continue
+        labels = ACTIVITY_LABELS.get(
+            event_type,
+            (event_type.replace('_', ' '), event_type.replace('_', ' ')),
+        )
+        activity_parts.append(f'{count} {labels[0] if count == 1 else labels[1]}')
+    if activity_parts:
+        sentences.append('During analysis, Jaspen recorded ' + ', '.join(activity_parts) + '.')
 
     if impact['moved']:
         for movement in impact['moved'][:4]:
@@ -1048,14 +1076,16 @@ def compose_narrative(impact, context):
                     f"{movement['label']} went from {movement['from']} to {movement['to']}."
                 )
 
-    for intervention in impact.get('interventions', []):
-        if intervention['qualifying']:
-            label = intervention['label'].lower()
-            if intervention['count'] == 1:
-                # "1 uncertainties made explicit" reads as a bug to a customer,
-                # and this paragraph is quoted into rooms.
-                label = INTERVENTION_SINGULARS.get(intervention['id'], label)
-            sentences.append(f"Jaspen recorded {intervention['count']} {label}.")
+    # Older reports can have computed interventions but no retained event
+    # counts. Preserve an honest account of that work without duplicating the
+    # activity sentence in current reports.
+    if not activity_parts:
+        for intervention in impact.get('interventions', []):
+            if intervention['qualifying']:
+                label = intervention['label'].lower()
+                if intervention['count'] == 1:
+                    label = INTERVENTION_SINGULARS.get(intervention['id'], label)
+                sentences.append(f"Jaspen recorded {intervention['count']} {label}.")
 
     unmoved_labels = [entry['label'].lower() for entry in impact['unmoved'][:3]]
     if unmoved_labels:
@@ -1117,6 +1147,7 @@ def build_impact_report(user, thread_id, epoch=1):
     closing_measures, context = current_measures(user.id, thread_id)
     all_events = thread_events(user.id, thread_id, epoch)
     visible_events = [event for event in all_events if event.user_visible]
+    activity_counts = counts_by_type(user.id, thread_id, epoch)
     impact = evaluate_impact(
         baseline_measures,
         closing_measures,
@@ -1125,12 +1156,13 @@ def build_impact_report(user, thread_id, epoch=1):
         capture_reason=baseline.capture_reason,
     )
 
-    # The narrative is composed last and from the finished impact block, so it
-    # can only ever describe what the rest of the report already established.
-    from .decision_narrative import compose as compose_what_changed
-    narrative_text, generated_by, model_id = compose_what_changed(
-        impact, context, template=compose_narrative(impact, context),
-    )
+    # The narrative is composed last and from the exact activity and impact
+    # blocks returned below. No model is called while a user opens a report.
+    narrative_context = dict(context)
+    narrative_context['activity_counts'] = activity_counts
+    narrative_text = compose_narrative(impact, narrative_context)
+    generated_by = 'template'
+    model_id = None
 
     return {
         'schema_version': IMPACT_SCHEMA_VERSION,
@@ -1155,7 +1187,7 @@ def build_impact_report(user, thread_id, epoch=1):
             'submission_ref': baseline.submission_ref(),
         },
         'activity': {
-            'counts_by_type': counts_by_type(user.id, thread_id, epoch),
+            'counts_by_type': activity_counts,
             # User-visible events only. One that nobody could observe did not
             # challenge anyone, and listing it would pad the section that is
             # supposed to be the evidence of intervention.

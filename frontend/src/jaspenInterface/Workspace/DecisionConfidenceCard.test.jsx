@@ -162,8 +162,8 @@ describe('DecisionConfidenceCard', () => {
     it('separates what Jaspen had from what is still needed', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(screen.getByText("Jaspen's assessment")).toBeInTheDocument();
-      expect(screen.getByText('Still unsupported')).toBeInTheDocument();
-      expect(screen.getAllByText('Strengthen it:').length).toBeGreaterThan(0);
+      expect(screen.getByText('What remains uncertain')).toBeInTheDocument();
+      expect(screen.getAllByText('What would help:').length).toBeGreaterThan(0);
     });
 
     it('never calls a gap-only criterion moderate evidence', () => {
@@ -191,11 +191,20 @@ describe('DecisionConfidenceCard', () => {
       expect(screen.getByText('8.8 points of exposure')).toBeInTheDocument();
     });
 
-    it('states the consequence of resolving each criterion', () => {
+    it('states why better evidence matters when the answer could move', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(
-        screen.getByText('Resolving this could materially change the score.'),
+        screen.getByText('Better evidence here could materially change the score.'),
       ).toBeInTheDocument();
+    });
+
+    it('does not turn a zero score swing into a dead-end resolution message', () => {
+      render(<DecisionConfidenceCard profile={profile({
+        criteria: [criterion({ severity: 'none', resolution: 'Validate the operating assumption.' })],
+      })} />);
+      expect(screen.getAllByText('Validate the operating assumption.').length).toBeGreaterThan(0);
+      expect(screen.queryByText(/would not move the score today/i)).toBeNull();
+      expect(screen.queryByText('Why this matters:')).toBeNull();
     });
 
     it('never names a severity tier on screen', () => {
@@ -429,21 +438,21 @@ describe('DecisionConfidenceCard', () => {
     // dead end: the reader is told the score could move and not told how.
     it('falls back to an honest generic when scoring named no action', () => {
       render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: null, confidence: 'assumed' })] })} />);
-      expect(screen.getAllByText('Strengthen it:').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('What would help:').length).toBeGreaterThan(0);
       expect(
-        screen.getByText(/Nothing verifiable supports this yet/),
+        screen.getByText(/best available source or analysis that could test this assumption/),
       ).toBeInTheDocument();
     });
 
     it("prefers scoring's own suggestion over the fallback", () => {
       render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: 'Connect NetSuite', confidence: 'assumed' })] })} />);
       expect(screen.getAllByText('Connect NetSuite')).toHaveLength(2);
-      expect(screen.queryByText(/Nothing verifiable supports this yet/)).toBeNull();
+      expect(screen.queryByText(/best available source or analysis that could test this assumption/)).toBeNull();
     });
 
     it('offers nothing to improve on a fully evidenced criterion', () => {
       render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: null, confidence: 'high' })] })} />);
-      expect(screen.queryByText('Strengthen it:')).toBeNull();
+      expect(screen.queryByText('What would help:')).toBeNull();
     });
   });
 });

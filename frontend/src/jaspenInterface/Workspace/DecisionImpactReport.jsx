@@ -48,6 +48,20 @@ const VERDICT_CLASS = {
 
 const GRADE_ORDER = ['high', 'medium', 'low', 'assumed'];
 
+const ACTIVITY_LABELS = {
+  evidence_requested: ['request for supporting evidence', 'requests for supporting evidence'],
+  assumption_resolved: ['assumption resolved', 'assumptions resolved'],
+  assumption_left_open: ['assumption left open', 'assumptions left open'],
+  exposure_quantified: ['exposure quantified', 'exposures quantified'],
+  dependency_surfaced: ['dependency surfaced', 'dependencies surfaced'],
+};
+
+function activityLabel(type, count) {
+  const labels = ACTIVITY_LABELS[type];
+  if (!labels) return type.replace(/_/g, ' ');
+  return Number(count) === 1 ? labels[0] : labels[1];
+}
+
 function formatValue(value) {
   if (value === null || value === undefined) return '—';
   if (typeof value === 'object') {
@@ -149,7 +163,6 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
   return (
     <section className="dir" ref={rootRef} aria-labelledby="dir-title">
       <header className="dir-head">
-        <p className="dir-eyebrow">Decision impact</p>
         <h3 className="dir-title" id="dir-title">
           {verified ? 'What changed about this decision' : 'Decision record — current state'}
         </h3>
@@ -158,17 +171,16 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
         {report.reconstruction_note && (
           <p className="dir-reconstructed">{report.reconstruction_note}</p>
         )}
-        <p className="dir-provenance">{report.provenance_note}</p>
       </header>
 
       <div className="dir-executive">
         <div className="dir-executive-head">
-          <h4 className="dir-block-title">
-            {verified ? 'What changed in the decision' : 'What the current record shows'}
-          </h4>
           <p className={`dir-verdict ${VERDICT_CLASS[impact.verdict]}`}>
             {VERDICT_LABELS[impact.verdict]}
           </p>
+          <h4 className="dir-block-title">
+            {verified ? 'The decision story so far' : 'What the current record shows'}
+          </h4>
         </div>
         {impact.withheld_reason && (
           <p className="dir-block-note">{impact.withheld_reason}</p>
@@ -183,17 +195,17 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
       </div>
 
       <details className="dir-audit">
-        <summary>View comparison and methodology</summary>
+        <summary>See the before, challenge, and after</summary>
         <div className="dir-audit-body">
 
       {verified ? (
-        /* The three columns ARE the argument: what you brought, what Jaspen
-           put to it, and what moved as a result. Stacked, a reader has to hold
-           the first column in their head to judge the third. Side by side they
-           can check it. */
-        <div className="dir-triptych">
+        /* Read as a sequence, not a dashboard comparison. The report is a
+           story about one decision moving through three states, and each step
+           should be understandable before the reader reaches the next. */
+        <div className="dir-story">
           <section className="dir-panel">
-            <h4 className="dir-block-title">What you provided</h4>
+            <p className="dir-step-label">1 · Before analysis</p>
+            <h4 className="dir-block-title">What you brought to the decision</h4>
             <p className="dir-block-note">
               Sealed {new Date(baseline.sealed_at).toLocaleDateString()}
               {baseline.sealed_by === 'user_confirmed' ? ', confirmed by you' : ', recorded at analysis'}
@@ -208,6 +220,7 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
           </section>
 
           <section className="dir-panel">
+            <p className="dir-step-label">2 · Jaspen's challenge</p>
             <h4 className="dir-block-title">What Jaspen challenged</h4>
             {interventions.length === 0 && !activity?.available && (
               <p className="dir-block-note">
@@ -239,7 +252,7 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
               <ul className="dir-activity">
                 {Object.entries(activity.counts_by_type).map(([type, count]) => (
                   <li key={type}>
-                    <strong>{count}</strong> {type.replace(/_/g, ' ')}
+                    <strong>{count}</strong> {activityLabel(type, count)}
                   </li>
                 ))}
               </ul>
@@ -247,7 +260,8 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
           </section>
 
           <section className="dir-panel">
-            <h4 className="dir-block-title">What changed after</h4>
+            <p className="dir-step-label">3 · After analysis</p>
+            <h4 className="dir-block-title">What the record shows now</h4>
             {current.leading_option && (
               <p className="dir-block-note">Leading option: {current.leading_option}</p>
             )}
@@ -341,6 +355,7 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
         </p>
         )}
       </div>
+      <p className="dir-provenance">{report.provenance_note}</p>
         </div>
       </details>
     </section>

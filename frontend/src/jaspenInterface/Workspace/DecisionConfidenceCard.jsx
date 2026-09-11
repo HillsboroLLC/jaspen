@@ -152,15 +152,15 @@ const UNSUPPORTED_BY_GRADE = {
 const FALLBACK_ACTION_BY_GRADE = {
   high: null,
   medium: 'Share the source behind this, a document, export, or connected system, so it can be verified rather than taken as reported.',
-  low: 'Provide the underlying figures or documents for this criterion so more of it rests on evidence.',
-  assumed: 'Nothing verifiable supports this yet. Upload or connect the source that would establish it.',
+  low: 'Provide the underlying figures, documents, or analysis that could test this assumption and show whether it holds.',
+  assumed: 'Provide the best available source or analysis that could test this assumption. If none exists, identify it explicitly as uncertainty you are choosing to carry.',
 };
 
 const SEVERITY_CONSEQUENCE = {
-  reversing: 'Resolving this could change which option leads.',
-  material: 'Resolving this could materially change the score.',
-  other: 'Resolving this would move the score slightly.',
-  none: 'Resolving this would not move the score today.',
+  reversing: 'Better evidence here could change which option leads.',
+  material: 'Better evidence here could materially change the score.',
+  other: 'Better evidence here could move the score slightly.',
+  none: null,
 };
 
 function pointsLabel(swing) {
@@ -242,7 +242,7 @@ function CriterionRow({
         </p>
         {action && (
           <p className="dcc-criterion-strengthen">
-            <strong>Strengthen it:</strong> {action}
+            <strong>What would help:</strong> {action}
           </p>
         )}
       </div>
@@ -383,17 +383,20 @@ function CriterionRow({
 
       {unsupported && (
         <div className="dcc-unsupported-block">
-          <p className="dcc-block-label dcc-block-unsupported">Still unsupported</p>
+          <p className="dcc-block-label dcc-block-unsupported">What remains uncertain</p>
           <p className="dcc-block-text">{unsupported}</p>
         </div>
       )}
 
-      {/* The consequence, then what to do about it. The action sits directly
-          under the line that states the exposure, so "this could move the
-          score" is never left without an answer to "so what do I do?". */}
-      <p className="dcc-criterion-consequence">
-        {SEVERITY_CONSEQUENCE[entry.severity]}
-      </p>
+      {/* Sensitivity is useful only when it says the answer could move. A
+          zero-swing criterion can still need evidence, but telling a reader
+          that resolving it would not move today's score turns guidance into
+          a dead end and confuses evidence quality with score mechanics. */}
+      {SEVERITY_CONSEQUENCE[entry.severity] && (
+        <p className="dcc-criterion-consequence">
+          <strong>Why this matters:</strong> {SEVERITY_CONSEQUENCE[entry.severity]}
+        </p>
+      )}
 
       {acceptance && (
         <div className="dcc-acceptance dcc-acceptance-history" role="status">

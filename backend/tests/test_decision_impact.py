@@ -683,6 +683,22 @@ def test_the_narrative_states_only_computed_facts():
     assert 'without attributing it to Jaspen' in narrative
 
 
+def test_the_narrative_uses_the_same_recorded_activity_as_the_report():
+    impact = evaluate_impact(
+        _measure_set(B1=_m(57)), _measure_set(B1=_m(57)), user_visible_events=3,
+    )
+    from app.decision_impact import compose_narrative
+
+    narrative = compose_narrative(impact, {
+        'leading_option': 'Option A',
+        'activity_counts': {'evidence_requested': 3},
+    })
+
+    assert '3 requests for supporting evidence' in narrative
+    assert 'No challenge or validation activity was recorded' not in narrative
+    assert 'The leading option is Option A' in narrative
+
+
 def test_at40_no_refund_or_guarantee_mechanics_on_this_branch():
     """AT-40 The evidence layer ships before any commercial language does."""
     forbidden = ('refund', 'guarantee', 'entitlement', 'stripe', 'billing')
