@@ -117,13 +117,13 @@
 
 /* The mechanic. This is the panel's strongest moment, so it gets the accent
    rule and slightly more room than anything above it. */
-.ccp-mechanic {
+.ccp-callout {
   border-left: 3px solid #a0036c;
   background: #faf5f9;
   padding: 12px 14px;
 }
 
-.ccp-mechanic p {
+.ccp-callout p {
   margin: 0;
   font-size: 13px;
   line-height: 1.55;

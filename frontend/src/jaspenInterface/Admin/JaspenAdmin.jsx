@@ -1050,7 +1050,7 @@ export default function JaspenAdmin() {
             <div>
               <h3>Homepage Promotion</h3>
               <p className="jas-admin-empty">
-                The RANK THEM modal for the 300K Limited-Time offer. Ending it hides the modal for
+                The pressure-test modal for the 300K Limited-Time offer. Ending it hides the modal for
                 every visitor within about a minute; it never stops the campaign pages or checkout.
                 The promotion also stops itself once the sales cap is reached.
               </p>
@@ -1070,7 +1070,7 @@ export default function JaspenAdmin() {
 
           <div className="jas-admin-review-row">
             <div className="jas-admin-review-meta">
-              <strong>RANK THEM modal</strong>
+              <strong>Pressure-test modal</strong>
               <span>
                 {promotion
                   ? `${promotion.sales_count ?? 0} of ${promotion.config?.sales_cap ?? 0} sales${

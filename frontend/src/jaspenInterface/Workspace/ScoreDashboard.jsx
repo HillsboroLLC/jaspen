@@ -237,10 +237,10 @@ export default function ScoreDashboard({
   };
 
   const getScoreLabel = (s) => {
-    if (s >= 80) return 'Excellent';
-    if (s >= 60) return 'Good';
-    if (s >= 40) return 'Fair';
-    return 'At Risk';
+    if (s >= 80) return 'Well supported';
+    if (s >= 60) return 'Promising — validate gaps';
+    if (s >= 40) return 'Not ready to commit';
+    return 'Insufficient support';
   };
 
   const getScoreRatingClass = (s) => {
@@ -601,17 +601,17 @@ export default function ScoreDashboard({
   const sectionCards = useMemo(() => ([
     {
       key: 'score',
-      title: 'Strategy Score',
+      title: 'Decision Case Strength',
       populated: true,
       priority: 0,
       render: () => (
         <div className="score-main-card card-shell card-score">
           <div className="score-circle">
             <span className="score-value">{score}</span>
-            <span className="score-label">Score</span>
+            <span className="score-label">Decision case</span>
           </div>
           <div className="score-text">
-            <h3>Strategy Score</h3>
+            <h3>Decision Case Strength</h3>
             <span className={`score-rating ${scoreRatingClass}`}>{scoreLabel}</span>
             {/* The "Data confidence" bar that lived here reported a bare
                 percentage with no account of what it measured or what to do
@@ -644,7 +644,7 @@ export default function ScoreDashboard({
       // the next question after "what is it", and every other card on this
       // dashboard assumes an answer to it.
       key: 'confidence',
-      title: 'Decision Confidence',
+      title: 'Evidence Confidence',
       populated: Boolean(evidenceProfile),
       priority: 0.5,
       render: () => (
@@ -935,7 +935,7 @@ export default function ScoreDashboard({
     },
     {
       key: 'risks',
-      title: 'Top Risks',
+      title: 'Where the Plan Is Exposed',
       populated: risks.length > 0,
       priority: 7,
       render: () => (

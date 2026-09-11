@@ -15,6 +15,26 @@
 //     it simply sums the `signals` declared on each chosen option.
 //   - Fully deterministic and side-effect free, so it is trivial to unit test.
 
+// TODO (before the formal Decision Profile engine is built): THIS LOGIC MUST
+// MOVE SERVER-SIDE.
+//
+// What ships to the browser today is the placeholder above: every option's
+// affinity weight, the tally, the tie-break and the fallback. An audit
+// confirmed all 38 options carry weights identical to OPTION_SIGNALS in
+// backend/app/decision_profile.py, so the server-side copy currently protects
+// nothing. That is acceptable only because this mapping is a stand-in and not
+// the real framework.
+//
+// It stops being acceptable the moment the formal interpretation engine
+// replaces deriveProvisionalStyle. Dropping that engine into this file would
+// publish the actual Decision Profile methodology in a public bundle, where it
+// is readable and reproducible by anyone.
+//
+// The client's job at that point is to SUBMIT ANSWERS AND RENDER THE RETURNED
+// PROFILE. It should hold no weights, no thresholds, no classification rules.
+// Move the call to the backend before the real engine is written, not after,
+// so the sensitive version is never the one that has to be retrofitted.
+
 import { QUESTIONS, STYLES, STYLE_ORDER } from './assessmentData';
 
 // Neutral, balanced default when we cannot infer anything (e.g. every answer

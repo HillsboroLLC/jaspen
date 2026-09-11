@@ -26,17 +26,12 @@
 # commitment is made.
 #
 # PROVENANCE LIMIT, read before building anything that shows "evidence":
-# nothing in this system retains WHICH input supported a judgment. Scoring
-# records a channel (`source`: conversation / connector / inferred / assumed)
-# and the model's own reasoning (`rationale`). It does not record the document,
-# the message, the connector field, or the figure that a score rested on.
-#
-# So a surface may say "Jaspen based this on connected data, and here is its
-# stated reasoning". It may NOT present a list of evidence held, cite a figure
-# to a source, or imply an audit trail exists. Doing so would manufacture
-# exactly the confident, unsupported content this module exists to expose, and
-# it would be indistinguishable from the failure the product is sold against.
-# Closing this properly means capturing evidence references during scoring.
+# scoring now retains deterministically verified references to exact passages
+# from the input. Those references prove which text Jaspen read; they do not
+# prove that the text is true. `evidence_role` further distinguishes affirmative
+# support from an explicit admission of uncertainty. The model's `source` and
+# `rationale` fields remain model claims and must never be presented as an audit
+# trail. Only a verified reference may be shown as source material.
 #
 # SCOPE LIMIT, load-bearing, do not let UI or marketing copy exceed it:
 # a confidence cap only ever LOWERS a judgment, so obtaining evidence can only
@@ -56,7 +51,11 @@ CONFIDENCE_CAPS = {"high": 100, "medium": 75, "low": 60, "assumed": 45}
 # How much of a criterion's weight counts toward the evidence-backed share at
 # each grade. High evidence counts fully. An assumption contributes nothing,
 # which is what makes it an assumption rather than a weak fact.
-EVIDENCE_FACTOR = {"high": 1.0, "medium": 0.75, "low": 0.4, "assumed": 0.0}
+# Coverage is deliberately binary even though confidence caps are graded. A
+# criterion either has a verified affirmative passage behind it or it does
+# not. Calling a low-confidence impression "40% evidence" was mathematically
+# tidy and operationally misleading.
+EVIDENCE_FACTOR = {"high": 1.0, "medium": 1.0, "low": 0.0, "assumed": 0.0}
 
 # Score band floors, mirroring the score_category thresholds in
 # routes/strategy.py. A swing that carries an option into a higher band is
@@ -99,6 +98,7 @@ SEVERITY_LABELS = {
 # Grades that count as evidence rather than assumption when a reader wants the
 # split as a binary rather than a graded share.
 EVIDENCED_GRADES = frozenset({"high", "medium"})
+_COVERAGE_META_CRITERIA = frozenset({"evidence_quality"})
 
 
 def _confidence_of(dim):
@@ -176,6 +176,31 @@ def criterion_entries(dimensions, weights):
     for key, dim, w, raw, capped, grade in usable:
         weight_norm = w / total_w
         resolution = _text(dim.get("what_would_improve"))
+        raw_references = (
+            dim.get("evidence_references")
+            if isinstance(dim.get("evidence_references"), list)
+            else []
+        )
+        # A located quote is provenance, but it may be an explicit admission
+        # of uncertainty rather than evidence for the decision case. Keep both
+        # kinds visible while allowing only affirmative support into coverage.
+        from app.evidence_references import evidence_role, reference_supports_decision
+        references = [
+            {
+                **ref,
+                # Re-derive this on every read. Older scorecards may carry a
+                # stored role from before gap detection was tightened; trusting
+                # that stale label would let an admission such as "nobody has
+                # reviewed the lease" continue to count as support forever.
+                "evidence_role": evidence_role(ref.get("excerpt")),
+            }
+            for ref in raw_references if isinstance(ref, dict)
+        ]
+        supporting_references = [
+            ref for ref in references if reference_supports_decision(ref)
+        ]
+        coverage_eligible = key not in _COVERAGE_META_CRITERIA
+        evidenced = bool(supporting_references) and grade in EVIDENCED_GRADES
         entries.append({
             "key": key,
             "label": _text(dim.get("label")) or key,
@@ -186,9 +211,10 @@ def criterion_entries(dimensions, weights):
             "cap": CONFIDENCE_CAPS.get(grade),
             "capped": raw > capped,
             "swing": round(weight_norm * (raw - capped), 2),
-            "evidence_factor": EVIDENCE_FACTOR.get(grade, 0.0),
-            "evidenced": grade in EVIDENCED_GRADES,
-            "resolvable": bool(resolution) and grade not in EVIDENCED_GRADES,
+            "evidence_factor": EVIDENCE_FACTOR.get(grade, 0.0) if evidenced else 0.0,
+            "evidenced": evidenced,
+            "coverage_eligible": coverage_eligible,
+            "resolvable": bool(resolution) and not evidenced,
             "resolution": resolution or None,
             # Passed through, not derived. Both are what the scoring pass
             # already recorded, and both are weaker than they may look:
@@ -199,10 +225,8 @@ def criterion_entries(dimensions, weights):
             #   rationale  the model's own account of why it scored this way.
             #              It is reasoning, not a record of evidence.
             #
-            # Neither is provenance. Nothing here retains which document,
-            # message, or connector field supported a judgment, so no surface
-            # may present these as an evidence trail. See PROVENANCE LIMIT at
-            # the top of this module.
+            # Neither is provenance. The verified references below are the
+            # only fields a surface may present as source material.
             "source": _text(dim.get("source")).lower() or None,
             "rationale": _text(dim.get("rationale")) or None,
             # Verified provenance, passed through untouched. Unlike `source`
@@ -210,7 +234,8 @@ def criterion_entries(dimensions, weights):
             # the input by deterministic code before being stored, so they are
             # the only thing in this record a reader may treat as evidence.
             # See app/evidence_references.py.
-            "evidence_references": dim.get("evidence_references") or [],
+            "evidence_references": references,
+            "supporting_evidence_references": supporting_references,
         })
     return entries
 
@@ -231,8 +256,12 @@ def evidence_ratio(entries):
     """
     if not entries:
         return None
-    backed = sum(e["weight"] * e["evidence_factor"] for e in entries)
-    return int(round(max(0.0, min(1.0, backed)) * 100))
+    eligible = [e for e in entries if e.get("coverage_eligible", True)]
+    total_weight = sum(e["weight"] for e in eligible)
+    if total_weight <= 0:
+        return 0
+    backed = sum(e["weight"] * e["evidence_factor"] for e in eligible)
+    return int(round(max(0.0, min(1.0, backed / total_weight)) * 100))
 
 
 def _severity(entry, score, leader_score):
@@ -284,15 +313,16 @@ def evidence_profile(dimensions, weights, *, score=None, leader_score=None):
     backed = evidence_ratio(entries)
     reversing = sum(1 for e in entries if e["severity"] == SEVERITY_REVERSING)
     material = sum(1 for e in entries if e["severity"] == SEVERITY_MATERIAL)
+    coverage_entries = [e for e in entries if e.get("coverage_eligible", True)]
     profile = {
         "evidence_backed_pct": backed,
         "assumption_dependent_pct": 100 - backed,
         "score": resolved_score,
         "criteria": entries,
         "counts": {
-            "total": len(entries),
-            "evidenced": sum(1 for e in entries if e["evidenced"]),
-            "assumption_dependent": sum(1 for e in entries if not e["evidenced"]),
+            "total": len(coverage_entries),
+            "evidenced": sum(1 for e in coverage_entries if e["evidenced"]),
+            "assumption_dependent": sum(1 for e in coverage_entries if not e["evidenced"]),
             "reversing": reversing,
             "material": material,
             # Severity tiers are exclusive, so a reversing assumption is not

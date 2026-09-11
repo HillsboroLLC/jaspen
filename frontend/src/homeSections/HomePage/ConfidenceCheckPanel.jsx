@@ -10,7 +10,7 @@
 //
 //   1. What Jaspen can already see        something gained, from one sentence
 //   2. The biggest gaps, and what closes them
-//   3. Why those gaps matter              the cap mechanic, the actual "aha"
+//   3. Why those gaps matter              what it means for the decision
 //   4. Context coverage                   supporting, and last
 //
 // Every number and sentence comes from the server's confidence_check payload.
@@ -45,7 +45,7 @@ const FRIENDLY_GAP_LABELS = {
   execution_plan: 'A timeline and the resources',
 };
 
-const CLAIM_KIND_ORDER = ['evidence_baseline', 'cap_consequence', 'blocking'];
+const CLAIM_KIND_ORDER = ['evidence_baseline', 'implication', 'blocking'];
 
 function gapLabel(gap) {
   return FRIENDLY_GAP_LABELS[gap.key] || gap.label;
@@ -117,11 +117,11 @@ export default function ConfidenceCheckPanel({ check }) {
         </div>
       )}
 
-      {/* 3. Why it matters. The mechanic, quoted from the server. */}
+      {/* 3. Why it matters. Quoted from the server, never composed here. */}
       {findings
-        .filter((claim) => claim.kind === 'cap_consequence')
+        .filter((claim) => claim.kind === 'implication')
         .map((claim) => (
-          <div className="ccp-mechanic" key={claim.kind}>
+          <div className="ccp-callout" key={claim.kind}>
             <p>{claim.text}</p>
           </div>
         ))}

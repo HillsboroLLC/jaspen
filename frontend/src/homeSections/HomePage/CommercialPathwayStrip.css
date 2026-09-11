@@ -1,0 +1,110 @@
+/* Commercial pathway strip — the hand-off from the free tools into pricing.
+   Site palette only: navy #161f3b, slate #5a6585, muted #8a93ad, warm shell
+   #faf9f7. No gradients, no imagery, no icons. */
+
+.cps {
+  /* The pricing section's own background, so at rest the two read as one zone
+     and the strip is the opening of the pricing conversation rather than a
+     separate band wedged in front of it. */
+  background: #faf9f7;
+  /* A fraction of a section's padding. This is connective tissue: it has to
+     carry the reader across a boundary without becoming somewhere to stop. */
+  padding: 52px 40px 44px;
+  border-top: 1px solid rgba(22, 31, 59, 0.07);
+}
+
+.cps-inner {
+  /* Matches .hsw-inner above and .pvb's container below, so the strip sits on
+     the same measure as its neighbours instead of announcing itself. */
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.cps-title {
+  margin: 0 0 28px;
+  text-align: center;
+  text-wrap: balance;
+  font-size: clamp(1.05rem, 1.9vw, 1.3rem);
+  font-weight: 720;
+  letter-spacing: -0.005em;
+  line-height: 1.3;
+  color: #161f3b;
+}
+
+/* ── The three paths ──────────────────────────────────────────────────────
+   Equal columns, identical treatment. No numbering, no accent on any one of
+   them, no growing weight left to right: a reader must not be able to infer
+   from the layout that one of these is the real product and the others are
+   samples of it. */
+.cps-paths {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 32px;
+}
+
+.cps-path {
+  min-width: 0;
+}
+
+/* Hairline dividers rather than cards, so this stays a band. */
+.cps-path + .cps-path {
+  padding-left: 32px;
+  border-left: 1px solid rgba(22, 31, 59, 0.08);
+}
+
+.cps-path-title {
+  margin: 0 0 7px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #161f3b;
+}
+
+.cps-path-body {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: #5a6585;
+}
+
+.cps-footer {
+  margin: 30px 0 0;
+  padding-top: 20px;
+  border-top: 1px solid rgba(22, 31, 59, 0.07);
+  text-align: center;
+  text-wrap: balance;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: #8a93ad;
+}
+
+/* Matches the breakpoint the section above it collapses at, so the page does
+   not change shape twice in a row. */
+@media (max-width: 860px) {
+  .cps {
+    padding: 44px 24px 38px;
+  }
+
+  .cps-paths {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+
+  .cps-path + .cps-path {
+    padding-left: 0;
+    border-left: 0;
+    padding-top: 24px;
+    border-top: 1px solid rgba(22, 31, 59, 0.08);
+  }
+
+  .cps-title {
+    margin-bottom: 24px;
+  }
+}
+
+@media (max-width: 520px) {
+  .cps {
+    padding: 38px 20px 34px;
+  }
+}

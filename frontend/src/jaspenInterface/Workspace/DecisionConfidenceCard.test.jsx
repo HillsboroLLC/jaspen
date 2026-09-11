@@ -47,18 +47,23 @@ function profile(overrides = {}) {
 
 describe('DecisionConfidenceCard', () => {
   describe('the summary layer', () => {
-    it('leads with the score and the evidence split', () => {
-      render(<DecisionConfidenceCard profile={profile()} score={66} scoreCategory="Good" />);
-      expect(screen.getByText('66')).toBeInTheDocument();
-      expect(screen.getByText('Good')).toBeInTheDocument();
+    it('leads with the evidence split', () => {
+      render(<DecisionConfidenceCard profile={profile()} summary={summary()} />);
       expect(screen.getByText('55%')).toBeInTheDocument();
       expect(screen.getByText('45%')).toBeInTheDocument();
+    });
+
+    it('never shows the option score, which rates the idea rather than the evidence', () => {
+      render(<DecisionConfidenceCard profile={profile()} summary={summary()} />);
+      expect(screen.queryByText('66')).not.toBeInTheDocument();
+      expect(screen.queryByText('Good')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Scores 66 of 100/)).not.toBeInTheDocument();
     });
 
     it('says what the ratio measures so it is not read as certainty', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(
-        screen.getByText('Evidence-backed share of the weighted decision'),
+        screen.getByText('Verified-support share of weighted decision criteria'),
       ).toBeInTheDocument();
     });
 
@@ -69,7 +74,8 @@ describe('DecisionConfidenceCard', () => {
       const briefing = container.querySelector('.dcc-briefing');
       expect(briefing).toBeInTheDocument();
       // Continuous prose, so it can be quoted straight into a room.
-      expect(briefing.textContent).toContain('Scores 66 of 100, rated Good.');
+      // The option's rating is not part of the confidence briefing.
+      expect(briefing.textContent).not.toContain('Scores 66 of 100');
       expect(briefing.textContent).toContain('Trails Consolidate the Reno hub by 8 points');
       expect(briefing.textContent).toContain('55% of the weighted decision rests on evidence');
       expect(briefing.textContent).toContain('Most of that exposure sits in one criterion');
@@ -102,7 +108,36 @@ describe('DecisionConfidenceCard', () => {
   });
 
   describe('the detail layer', () => {
-    it('shows every weighted criterion, none of it collapsed', () => {
+    it('does not repeat acceptance controls on every criterion', () => {
+      render(<DecisionConfidenceCard profile={profile()} />);
+      expect(screen.queryByRole('button', { name: /accept this exposure/i })).not.toBeInTheDocument();
+      expect(screen.queryByText('Consciously accepted exposure')).not.toBeInTheDocument();
+    });
+
+    it('shows who accepted an exposure, when, and their note', () => {
+      render(
+        <DecisionConfidenceCard
+          profile={profile()}
+          optionName="Phased automation"
+          acceptedExposures={[{
+            id: 'accepted-1',
+            accepted_at: '2026-09-08T14:00:00Z',
+            accepted_by: { name: 'Lydia Bailey', email: 'lydia@example.com' },
+            note: 'Proceed with a validation checkpoint.',
+            exposure: {
+              kind: 'criterion',
+              option_name: 'Phased automation',
+              target_key: 'fin',
+            },
+          }]}
+        />,
+      );
+
+      expect(screen.getByText('Accepted by Lydia Bailey')).toBeInTheDocument();
+      expect(screen.getByText('Proceed with a validation checkpoint.')).toBeInTheDocument();
+    });
+
+    it('shows every weighted criterion as a compact drill-down', () => {
       const many = profile({
         criteria: [
           criterion(),
@@ -119,6 +154,7 @@ describe('DecisionConfidenceCard', () => {
       expect(detail.getByText('Financial viability')).toBeInTheDocument();
       expect(detail.getByText('Execution readiness')).toBeInTheDocument();
       expect(detail.getByText('Market opportunity')).toBeInTheDocument();
+      expect(screen.getAllByText('View evidence & reasoning')).toHaveLength(3);
       // The old "Show N criteria" affordance is gone.
       expect(screen.queryByRole('button', { name: /show \d+ criteri/i })).not.toBeInTheDocument();
     });
@@ -126,22 +162,49 @@ describe('DecisionConfidenceCard', () => {
     it('separates what Jaspen had from what is still needed', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(screen.getByText("Jaspen's assessment")).toBeInTheDocument();
-      expect(screen.getByText('Still unsupported')).toBeInTheDocument();
-      expect(screen.getByText('How to improve this')).toBeInTheDocument();
+      expect(screen.getByText('What remains uncertain')).toBeInTheDocument();
+      expect(screen.getAllByText('What would help:').length).toBeGreaterThan(0);
+    });
+
+    it('never calls a gap-only criterion moderate evidence', () => {
+      const gapOnly = criterion({
+        confidence: 'medium',
+        evidenced: false,
+        supporting_evidence_references: [],
+        evidence_references: [{
+          id: 'gap-1',
+          excerpt: 'Nobody has reviewed the lease for an exit clause.',
+          evidence_role: 'gap',
+        }],
+      });
+      render(<DecisionConfidenceCard profile={profile({ criteria: [gapOnly] })} />);
+
+      expect(screen.getAllByText('No verified support').length).toBeGreaterThan(0);
+      expect(screen.queryByText('Moderate evidence')).not.toBeInTheDocument();
+      expect(screen.getByText('No affirmative verified input supports this criterion yet.')).toBeInTheDocument();
     });
 
     it('reports the weight, contribution and exposure for a criterion', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(screen.getByText('25% of the decision')).toBeInTheDocument();
-      expect(screen.getByText('contributes 45')).toBeInTheDocument();
+      expect(screen.getByText('criterion score 45/100')).toBeInTheDocument();
       expect(screen.getByText('8.8 points of exposure')).toBeInTheDocument();
     });
 
-    it('states the consequence of resolving each criterion', () => {
+    it('states why better evidence matters when the answer could move', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(
-        screen.getByText('Resolving this could materially change the score.'),
+        screen.getByText('Better evidence here could materially change the score.'),
       ).toBeInTheDocument();
+    });
+
+    it('does not turn a zero score swing into a dead-end resolution message', () => {
+      render(<DecisionConfidenceCard profile={profile({
+        criteria: [criterion({ severity: 'none', resolution: 'Validate the operating assumption.' })],
+      })} />);
+      expect(screen.getAllByText('Validate the operating assumption.').length).toBeGreaterThan(0);
+      expect(screen.queryByText(/would not move the score today/i)).toBeNull();
+      expect(screen.queryByText('Why this matters:')).toBeNull();
     });
 
     it('never names a severity tier on screen', () => {
@@ -167,11 +230,16 @@ describe('DecisionConfidenceCard', () => {
         locator: { message_index: 0, role: 'user', start: 89, end: 140 },
       }])} />);
 
-      expect(screen.getByText('Evidence used')).toBeInTheDocument();
+      // Never "Evidence used": a stored reference proves Jaspen read the
+      // passage, not that the passage is evidence. On a thin criterion it is
+      // often the user saying they have none.
+      expect(screen.queryByText('Evidence used')).not.toBeInTheDocument();
+      expect(screen.getByText('Verified input passages')).toBeInTheDocument();
+      // Twice: once in the summary ledger, once in the criterion detail.
       expect(
-        screen.getByText('paying roughly $40,000 a month in carrier penalties'),
-      ).toBeInTheDocument();
-      expect(screen.getByText('From your input')).toBeInTheDocument();
+        screen.getAllByText('paying roughly $40,000 a month in carrier penalties'),
+      ).toHaveLength(2);
+      expect(screen.getByText(/From your input · supports this dimension/)).toBeInTheDocument();
       // Offsets are provenance, not reading material.
       expect(screen.queryByText(/chars 89/)).not.toBeInTheDocument();
       expect(screen.queryByText(/message 0/)).not.toBeInTheDocument();
@@ -192,7 +260,7 @@ describe('DecisionConfidenceCard', () => {
         id: 'ev_2', kind: 'attachment', excerpt: 'Penalty accrual: $40,000/mo',
         locator: { filename: 'Cost Model.xlsx', location: { sheet: 'Assumptions', cell: 'F18' } },
       }])} />);
-      expect(screen.getByText('Cost Model.xlsx · Assumptions · F18')).toBeInTheDocument();
+      expect(screen.getByText(/Cost Model\.xlsx · Assumptions · F18 · supports this dimension/)).toBeInTheDocument();
     });
 
     it('shows when connector evidence was retrieved', () => {
@@ -203,7 +271,7 @@ describe('DecisionConfidenceCard', () => {
         locator: { system: 'netsuite', field: 'monthly_penalty', retrieved_at: '2026-08-29T10:00:00' },
       }])} />);
       expect(
-        screen.getByText('NETSUITE · monthly_penalty · retrieved 2026-08-29'),
+        screen.getByText(/NETSUITE · monthly_penalty · retrieved 2026-08-29 · supports this dimension/),
       ).toBeInTheDocument();
     });
 
@@ -220,7 +288,7 @@ describe('DecisionConfidenceCard', () => {
     it('labels the basis as reasoning, never as an evidence record', () => {
       render(<DecisionConfidenceCard profile={profile()} />);
       expect(
-        screen.getByText(/nothing here should be read as a source citation or an audit trail/),
+        screen.getByText(/They do not independently prove that the source statement is true/),
       ).toBeInTheDocument();
     });
 
@@ -292,7 +360,7 @@ describe('DecisionConfidenceCard', () => {
     it('marks edited copy rather than passing it off as the system finding', () => {
       render(<DecisionConfidenceCard profile={edited()} />);
       expect(screen.getByText('Edited')).toBeInTheDocument();
-      expect(screen.getByText('Ops confirmed this verbally on 12 Aug.')).toBeInTheDocument();
+      expect(screen.getAllByText('Ops confirmed this verbally on 12 Aug.')).toHaveLength(2);
     });
 
     it('keeps Jaspen\'s original wording recoverable', () => {
@@ -318,8 +386,8 @@ describe('DecisionConfidenceCard', () => {
     });
 
     it('tells the writer what an edit does not change', () => {
-      render(<DecisionConfidenceCard profile={profile()} editable onEditNarrative={jest.fn()} />);
-      fireEvent.click(screen.getByText(/The penalty figure was described/));
+      const { container } = render(<DecisionConfidenceCard profile={profile()} editable onEditNarrative={jest.fn()} />);
+      fireEvent.click(container.querySelector('.dcc-basis-text'));
       expect(
         screen.getByText('Wording only. This does not change the score, grade, or exposure.'),
       ).toBeInTheDocument();
@@ -370,21 +438,21 @@ describe('DecisionConfidenceCard', () => {
     // dead end: the reader is told the score could move and not told how.
     it('falls back to an honest generic when scoring named no action', () => {
       render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: null, confidence: 'assumed' })] })} />);
-      expect(screen.getByText('How to improve this')).toBeInTheDocument();
+      expect(screen.getAllByText('What would help:').length).toBeGreaterThan(0);
       expect(
-        screen.getByText(/Nothing verifiable supports this yet/),
+        screen.getByText(/best available source or analysis that could test this assumption/),
       ).toBeInTheDocument();
     });
 
     it("prefers scoring's own suggestion over the fallback", () => {
       render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: 'Connect NetSuite', confidence: 'assumed' })] })} />);
-      expect(screen.getByText('Connect NetSuite')).toBeInTheDocument();
-      expect(screen.queryByText(/Nothing verifiable supports this yet/)).toBeNull();
+      expect(screen.getAllByText('Connect NetSuite')).toHaveLength(2);
+      expect(screen.queryByText(/best available source or analysis that could test this assumption/)).toBeNull();
     });
 
     it('offers nothing to improve on a fully evidenced criterion', () => {
       render(<DecisionConfidenceCard profile={profile({ criteria: [criterion({ resolution: null, confidence: 'high' })] })} />);
-      expect(screen.queryByText('How to improve this')).toBeNull();
+      expect(screen.queryByText('What would help:')).toBeNull();
     });
   });
 });

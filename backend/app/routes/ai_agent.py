@@ -5131,6 +5131,16 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
     if not thread_id:
         return _tool_error("thread_id is required for mutation tools.", code="missing_thread")
 
+    # Freeze the intake baseline before the agent begins scoring
+    # (docs/DECISION_IMPACT_REPORT_SPEC.md §3.4). This is the agent's single
+    # chokepoint into scoring, which is why the whole conversational path costs
+    # one call here rather than a hook per tool. Best effort and idempotent: it
+    # cannot fail a tool, and a thread that also reaches a scoring route seals
+    # once, at whichever came first.
+    from ..decision_impact import SCORING_ENTRY_TOOLS, seal_baseline_on_analysis_start
+    if tool_name in SCORING_ENTRY_TOOLS:
+        seal_baseline_on_analysis_start(user, str(thread_id))
+
     plan_key = effective_plan_key(user, current_app.config)
     tool_input = tool_input if isinstance(tool_input, dict) else {}
 
@@ -5572,6 +5582,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             if isinstance(updated, dict):
                 keep_id = str(updated.get("id") or updated.get("analysis_id") or rescore_id)
                 upsert_scorecard(
+                    analysis_pass=True,   # a real scoring pass: may write ledger events
                     user_id=user_id,
                     thread_id=thread_id,
                     payload=updated,
@@ -5600,6 +5611,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
 
         try:
             upsert_scorecard(
+                analysis_pass=True,   # a real scoring pass: may write ledger events
                 user_id=user_id,
                 thread_id=thread_id,
                 payload=scorecard,
@@ -6234,6 +6246,23 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         _stamp_wbs_identity(normalized_wbs, scorecard, fallback_id=exec_scorecard_id)
         exec_scorecard_id = str(normalized_wbs.get("scorecard_id") or exec_scorecard_id or "").strip() or None
         _store_thread_wbs(thread_data, exec_scorecard_id, normalized_wbs)
+        # Dependencies Jaspen authored in a GENERATED plan (spec §4.3). The
+        # plan-editing routes deliberately do not call this: a dependency the
+        # user typed into their own plan is theirs, not a Jaspen finding.
+        # Never allowed to fail the request.
+        try:
+            from ..decision_ledger import record_generated_plan
+            record_generated_plan(
+                user_id=user_id,
+                thread_id=thread_id,
+                plan=normalized_wbs,
+                organization_id=None,
+            )
+        except Exception:  # noqa: BLE001
+            current_app.logger.warning(
+                'decision_ledger: could not record generated plan for thread %s',
+                thread_id, exc_info=True,
+            )
         all_data[thread_id] = thread_data
         _save_scenarios(user_id, all_data)
         sync_status = {"status": "skipped", "reason": "no_pm_tool_selected"}

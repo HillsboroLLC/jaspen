@@ -11,6 +11,9 @@
 # lessons learned → [future: Library, pattern discovery, decision intelligence].
 
 from datetime import datetime
+import hashlib
+import json
+import uuid
 
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -114,6 +117,7 @@ def _collect_peer_scorecards(session, thread_data, *, user_id=None, thread_id=No
             'executive_summary': _clip(card.get('executive_summary')),
             'key_insights': card.get('key_insights') if isinstance(card.get('key_insights'), list) else [],
             'top_risks': card.get('top_risks') if isinstance(card.get('top_risks'), list) else [],
+            'evidence_profile': card.get('evidence_profile') if isinstance(card.get('evidence_profile'), dict) else {},
             'assumptions': card.get('assumptions') if isinstance(card.get('assumptions'), list) else [],
             'generated_at': card.get('timestamp') or card.get('createdAt'),
         })
@@ -268,6 +272,7 @@ def create_or_refresh_record(user, thread_id):
         record_json['schema_version'] = payload['schema_version']
         existing.record = record_json
         flag_modified(existing, 'record')
+        existing.schema_version = DECISION_RECORD_SCHEMA_VERSION
         existing.title = promoted['title']
         if not existing.decision_statement:
             existing.decision_statement = promoted['decision_statement']
@@ -327,6 +332,95 @@ def append_lesson(record, lesson):
     record.updated_at = datetime.utcnow()
     db.session.commit()
     return record
+
+
+def _exposure_snapshot(record, kind, option_name, target_key):
+    """Resolve an exposure from the server-owned Decision Record."""
+    payload = record.record if isinstance(record.record, dict) else {}
+    cards = payload.get('scorecards') if isinstance(payload.get('scorecards'), list) else []
+    card = next((item for item in cards if isinstance(item, dict) and (
+        str(item.get('id') or '') == str(option_name or '')
+        or str(item.get('name') or '') == str(option_name or '')
+    )), None)
+    if not card:
+        raise LookupError('The selected option is not present in the Decision Record')
+
+    if kind == 'criterion':
+        profile = card.get('evidence_profile') if isinstance(card.get('evidence_profile'), dict) else {}
+        criteria = profile.get('criteria') if isinstance(profile.get('criteria'), list) else []
+        item = next((entry for entry in criteria if isinstance(entry, dict)
+                     and str(entry.get('key') or '') == str(target_key or '')), None)
+        if not item:
+            raise LookupError('The selected criterion exposure is not present in the Decision Record')
+        if not item.get('swing') and item.get('evidenced') is not False:
+            raise ValueError('Only an unresolved criterion exposure can be accepted')
+        return {
+            'kind': kind,
+            'option_id': card.get('id'),
+            'option_name': card.get('name'),
+            'target_key': item.get('key'),
+            'target_label': item.get('label') or item.get('key'),
+            'confidence': item.get('confidence'),
+            'weight': item.get('weight'),
+            'score': item.get('score'),
+            'exposure_points': item.get('swing'),
+            'severity': item.get('severity'),
+            'what_would_improve': item.get('resolution'),
+        }
+
+    if kind == 'risk':
+        risks = card.get('top_risks') if isinstance(card.get('top_risks'), list) else []
+        item = next((entry for entry in risks if isinstance(entry, dict)
+                     and str(entry.get('id') or '') == str(target_key or '')), None)
+        if not item:
+            raise LookupError('The selected residual risk is not present in the Decision Record')
+        if not item.get('residual_risk'):
+            raise ValueError('Only a risk with a recorded residual level can be accepted')
+        return {
+            'kind': kind,
+            'option_id': card.get('id'),
+            'option_name': card.get('name'),
+            'target_key': item.get('id'),
+            'target_label': item.get('risk') or 'Recorded risk',
+            'likelihood': item.get('probability'),
+            'impact': item.get('impact_dollars') or item.get('impact'),
+            'mitigation': item.get('mitigation'),
+            'residual_risk': item.get('residual_risk'),
+        }
+
+    raise ValueError('exposure kind must be criterion or risk')
+
+
+def accept_exposure(record, user, *, kind, option_name, target_key, note=None):
+    """Append an explicit, attributable acceptance of the current exposure."""
+    snapshot = _exposure_snapshot(record, kind, option_name, target_key)
+    fingerprint = hashlib.sha256(
+        json.dumps(snapshot, sort_keys=True, separators=(',', ':'), default=str).encode('utf-8')
+    ).hexdigest()
+    entries = list(record.accepted_exposures or [])
+    existing = next((entry for entry in entries
+                     if isinstance(entry, dict) and entry.get('fingerprint') == fingerprint), None)
+    if existing:
+        return existing, False
+
+    entry = {
+        'id': str(uuid.uuid4()),
+        'fingerprint': fingerprint,
+        'accepted_at': datetime.utcnow().isoformat(),
+        'accepted_by': {
+            'user_id': str(user.id),
+            'name': _clip(getattr(user, 'name', ''), 255),
+            'email': _clip(getattr(user, 'email', ''), 255),
+        },
+        'note': _clip(note, 1000) or None,
+        'exposure': snapshot,
+    }
+    entries.append(entry)
+    record.accepted_exposures = entries
+    flag_modified(record, 'accepted_exposures')
+    record.updated_at = datetime.utcnow()
+    db.session.commit()
+    return entry, True
 
 
 def set_library_consent(record, level):

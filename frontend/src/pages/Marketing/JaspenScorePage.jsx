@@ -6,7 +6,10 @@ import Seo from '../../shared/components/Seo';
 // SEO pillar page for the branded term "Jaspen Score" and the broader intent
 // "how to score / prioritize decisions". Content is accurate to the Decision
 // Intelligence Framework and Constitution: six weighted dimensions, criteria
-// the user owns, confidence caps enforced in code, deterministic rollup.
+// EDITING RULE: expose the questions Jaspen answers, never the mechanics it
+// uses to answer them. This page previously published the contribution
+// ceiling for every evidence grade as live data, which is the real constant
+// table from the scoring engine.
 // Reuses existing MarketingPages.css classes. No em dashes, no emojis, site
 // palette only.
 
@@ -21,10 +24,10 @@ const DIMENSIONS = [
 ];
 
 const CONFIDENCE = [
-  { level: 'High', cap: 100, meaning: 'Backed by evidence in front of you.' },
-  { level: 'Medium', cap: 75, meaning: 'A reasonable inference from what you know.' },
-  { level: 'Low', cap: 60, meaning: 'Limited signal so far.' },
-  { level: 'Assumed', cap: 45, meaning: 'No direct evidence yet, so it is labeled and bounded.' },
+  { level: 'Strong evidence', meaning: 'Backed by something you can point to.' },
+  { level: 'Moderate evidence', meaning: 'A reasonable inference from what you know.' },
+  { level: 'Thin evidence', meaning: 'Limited signal so far.' },
+  { level: 'Assumed', meaning: 'Nothing verifiable behind it yet, and labelled as such.' },
 ];
 
 export default function JaspenScorePage() {
@@ -114,7 +117,7 @@ export default function JaspenScorePage() {
         <p className="section-lead">
           Every decision is different, so the criteria should be too. Jaspen proposes a sensible
           starter rubric based on your objective, then you approve it, edit it, or replace it
-          with your own. You can define up to twelve weighted criteria that capture exactly what
+          with your own. You can define the weighted criteria that capture exactly what
           matters for this call. Jaspen proposes. It never imposes.
         </p>
         <div className="score-pillars-grid">
@@ -153,18 +156,18 @@ export default function JaspenScorePage() {
       </section>
 
       <section className="marketing-section">
-        <h2>Confidence caps: enthusiasm cannot outrun evidence</h2>
+        <h2>A confident argument is not the same as a supported one</h2>
         <p className="section-lead">
-          Every dimension carries a confidence level, and that level caps how much it can
-          contribute before weighting. A confident guess with no evidence behind it is held to 45
-          points, no matter how good the pitch sounds. Better evidence raises the ceiling.
+          Every criterion carries an evidence level, and you can see it. A well-argued case with
+          nothing behind it is labelled as an assumption rather than counted as a finding, so you
+          always know which parts of the recommendation would survive scrutiny and which parts
+          still need something behind them.
         </p>
         <div className="score-pillars-grid">
           {CONFIDENCE.map((c) => (
             <article key={c.level} className="score-pillar-card">
               <div className="score-pillar-head">
                 <h3>{c.level}</h3>
-                <span>{c.cap}</span>
               </div>
               <p>{c.meaning}</p>
             </article>

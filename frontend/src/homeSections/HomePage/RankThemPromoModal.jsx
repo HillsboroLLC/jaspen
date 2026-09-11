@@ -13,7 +13,7 @@ const REAPPEAR_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 // Fallbacks only. The server sends a frequency block, and it wins when present
 // so pacing can be retuned without a deploy.
 const APPEAR_AFTER_MS = 12000;
-const HEADLINE = 'RANK THEM';
+const HEADLINE = 'PRESSURE-TEST THE PLAN';
 
 function readTimestamp(key) {
   try {
@@ -173,10 +173,12 @@ export default function RankThemPromoModal() {
         <p className="rank-them-eyebrow">Limited-time offer</p>
         <h2 id="rank-them-title">{HEADLINE}</h2>
         <p id="rank-them-body">
-          Limited time. Limited resources. Too many priorities.
+          Before you commit time, money, or attention, expose the assumptions,
+          blind spots, and weak points that could create problems later.
         </p>
         <p className="rank-them-body-detail">
-          Rank your initiatives so you know what to focus on first, what can wait, and why.
+          Use Jaspen to test the reasoning behind your decision, see where you are
+          exposed, and strengthen the plan before you move.
         </p>
         <p className="rank-them-price">
           <strong>300,000 AI-powered usage credits for $999.</strong>
@@ -184,7 +186,7 @@ export default function RankThemPromoModal() {
         </p>
         <div className="rank-them-actions">
           <button type="button" className="rank-them-primary" onClick={goToOffer}>
-            {'Let\u2019s rank my priorities'}
+            Pressure-test my decision
           </button>
           <button type="button" className="rank-them-secondary" onClick={() => close({ permanently: true })}>
             Not now

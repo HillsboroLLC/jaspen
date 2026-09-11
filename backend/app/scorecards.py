@@ -3,6 +3,8 @@
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from flask import current_app
+
 from . import db
 from .models import Scorecard
 
@@ -48,13 +50,29 @@ def upsert_scorecard(
     session_id=None,
     evaluation_id=None,
     source='native',
+    analysis_pass=False,
 ):
+    """Persist one scorecard.
+
+    `analysis_pass` says this write is a genuine analytical scoring pass rather
+    than a rename, an in-place prose edit, a display override, or a backfill.
+    Only a scoring pass may produce challenge-ledger entries.
+
+    It defaults to False on purpose. Ten call sites reach this function and
+    only three of them are analysis; a default of True would quietly turn
+    every backfill and every cosmetic edit into evidence of intellectual work,
+    which is precisely the inflation the ledger exists to avoid. A caller that
+    forgets to pass it under-reports, which is the safe direction.
+    """
     if not isinstance(payload, dict):
         raise ValueError('scorecard payload must be an object')
     scorecard_id = str(payload.get('id') or payload.get('analysis_id') or '').strip()
     if not scorecard_id:
         raise ValueError('scorecard payload requires a stable id')
     row = Scorecard.query.filter_by(id=scorecard_id, user_id=str(user_id)).first()
+    # The previously persisted payload, read BEFORE anything overwrites it.
+    # Without this snapshot there is no "before" to compare a grade against.
+    previous = dict(row.data) if row is not None and isinstance(row.data, dict) else {}
     if row is None:
         row = Scorecard(id=scorecard_id, user_id=str(user_id))
         db.session.add(row)
@@ -93,6 +111,30 @@ def upsert_scorecard(
     }
     row.source = source
     row.archived_at = None
+
+    # Emitted here because this is the only point holding BOTH the dimensions
+    # that were persisted and the ones replacing them — `previous` is captured
+    # above, before row.data is overwritten. A grade transition is invisible
+    # anywhere else.
+    #
+    # Never allowed to break a save: a decision the user is waiting on outranks
+    # a ledger row, and an absent event only ever costs Jaspen credit.
+    if analysis_pass:
+        try:
+            from .decision_ledger import record_scoring_pass
+            record_scoring_pass(
+                user_id=user_id,
+                thread_id=thread_id,
+                scorecard_id=scorecard_id,
+                previous_payload=previous,
+                new_payload=normalized,
+                organization_id=organization_id,
+            )
+        except Exception:  # noqa: BLE001 — see above
+            current_app.logger.warning(
+                'decision_ledger: could not record scoring pass for %s', scorecard_id,
+                exc_info=True,
+            )
     return row
 
 

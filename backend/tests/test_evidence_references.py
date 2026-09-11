@@ -18,6 +18,7 @@ from app.evidence_references import (
     conversation_reference,
     locate_excerpt,
     verify_claimed_evidence,
+    evidence_role,
 )
 
 
@@ -146,6 +147,12 @@ def test_no_claims_yields_no_references_rather_than_an_error():
     assert verify_claimed_evidence("not a list", HISTORY) == []
 
 
+def test_explicit_absence_and_unreviewed_work_are_gap_evidence():
+    assert evidence_role("We have no labor recruiting study for Atlanta.") == "gap"
+    assert evidence_role("Nobody has reviewed the proposed lease for an exit clause.") == "gap"
+    assert evidence_role("Six months of signed invoices average $31,500.") == "support"
+
+
 def test_plain_text_is_verifiable_the_same_way_a_transcript_is():
     """Scoring is handed a description string, not a transcript.
 
@@ -258,7 +265,7 @@ def test_every_path_produces_the_same_shape():
     ]
     for reference in references:
         assert set(reference) == {
-            "id", "kind", "criterion", "captured_at", "excerpt", "locator",
+            "id", "kind", "criterion", "captured_at", "excerpt", "evidence_role", "locator",
         }
         assert reference["id"].startswith("ev_")
         assert reference["excerpt"]

@@ -30,7 +30,7 @@ from . import db
 
 # Schema version for the JSON payload in `record`. Bump when the canonical
 # field set changes shape; readers must tolerate older versions.
-DECISION_RECORD_SCHEMA_VERSION = 1
+DECISION_RECORD_SCHEMA_VERSION = 2
 
 # Lifecycle vocabulary (promoted `status` column):
 #   in_analysis      — record created; decision still being worked
@@ -94,6 +94,10 @@ class DecisionRecord(db.Model):
     final_decision = db.Column(db.Text, nullable=True)
     outcomes = db.Column(db.JSON, nullable=False, default=list)          # [{summary, recorded_at, ...}]
     lessons_learned = db.Column(db.JSON, nullable=False, default=list)   # [{lesson, recorded_at, ...}]
+    # Explicit human attestations. Jaspen may identify an exposure, but only a
+    # signed-in person can accept it. Entries are append-only snapshots so a
+    # later rescore cannot rewrite what was consciously accepted at the time.
+    accepted_exposures = db.Column(db.JSON, nullable=False, default=list)
 
     # Search/retrieval metadata (future: Library, AI search, dashboards).
     tags = db.Column(db.JSON, nullable=False, default=list)
@@ -123,6 +127,7 @@ class DecisionRecord(db.Model):
             'final_decision': self.final_decision,
             'outcomes': self.outcomes if isinstance(self.outcomes, list) else [],
             'lessons_learned': self.lessons_learned if isinstance(self.lessons_learned, list) else [],
+            'accepted_exposures': self.accepted_exposures if isinstance(self.accepted_exposures, list) else [],
             'tags': self.tags if isinstance(self.tags, list) else [],
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,

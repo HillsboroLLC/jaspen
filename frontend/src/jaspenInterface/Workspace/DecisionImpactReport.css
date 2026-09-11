@@ -1,0 +1,280 @@
+/* Decision Impact Report.
+   App palette: navy #161f3b, slate #5a6585, muted #8a93ad, rose #a0036c,
+   line #d6e9ef, ice #eff9fc. Solid colours only, no gradients. */
+
+.dir {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 4px 2px 8px;
+  text-align: left;
+}
+
+.dir-head {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dir-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #161f3b;
+}
+
+.dir-provenance {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #8a93ad;
+}
+
+.dir-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid #d6e9ef;
+}
+
+.dir-block-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #161f3b;
+}
+
+.dir-block-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #5a6585;
+}
+
+.dir-executive {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0;
+}
+
+.dir-executive-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.dir-audit {
+  border-top: 1px solid #d6e9ef;
+  padding-top: 12px;
+}
+
+.dir-audit > summary {
+  cursor: pointer;
+  color: #5a6585;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dir-audit > summary:hover {
+  color: #a0036c;
+}
+
+.dir-audit-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-top: 16px;
+}
+
+.dir-sub {
+  margin: 10px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8a93ad;
+}
+
+.dir-empty {
+  margin: 0;
+  font-size: 13px;
+  color: #8a93ad;
+}
+
+/* ── State lists (Before / After) ───────────────────────────────────────── */
+
+.dir-state,
+.dir-deltas,
+.dir-reasons,
+.dir-activity {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dir-state-row,
+.dir-delta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid #eff9fc;
+  font-size: 13px;
+}
+
+.dir-state-label,
+.dir-delta-label {
+  flex: 1 1 auto;
+  color: #5a6585;
+}
+
+.dir-state-value,
+.dir-delta-figures {
+  font-weight: 600;
+  color: #161f3b;
+  font-variant-numeric: tabular-nums;
+}
+
+.dir-state-basis {
+  font-size: 11px;
+  color: #8a93ad;
+}
+
+/* A measure that held still is reported at the same weight as one that
+   moved — quieter in colour, not smaller or hidden. */
+.dir-delta-flat .dir-delta-figures {
+  color: #5a6585;
+  font-weight: 500;
+}
+
+.dir-delta-threshold {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: #8a93ad;
+}
+
+.dir-reasons li,
+.dir-activity li {
+  padding: 5px 0;
+  font-size: 13px;
+  color: #5a6585;
+}
+
+.dir-activity strong {
+  color: #161f3b;
+  font-variant-numeric: tabular-nums;
+}
+
+.dir-reason {
+  color: #8a93ad;
+}
+
+/* ── Decision story ─────────────────────────────────────────────────────
+   One decision, read in order. Stacked steps match the report's normal
+   reading rhythm and leave enough width for evidence descriptions. */
+.dir-story {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.dir-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px 0;
+  border-top: 1px solid #d6e9ef;
+}
+
+.dir-step-label {
+  margin: 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #a0036c;
+}
+
+/* Narrow columns cannot hold label and figures on one line without the
+   numbers colliding with the text. */
+.dir-delta-stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+/* ── Verdict ────────────────────────────────────────────────────────────── */
+
+.dir-verdict {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  background: transparent;
+  color: #5a6585;
+}
+
+.dir-verdict-material {
+  color: #161f3b;
+}
+
+.dir-verdict-limited {
+  color: #5a6585;
+}
+
+/* Same size, same weight, same prominence. Not softened, not buried. */
+.dir-verdict-none {
+  color: #5a6585;
+}
+
+/* The qualification on a reconstructed baseline. Bordered and full width so
+   it reads before the sections it qualifies, not as a footnote beneath them. */
+.dir-reconstructed {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #d6e9ef;
+  border-left: 3px solid #a0036c;
+  border-radius: 6px;
+  background: #eff9fc;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #5a6585;
+}
+
+/* Same weight as every other verdict. It is a real answer, not a failure. */
+.dir-verdict-unverified {
+  color: #a0036c;
+}
+
+.dir-thresholds {
+  margin: 12px 0 0;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 1.7;
+  color: #8a93ad;
+}
+
+.dir-narrative {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #334155;
+}
+
+@media (max-width: 680px) {
+  .dir-executive-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

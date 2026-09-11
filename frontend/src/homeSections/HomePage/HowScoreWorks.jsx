@@ -1,24 +1,29 @@
 import React from 'react';
 import './HowScoreWorks.css';
 
-// Trust section: prove the methodology by showing a single score decompose,
-// including the confidence-cap moment (Constitution Art. 7 + 9). Deliberately
-// a new visual device (a "score anatomy" ledger with monospace numerals), not
-// a reuse of the BeforeAfter table or the WhyNotChatGPT card grid. Site colors
-// only, no gradients, no emojis, Font Awesome icons only. The data is a labeled
-// EXAMPLE, not a real customer's figures.
+// Trust section: show what a score RESTS ON, not how the score is produced.
+//
+// WHAT THIS SECTION MAY AND MAY NOT SAY
+//
+// It answers the questions a buyer cares about: how much of this rests on
+// evidence, where are we assuming, which assumption matters most, what would
+// strengthen it. Those are reasons to buy.
+//
+// It must NOT publish the machinery that answers them. An earlier version
+// rendered the confidence ceiling for every grade as live data (100 / 75 / 60
+// and 45), the min(judged, ceiling) rule, and worked arithmetic reconciling to
+// the overall. Those numbers are the real constants from the scoring engine, so
+// the marketing site was handing a competent reader the implementation.
+//
+// Rule for anyone editing this file: expose the questions Jaspen answers, never
+// the mechanics it uses to answer them. No ceilings, no formulas, no
+// judged-versus-final arithmetic.
 
-// raw = the model's judged 0-100; cap = the confidence ceiling; weight = the
-// user-owned importance. Contribution uses min(raw, cap). One row is capped on
-// purpose to teach the mechanism.
-// Weights sum to 1.00 and the capped, weighted average lands on exactly 68, so
-// the displayed overall genuinely derives from these rows (audit-safe):
-// 88*.30 + 45*.25 + 74*.25 + 60*.20 = 68.15 -> 68 (Good, >=60).
-const DIMENSIONS = [
-  { name: 'Market opportunity', raw: 88, confidence: 'High', cap: 100, weight: 0.30 },
-  { name: 'Financial viability', raw: 80, confidence: 'Assumed', cap: 45, weight: 0.25, flag: true },
-  { name: 'Execution readiness', raw: 74, confidence: 'Medium', cap: 75, weight: 0.25 },
-  { name: 'Evidence quality', raw: 60, confidence: 'Low', cap: 60, weight: 0.20 },
+const CRITERIA = [
+  { name: 'Market opportunity', evidence: 'Strong evidence', weight: 0.30, share: 88 },
+  { name: 'Financial viability', evidence: 'Assumed', weight: 0.25, share: 34, flag: true },
+  { name: 'Execution readiness', evidence: 'Moderate evidence', weight: 0.25, share: 66 },
+  { name: 'Evidence quality', evidence: 'Thin evidence', weight: 0.20, share: 52 },
 ];
 
 export default function HowScoreWorks() {
@@ -27,20 +32,15 @@ export default function HowScoreWorks() {
       <div className="hsw-inner">
         <div className="hsw-header">
           <p className="hsw-eyebrow">How the score works</p>
-          {/* Section deliberately otherwise unchanged. The worked example below,
-              judged 80 and capped at 45, is the most persuasive thing on the
-              site and needs no rewrite. Only the heading moves, from describing
-              a capability to naming what the reader gets. */}
-          <h2 className="hsw-heading">Every number tells you how much of it is evidence.</h2>
+          <h2 className="hsw-heading">See what the score rests on.</h2>
           <p className="hsw-sub">
-            A Jaspen score is never a single opaque figure. It is assembled from parts you can
-            inspect: what the evidence says, how much each factor matters to you, and how sure
-            the evidence actually is.
+            Every recommendation is accompanied by the evidence, assumptions and reasoning
+            behind it, so you can understand where the decision is strong and where more
+            information could change the answer.
           </p>
         </div>
 
         <div className="hsw-anatomy">
-          {/* Left: the computed result */}
           <aside className="hsw-summary">
             <p className="hsw-summary-label">Overall score</p>
             <p className="hsw-summary-score">
@@ -49,53 +49,45 @@ export default function HowScoreWorks() {
             </p>
             <span className="hsw-summary-pill">Good</span>
 
+            <p className="hsw-summary-split">
+              <strong>61%</strong> of this decision rests on evidence.
+              <br />
+              <strong>39%</strong> still rests on assumptions.
+            </p>
+
             <p className="hsw-summary-foot">
               <i className="fa-solid fa-arrows-rotate" aria-hidden="true" />
-              Same inputs, same result. A re-run is an audit, not a reroll.
+              Same inputs. Same result.
             </p>
           </aside>
 
-          {/* Right: the parts that made it */}
           <div className="hsw-breakdown">
             <div className="hsw-breakdown-head">
-              <span className="hsw-col-dim">The parts that made it</span>
+              <span className="hsw-col-dim">What it rests on</span>
               <span className="hsw-tag-example">Example</span>
             </div>
 
-            {DIMENSIONS.map((d) => {
-              const scored = Math.min(d.raw, d.cap);
-              return (
-                <div className={`hsw-row${d.flag ? ' is-flagged' : ''}`} key={d.name}>
-                  <div className="hsw-row-top">
-                    <span className="hsw-dim-name">{d.name}</span>
-                    <span className={`hsw-conf hsw-conf--${d.confidence.toLowerCase()}`}>{d.confidence}</span>
-                    <span className="hsw-weight">weight {d.weight.toFixed(2)}</span>
-                  </div>
-                  <div className="hsw-bar-track">
-                    <span className="hsw-bar-fill" style={{ width: `${scored}%` }} />
-                    {d.cap < d.raw && (
-                      <span
-                        className="hsw-bar-lost"
-                        style={{ left: `${d.cap}%`, width: `${d.raw - d.cap}%` }}
-                      />
-                    )}
-                  </div>
-                  <div className="hsw-row-values">
-                    <span className="hsw-value-num">{scored}</span>
-                    {d.cap < d.raw && (
-                      <span className="hsw-value-note">judged {d.raw}, capped at {d.cap}</span>
-                    )}
-                  </div>
+            {CRITERIA.map((d) => (
+              <div className={`hsw-row${d.flag ? ' is-flagged' : ''}`} key={d.name}>
+                <div className="hsw-row-top">
+                  <span className="hsw-dim-name">{d.name}</span>
+                  <span className={`hsw-conf hsw-conf--${d.evidence.split(' ')[0].toLowerCase()}`}>
+                    {d.evidence}
+                  </span>
+                  <span className="hsw-weight">weight {d.weight.toFixed(2)}</span>
                 </div>
-              );
-            })}
+                <div className="hsw-bar-track">
+                  <span className="hsw-bar-fill" style={{ width: `${d.share}%` }} />
+                </div>
+              </div>
+            ))}
 
-            <p className="hsw-cap-callout">
-              <i className="fa-solid fa-lock hsw-cap-icon" aria-hidden="true" />
+            <p className="hsw-gap-callout">
+              <i className="fa-solid fa-lock hsw-gap-icon" aria-hidden="true" />
               <span>
-                Financial viability was judged 80, but there is no data behind it yet, so its
-                confidence is <strong>Assumed</strong> and it is capped at 45. A stronger pitch
-                cannot raise it. Only stronger evidence can.
+                Financial viability carries a quarter of this decision and nothing verifiable
+                supports it yet. It is the assumption most worth resolving before you commit,
+                and a more confident argument will not settle it. Better information will.
               </span>
             </p>
           </div>

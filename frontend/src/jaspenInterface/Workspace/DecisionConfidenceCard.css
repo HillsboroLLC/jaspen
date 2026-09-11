@@ -87,6 +87,118 @@
   color: #8a93ad;
 }
 
+/* Evidence quality: a read on the inputs, not a criterion the decision rests
+   on, so it sits apart from the two columns rather than inside them. */
+.dcc-meta-line {
+  margin: 2px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.dcc-meta-label {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #5a6585;
+}
+
+.dcc-meta-note {
+  font-size: 11.5px;
+  color: #8a93ad;
+}
+
+/* ── What the split is made of ────────────────────────────────────────────
+   Two columns, because the point is the contrast. Left is verified excerpt;
+   right is a criterion carrying weight on nothing. */
+.dcc-ledger {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid #eef1f6;
+}
+
+.dcc-ledger-col {
+  min-width: 0;
+}
+
+.dcc-ledger-label {
+  margin: 0 0 7px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.dcc-ledger-label-evidence { color: #0e6b3f; }
+.dcc-ledger-label-assumed  { color: #8a5406; }
+
+.dcc-ledger-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dcc-ledger-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 9px;
+  border-left: 2px solid #e6eaf2;
+}
+.dcc-ledger-col:first-child li { border-left-color: #10b981; }
+.dcc-ledger-col:last-child li  { border-left-color: #f5d9a4; }
+
+.dcc-ledger-excerpt {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #161f3b;
+}
+
+.dcc-ledger-meta {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: #8a93ad;
+}
+
+/* The passage itself, set as a quotation so it is never mistaken for Jaspen's
+   own words or for a verdict about the passage. */
+.dcc-ledger-quote {
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  font-style: italic;
+  color: #5a6585;
+}
+.dcc-ledger-quote::before { content: '\201C'; }
+.dcc-ledger-quote::after  { content: '\201D'; }
+
+.dcc-ledger-empty {
+  margin: 0;
+  font-size: 12.5px;
+  font-style: italic;
+  color: #8a93ad;
+}
+
+.dcc-drilldown-cue {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: #8a93ad;
+}
+
+@media (max-width: 780px) {
+  .dcc-ledger { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* The briefing. Prose, set at reading size, because this block is what gets
    read aloud or pasted into a board pack. It is not a label/value list: that
    shape made the summary read as the first rows of the detail rather than as
@@ -244,6 +356,51 @@
 .dcc-grade-medium  { color: #0e6b3f; background: #eef7f1; border: 1px solid #a7d9bf; }
 .dcc-grade-low     { color: #8a5406; background: #fdf2dc; border: 1px solid #f59e0b; }
 .dcc-grade-assumed { color: #9f1f16; background: #fbe9e7; border: 1px solid #dc2626; }
+.dcc-grade-unsupported { color: #9f1f16; background: #fbe9e7; border: 1px solid #dc2626; }
+
+.dcc-criterion-brief {
+  display: grid;
+  gap: 5px;
+  padding: 11px 12px;
+  border-left: 3px solid #f59e0b;
+  background: #fffaf0;
+}
+
+.dcc-criterion-brief.is-supported {
+  border-left-color: #10b981;
+  background: #f3fbf6;
+}
+
+.dcc-criterion-strengthen {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.dcc-drilldown {
+  border-top: 1px solid #e6eaf2;
+  padding-top: 8px;
+}
+
+.dcc-drilldown > summary {
+  cursor: pointer;
+  color: #1f5f9e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dcc-drilldown > summary:focus-visible {
+  outline: 2px solid #a0036c;
+  outline-offset: 3px;
+}
+
+.dcc-drilldown-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 11px;
+}
 
 /* Three blocks, visually distinct on purpose. What Jaspen had, what is still
    missing, and what the user should supply are three different things and were
@@ -268,6 +425,33 @@
   padding-left: 10px;
   border-left: 2px solid #e6eaf2;
 }
+
+.dcc-acceptance {
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid #d9dce6;
+  border-radius: 9px;
+  background: #fafbfc;
+}
+.dcc-acceptance-record { display: grid; gap: 3px; margin-top: 7px; color: #334155; }
+.dcc-acceptance-record strong { font-size: 0.84rem; color: #161f3b; }
+.dcc-acceptance-record span { font-size: 0.75rem; color: #64748b; }
+.dcc-acceptance-record p { margin: 5px 0 0; font-size: 0.82rem; line-height: 1.45; }
+.dcc-accept-open {
+  margin-top: 9px;
+  padding: 7px 10px;
+  border: 1px solid #a0036c;
+  border-radius: 7px;
+  background: #fff;
+  color: #8a025e;
+  font: 700 0.78rem/1.2 inherit;
+  cursor: pointer;
+}
+.dcc-accept-form { margin-top: 8px; }
+.dcc-accept-form > p { margin: 0 0 9px; color: #475569; font-size: 0.8rem; line-height: 1.45; }
+.dcc-accept-form label { display: grid; gap: 5px; color: #334155; font-size: 0.76rem; font-weight: 700; }
+.dcc-accept-form textarea { resize: vertical; padding: 8px; border: 1px solid #cbd5e1; border-radius: 7px; font: inherit; }
+.dcc-accept-error { margin: 7px 0 0; color: #b42318; font-size: 0.78rem; }
 /* Green, because this is the only block on the card whose contents were
    verified rather than asserted. */
 .dcc-evidence-block { border-left-color: #10b981; }

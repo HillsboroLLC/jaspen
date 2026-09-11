@@ -18,20 +18,20 @@
 // is the product. A reader scrolls the report; they do not hunt for it.
 //
 // PROVENANCE LIMIT, the constraint that shapes this whole file. Scoring
-// records only two things about why a criterion scored as it did:
+// records model reasoning plus deterministically located source passages:
 //
 //   source     the CHANNEL an input arrived on: conversation, connector,
 //              inferred, or assumed. It does not identify which input.
 //   rationale  the model's own account of its reasoning. Reasoning, not a
 //              record of evidence.
 //
-// Nothing retains which document, message, connector field, or figure a score
-// rested on. So this report says "Jaspen's assessment" and shows the model's
-// reasoning plus a hedged characterisation of the channel. It must never
-// render a list of evidence held, attribute a figure to a source, or imply an
-// audit trail.
-// Manufacturing that would produce precisely the confident, unsupported
-// content the product exists to expose. See app/decision_confidence.py.
+//   references verified excerpts from conversation, attachments, or connector
+//              snapshots. They prove what Jaspen read, not that it is true.
+//   role       deterministic support/gap classification. A sentence saying
+//              "I have no data" remains visible but cannot support the case.
+//
+// The report may quote verified references and their locators. It may not
+// promote model reasoning or a claimed source channel into evidence.
 //
 // Everything numeric comes from the server. Nothing here derives a figure or
 // composes a claim; claims arrive rendered from exposure_claims() so the
@@ -51,12 +51,66 @@
 import React, { useState } from 'react';
 import './DecisionConfidenceCard.css';
 
+// The built-in scoring pass returns dimensions with no `label`, so
+// criterion_entries falls back to the raw key and the whole report renders
+// `financial_viability` at a customer. These are the names the rest of the
+// product already uses for the same six keys (see _DIMENSION_LABELS in
+// JaspenWorkspace and the fallback list in JaspenChat), so a reader sees one
+// vocabulary wherever a criterion is named.
+const BUILT_IN_CRITERION_LABELS = {
+  strategic_alignment: 'Strategic fit',
+  financial_viability: 'Cost efficiency',
+  execution_readiness: 'Time-to-value',
+  risk_profile: 'Execution risk',
+  market_opportunity: 'Market opportunity',
+  evidence_quality: 'Evidence quality',
+};
+
+/** The criterion's name as a person should read it. A custom rubric supplies
+ *  its own label and always wins; the built-in six are named above; anything
+ *  else is de-slugged rather than shown raw. */
+function criterionLabel(entry) {
+  if (!entry) return '';
+  const own = String(entry.label || '').trim();
+  const key = String(entry.key || '');
+  if (own && own !== key) return own;
+  return (
+    BUILT_IN_CRITERION_LABELS[key]
+    || key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  );
+}
+
+// `evidence_quality` is a META dimension: it assesses how good the user's
+// evidence IS, rather than being something the decision rests on. Its passages
+// are the user talking ABOUT their evidence ("I have the quotes", "Honestly I
+// have no data on this"), which is correct for what it measures and wrong
+// beside Cost efficiency in a list of what the decision stands on. Held out of
+// that split and reported on its own.
+const META_CRITERIA = new Set(['evidence_quality']);
+
 const GRADE_LABELS = {
   high: 'Strong evidence',
   medium: 'Moderate evidence',
   low: 'Thin evidence',
   assumed: 'Assumed',
 };
+
+function supportingReferenceCount(entry) {
+  if (Array.isArray(entry?.supporting_evidence_references)) {
+    return entry.supporting_evidence_references.length;
+  }
+  return (Array.isArray(entry?.evidence_references) ? entry.evidence_references : [])
+    .filter((reference) => reference?.evidence_role !== 'gap').length;
+}
+
+// A confidence grade is the model's assessment of the criterion. It must not
+// become an evidence claim when every located passage is actually a gap.
+function evidenceGradeLabel(entry) {
+  if (!entry?.evidenced && supportingReferenceCount(entry) === 0) {
+    return 'No verified support';
+  }
+  return GRADE_LABELS[entry?.confidence] || entry?.confidence;
+}
 
 // How Jaspen characterises the input it used. Every one of these is hedged on
 // purpose, because `source` is the model's own claim about where something came
@@ -98,20 +152,27 @@ const UNSUPPORTED_BY_GRADE = {
 const FALLBACK_ACTION_BY_GRADE = {
   high: null,
   medium: 'Share the source behind this, a document, export, or connected system, so it can be verified rather than taken as reported.',
-  low: 'Provide the underlying figures or documents for this criterion so more of it rests on evidence.',
-  assumed: 'Nothing verifiable supports this yet. Upload or connect the source that would establish it.',
+  low: 'Provide the underlying figures, documents, or analysis that could test this assumption and show whether it holds.',
+  assumed: 'Provide the best available source or analysis that could test this assumption. If none exists, identify it explicitly as uncertainty you are choosing to carry.',
 };
 
 const SEVERITY_CONSEQUENCE = {
-  reversing: 'Resolving this could change which option leads.',
-  material: 'Resolving this could materially change the score.',
-  other: 'Resolving this would move the score slightly.',
-  none: 'Resolving this would not move the score today.',
+  reversing: 'Better evidence here could change which option leads.',
+  material: 'Better evidence here could materially change the score.',
+  other: 'Better evidence here could move the score slightly.',
+  none: null,
 };
 
 function pointsLabel(swing) {
   const rounded = Math.round(swing * 10) / 10;
   return `${rounded} ${rounded === 1 ? 'point' : 'points'}`;
+}
+
+function firstSentence(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const match = text.match(/^.*?[.!?](?:\s|$)/);
+  return (match ? match[0] : text).trim();
 }
 
 // A concise, human source for a verified reference. The exact locator stays on
@@ -136,9 +197,14 @@ function evidenceSource(reference) {
   return 'From your input';
 }
 
-function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) {
+function CriterionRow({
+  entry, onEditNarrative, onRestoreNarrative, editable,
+  acceptance,
+}) {
   const [draft, setDraft] = useState(null);
-  const unsupported = UNSUPPORTED_BY_GRADE[entry.confidence];
+  const unsupported = supportingReferenceCount(entry) === 0
+    ? 'No affirmative verified input supports this criterion yet.'
+    : UNSUPPORTED_BY_GRADE[entry.confidence];
   // Scoring's own suggestion when it made one, otherwise an honest generic.
   const action = entry.resolution || FALLBACK_ACTION_BY_GRADE[entry.confidence] || null;
   const references = Array.isArray(entry.evidence_references)
@@ -147,16 +213,16 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
   return (
     <li className={`dcc-criterion dcc-criterion-${entry.severity}`}>
       <div className="dcc-criterion-head">
-        <span className="dcc-criterion-name">{entry.label}</span>
-        <span className={`dcc-grade dcc-grade-${entry.confidence}`}>
-          {GRADE_LABELS[entry.confidence] || entry.confidence}
+        <span className="dcc-criterion-name">{criterionLabel(entry)}</span>
+        <span className={`dcc-grade dcc-grade-${supportingReferenceCount(entry) === 0 ? 'unsupported' : entry.confidence}`}>
+          {evidenceGradeLabel(entry)}
         </span>
       </div>
 
       <div className="dcc-criterion-meta">
         <span>{Math.round(entry.weight * 100)}% of the decision</span>
         <span aria-hidden="true">·</span>
-        <span>contributes {entry.score}</span>
+        <span>criterion score {entry.score}/100</span>
         {entry.swing > 0 && (
           <>
             <span aria-hidden="true">·</span>
@@ -167,6 +233,24 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
         )}
       </div>
 
+      <div className={`dcc-criterion-brief${entry.evidenced ? ' is-supported' : ' is-exposed'}`}>
+        <p className="dcc-block-label">
+          {entry.evidenced ? 'What is strong' : 'Exposure'}
+        </p>
+        <p className="dcc-block-text">
+          {firstSentence(entry.rationale) || unsupported || 'No assessment was recorded for this criterion.'}
+        </p>
+        {action && (
+          <p className="dcc-criterion-strengthen">
+            <strong>What would help:</strong> {action}
+          </p>
+        )}
+      </div>
+
+      <details className="dcc-drilldown">
+        <summary>View evidence &amp; reasoning</summary>
+        <div className="dcc-drilldown-body">
+
       {/* Verified evidence, above the assessment on purpose. These excerpts
           were located in the input by deterministic code, so they outrank the
           model's reasoning about them and should be read first. A criterion
@@ -174,12 +258,23 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
           undo the entire point of verifying them. */}
       {references.length > 0 && (
         <div className="dcc-evidence-block">
-          <p className="dcc-block-label dcc-block-evidence">Evidence used</p>
+          {/* NOT "Evidence used". evidence_references verifies PROVENANCE —
+              that this passage demonstrably exists in the input and the scoring
+              pass named it — never that the passage is evidence. On a thin
+              criterion the passage is often the user saying they have none
+              ("that's my gut"), and heading it "Evidence used" turns an
+              anti-hallucination record into an evidentiary claim. The grade
+              beside it carries the weight; this block only says what was read. */}
+          <p className="dcc-block-label dcc-block-evidence">Verified input passages</p>
           <ul className="dcc-evidence-list">
             {references.map((reference) => (
               <li key={reference.id} data-evidence-locator={JSON.stringify(reference.locator)}>
                 <span className="dcc-evidence-excerpt">{reference.excerpt}</span>
-                <span className="dcc-evidence-source">{evidenceSource(reference)}</span>
+                <span className="dcc-evidence-source">
+                  {evidenceSource(reference)}
+                  {' · '}
+                  {reference.evidence_role === 'gap' ? 'identifies a gap' : 'supports this dimension'}
+                </span>
               </li>
             ))}
           </ul>
@@ -228,7 +323,7 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
               rows={3}
               autoFocus
               onChange={(event) => setDraft(event.target.value)}
-              aria-label={`Assessment for ${entry.label}`}
+              aria-label={`Assessment for ${criterionLabel(entry)}`}
             />
             <div className="dcc-edit-actions">
               <button
@@ -288,31 +383,43 @@ function CriterionRow({ entry, onEditNarrative, onRestoreNarrative, editable }) 
 
       {unsupported && (
         <div className="dcc-unsupported-block">
-          <p className="dcc-block-label dcc-block-unsupported">Still unsupported</p>
+          <p className="dcc-block-label dcc-block-unsupported">What remains uncertain</p>
           <p className="dcc-block-text">{unsupported}</p>
         </div>
       )}
 
-      {/* The consequence, then what to do about it. The action sits directly
-          under the line that states the exposure, so "this could move the
-          score" is never left without an answer to "so what do I do?". */}
-      <p className="dcc-criterion-consequence">
-        {SEVERITY_CONSEQUENCE[entry.severity]}
-      </p>
+      {/* Sensitivity is useful only when it says the answer could move. A
+          zero-swing criterion can still need evidence, but telling a reader
+          that resolving it would not move today's score turns guidance into
+          a dead end and confuses evidence quality with score mechanics. */}
+      {SEVERITY_CONSEQUENCE[entry.severity] && (
+        <p className="dcc-criterion-consequence">
+          <strong>Why this matters:</strong> {SEVERITY_CONSEQUENCE[entry.severity]}
+        </p>
+      )}
 
-      {action && (
-        <div className="dcc-needed-block">
-          <p className="dcc-block-label dcc-block-needed">How to improve this</p>
-          <p className="dcc-block-text">{action}</p>
+      {acceptance && (
+        <div className="dcc-acceptance dcc-acceptance-history" role="status">
+          <p className="dcc-block-label">Previously accepted exposure</p>
+          <div className="dcc-acceptance-record">
+            <strong>
+              Accepted by {acceptance.accepted_by?.name || acceptance.accepted_by?.email || 'a user'}
+            </strong>
+            <span>{new Date(acceptance.accepted_at).toLocaleString()}</span>
+            {acceptance.note && <p>{acceptance.note}</p>}
+          </div>
         </div>
       )}
+        </div>
+      </details>
     </li>
   );
 }
 
 export default function DecisionConfidenceCard({
-  profile, exposure, optionName, score, scoreCategory, summary,
+  profile, exposure, optionName, summary,
   onEditNarrative, onRestoreNarrative, editable = false,
+  acceptedExposures = [],
   // Which half to render. The report is split across canvas sections so each
   // criterion can be resized and reordered on its own, which means this
   // component is mounted once for the briefing and once per criterion rather
@@ -325,22 +432,54 @@ export default function DecisionConfidenceCard({
   const assumed = profile.assumption_dependent_pct;
   const claims = Array.isArray(profile.claims) ? profile.claims : [];
   const criteria = profile.criteria || [];
+
+  // What was actually located in the input, and what is carrying weight on
+  // nothing. `evidence_references` is the only verified provenance the system
+  // keeps — everything else on this card is Jaspen's own reasoning — so the
+  // left column is built from those and nothing else.
+  // Grouped by CRITERION, not pooled by passage. A verified passage is not the
+  // same thing as evidence — evidence_references only proves Jaspen read the
+  // text — so counting passages and calling the total "evidence you provided"
+  // put "that's my gut" into an evidence list. What a criterion stands on is
+  // decided by its grade, and that is what these two columns split on.
+  const passagesFor = (entry, { supportOnly = false } = {}) =>
+    (Array.isArray(
+      supportOnly ? entry.supporting_evidence_references : entry.evidence_references
+    ) ? (supportOnly ? entry.supporting_evidence_references : entry.evidence_references) : [])
+      .map((ref) => String(ref?.excerpt || ref?.text || '').trim())
+      .filter(Boolean);
+  const decisionCriteria = criteria.filter((entry) => !META_CRITERIA.has(entry.key));
+  const evidenced = decisionCriteria.filter((entry) => entry.evidenced);
+  const assumedCriteria = decisionCriteria.filter((entry) => !entry.evidenced);
+  const strongestSupport = [...evidenced]
+    .sort((a, b) => (b.weight || 0) - (a.weight || 0))
+    .slice(0, 3);
+  const biggestExposure = [...assumedCriteria]
+    .sort((a, b) => (b.swing || 0) - (a.swing || 0) || (b.weight || 0) - (a.weight || 0))
+    .slice(0, 3);
+  const evidenceQuality = criteria.find((entry) => entry.key === 'evidence_quality') || null;
   const primaryClaim = claims[0] || null;
   const secondaryClaims = claims.slice(1);
   const isClear = primaryClaim?.kind === 'clear';
+  const acceptanceFor = (entry) => [...acceptedExposures].reverse().find((item) => (
+    item?.exposure?.kind === 'criterion'
+    && item?.exposure?.target_key === entry.key
+    && (!optionName || item?.exposure?.option_name === optionName || item?.exposure?.option_id === optionName)
+  ));
 
   // One criterion, rendered into its own section.
   if (only === 'criterion') {
     const entry = criteria.find((c) => c.key === criterionKey);
     if (!entry) return null;
     return (
-      <section className="dcc dcc-single" aria-label={`${entry.label} detail`}>
+      <section className="dcc dcc-single" aria-label={`${criterionLabel(entry)} detail`}>
         <ul className="dcc-criteria">
           <CriterionRow
             entry={entry}
             editable={editable}
             onEditNarrative={onEditNarrative}
             onRestoreNarrative={onRestoreNarrative}
+            acceptance={acceptanceFor(entry)}
           />
         </ul>
       </section>
@@ -353,26 +492,111 @@ export default function DecisionConfidenceCard({
     <section className="dcc" aria-label="Decision confidence report">
       {/* ── Layer 1: the summary ─────────────────────────────────────────── */}
       <header className="dcc-head">
-        <p className="dcc-eyebrow">Decision Confidence</p>
+        <p className="dcc-eyebrow">Evidence Confidence</p>
 
-        {Number.isFinite(score) && (
-          <p className="dcc-score-line">
-            <strong>{score}</strong>
-            {scoreCategory && <span className="dcc-score-cat">{scoreCategory}</span>}
-          </p>
-        )}
-
+        {/* NO OVERALL SCORE HERE, deliberately. The Jaspen score rates the
+            OPTION — whether this is a good thing to do. This card rates the
+            EVIDENCE — how much of that rating stands on anything. Leading the
+            confidence report with the score made the two read as one number,
+            so a thin 78 looked like a confident 78. The split below is the
+            only headline this card gets. */}
         <p className="dcc-headline">
-          <strong>{backed}%</strong> evidence-backed
+          <strong>{backed}%</strong> supported by verified input
           <span className="dcc-sep" aria-hidden="true">·</span>
           <strong>{assumed}%</strong> assumption-dependent
         </p>
         <div className="dcc-split" role="img"
-          aria-label={`${backed} percent evidence-backed, ${assumed} percent assumption-dependent`}>
+          aria-label={`${backed} percent supported by verified input, ${assumed} percent assumption-dependent`}>
           <span className="dcc-split-backed" style={{ width: `${backed}%` }} />
           <span className="dcc-split-assumed" style={{ width: `${assumed}%` }} />
         </div>
-        <p className="dcc-basis">Evidence-backed share of the weighted decision</p>
+        <p className="dcc-basis">Verified-support share of weighted decision criteria</p>
+
+        {/* Reported on its own line, not in the split below: this is Jaspen's
+            read on the QUALITY of what was brought, not one of the things the
+            decision rests on. */}
+        {evidenceQuality && (
+          <p className="dcc-meta-line">
+            <span className="dcc-meta-label">Evidence quality</span>
+            <span className={`dcc-grade dcc-grade-${supportingReferenceCount(evidenceQuality) === 0 ? 'unsupported' : evidenceQuality.confidence}`}>
+              {GRADE_LABELS[evidenceQuality.confidence] || evidenceQuality.confidence}
+            </span>
+            <span className="dcc-meta-note">Jaspen&rsquo;s read on what you brought</span>
+          </p>
+        )}
+
+        {/* The two sides of that bar, named. A percentage on its own tells a
+            reader how exposed they are without telling them to what, and the
+            per-criterion detail below is too long to answer it at a glance.
+            Split by verified affirmative support. Explicit gap statements
+            remain visible on the assumption-dependent side. */}
+        {(evidenced.length > 0 || assumedCriteria.length > 0) && (
+          <div className="dcc-ledger">
+            <div className="dcc-ledger-col">
+              <p className="dcc-ledger-label dcc-ledger-label-evidence">
+                Strongest support
+              </p>
+              {evidenced.length === 0 ? (
+                <p className="dcc-ledger-empty">
+                  No decision dimension has verified affirmative support.
+                </p>
+              ) : (
+                <ul className="dcc-ledger-list">
+                  {strongestSupport.map((entry) => (
+                    <li key={entry.key}>
+                      <span className="dcc-ledger-excerpt">{criterionLabel(entry)}</span>
+                      <span className="dcc-ledger-meta">
+                        {evidenceGradeLabel(entry)}
+                        {' · '}
+                        {Math.round((entry.weight || 0) * 100)}% of the decision
+                      </span>
+                      {passagesFor(entry, { supportOnly: true }).slice(0, 1).map((excerpt) => (
+                        <span className="dcc-ledger-quote" key={excerpt}>{excerpt}</span>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="dcc-ledger-col">
+              <p className="dcc-ledger-label dcc-ledger-label-assumed">
+                Biggest exposure
+              </p>
+              {assumedCriteria.length === 0 ? (
+                <p className="dcc-ledger-empty">
+                  Every decision dimension has verified affirmative support.
+                </p>
+              ) : (
+                <ul className="dcc-ledger-list">
+                  {biggestExposure.map((entry) => (
+                    <li key={entry.key}>
+                      <span className="dcc-ledger-excerpt">{criterionLabel(entry)}</span>
+                      <span className="dcc-ledger-meta">
+                        {evidenceGradeLabel(entry)}
+                        {' · '}
+                        {Math.round((entry.weight || 0) * 100)}% of the decision
+                      </span>
+                      {/* Shown on purpose: seeing what you actually said is the
+                          fastest way to understand why it is not evidence. */}
+                      {passagesFor(entry).slice(0, 1).map((excerpt) => (
+                        <span className="dcc-ledger-quote" key={excerpt}>{excerpt}</span>
+                      ))}
+                      {entry.resolution && (
+                        <span className="dcc-ledger-meta">
+                          <strong>What would strengthen it:</strong> {entry.resolution}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+        <p className="dcc-drilldown-cue">
+          Full evidence, gaps, and reasoning are available in the dimension details below.
+        </p>
       </header>
 
       {/* A briefing, not the first rows of the detail. It reads as continuous
@@ -383,10 +607,14 @@ export default function DecisionConfidenceCard({
       {summary && (
         <div className="dcc-briefing">
           <p className="dcc-briefing-label">Summary</p>
-          <p className="dcc-briefing-lead">
-            {summary.verdict} {summary.standing}
-          </p>
-          <p className="dcc-briefing-body">
+          {/* summary.verdict is dropped for the same reason: it opens
+              "Scores 66 of 100", which is the option's rating, not this
+              report's finding. Standing leads when there is a peer set;
+              otherwise the evidence sentence does. */}
+          {summary.standing && (
+            <p className="dcc-briefing-lead">{summary.standing}</p>
+          )}
+          <p className={summary.standing ? 'dcc-briefing-body' : 'dcc-briefing-lead'}>
             {summary.confidence} {summary.concentration}
           </p>
           <p className={`dcc-briefing-sensitivity${isClear ? ' is-clear' : ''}`}>
@@ -418,14 +646,14 @@ export default function DecisionConfidenceCard({
                 editable={editable}
                 onEditNarrative={onEditNarrative}
                 onRestoreNarrative={onRestoreNarrative}
+                acceptance={acceptanceFor(entry)}
               />
             ))}
           </ul>
           <p className="dcc-provenance-note">
-            Jaspen&apos;s assessment is its own reasoning about the inputs it was
-            given. Jaspen cannot yet identify the specific document, message, or
-            record behind a judgment, so nothing here should be read as a source
-            citation or an audit trail.
+            Verified passages show exactly what Jaspen read and where it came
+            from. They do not independently prove that the source statement is
+            true. Jaspen&apos;s assessment remains model reasoning, not evidence.
           </p>
         </div>
       )}

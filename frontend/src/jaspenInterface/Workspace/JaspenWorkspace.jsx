@@ -23,6 +23,7 @@ import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import TradeoffView from './TradeoffView';
 import DecisionConfidenceCard from './DecisionConfidenceCard';
+import DecisionImpactReport from './DecisionImpactReport';
 import RiskRegister from './RiskRegister';
 import './JaspenWorkspace.css';
 import ChoicePrompt, { parseChoicePrompt } from './ChoicePrompt';
@@ -74,17 +75,23 @@ const _GENERIC_TITLE_PATTERNS = [/^version\s+\d+$/i, /^v\d+$/i, /^scenario\s+[a-
 // an answer to it. Locked for the same reason the score is: it is computed, not
 // authored, so it must not be editable as prose.
 const DEFAULT_SCORECARD_SECTIONS = [
-  { key: 'score',      label: 'Score',                cols: 4, locked: true,  x: 0, y: 0,  w: 12, h: 4 },
+  { key: 'score',      label: 'Decision Case Strength', cols: 4, locked: true, x: 0, y: 0, w: 12, h: 4 },
   // Holds the briefing only. The criterion detail moved into its own generated
   // sections so each can be resized and reordered, which makes this block much
   // shorter than when it carried the whole report. Auto-sizing grows it if a
   // decision produces a longer summary; it never shrinks, so a size a user has
   // chosen is theirs to keep.
-  { key: 'confidence', label: 'Decision Confidence',  cols: 4, locked: true,  x: 0, y: 4,  w: 12, h: 8 },
+  { key: 'confidence', label: 'Evidence Confidence',  cols: 4, locked: true,  x: 0, y: 4,  w: 12, h: 7 },
   { key: 'executive',  label: 'Executive Summary',    cols: 4, locked: false, x: 0, y: 12, w: 12, h: 5 },
   { key: 'dimensions', label: 'Dimensions',           cols: 4, locked: true,  dimCols: 2, dimOrder: null, x: 0, y: 17, w: 12, h: 8 },
-  { key: 'risks',      label: 'Top Risks',            cols: 4, locked: false, x: 0, y: 25, w: 12, h: 8 },
+  { key: 'risks',      label: 'Where the Plan Is Exposed', cols: 4, locked: false, x: 0, y: 25, w: 12, h: 8 },
   { key: 'scenario',   label: 'Recommended Scenario', cols: 4, locked: true,  x: 0, y: 33, w: 12, h: 6 },
+  // Last, deliberately. Every block above answers "what does the analysis
+  // say"; this one answers "what did the analysis change", which is only a
+  // meaningful question once the reader has seen the analysis. Locked for the
+  // same reason as the score and the confidence report: it is computed, not
+  // authored, and must not be editable as prose.
+  { key: 'impact',     label: 'Decision Impact',      cols: 4, locked: true,  x: 0, y: 39, w: 12, h: 12 },
 ];
 
 // The canvas arrangement the user drags into place. Persisted in TWO places on
@@ -878,6 +885,33 @@ export default function JaspenWorkspace() {
   // travels with the bundle instead. Null with fewer than two options, which
   // is correct: there is nothing to overtake.
   const decisionExposure = bundle?.decision_exposure || null;
+  const [acceptedExposures, setAcceptedExposures] = useState([]);
+
+  useEffect(() => {
+    if (!threadId || !isScorecard) return undefined;
+    let cancelled = false;
+    Jaspen.getAcceptedExposures(threadId)
+      .then((data) => {
+        if (!cancelled) setAcceptedExposures(
+          Array.isArray(data?.accepted_exposures) ? data.accepted_exposures : [],
+        );
+      })
+      .catch(() => { if (!cancelled) setAcceptedExposures([]); });
+    return () => { cancelled = true; };
+  }, [threadId, isScorecard]);
+
+  const acceptRiskExposure = useCallback(async (risk, note) => {
+    const data = await Jaspen.acceptExposure(threadId, {
+      kind: 'risk', option_name: scorecardId, target_key: risk.id, note,
+    });
+    const accepted = data?.accepted_exposure;
+    if (accepted) {
+      setAcceptedExposures((current) => (
+        current.some((item) => item?.id === accepted.id) ? current : [...current, accepted]
+      ));
+    }
+    return accepted;
+  }, [threadId, scorecardId]);
 
   // Section sizing is predicted from content, not measured after render. An
   // earlier version measured each section and wrote a height back into the
@@ -898,6 +932,7 @@ export default function JaspenWorkspace() {
     if ((entry.evidence_references || []).length) rows += 1;
     if (entry.confidence !== 'high') rows += 1;
     if (entry.resolution) rows += 2;
+    if (entry.swing > 0 || entry.evidenced === false) rows += 5;
     return Math.max(4, rows);
   }
 
@@ -942,6 +977,16 @@ export default function JaspenWorkspace() {
 
   // The briefing alone, so it is short.
   const confidenceRows = 8;
+
+  // Reported by the Decision Impact card itself (see its onMeasure). Converted
+  // to grid rows with the grid's own rowHeight/margin, plus two rows for the
+  // section's header and padding. A height the user drags still wins: hUser is
+  // checked before this is consulted.
+  const [impactRows, setImpactRows] = useState(12);
+  const measureImpact = useCallback((px) => {
+    const rows = Math.min(60, Math.max(8, Math.ceil((px + 16) / 44) + 2));
+    setImpactRows((prev) => (prev === rows ? prev : rows));
+  }, []);
 
   // The risk register, sized from what it renders. Each risk carries a
   // description, a row of levels, and usually a mitigation, so a register is
@@ -1066,7 +1111,13 @@ export default function JaspenWorkspace() {
 
   const score = Number(rendered?.jaspen_score || 0);
   const ringColor = rendered?._accent_color || '#a0036c';
-  const category = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk';
+  const category = score >= 80
+    ? 'Well supported'
+    : score >= 60
+      ? 'Promising — validate gaps'
+      : score >= 40
+        ? 'Not ready to commit'
+        : 'Insufficient support';
 
   // Recommended scenario (first recommendation that has actionable text)
   const recs = Array.isArray(rendered?.recommendations) ? rendered.recommendations : [];
@@ -2259,6 +2310,7 @@ export default function JaspenWorkspace() {
                 if (!s.hUser) {
                   if (s.key === 'confidence') computed = confidenceRows;
                   else if (s.key === 'risks') computed = riskRows;
+                  else if (s.key === 'impact') computed = impactRows;
                 }
                 return {
                   i: s.key,
@@ -2472,10 +2524,14 @@ export default function JaspenWorkspace() {
                           </div>
                           <div>
                             <div style={{ fontSize:11, fontWeight:600, color:ringColor, letterSpacing:'0.06em', textTransform:'uppercase' }}>{category}</div>
-                            <div style={{ fontSize:18, fontWeight:600, color:'#0f172a', marginTop:4 }}>Strategy scorecard</div>
-                            <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>Locked · scores reflect Jaspen's analysis. Open chat to rescore.</div>
+                            <div style={{ fontSize:18, fontWeight:600, color:'#0f172a', marginTop:4 }}>Decision Case Strength</div>
+                            <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>Support for the current case · not outcome probability</div>
                           </div>
                         </div>
+                      )}
+
+                      {section.key === 'impact' && (
+                        <DecisionImpactReport threadId={threadId} onMeasure={measureImpact} />
                       )}
 
                       {section.key === 'confidence' && (
@@ -2484,9 +2540,8 @@ export default function JaspenWorkspace() {
                           profile={rendered?.evidence_profile || null}
                           exposure={decisionExposure}
                           optionName={rendered?.project_name || null}
-                          score={score}
-                          scoreCategory={category}
                           summary={decisionExposure?.summaries?.[rendered?.project_name] || null}
+                          acceptedExposures={acceptedExposures}
                         />
                       )}
 
@@ -2495,9 +2550,11 @@ export default function JaspenWorkspace() {
                           only="criterion"
                           criterionKey={section.key.slice(CRITERION_SECTION_PREFIX.length)}
                           profile={rendered?.evidence_profile || null}
+                          optionName={rendered?.project_name || scorecardId}
                           editable
                           onEditNarrative={setCriterionNarrative}
                           onRestoreNarrative={restoreCriterionNarrative}
+                          acceptedExposures={acceptedExposures}
                         />
                       )}
 
@@ -2536,6 +2593,9 @@ export default function JaspenWorkspace() {
                           editable
                           onEdit={setRiskNarrative}
                           onRestore={restoreRiskNarrative}
+                          optionName={rendered?.project_name || scorecardId}
+                          acceptedExposures={acceptedExposures}
+                          onAcceptExposure={acceptRiskExposure}
                         />
                       )}
 
