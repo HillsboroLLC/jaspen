@@ -100,7 +100,7 @@ describe('Advisory Partnerships tab', () => {
     render(<PricingVariantB onOpenModal={onOpenModal} />);
     await openAdvisory(user);
 
-    const ctas = screen.getAllByRole('button', { name: /request a consultation/i });
+    const ctas = screen.getAllByRole('button', { name: /request consideration/i });
     expect(ctas).toHaveLength(2);
 
     await user.click(ctas[0]);
@@ -109,7 +109,7 @@ describe('Advisory Partnerships tab', () => {
 
     await user.click(within(dialog).getByRole('button', { name: /close request form/i }));
 
-    await user.click(screen.getAllByRole('button', { name: /request a consultation/i })[1]);
+    await user.click(screen.getAllByRole('button', { name: /request consideration/i })[1]);
     const secondDialog = screen.getByRole('dialog', { name: /executive partnership request/i });
     expect(within(secondDialog).getByRole('radio', { name: /Strategic Advisor Partnership \(\$100,000\)/ })).toBeChecked();
 
@@ -131,6 +131,26 @@ describe('Advisory Partnerships tab', () => {
     expect(panel.textContent).not.toMatch(/consulting/i);
     // No outcome promises.
     expect(panel.textContent).not.toMatch(/guarantee[ds]?\s+(revenue|savings|EBITDA)/i);
+  });
+
+  it('sets a deliberate capacity and conflict-review boundary above the offers', async () => {
+    const user = userEvent.setup();
+    render(<PricingVariantB onOpenModal={jest.fn()} />);
+
+    await openAdvisory(user);
+
+    const capacity = screen.getByRole('complementary', { name: /limited advisory capacity/i });
+    expect(capacity).toHaveTextContent(/limited number of advisory engagements each quarter/i);
+    expect(capacity).toHaveTextContent(/level of attention, rigor, and executive support/i);
+    expect(capacity).toHaveTextContent(/review potential competitive conflicts/i);
+    expect(capacity).toHaveTextContent(/confidentiality or competitive sensitivity/i);
+    expect(capacity).toHaveTextContent(/subject to fit, timing, and conflict review/i);
+
+    const firstOffer = screen
+      .getByText('Executive Decision Intensive', { selector: '.pvb-card-name' })
+      .closest('.pvb-advisory-card');
+    expect(capacity.compareDocumentPosition(firstOffer) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
   });
 
   it('describes included Jaspen access and AI capacity without fixed credits on advisory cards', async () => {

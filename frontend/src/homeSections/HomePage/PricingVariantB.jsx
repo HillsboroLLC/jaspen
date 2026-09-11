@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { createAnalytics } from '../../tools/shared/createAnalytics';
 import EnterpriseInvestmentCalculator from './EnterpriseInvestmentCalculator';
 import ExecutivePartnershipRequest from './ExecutivePartnershipRequest';
+import AdvisoryDecisionCalculator from './AdvisoryDecisionCalculator';
 import {
   LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT,
   THINKING_POWER_PROJECT_ESTIMATES,
@@ -202,7 +203,7 @@ const ADVISORY_COMPARISON = [
   { label: 'Decision Records retained',       intensive: 'One, with outcomes tracked as they arrive',                     partnership: 'Across the cycle, with outcomes tracked as they arrive' },
   { label: 'AI-powered usage credits',        intensive: `300,000 (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})`,        partnership: `300,000 (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})` },
   { label: 'Facilitator',                     intensive: 'Founder or designated Customer Success Partner',                partnership: 'Founder or designated Customer Success Partner' },
-  { label: 'Next step',                       intensive: 'Request a Consultation',                                        partnership: 'Request a Consultation' },
+  { label: 'Next step',                       intensive: 'Request Consideration',                                         partnership: 'Request Consideration' },
 ];
 
 const AUDIENCE_TABS = [
@@ -323,6 +324,23 @@ export default function PricingVariantB({ onOpenModal }) {
               Advisory engagements are delivered through structured virtual working sessions. Clients
               execute within Jaspen while the Jaspen advisor guides the decision process.
             </p>
+            <aside className="pvb-advisory-capacity" aria-labelledby="pvb-advisory-capacity-title">
+              <h4 id="pvb-advisory-capacity-title">Limited advisory capacity</h4>
+              <p>
+                Jaspen accepts a limited number of advisory engagements each quarter. We do this
+                deliberately so each partner receives the level of attention, rigor, and executive
+                support the work requires.
+              </p>
+              <p>
+                We also review potential competitive conflicts before accepting new engagements and
+                may decline or defer work where confidentiality or competitive sensitivity could be
+                compromised.
+              </p>
+              <p>
+                Availability is subject to fit, timing, and conflict review. Advisory engagements are
+                accepted based on fit, timing, and availability.
+              </p>
+            </aside>
           </div>
 
           <div className="pvb-advisory-cards">
@@ -361,7 +379,7 @@ export default function PricingVariantB({ onOpenModal }) {
                   className={`pvb-card-cta jaspen-btn ${offering.featured ? 'jaspen-btn-primary' : 'jaspen-btn-outline'}`}
                   onClick={() => requestConsultation(offering)}
                 >
-                  Request a Consultation
+                  Request Consideration
                 </button>
                 <p className="pvb-advisory-cta-note">{ADVISORY_CTA_NOTE}</p>
               </div>
@@ -381,6 +399,8 @@ export default function PricingVariantB({ onOpenModal }) {
             Approved travel, lodging, transportation, meals, and related expenses are billed
             separately and are not included in the flat fee.
           </p>
+
+          <AdvisoryDecisionCalculator />
 
           <div className="pvb-compare-accordion">
             <button
