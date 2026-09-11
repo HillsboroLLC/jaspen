@@ -44,7 +44,13 @@ import {
 } from 'lucide-react';
 
 // Data / storage
-import { Jaspen, storage } from './JaspenClient';
+import {
+  Jaspen,
+  storage,
+  rememberThreadRevision,
+  isRevisionConflict,
+  REVISION_CONFLICT_MESSAGE,
+} from './JaspenClient';
 import EmailResultsButton from './EmailResultsButton';
 import IntakeReceipt from './IntakeReceipt';
 
@@ -5907,7 +5913,13 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
       await Jaspen.setThreadObjective(persistThreadId, normalized, explicitSetting);
     } catch (err) {
       console.error('[applyStrategyObjective] persist failed', err);
-      if (!silent) showToast('Saved locally, but could not sync objective to thread yet.', 'warning');
+      if (isRevisionConflict(err)) {
+        // Someone else changed this project. Say so and stop -- do not retry
+        // against the newer revision, which would overwrite their work.
+        showToast(REVISION_CONFLICT_MESSAGE, 'error');
+      } else if (!silent) {
+        showToast('Saved locally, but could not sync objective to thread yet.', 'warning');
+      }
     }
     return normalized;
   }, [currentSessionId, sessionId, showToast]);
@@ -6059,6 +6071,9 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
 
       for (const session of scopedSessions) {
         const threadId = String(session?.session_id || '').trim();
+        // The list carries `revision` too, so a mutation launched from history
+        // declares a base without having to open the thread first.
+        rememberThreadRevision(threadId, session?.revision);
         if (!threadId) continue;
 
         const sessionResult = getDisplayScorecardResult(
@@ -6161,7 +6176,11 @@ async function loadSessionById(id) {
     if (!resp.ok) return null;
 
     const data = await resp.json();
-    
+
+    // Remember the version we just read so a later mutation can declare what
+    // it is writing on top of. Without this the server refuses shared writes.
+    rememberThreadRevision(id, data?.thread?.revision ?? data?.session?.revision);
+
     // Transform NEW API response (thread + analyses) to OLD format
     if (data.thread) {
       const thread = data.thread;
@@ -10900,7 +10919,12 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
           objective: OBJECTIVE_LABEL_BY_KEY[mappedObjective] || OBJECTIVE_LABEL_BY_KEY.balanced,
         }, mappedObjective, nextExplicit).catch((err) => {
           console.error('[handleOnboardingComplete] intake context sync failed', err);
-          showToast('Saved locally, but could not sync onboarding context to this thread yet.', 'warning');
+          showToast(
+            isRevisionConflict(err)
+              ? REVISION_CONFLICT_MESSAGE
+              : 'Saved locally, but could not sync onboarding context to this thread yet.',
+            isRevisionConflict(err) ? 'error' : 'warning',
+          );
         });
       }
       if (!sessionId && !currentSessionId && (!Array.isArray(messages) || messages.length === 0)) {
@@ -13880,7 +13904,16 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     <span>Status: {project.status || 'active'}</span>
                     <span>Updated: {project.updated_at ? new Date(project.updated_at).toLocaleString() : '—'}</span>
                     <span className="jas-shared-project-access">
-                      {effectiveIsViewer ? 'View only' : 'Can edit'}
+                      {/* Backend-computed access, not a role guess. This label
+                          used to read "Can edit" purely because the member was
+                          not a viewer, including for projects they could not
+                          open at all. `can_edit` comes from the same predicate
+                          the workspace authorizes with. */}
+                      {project.can_edit === true
+                        ? 'Can edit'
+                        : project.can_read === false
+                          ? 'No access'
+                          : 'View only'}
                     </span>
                   </button>
                 ))}

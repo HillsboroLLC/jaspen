@@ -127,6 +127,9 @@ export default function Projects() {
           status,
           updatedAt,
           updatedAtLabel: session?.timestamp || session?.updated_at || session?.created || null,
+          // Carried so archiving can declare the version it is acting on. The
+          // server requires this for shared organization projects.
+          revision: Number.isFinite(Number(session?.revision)) ? Number(session.revision) : null,
         };
       }).filter((item) => item.threadId);
 
@@ -226,16 +229,31 @@ export default function Projects() {
     setBulkBusy(true);
     setError('');
     try {
-      const updates = Array.from(selectedIds).map((threadId) =>
-        authFetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`, {
+      const revisionByThread = new Map(projects.map((row) => [row.threadId, row.revision]));
+      const updates = Array.from(selectedIds).map((threadId) => {
+        const revision = revisionByThread.get(threadId);
+        return authFetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`, {
           method: 'PATCH',
           credentials: 'include',
           headers: authHeaders('PATCH'),
-          body: JSON.stringify({ status: 'archived' }),
-        })
-      );
+          body: JSON.stringify({
+            status: 'archived',
+            ...(revision != null ? { base_revision: revision } : {}),
+          }),
+        });
+      });
       const responses = await Promise.all(updates);
+      const conflicted = responses.filter((res) => res.status === 409);
       const failed = responses.filter((res) => !res.ok);
+      if (conflicted.length) {
+        // Reload so the list shows the current state. Deliberately NOT
+        // re-issuing the archive against the newer revision.
+        await loadProjects();
+        throw new Error(
+          `${conflicted.length} project(s) changed since this list was loaded. `
+          + 'The list has been refreshed — review them and try again.'
+        );
+      }
       if (failed.length) {
         throw new Error(`Failed to archive ${failed.length} project(s).`);
       }
@@ -252,14 +270,27 @@ export default function Projects() {
     setBulkBusy(true);
     setError('');
     try {
+      const revision = projects.find((row) => row.threadId === threadId)?.revision;
       const res = await authFetch(`${API_BASE}/api/v1/ai-agent/threads/${encodeURIComponent(threadId)}`, {
         method: 'PATCH',
         credentials: 'include',
         headers: authHeaders('PATCH'),
-        body: JSON.stringify({ status: 'archived' }),
+        body: JSON.stringify({
+          status: 'archived',
+          ...(revision != null ? { base_revision: revision } : {}),
+        }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
+        if (res.status === 409) {
+          // Refresh to the server's current state and stop. No automatic
+          // retry: the newer version may be someone else's work.
+          await loadProjects();
+          throw new Error(
+            data?.error
+            || 'This project changed since the list was loaded. It has been refreshed — review it and try again.'
+          );
+        }
         throw new Error(data?.error || `Failed to archive project (${res.status})`);
       }
       await loadProjects();

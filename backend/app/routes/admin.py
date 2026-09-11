@@ -1857,8 +1857,45 @@ def run_user_recovery(user_id):
 
     result = {"action": action}
     if action == "clear_sessions":
-        deleted = UserSession.query.filter_by(user_id=user.id).delete(synchronize_session=False)
-        result["deleted_sessions"] = int(deleted or 0)
+        # PHASE 2. This used to be a bare
+        #   UserSession.query.filter_by(user_id=user.id).delete()
+        # which hard-deleted every row whose home user was the target --
+        # including canonical organization-owned projects other members were
+        # relying on, with no grace window and no ledger distillation.
+        #
+        # Clearing ONE USER'S data must not be a way to destroy AN
+        # ORGANISATION'S work. Personal and unshared rows are still cleared
+        # under the existing admin semantics; organization-owned shared rows
+        # are skipped and reported. Destroying organizational data, if it is
+        # ever needed, belongs in an explicit organization-scoped operation --
+        # not as a side effect of a per-user cleanup.
+        from app.session_access import org_is_multi_member, VISIBILITY_PRIVATE
+
+        rows = UserSession.query.filter_by(user_id=user.id).all()
+        deleted = 0
+        skipped = []
+        for row in rows:
+            visibility = str(row.visibility or VISIBILITY_PRIVATE).strip().lower()
+            is_org_shared = bool(
+                row.organization_id
+                and visibility != VISIBILITY_PRIVATE
+                and org_is_multi_member(row.organization_id)
+            )
+            if is_org_shared:
+                skipped.append(row.session_id)
+                continue
+            db.session.delete(row)
+            deleted += 1
+
+        result["deleted_sessions"] = deleted
+        result["skipped_org_owned_sessions"] = len(skipped)
+        result["skipped_session_ids"] = skipped[:50]
+        if skipped:
+            current_app.logger.info(
+                "[admin.clear_sessions] user=%s: cleared %d personal row(s); "
+                "preserved %d organization-owned shared row(s): %s",
+                str(user.id)[:8], deleted, len(skipped), skipped[:20],
+            )
     elif action == "clear_connectors":
         save_connector_state(user.id, {"connectors": {}, "thread_sync": {}})
         result["cleared_connectors"] = True

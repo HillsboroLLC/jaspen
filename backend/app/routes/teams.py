@@ -40,6 +40,8 @@ from app.orgs import (
     ORG_ROLE_VIEWER,
     build_seat_usage,
     collaboration_denied_message,
+    ensure_default_organization_for_user,
+    sync_org_plan_and_commit,
     mfa_policy_for_org,
     normalize_mfa_policy,
     normalize_org_role,
@@ -144,6 +146,15 @@ def _require_org_access(org_id):
     org = Organization.query.filter_by(id=str(org_id)).first()
     if not org:
         return None, None, None, (jsonify({"error": "Organization not found"}), 404)
+
+    # Bring the organization's entitlement up to date BEFORE any gate reads it.
+    # This blueprint addresses orgs by id and so never went through org
+    # resolution, which is where the plan sync used to live -- leaving
+    # _collaboration_gate() evaluating a stale plan_key. Harmless on an upgrade
+    # (fails closed), but fail-OPEN on a downgrade: a just-downgraded owner
+    # could still invite. Syncs from the OWNER's subscription, never the
+    # caller's.
+    sync_org_plan_and_commit(org)
 
     membership = _active_membership(org.id, user.id)
     if not membership:
@@ -261,6 +272,39 @@ def create_team_org():
             "plan_key": state["public_plan_key"],
             "required_plan": COLLABORATION_MIN_PLAN,
         }), 403
+
+    # UPGRADE IN PLACE, never mint a second owned organization.
+    #
+    # Every user already owns an organization from signup
+    # (orgs.ensure_default_organization_for_user), and their projects, Decision
+    # Records, outcomes, lessons and organizational memory are all attached to
+    # its id. Creating a fresh Organization here and repointing
+    # active_organization_id at it would strand every one of those in an org
+    # the user can no longer reach -- silently, because retrieval is scoped to
+    # the active organization. Going solo -> team is an UPGRADE of the
+    # organization they already have, not a replacement for it.
+    #
+    # Owning several organizations is not a supported model: billing funds one
+    # active org's Thinking Power pool, default resolution always returns the
+    # oldest owned org, and nothing in the product enumerates owned orgs.
+    # Belonging to other organizations is untouched and stays valid -- that is
+    # membership, resolved separately by the organization switcher.
+    existing_org, membership, changed = ensure_default_organization_for_user(user)
+    if existing_org is not None and existing_org.owner_user_id == user.id:
+        # Naming the team is the legitimate part of this request; the identity
+        # of the organization is not up for negotiation.
+        if name and existing_org.name != name:
+            existing_org.name = name
+            changed = True
+        if changed:
+            db.session.commit()
+        return jsonify({
+            "organization": _org_payload(existing_org, membership_role=ROLE_OWNER),
+            # Explicit, so a caller can tell an upgrade from a creation rather
+            # than inferring it from the status code.
+            "created": False,
+            "reused_existing_organization": True,
+        }), 200
 
     plan_key = to_public_plan(normalize_plan_key(user.subscription_plan))
     if plan_key not in {"team", "business"}:
@@ -542,6 +586,12 @@ def accept_team_invitation(token):
     org = Organization.query.filter_by(id=invite.organization_id).first()
     if not org:
         return jsonify({"error": "Organization not found"}), 404
+
+    # Same reason as _require_org_access: the invitee is not a member yet, so
+    # this path never went through org resolution either. Without the sync the
+    # accept gate below would read a stale plan and let someone join an
+    # organization that has since downgraded.
+    sync_org_plan_and_commit(org)
 
     # Re-checked at accept: the org may have downgraded below Team, or gone
     # past due, between the invitation being sent and this link being clicked.

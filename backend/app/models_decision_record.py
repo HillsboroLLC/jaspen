@@ -54,10 +54,21 @@ class DecisionRecord(db.Model):
         primary_key=True,
         default=lambda: str(uuid.uuid4()),
     )
+    # ATTRIBUTION, not ownership -- the organization owns the record.
+    #
+    # SET NULL, not CASCADE (Phase 6). Phase 2 catalogued this FK as a latent
+    # risk and deferred it because no user-deletion path existed and the
+    # record's analysis fields could always be re-derived from the project.
+    # That changed when outcomes and lessons landed here: those are
+    # human-authored institutional learning, they cannot be reconstructed from
+    # anything, and cascading them away with the person who happened to type
+    # them would destroy exactly the knowledge this system exists to keep.
+    # The author's NAME is snapshotted into the record payload and onto each
+    # outcome/lesson entry, so attribution survives the row going null.
     user_id = db.Column(
         db.String(36),
-        db.ForeignKey('users.id', ondelete='CASCADE'),
-        nullable=False,
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
         index=True,
     )
     organization_id = db.Column(db.String(36), nullable=True, index=True)
@@ -102,6 +113,32 @@ class DecisionRecord(db.Model):
     # Search/retrieval metadata (future: Library, AI search, dashboards).
     tags = db.Column(db.JSON, nullable=False, default=list)
 
+    # ── Supersession (Phase 5) ───────────────────────────────────────────
+    #
+    # ONE forward link, deliberately. The obvious design stores both
+    # `supersedes_id` and `superseded_by_id`, but they are inverses of each
+    # other and can desync -- and a desynced pair means the record claims a
+    # current-state it does not have, which is the worst failure mode for
+    # institutional memory. The reverse direction is a single indexed query
+    # instead (successor_of()).
+    #
+    # There is likewise NO stored `is_current` flag. A denormalized boolean
+    # must be rewritten on every supersession and silently lies the moment an
+    # update is missed. Current state is DERIVED -- see current_state() in
+    # app/decision_records.py.
+    supersedes_id = db.Column(
+        db.String(36),
+        db.ForeignKey('decision_records.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    # When the supersession link was made. A real event with a real timestamp,
+    # unlike an `effective_from` / `effective_until` pair -- nothing in the
+    # product captures when a decision *takes effect*, so inventing those
+    # fields would fabricate a signal. `decided_at` remains the only temporal
+    # marker of the decision itself.
+    superseded_at = db.Column(db.DateTime, nullable=True)
+
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     decided_at = db.Column(db.DateTime, nullable=True)
@@ -129,6 +166,8 @@ class DecisionRecord(db.Model):
             'lessons_learned': self.lessons_learned if isinstance(self.lessons_learned, list) else [],
             'accepted_exposures': self.accepted_exposures if isinstance(self.accepted_exposures, list) else [],
             'tags': self.tags if isinstance(self.tags, list) else [],
+            'supersedes_id': self.supersedes_id,
+            'superseded_at': self.superseded_at.isoformat() if self.superseded_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'decided_at': self.decided_at.isoformat() if self.decided_at else None,

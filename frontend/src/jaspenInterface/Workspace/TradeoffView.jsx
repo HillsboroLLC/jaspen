@@ -7,6 +7,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faEye, faEyeSlash, faDiagramProject, faSpinner, faUpRightFromSquare } from '@fortawesome/free-solid-svg-icons';
 import { Jaspen } from './JaspenClient';
 import { computeTradeoffInsights } from './tradeoffInsights';
+import RecordDecisionPanel from './RecordDecisionPanel';
 
 const NAVY   = '#161f3b';
 const ROSE   = '#a0036c';
@@ -674,6 +675,16 @@ const TradeoffView = ({
     <div style={{ display:'flex', background:BG_ALT, fontFamily:"'Inter Tight', system-ui, sans-serif", ...(flow ? {} : { flex:1, minHeight:0 }) }}>
       {/* Main content */}
       <div style={{ flex:1, display:'flex', flexDirection:'column', padding:'20px 24px', gap:14, minWidth:0, ...(flow ? {} : { overflow:'auto' }) }}>
+
+        {/* The organization's decision. Sits above the analysis it was made
+            from, because "what did we decide" is the question a returning
+            reader has first -- and because it must never look like an output
+            of the scoring below it. Renders nothing until a Decision Record
+            exists for the thread. */}
+        <RecordDecisionPanel
+          threadId={threadId}
+          alternatives={ideas.map((idea) => idea && idea.name).filter(Boolean)}
+        />
 
         {/* Hero + quadrant */}
         <div data-workspace-pdf-break style={{ display:'grid', gridTemplateColumns:'1fr 390px', gap:14 }}>

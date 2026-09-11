@@ -37,6 +37,12 @@ export default function ThreadEditModal({
 
   const [analysisOptions, setAnalysisOptions] = React.useState([]); // [{analysis_id,label,created_at}]
 
+  // The thread revision observed when this modal hydrated. Sent back as
+  // `base_revision` on rename so the server can refuse a write layered on a
+  // version someone else has already replaced. A ref rather than state: it is
+  // never rendered and must not re-run the hydrate effect.
+  const baseRevisionRef = React.useRef(null);
+
   React.useEffect(() => {
     nameRef.current = name;
   }, [name]);
@@ -105,6 +111,9 @@ export default function ThreadEditModal({
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data?.error || data?.msg || `HTTP ${res.status}`);
 
+        const revision = data?.thread?.revision ?? data?.session?.revision;
+        if (Number.isFinite(Number(revision))) baseRevisionRef.current = Number(revision);
+
         const hist = Array.isArray(data?.analysis_history) ? data.analysis_history : [];
         const opts = hist
           .map((h) => {
@@ -166,7 +175,13 @@ export default function ThreadEditModal({
     try {
       // 1) Rename
       if (name && name.trim()) {
-        const renameBody = JSON.stringify({ name: name.trim() });
+        // Declare the version this rename is layered on. The server requires
+        // it for a shared organization project and answers 409 when the
+        // project has moved on.
+        const renameBody = JSON.stringify({
+          name: name.trim(),
+          ...(baseRevisionRef.current != null ? { base_revision: baseRevisionRef.current } : {}),
+        });
         const renameEndpoints = threadMode === 'strategy'
           ? [`/api/v1/strategy/threads/${encodeURIComponent(targetThreadId)}`]
           : threadMode === 'ai-agent'
@@ -188,6 +203,15 @@ export default function ThreadEditModal({
           if (res.ok) {
             renameSucceeded = true;
             break;
+          }
+          if (res.status === 409) {
+            // A conflict is an answer, not a failed attempt. Stop here rather
+            // than falling through to the sibling endpoint, and never retry:
+            // the newer version is someone else's work.
+            throw new Error(
+              data?.error
+              || 'This project changed since you opened it. Close and reopen it to get the latest version before renaming.'
+            );
           }
           renameError = new Error(data?.error || data?.msg || `Rename failed (HTTP ${res.status})`);
         }

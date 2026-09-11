@@ -472,17 +472,56 @@ def ensure_default_organization_for_user(user):
                 status="active",
             ).first()
 
-    if org and org.owner_user_id == user.id:
-        owner_plan = normalize_plan_key(user.subscription_plan)
-        if owner_plan and org.plan_key != owner_plan:
-            org.plan_key = owner_plan
-            changed = True
+    # One implementation, shared with the by-id endpoints. Reads the OWNER's
+    # plan, so this is correct no matter who triggered the resolution.
+    if org is not None and sync_org_plan_from_owner(org):
+        changed = True
 
     if org and user.active_organization_id != org.id:
         user.active_organization_id = org.id
         changed = True
 
     return org, membership, changed
+
+
+def sync_org_plan_from_owner(org):
+    """Bring org.plan_key in line with its OWNER's current subscription.
+
+    The single plan-sync implementation. An organization's entitlement follows
+    the person who pays for it, never whoever happens to be making the request
+    -- a member's own subscription must not move someone else's org between
+    plans.
+
+    Returns True when the row changed, so callers can decide whether to commit.
+
+    Why this is called from the gates and not only at org resolution: a
+    subscription change writes `user.subscription_plan` and nothing else, so
+    `org.plan_key` is stale until something syncs it. Endpoints that address an
+    organization by id (app.routes.teams._require_org_access, invitation
+    accept) never went through org resolution, so they evaluated the
+    collaboration gate against a stale plan. On an upgrade that failed closed
+    and was merely annoying; on a DOWNGRADE it failed open -- a just-downgraded
+    owner could still invite, and the invitee could still accept, because both
+    read the same stale 'team'.
+    """
+    if not isinstance(org, Organization) or not org.owner_user_id:
+        return False
+    owner = User.query.filter_by(id=org.owner_user_id).first()
+    if owner is None:
+        return False
+    owner_plan = normalize_plan_key(getattr(owner, "subscription_plan", None))
+    if owner_plan and org.plan_key != owner_plan:
+        org.plan_key = owner_plan
+        return True
+    return False
+
+
+def sync_org_plan_and_commit(org):
+    """sync_org_plan_from_owner() for callers outside a write transaction."""
+    if sync_org_plan_from_owner(org):
+        db.session.commit()
+        return True
+    return False
 
 
 def resolve_active_org_for_user(user):

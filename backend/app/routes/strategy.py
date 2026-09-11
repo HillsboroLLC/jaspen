@@ -57,7 +57,14 @@ from app.jira_sync import sync_wbs_to_jira
 from app.connector_store import get_thread_sync_profile
 from app.orgs import resolve_active_org_for_user
 from app.rate_limits import AI_CONVERSATION_SCOPE
-from .sessions import load_user_sessions, save_user_sessions
+from app.session_access import (
+    SessionAccessError,
+    canonical_row,
+    check_revision,
+    extract_base_revision,
+    resolve_session_for_actor,
+)
+from .sessions import load_sessions_for_thread, load_user_sessions, save_user_sessions
 
 strategy_bp = Blueprint('strategy', __name__)
 
@@ -4116,7 +4123,39 @@ def analyze_project():
             sessions[session_key or resolved_thread_id] = session
             persisted_session = save_user_sessions(current_user_id, sessions)
 
+        # PHASE 3. A completed score is the product's meaningful "decision
+        # artifact exists" moment -- the same lifecycle point that already
+        # marks the session completed and updates personal memory. That makes
+        # it the right and only chokepoint for the canonical Decision Record;
+        # ordinary chat turns never reach here.
+        #
+        # Synchronous and best-effort: the record is derived from rows that
+        # were just committed above, and a failure here must never fail the
+        # user's score. It is create-OR-REFRESH, so re-scoring the same thread
+        # updates one record rather than accumulating duplicates.
+        try:
+            from app.decision_records import create_or_refresh_record
+            _actor = User.query.get(str(current_user_id))
+            if _actor is not None:
+                _record, _created = create_or_refresh_record(_actor, resolved_thread_id)
+                current_app.logger.info(
+                    "[decision_record] %s record %s for thread %s",
+                    "created" if _created else "refreshed",
+                    _record.id, resolved_thread_id,
+                )
+        except LookupError:
+            # Nothing analyzable in the thread yet -- not an error.
+            current_app.logger.debug(
+                "[decision_record] nothing to record for thread %s", resolved_thread_id
+            )
+        except Exception:
+            current_app.logger.exception(
+                "[decision_record] failed for thread %s", resolved_thread_id
+            )
+
         # Fire-and-forget: extract business facts from this score into persistent user memory.
+        # Unchanged by Phase 3: personal memory and the organization's Decision
+        # Record are separate layers and both continue to run.
         try:
             from app.routes.ai_agent import extract_and_update_user_memory
             _score_val = analysis_result.get('jaspen_score')
@@ -9700,7 +9739,25 @@ def update_strategy_thread(thread_id):
         if not next_name:
             return jsonify({'error': 'name is required'}), 400
 
-        sessions = load_user_sessions(user_id) or {}
+        # PHASE 1.1. This is the SECOND rename endpoint -- ThreadEditModal
+        # falls back to it when the ai-agent one does not answer -- and it used
+        # to resolve through load_user_sessions(user_id) with no organization
+        # authorization and no revision check. Left alone it would be a
+        # complete bypass of the concurrency guarantee for the single most
+        # common shared mutation there is. It now goes through the same
+        # chokepoint as everything else.
+        actor = User.query.get(str(user_id))
+        canonical = canonical_row(actor, thread_id, include_archived=True) if actor else None
+        if canonical is not None:
+            resolve_session_for_actor(
+                actor, thread_id, require_write=True, include_archived=True
+            )
+            check_revision(canonical, extract_base_revision(payload))
+            sessions = load_sessions_for_thread(actor, thread_id, include_archived=True) or {}
+        else:
+            # No canonical row: a scenario-only thread that has no session row
+            # yet. Nothing is shared, so there is nothing to race on.
+            sessions = load_user_sessions(user_id) or {}
         all_data = _load_scenarios(user_id)
         resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
         if not resolved_thread_id:
@@ -9826,6 +9883,7 @@ def update_strategy_thread(thread_id):
             all_data[resolved_thread_id] = thread_data
             _save_scenarios(user_id, all_data)
 
+        _written = canonical_row(actor, resolved_thread_id, include_archived=True) if actor else None
         return jsonify({
             'success': True,
             'thread': {
@@ -9833,10 +9891,16 @@ def update_strategy_thread(thread_id):
                 'session_id': resolved_thread_id,
                 'name': next_name,
                 'status': session.get('status') or 'in_progress',
+                'revision': int(_written.revision or 1) if _written is not None else None,
                 'timestamp': now_iso,
             },
         }), 200
 
+    except SessionAccessError:
+        # A 403/404/409 is a decision, not a failure. Let the app-level handler
+        # render it instead of the catch-all below flattening it into a 500 --
+        # which would hide a revision conflict from the client entirely.
+        raise
     except Exception as e:
         current_app.logger.error("[update_strategy_thread] %s", e)
         return jsonify({'error': str(e)}), 500

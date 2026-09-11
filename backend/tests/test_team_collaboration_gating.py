@@ -362,7 +362,15 @@ def test_sub_team_plans_cannot_create_a_team_org(client, app, db, plan):
     assert Organization.query.filter_by(owner_user_id=user.id).count() == 0
 
 
-def test_team_plan_can_create_a_team_org(client, app, db):
+def test_team_plan_gets_its_existing_org_upgraded_not_replaced(client, app, db):
+    """Was: asserted 201 and a freshly minted Organization.
+
+    That encoded the behaviour we deliberately removed. Every user already owns
+    a default organization from signup, and their projects, Decision Records
+    and organizational memory hang off its id -- so this endpoint upgrades that
+    organization in place rather than creating a second one and stranding
+    everything in the first. See test_solo_to_team_continuity.py.
+    """
     user = _make_user(db, "creator-team@example.com", plan="team")
 
     response = client.post(
@@ -371,9 +379,16 @@ def test_team_plan_can_create_a_team_org(client, app, db):
         headers=_headers(app, user),
     )
 
-    assert response.status_code == 201
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["created"] is False
+    assert body["reused_existing_organization"] is True
+
+    # Exactly one owned organization, named as requested, on the Team plan.
     org = Organization.query.filter_by(owner_user_id=user.id).one()
     assert org.plan_key == "team"
+    assert org.name == "Real Team Co"
+    assert body["organization"]["id"] == org.id
 
 
 def test_past_due_team_cannot_create_a_team_org(client, app, db):

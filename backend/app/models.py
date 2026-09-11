@@ -748,16 +748,49 @@ class UserSession(db.Model):
     scenarios_json = db.Column(db.JSON, nullable=True, default=dict)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # --- Canonical organization ownership (Phase 1) -----------------------
+    #
+    # `organization_id` above is the CANONICAL OWNER of the work product.
+    # `user_id` and `created_by_user_id` are ATTRIBUTION and must never be
+    # read as ownership for a Team+ org -- see app/session_access.py.
+    #
+    # `revision` is the optimistic-concurrency token. It must be used instead
+    # of `updated_at`, which is derived from the CLIENT-supplied `timestamp`
+    # in _normalize_session_payload() and therefore cannot be trusted.
+    # Rows start at 1; every accepted mutation increments by exactly 1.
+    revision = db.Column(db.Integer, nullable=False, default=1, server_default='1')
+    last_edited_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+
     # Soft delete: when the user clicks "Delete from my history" we set
     # archived_at + purge_after. The row stays in the table (so we can undo
     # within the grace window) but is hidden from history queries.
+    #
+    # These two columns are ORGANIZATION-LEVEL state: archiving schedules a
+    # purge that destroys the canonical row for everyone. A member removing a
+    # shared project from their own history must NOT reach them -- that adds
+    # their id to `hidden_for_user_ids` instead, which is per-member view
+    # state and never schedules a purge. See archive_user_session().
     archived_at = db.Column(db.DateTime, nullable=True, index=True)
     purge_after = db.Column(db.DateTime, nullable=True, index=True)
+    hidden_for_user_ids = db.Column(db.JSON, nullable=True, default=list)
 
     __table_args__ = (
+        # Retained deliberately. It is the personal-scope guard and it is what
+        # makes the migration additive. Canonical (organization_id, session_id)
+        # uniqueness is NOT enforced here: the `__user_memory__` sentinel gives
+        # every member of an org a row with an identical session_id, so a unique
+        # constraint would be unsatisfiable. Canonicity is resolved in
+        # app/session_access.py (oldest created_at wins).
         db.UniqueConstraint('user_id', 'session_id', name='uq_user_sessions_user_id_session_id'),
         db.Index('ix_user_sessions_user_id_updated_at', 'user_id', 'updated_at'),
         db.Index('ix_user_sessions_user_archived', 'user_id', 'archived_at'),
+        db.Index('ix_user_sessions_org_session', 'organization_id', 'session_id'),
     )
 
 
