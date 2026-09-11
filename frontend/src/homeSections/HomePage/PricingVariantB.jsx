@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { createAnalytics } from '../../tools/shared/createAnalytics';
 import EnterpriseInvestmentCalculator from './EnterpriseInvestmentCalculator';
 import ExecutivePartnershipRequest from './ExecutivePartnershipRequest';
+import AdvisoryDecisionCalculator from './AdvisoryDecisionCalculator';
 import {
   LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT,
   THINKING_POWER_PROJECT_ESTIMATES,
@@ -145,13 +146,14 @@ const ADVISORY_OFFERINGS = [
     description: 'An independent review of a decision your team has already developed. Jaspen separates what is evidenced from what is assumed, and we pressure test what the recommendation is resting on, before resources are committed. Confirming the direction is a legitimate result. So is finding that it does not hold.',
     includedLabel: 'You receive',
     included: [
+      'A Jaspen Customer Success Partner to challenge assumptions, strengthen inputs, and identify the areas of greatest exposure before significant resources are committed',
       'An Evidence and Assumption Profile of the decision, showing what share of it is evidenced and what share is assumed',
       'A ranked assumption register, each entry carrying its power to change the answer',
       'The evidence that would resolve the top assumptions, and what obtaining it would take',
       'A trade-off analysis across the options under consideration, on one shared rubric',
       'A Decision Record your organization keeps, which updates as assumptions resolve',
     ],
-    logistics: 'Delivered as one 90-minute virtual session facilitated by Jaspen’s Founder or a designated Customer Success Partner, with tailored preparation guidance beforehand. Jaspen access and AI capacity are included throughout the engagement.',
+    logistics: 'Delivered as one 90-minute virtual session facilitated by a Jaspen Customer Success Partner, with tailored preparation guidance beforehand. Jaspen access and AI capacity are included throughout the engagement.',
     engagement: 'executive_decision_intensive',
   },
   {
@@ -170,6 +172,7 @@ const ADVISORY_OFFERINGS = [
     includedLabel: 'You receive',
     includedIntro: 'Everything in the Intensive, applied across the cycle, plus:',
     included: [
+      'A Jaspen Customer Success Partner to challenge assumptions, strengthen inputs, and identify the areas of greatest exposure before significant resources are committed',
       'Shared assumptions traced across initiatives, so one failure is visible everywhere it lands',
       'Aggregate assumption exposure across the portfolio, not decision by decision',
       'Where confidence is running ahead of the evidence supporting it',
@@ -177,7 +180,7 @@ const ADVISORY_OFFERINGS = [
       'Sequencing guidance on what needs resolving before the organization commits further',
       'Decision Records retained across the cycle, with outcomes tracked as they arrive',
     ],
-    logistics: 'Delivered across five 90-minute virtual sessions and a portfolio review, facilitated by Jaspen’s Founder or a designated Customer Success Partner, with strategic context carried forward between them. Jaspen access and AI capacity are included throughout the engagement.',
+    logistics: 'Delivered across five 90-minute virtual sessions and a portfolio review, facilitated by a Jaspen Customer Success Partner, with strategic context carried forward between them. Jaspen access and AI capacity are included throughout the engagement.',
     engagement: 'strategic_advisor_partnership',
     featured: true,
   },
@@ -201,8 +204,8 @@ const ADVISORY_COMPARISON = [
   { label: 'Shared rubric',                   intensive: 'Applied to this decision',                                      partnership: 'Applied across the cycle, so submissions are comparable' },
   { label: 'Decision Records retained',       intensive: 'One, with outcomes tracked as they arrive',                     partnership: 'Across the cycle, with outcomes tracked as they arrive' },
   { label: 'AI-powered usage credits',        intensive: `300,000 (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})`,        partnership: `300,000 (${LIMITED_TIME_300K_PROJECT_ESTIMATE_SHORT})` },
-  { label: 'Facilitator',                     intensive: 'Founder or designated Customer Success Partner',                partnership: 'Founder or designated Customer Success Partner' },
-  { label: 'Next step',                       intensive: 'Request a Consultation',                                        partnership: 'Request a Consultation' },
+  { label: 'Facilitator',                     intensive: 'Jaspen Customer Success Partner',                               partnership: 'Jaspen Customer Success Partner' },
+  { label: 'Next step',                       intensive: 'Request Consideration',                                         partnership: 'Request Consideration' },
 ];
 
 const AUDIENCE_TABS = [
@@ -313,16 +316,40 @@ export default function PricingVariantB({ onOpenModal }) {
         >
           <div className="pvb-advisory-intro">
             <p className="pvb-advisory-eyebrow">Jaspen Advisory</p>
-            <h3>Strategic decisions deserve more than software alone.</h3>
+            <h3>See where the decision is exposed before you commit.</h3>
             <p className="pvb-advisory-lead">
-              Work virtually with Jaspen’s Founder or a designated Customer Success Partner to frame
-              high-impact decisions, strengthen the inputs and prompts used in Jaspen, challenge
-              assumptions, and identify where the greatest estimated financial value may be available.
+              Advisory engagements combine structured working sessions with Jaspen’s
+              decision-confidence workflow.
             </p>
-            <p className="pvb-advisory-disclosure">
-              Advisory engagements are delivered through structured virtual working sessions. Clients
-              execute within Jaspen while the Jaspen advisor guides the decision process.
-            </p>
+            <aside className="pvb-advisory-capacity" aria-labelledby="pvb-advisory-capacity-title">
+              <h4 id="pvb-advisory-capacity-title" className="pvb-advisory-capacity-heading">
+                Limited quarterly openings
+              </h4>
+              <div className="pvb-advisory-capacity-grid">
+                <div className="pvb-advisory-capacity-item">
+                  <h4 className="pvb-advisory-capacity-pill">Limited Capacity</h4>
+                  <p>
+                    A small number of advisory engagements are accepted <strong>each quarter</strong> to
+                    protect depth, rigor, and attention.
+                  </p>
+                </div>
+                <div className="pvb-advisory-capacity-item">
+                  <h4 className="pvb-advisory-capacity-pill">Conflict of Interest</h4>
+                  <p>
+                    Potential competitive and confidentiality conflicts are reviewed before acceptance.
+                    We may decline or defer an engagement where either could be compromised.
+                  </p>
+                </div>
+                <div className="pvb-advisory-capacity-item">
+                  <h4 className="pvb-advisory-capacity-pill">Fit &amp; Timing</h4>
+                  <p>
+                    We want to make sure we will work well together. Every request is considered based
+                    on fit and timing. We may decline an engagement that is not a fit or defer it to a
+                    time when capacity is right.
+                  </p>
+                </div>
+              </div>
+            </aside>
           </div>
 
           <div className="pvb-advisory-cards">
@@ -361,7 +388,7 @@ export default function PricingVariantB({ onOpenModal }) {
                   className={`pvb-card-cta jaspen-btn ${offering.featured ? 'jaspen-btn-primary' : 'jaspen-btn-outline'}`}
                   onClick={() => requestConsultation(offering)}
                 >
-                  Request a Consultation
+                  Request Consideration
                 </button>
                 <p className="pvb-advisory-cta-note">{ADVISORY_CTA_NOTE}</p>
               </div>
@@ -381,6 +408,8 @@ export default function PricingVariantB({ onOpenModal }) {
             Approved travel, lodging, transportation, meals, and related expenses are billed
             separately and are not included in the flat fee.
           </p>
+
+          <AdvisoryDecisionCalculator />
 
           <div className="pvb-compare-accordion">
             <button
