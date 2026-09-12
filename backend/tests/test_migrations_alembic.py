@@ -430,10 +430,26 @@ def test_phase_5_downgrade_removes_the_columns(pre_phase_5_db):
 # --- Phase 6: attribution retention on decision_records ----------------------
 
 PHASE_6_REVISION = "e2f9a4d17c63"
+ORG_MEMORY_FK_REVISION = "f4c8d2a71e90"
 
 
 def _load_phase_6():
     return ScriptDirectory(MIGRATIONS_DIR).get_revision(PHASE_6_REVISION).module
+
+
+def _load_org_memory_fks():
+    return ScriptDirectory(MIGRATIONS_DIR).get_revision(ORG_MEMORY_FK_REVISION).module
+
+
+def _foreign_key(db_path, table, constrained_column, referred_table):
+    conn = sqlite3.connect(db_path)
+    try:
+        for row in conn.execute(f"PRAGMA foreign_key_list({table})"):
+            if row[3] == constrained_column and row[2] == referred_table:
+                return {'ondelete': row[6]}
+    finally:
+        conn.close()
+    return None
 
 
 def _user_id_nullable(db_path):
@@ -609,3 +625,96 @@ def test_phase_6_refused_downgrade_leaves_every_record_untouched(pre_phase_5_db)
     assert _user_id_nullable(pre_phase_5_db) is True
     # The orphaned record and its human-authored decision survive.
     assert ('rec-orphan', None, 'We restructured.') in _snapshot()
+
+
+# --- Organization-memory database integrity ---------------------------------
+
+def _prepare_org_memory_fk_schema(db_path):
+    """Add the Phase 1-shaped session table required by the FK revision."""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript("""
+            CREATE TABLE user_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id VARCHAR(36) NOT NULL,
+                session_id VARCHAR(255) NOT NULL,
+                last_edited_by_user_id VARCHAR(36),
+                CONSTRAINT fk_user_sessions_user_id_users
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            INSERT INTO users (id) VALUES ('u-editor');
+            INSERT INTO user_sessions
+                (user_id, session_id, last_edited_by_user_id)
+            VALUES ('u-owner', 'shared-project', 'u-editor');
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _upgrade_through_org_memory_fks(db_path):
+    _prepare_org_memory_fk_schema(db_path)
+    with _migration_ops(db_path):
+        _load_phase_5().upgrade()
+    with _migration_ops(db_path):
+        _load_phase_6().upgrade()
+    with _migration_ops(db_path):
+        _load_org_memory_fks().upgrade()
+
+
+def test_org_memory_foreign_keys_match_the_orm_contract(pre_phase_5_db):
+    _upgrade_through_org_memory_fks(pre_phase_5_db)
+
+    editor_fk = _foreign_key(
+        pre_phase_5_db, 'user_sessions', 'last_edited_by_user_id', 'users'
+    )
+    supersession_fk = _foreign_key(
+        pre_phase_5_db, 'decision_records', 'supersedes_id', 'decision_records'
+    )
+
+    assert editor_fk == {'ondelete': 'SET NULL'}
+    assert supersession_fk == {'ondelete': 'SET NULL'}
+
+
+def test_org_memory_foreign_keys_clear_deleted_references(pre_phase_5_db):
+    _upgrade_through_org_memory_fks(pre_phase_5_db)
+
+    conn = sqlite3.connect(pre_phase_5_db)
+    try:
+        conn.execute('PRAGMA foreign_keys = ON')
+        conn.execute(
+            "UPDATE decision_records SET supersedes_id = 'rec-undecided' "
+            "WHERE id = 'rec-decided'"
+        )
+        conn.execute("DELETE FROM users WHERE id = 'u-editor'")
+        conn.execute("DELETE FROM decision_records WHERE id = 'rec-undecided'")
+        conn.commit()
+
+        last_editor = conn.execute(
+            "SELECT last_edited_by_user_id FROM user_sessions "
+            "WHERE session_id = 'shared-project'"
+        ).fetchone()[0]
+        supersedes_id = conn.execute(
+            "SELECT supersedes_id FROM decision_records WHERE id = 'rec-decided'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    assert last_editor is None
+    assert supersedes_id is None
+
+
+def test_org_memory_foreign_key_downgrade_removes_only_its_constraints(pre_phase_5_db):
+    _upgrade_through_org_memory_fks(pre_phase_5_db)
+
+    with _migration_ops(pre_phase_5_db):
+        _load_org_memory_fks().downgrade()
+
+    assert _foreign_key(
+        pre_phase_5_db, 'user_sessions', 'last_edited_by_user_id', 'users'
+    ) is None
+    assert _foreign_key(
+        pre_phase_5_db, 'decision_records', 'supersedes_id', 'decision_records'
+    ) is None
+    assert 'last_edited_by_user_id' in _columns(pre_phase_5_db, 'user_sessions')
+    assert 'supersedes_id' in _columns(pre_phase_5_db, 'decision_records')
