@@ -804,7 +804,7 @@ export default function JaspenWorkspace() {
   // Force-save: flush the pending override save immediately (the "Save" button).
   // Some users want the reassurance of an explicit save even though edits auto-save.
   const flushSave = useCallback(async () => {
-    if (!threadId || !scorecardId) return;
+    if (!threadId || !scorecardId || !isScorecard) return;
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     try {
       setSaving(true);
@@ -817,7 +817,7 @@ export default function JaspenWorkspace() {
     } finally {
       setSaving(false);
     }
-  }, [threadId, scorecardId, overrides]);
+  }, [threadId, scorecardId, isScorecard, overrides]);
 
   // Debounced auto-save: any change to overrides is persisted ~500ms later.
   useEffect(() => {
@@ -825,7 +825,11 @@ export default function JaspenWorkspace() {
       skipNextSaveRef.current = false;
       return;
     }
-    if (!threadId || !scorecardId) return;
+    // Trade-off and execution routes use sentinel ids rather than Scorecard
+    // rows. Cosmetic overrides belong to an individual scorecard only; trying
+    // to persist a sentinel produces a visible 404 in an otherwise healthy
+    // comparison view.
+    if (!threadId || !scorecardId || !isScorecard) return;
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(async () => {
       try {
@@ -839,7 +843,7 @@ export default function JaspenWorkspace() {
       }
     }, 500);
     return () => { if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current); };
-  }, [overrides, threadId, scorecardId]);
+  }, [overrides, threadId, scorecardId, isScorecard]);
 
   // Adopt the server-side layout once per loaded artifact. The server copy wins
   // over localStorage because it is the one that followed the user here from
@@ -859,7 +863,7 @@ export default function JaspenWorkspace() {
   // cache; display_overrides.section_layout rides the existing debounced
   // override auto-save and is what exports read.
   useEffect(() => {
-    if (!threadId || !scorecardId) return;
+    if (!threadId || !scorecardId || !isScorecard) return;
     try {
       localStorage.setItem(`jw-layout-${threadId}-${scorecardId}`, JSON.stringify(sectionLayout));
     } catch {}
@@ -876,7 +880,7 @@ export default function JaspenWorkspace() {
     // browser-only layout up to the server for cards saved before layout was
     // persisted. If the layout already matches, the merge no-ops and no PATCH
     // is issued.
-  }, [sectionLayout, threadId, scorecardId, loading]);
+  }, [sectionLayout, threadId, scorecardId, loading, isScorecard]);
 
   const rendered = useMemo(() => applyOverrides(snapshot, overrides), [snapshot, overrides]);
 
