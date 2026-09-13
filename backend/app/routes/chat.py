@@ -9,6 +9,9 @@ import anthropic
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
+from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_operation
+from app.models import User
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -80,7 +83,31 @@ def get_claude_client():
     return anthropic.Anthropic(api_key=api_key)
 
 
-def _anthropic_text_completion(system_prompt, user_prompt, *, max_tokens=1000, temperature=0.7, model=None):
+def _anthropic_text_completion(
+    system_prompt,
+    user_prompt,
+    *,
+    max_tokens=1000,
+    temperature=0.7,
+    model=None,
+    user_id=None,
+    operation_type='legacy_chat',
+):
+    if user_id:
+        user = User.query.get(str(user_id))
+        if user is None:
+            raise ValueError('User not found')
+        text, usage, _settlement = execute_customer_text_operation(
+            user,
+            messages=[{'role': 'user', 'content': str(user_prompt or '').strip()}],
+            system_prompt=system_prompt,
+            operation_type=operation_type,
+            model_type=_model_type_from_resolved_model(model or 'claude-sonnet-4-6'),
+            legacy_model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        return text, usage, usage.get('model')
     client = get_claude_client()
     last_error = None
     for candidate in _anthropic_model_candidates(model):
@@ -150,6 +177,8 @@ def chat():
             user_message,
             max_tokens=2000,
             temperature=0.7,
+            user_id=current_user_id,
+            operation_type='legacy_chat',
         )
 
         if not reply:
@@ -162,6 +191,8 @@ def chat():
             'usage': _public_usage_payload(usage, resolved_model),
         })
 
+    except AIOperationPaymentRequired as e:
+        return jsonify(e.payload or {'error': 'Thinking Power exhausted'}), 402
     except Exception as e:
         logger.error('Chat endpoint error: %s', e)
         return jsonify({'error': f'Server error: {str(e)}'}), 500
@@ -222,6 +253,8 @@ def handle_floating_ai_chat(payload, user_id):
             'timestamp': datetime.utcnow().isoformat(),
         })
 
+    except AIOperationPaymentRequired as e:
+        return jsonify(e.payload or {'error': 'Thinking Power exhausted'}), 402
     except Exception as e:
         logger.error(f'FloatingAI chat error: {str(e)}')
         return jsonify({'success': False, 'error': 'Failed to generate AI response', 'fallback': True}), 500
@@ -238,8 +271,12 @@ def generate_statistical_response(message, statistical_context, user_id):
             message,
             max_tokens=1000,
             temperature=0.7,
+            user_id=user_id,
+            operation_type='statistics_guidance',
         )
         return text or generate_statistical_fallback_response(message, statistical_context)
+    except AIOperationPaymentRequired:
+        raise
     except Exception as err:
         logger.warning('Statistical response fallback: %s', err)
         return generate_statistical_fallback_response(message, statistical_context)
@@ -302,8 +339,12 @@ def generate_form_response(message, tool, form_data, user_id):
             message,
             max_tokens=800,
             temperature=0.7,
+            user_id=user_id,
+            operation_type='tool_guidance',
         )
         return text or generate_form_fallback_response(message, tool, form_data)
+    except AIOperationPaymentRequired:
+        raise
     except Exception as e:
         logger.error(f'Form AI error: {str(e)}')
         return generate_form_fallback_response(message, tool, form_data)
@@ -354,6 +395,8 @@ def generate_general_response(message, tool, context, user_id):
             message,
             max_tokens=600,
             temperature=0.7,
+            user_id=user_id,
+            operation_type='tool_guidance',
         )
         return text or f"I'm here to help with {tool}. Could you tell me more about what you're working on?"
     except Exception as e:
@@ -408,16 +451,23 @@ def statistical_insights():
         dataset_info = data.get('dataset', {})
         analysis_goal = data.get('goal', 'describe')
 
-        insights = generate_analysis_insights(analysis_results, dataset_info, analysis_goal)
+        insights = generate_analysis_insights(
+            analysis_results,
+            dataset_info,
+            analysis_goal,
+            user_id=get_jwt_identity(),
+        )
 
         return jsonify({'success': True, 'insights': insights, 'timestamp': datetime.utcnow().isoformat()})
 
+    except AIOperationPaymentRequired as e:
+        return jsonify(e.payload or {'error': 'Thinking Power exhausted'}), 402
     except Exception as e:
         logger.error(f'Statistical insights error: {str(e)}')
         return jsonify({'success': False, 'error': 'Failed to generate insights'}), 500
 
 
-def generate_analysis_insights(results, dataset_info, goal):
+def generate_analysis_insights(results, dataset_info, goal, *, user_id=None):
     """
     Generate statistical insights from analysis results.
     """
@@ -443,6 +493,8 @@ Results: {json.dumps(results, indent=2)}
             f'Please analyze these statistical results and provide insights:\n\n{context}',
             max_tokens=1200,
             temperature=0.7,
+            user_id=user_id,
+            operation_type='statistics_analysis',
         )
         return text or 'Analysis complete. Review your results above and consider running additional analyses to validate assumptions.'
 

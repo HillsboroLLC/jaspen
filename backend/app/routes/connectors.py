@@ -10,6 +10,7 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app import limiter
 from app.admin_audit import append_user_audit_event
+from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_operation
 from app.billing_config import to_public_plan
 from app.connectors.smartsheet import smartsheet_connect, smartsheet_list_sheets
 from app.connector_registry import (
@@ -55,7 +56,6 @@ from app.salesforce_sync import (
     salesforce_missing_oauth_config,
     salesforce_runtime_config,
 )
-from app.routes.strategy import get_llm_client
 from app.smartsheet_sync import apply_smartsheet_webhook_to_wbs, import_tasks_from_smartsheet, sync_wbs_to_smartsheet
 from app.snowflake_insights import extract_kpi_metrics, run_allowlisted_query, test_snowflake_connection
 from app.tool_registry import get_tool_entitlements
@@ -1779,15 +1779,21 @@ Be specific to the actual data. Do not generate generic ideas. Every idea must b
 """
 
     try:
-        client = get_llm_client()
-        response = client.messages.create(
-            model=current_app.config.get("ANTHROPIC_MODEL") or os.getenv("ANTHROPIC_MODEL") or "claude-sonnet-4-6",
+        raw_text, _usage, _settlement = execute_customer_text_operation(
+            user,
+            messages=[{"role": "user", "content": user_prompt}],
+            system_prompt=system_prompt,
+            operation_type='connector_idea_generation',
+            model_type='orbit',
+            legacy_model=(
+                current_app.config.get("ANTHROPIC_MODEL")
+                or os.getenv("ANTHROPIC_MODEL")
+                or "claude-sonnet-4-6"
+            ),
             max_tokens=2000,
             temperature=0.3,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
         )
-        raw_text = str(response.content[0].text or "").strip()
+        raw_text = str(raw_text or "").strip()
         if raw_text.startswith("```"):
             parts = raw_text.split("```")
             if len(parts) > 1:
@@ -1797,6 +1803,8 @@ Be specific to the actual data. Do not generate generic ideas. Every idea must b
         ideas = json.loads(raw_text.strip())
         if not isinstance(ideas, list):
             ideas = []
+    except AIOperationPaymentRequired as exc:
+        return jsonify(exc.payload or {"error": "Thinking Power exhausted"}), 402
     except Exception as exc:
         return jsonify({"error": f"AI analysis failed: {str(exc)}"}), 500
 

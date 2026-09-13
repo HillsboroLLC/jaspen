@@ -12,6 +12,8 @@ from app.models import (
     AdvisoryInquiry,
     AppSetting,
     AccountEntitlement,
+    AIOperation,
+    AIProviderAttempt,
     ConnectorSyncLog,
     DecisionAssetEmail,
     EmailSuppression,
@@ -150,6 +152,8 @@ def db(app):
 
         for model in (
             DecisionRecord,
+            AIProviderAttempt,
+            AIOperation,
             OrgIdeaLedger,
             AdminAuditEvent,
             AppSetting,

@@ -15,6 +15,7 @@ from .models import (
 
 LIMITED_TIME_300K_ENTITLEMENT = '300k_limited_time'
 LIMITED_TIME_300K_CREDIT_SOURCE = '300k_limited_time'
+CREDIT_PACK_CREDIT_SOURCE = 'credit_pack'
 LIMITED_TIME_300K_HOURLY_REQUEST_LIMIT = 100
 LIMITED_TIME_300K_DAILY_REQUEST_LIMIT = 300
 
@@ -122,6 +123,55 @@ def grant_limited_time_300k_offer(
         transaction_metadata={'source': LIMITED_TIME_300K_CREDIT_SOURCE},
     ))
     return entitlement, grant, True
+
+
+def grant_persistent_credit_pack(
+    user,
+    amount,
+    *,
+    payment_reference,
+    checkout_id=None,
+    organization_id=None,
+    metadata=None,
+):
+    """Idempotently grant a purchased, non-expiring credit-pack lot."""
+    user_id = str(user.id)
+    payment_reference = str(payment_reference or '').strip()
+    if not payment_reference:
+        raise ValueError('payment_reference is required for an auditable credit-pack grant')
+    amount = max(0, int(amount or 0))
+    if amount <= 0:
+        raise ValueError('credit-pack amount must be positive')
+
+    external_reference = f'credit-pack:{payment_reference}'
+    existing = PersistentCreditGrant.query.filter_by(
+        external_reference=external_reference,
+    ).first()
+    if existing is not None:
+        return existing, False
+
+    grant = PersistentCreditGrant(
+        user_id=user_id,
+        organization_id=organization_id or getattr(user, 'active_organization_id', None),
+        source=CREDIT_PACK_CREDIT_SOURCE,
+        original_amount=amount,
+        remaining_amount=amount,
+        external_reference=external_reference,
+        stripe_checkout_id=str(checkout_id or '').strip() or None,
+        grant_metadata=dict(metadata or {}),
+    )
+    db.session.add(grant)
+    db.session.flush()
+    db.session.add(PersistentCreditTransaction(
+        grant_id=grant.id,
+        user_id=user_id,
+        transaction_type='grant',
+        amount=amount,
+        balance_after=amount,
+        idempotency_key=f'{external_reference}:grant',
+        transaction_metadata={'source': CREDIT_PACK_CREDIT_SOURCE},
+    ))
+    return grant, True
 
 
 def consume_persistent_credits(user, amount, *, metadata=None):
@@ -239,6 +289,37 @@ def reverse_limited_time_300k_credits(user, *, reason, external_reference):
     if entitlement is not None and entitlement.revoked_at is None:
         entitlement.revoked_at = datetime.utcnow()
     return reversed_amount
+
+
+def reverse_persistent_credit_pack(user, *, payment_reference, reason, external_reference):
+    """Reverse the unused portion of one refunded/charged-back pack lot."""
+    payment_reference = str(payment_reference or '').strip()
+    if not payment_reference:
+        return 0
+    grant = PersistentCreditGrant.query.filter_by(
+        user_id=str(user.id),
+        source=CREDIT_PACK_CREDIT_SOURCE,
+        external_reference=f'credit-pack:{payment_reference}',
+    ).first()
+    if grant is None or grant.status != 'active':
+        return 0
+    amount = max(0, int(grant.remaining_amount or 0))
+    grant.remaining_amount = 0
+    grant.status = 'reversed'
+    grant.reversed_at = datetime.utcnow()
+    db.session.add(PersistentCreditTransaction(
+        grant_id=grant.id,
+        user_id=str(user.id),
+        transaction_type='reversal',
+        amount=-amount,
+        balance_after=0,
+        idempotency_key=f'reversal:{external_reference}:{grant.id}',
+        transaction_metadata={
+            'reason': str(reason or 'refund'),
+            'payment_reference': payment_reference,
+        },
+    ))
+    return amount
 
 
 def limited_time_300k_limits_active(user_or_id):

@@ -368,6 +368,10 @@ def create_app():
     app.config['AI_AGENT_CREDITS_PER_1K_TOKENS'] = float(os.getenv('AI_AGENT_CREDITS_PER_1K_TOKENS', '1.0'))
     app.config['AI_AGENT_MIN_CREDIT_CHARGE'] = int(os.getenv('AI_AGENT_MIN_CREDIT_CHARGE', '1'))
     app.config['AI_AGENT_CREDIT_MULTIPLIERS'] = os.getenv('AI_AGENT_CREDIT_MULTIPLIERS_JSON', '')
+    # New routing and provider-cost credit policies default to shadow mode.
+    # Production behavior cannot change until each flag is explicitly activated.
+    app.config['JASPEN_AI_ROUTER_MODE'] = os.getenv('JASPEN_AI_ROUTER_MODE', 'shadow')
+    app.config['JASPEN_CREDIT_POLICY_MODE'] = os.getenv('JASPEN_CREDIT_POLICY_MODE', 'shadow')
     app.config['FEEDBACK_DIGEST_RECIPIENTS'] = os.getenv('FEEDBACK_DIGEST_RECIPIENTS', '')
     app.config['FEEDBACK_DIGEST_USE_AI'] = _as_bool(os.getenv('FEEDBACK_DIGEST_USE_AI'), default=True)
     app.config['FEEDBACK_DIGEST_ANTHROPIC_MODEL'] = os.getenv('FEEDBACK_DIGEST_ANTHROPIC_MODEL', '')

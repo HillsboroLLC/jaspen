@@ -12,7 +12,9 @@ StripeWebhookEvent), so every test buys under its own purchase id.
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.models import StripeWebhookEvent
+from app.billing_config import reset_user_monthly_credits
+from app.founder_entitlements import consume_persistent_credits, persistent_credit_balance
+from app.models import PersistentCreditGrant, PersistentCreditTransaction, StripeWebhookEvent
 
 PACK_TOKENS = 8_000_000
 
@@ -65,14 +67,28 @@ def _intent_event(test_user, purchase, event_id='evt_intent'):
     }
 
 
+def _refund_event(purchase, *, event_id='evt_refund'):
+    return {
+        'id': f'{event_id}_{purchase["intent"]}',
+        'type': 'charge.refunded',
+        'data': {'object': {
+            'id': f'ch_{purchase["intent"]}',
+            'payment_intent': purchase['intent'],
+            'customer': 'cus_credit_pack',
+            # Stripe charge metadata can be empty even when the PaymentIntent
+            # carried the original checkout metadata.
+            'metadata': {},
+        }},
+    }
+
+
 def _deliver(client, billing, monkeypatch, event):
     monkeypatch.setattr(billing.stripe.Webhook, 'construct_event', lambda *_args: event)
     return client.post('/api/v1/billing/webhook', data=b'{}', headers={'Stripe-Signature': 'test'})
 
 
-def _overage_tokens(user):
-    meter = (user.ui_preferences or {}).get('thinking_power') or {}
-    return int(meter.get('overage_tokens') or 0)
+def _pack_tokens(user):
+    return persistent_credit_balance(user, source='credit_pack')
 
 
 def _claims(claim_id):
@@ -89,7 +105,10 @@ def test_credit_pack_checkout_session_adds_tokens_once(
     response = _deliver(client, billing, monkeypatch, _session_event(test_user, purchase))
 
     assert response.status_code == 200
-    assert _overage_tokens(test_user) == PACK_TOKENS
+    assert _pack_tokens(test_user) == PACK_TOKENS
+    assert PersistentCreditGrant.query.filter_by(
+        external_reference=f'credit-pack:{purchase["intent"]}'
+    ).one().status == 'active'
     claims = _claims(purchase['claim'])
     assert len(claims) == 1
     assert claims[0].processed is True
@@ -105,7 +124,7 @@ def test_credit_pack_payment_intent_adds_tokens_once(
     response = _deliver(client, billing, monkeypatch, _intent_event(test_user, purchase))
 
     assert response.status_code == 200
-    assert _overage_tokens(test_user) == PACK_TOKENS
+    assert _pack_tokens(test_user) == PACK_TOKENS
     assert len(_claims(purchase['claim'])) == 1
 
 
@@ -123,7 +142,7 @@ def test_duplicate_credit_pack_event_id_does_not_double_credit(
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert _overage_tokens(test_user) == PACK_TOKENS
+    assert _pack_tokens(test_user) == PACK_TOKENS
 
 
 def test_duplicate_credit_pack_session_event_id_does_not_double_credit(
@@ -139,7 +158,7 @@ def test_duplicate_credit_pack_session_event_id_does_not_double_credit(
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert _overage_tokens(test_user) == PACK_TOKENS
+    assert _pack_tokens(test_user) == PACK_TOKENS
 
 
 def test_one_credit_pack_purchase_delivered_as_two_event_types_credits_once(
@@ -159,7 +178,7 @@ def test_one_credit_pack_purchase_delivered_as_two_event_types_credits_once(
 
     assert session_delivery.status_code == 200
     assert intent_delivery.status_code == 200
-    assert _overage_tokens(test_user) == PACK_TOKENS
+    assert _pack_tokens(test_user) == PACK_TOKENS
     assert len(_claims(purchase['claim'])) == 1
 
 
@@ -176,7 +195,7 @@ def test_two_event_types_credit_once_in_either_order(
 
     assert intent_delivery.status_code == 200
     assert session_delivery.status_code == 200
-    assert _overage_tokens(test_user) == PACK_TOKENS
+    assert _pack_tokens(test_user) == PACK_TOKENS
     assert len(_claims(purchase['claim'])) == 1
 
 
@@ -215,7 +234,7 @@ def test_concurrent_credit_pack_delivery_stands_down_instead_of_crediting_twice(
     assert lost_race['done'] is True
     assert result['granted'] is False
     assert result['reason'] == 'in_flight'
-    assert _overage_tokens(test_user) == 0
+    assert _pack_tokens(test_user) == 0
 
 
 def test_credit_pack_session_without_an_intent_still_claims_the_purchase(
@@ -234,7 +253,44 @@ def test_credit_pack_session_without_an_intent_still_claims_the_purchase(
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert _overage_tokens(test_user) == PACK_TOKENS
+    assert _pack_tokens(test_user) == PACK_TOKENS
     assert StripeWebhookEvent.query.filter_by(
         stripe_event_id=f'credit_pack_payment:{purchase["session"]}'
     ).count() == 1
+
+
+def test_credit_pack_survives_monthly_reset(
+    client, app, db, test_user, purchase, monkeypatch
+):
+    from app.routes import billing
+
+    app.config['STRIPE_WEBHOOK_SECRET'] = 'whsec_credit_pack'
+    assert _deliver(client, billing, monkeypatch, _intent_event(test_user, purchase)).status_code == 200
+
+    reset_user_monthly_credits(test_user, app.config, force=True)
+    db.session.commit()
+
+    assert _pack_tokens(test_user) == PACK_TOKENS
+
+
+def test_refund_reverses_only_unused_pack_value_and_keeps_audit_history(
+    client, app, db, test_user, purchase, monkeypatch
+):
+    from app.routes import billing
+
+    app.config['STRIPE_WEBHOOK_SECRET'] = 'whsec_credit_pack'
+    assert _deliver(client, billing, monkeypatch, _intent_event(test_user, purchase)).status_code == 200
+    assert consume_persistent_credits(test_user, 1_000_000) == 1_000_000
+    db.session.commit()
+
+    response = _deliver(client, billing, monkeypatch, _refund_event(purchase))
+
+    assert response.status_code == 200
+    grant = PersistentCreditGrant.query.filter_by(
+        external_reference=f'credit-pack:{purchase["intent"]}'
+    ).one()
+    assert grant.status == 'reversed'
+    assert grant.original_amount == PACK_TOKENS
+    assert grant.remaining_amount == 0
+    transactions = PersistentCreditTransaction.query.filter_by(grant_id=grant.id).all()
+    assert {row.transaction_type for row in transactions} == {'grant', 'usage', 'reversal'}

@@ -44,6 +44,15 @@ from app.billing_config import (
     to_public_plan,
     THINKING_POWER_LOW_WARNING_PCT,
 )
+from app.ai_governance import (
+    credit_policy_mode,
+    credits_for_provider_cost,
+    router_mode,
+    routing_decision,
+    shadow_comparison,
+)
+from app.ai_audit import attach_governance, persist_operation
+from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_operation
 from app.connector_monitor import check_connector_health, generate_connector_insights
 from app.tool_registry import (
     get_active_connector_tools,
@@ -3567,12 +3576,57 @@ def _resolve_generation_routes(model_selection, strategy_objective="balanced", i
     }]
 
 
+def _resolve_governed_routes(
+    legacy_routes,
+    *,
+    operation_type,
+    text="",
+    attachment_count=0,
+    context_tokens=0,
+    alternatives_count=0,
+    structured_output=False,
+    validation_failures=0,
+):
+    """Apply the centralized router only when explicitly active.
+
+    In shadow mode the legacy route is executed and the proposed route is
+    retained for comparison and audit.
+    """
+    decision = routing_decision(
+        provider_models=current_app.config.get("LLM_PROVIDER_MODELS") or {},
+        operation_type=operation_type,
+        text=text,
+        attachment_count=attachment_count,
+        context_tokens=context_tokens,
+        alternatives_count=alternatives_count,
+        structured_output=structured_output,
+        validation_failures=validation_failures,
+    )
+    decision["shadow_comparison"] = shadow_comparison(
+        legacy_routes=legacy_routes,
+        proposed_decision=decision,
+    )
+    candidate_routes = decision.get("routes") if router_mode(current_app.config) == "active" else legacy_routes
+    routes = []
+    for route in candidate_routes or []:
+        provider = route.get("provider") if isinstance(route, dict) else None
+        if provider == "anthropic" and not _anthropic_api_key():
+            continue
+        if provider == "gemini" and not _gemini_api_key():
+            continue
+        if provider not in {"anthropic", "gemini"}:
+            continue
+        routes.append(dict(route))
+    return routes, decision
+
+
 def _generate_routed_chat_reply(
     messages,
     model_selection,
     *,
     system_prompt,
     strategy_objective="balanced",
+    operation_type="strategy_generation",
     max_tokens=700,
     temperature=0.2,
 ):
@@ -3592,7 +3646,20 @@ def _generate_routed_chat_reply(
         raise ValueError("At least one chat message is required.")
 
     objective = normalize_strategy_objective(strategy_objective, default="balanced")
-    routes = _resolve_generation_routes(model_selection, objective)
+    legacy_routes = _resolve_generation_routes(model_selection, objective)
+    user_text = "\n".join(
+        item["content"] for item in sanitized_messages if item.get("role") == "user"
+    )
+    routes, governance_decision = _resolve_governed_routes(
+        legacy_routes,
+        operation_type=operation_type,
+        text=user_text,
+        structured_output=operation_type in {
+            "scorecard_generation", "score_next", "score_batch", "batch_ranking",
+            "batch_clarification", "scenario_generation", "execution_plan",
+            "execution_plan_refinement", "report_generation",
+        },
+    )
     last_error = None
     failover_log = []
 
@@ -3651,6 +3718,12 @@ def _generate_routed_chat_reply(
                 attempted_providers=failover_log,
                 final_provider=route["provider"],
                 final_model=usage.get("model") if isinstance(usage, dict) else route["model"],
+            )
+            usage = attach_governance(
+                usage,
+                decision=governance_decision,
+                legacy_routes=legacy_routes,
+                operation_type=operation_type,
             )
             return reply, usage
         except Exception as exc:
@@ -3944,7 +4017,7 @@ def _charge_for_usage(usage, model_type, user):
     """
     if not isinstance(usage, dict):
         return _estimate_usage_credit_charge(0, model_type, None)
-    return _estimate_usage_credit_charge(
+    legacy_charge = _estimate_usage_credit_charge(
         usage.get("total_tokens"),
         model_type,
         usage.get("provider"),
@@ -3953,6 +4026,39 @@ def _charge_for_usage(usage, model_type, user):
         anthropic_model=usage.get("model") or usage.get("anthropic_model"),
         plan_key=getattr(user, "subscription_plan", None) if user else None,
     )
+    component_usages = [
+        item for item in (usage.get('component_usages') or []) if isinstance(item, dict)
+    ]
+    raw_cost = (
+        sum(
+            provider_cost_usd(
+                item.get('model') or item.get('anthropic_model'),
+                item.get('input_tokens'),
+                item.get('output_tokens'),
+            )
+            for item in component_usages
+        )
+        if component_usages
+        else provider_cost_usd(
+            usage.get("model") or usage.get("anthropic_model"),
+            usage.get("input_tokens"),
+            usage.get("output_tokens"),
+        )
+    )
+    projected_charge = credits_for_provider_cost(raw_cost, internal=True)
+    usage["credit_policy"] = {
+        "mode": credit_policy_mode(current_app.config),
+        "version": "provider-cost-3600-v1",
+        "raw_provider_cost_usd": raw_cost,
+        "legacy_charge": int(legacy_charge or 0),
+        "projected_charge": int(projected_charge or 0),
+    }
+    if credit_policy_mode(current_app.config) != "active":
+        return legacy_charge
+    total_tokens = int(usage.get("total_tokens") or 0)
+    if total_tokens > 0 and raw_cost <= 0:
+        raise RuntimeError("unpriced_provider_model")
+    return projected_charge
 
 
 def _preflight_credit_estimate(model_type, token_hint=None):
@@ -4347,7 +4453,7 @@ def _heuristic_segment_summary(messages):
     return ("Conversation summary for continuity. " + " ".join(parts))[:1400]
 
 
-def _summarize_conversation_segment(messages, model_name):
+def _summarize_conversation_segment(messages, model_name, *, user=None, thread_id=None):
     if not isinstance(messages, list) or not messages:
         return "", {
             "provider": "heuristic",
@@ -4388,13 +4494,28 @@ def _summarize_conversation_segment(messages, model_name):
     )
 
     try:
-        payload, usage = _anthropic_json_completion(
-            system_prompt,
-            user_prompt,
-            model_name=model_name,
-            max_tokens=700,
-            temperature=0.1,
-        )
+        if user is not None:
+            raw, usage, _settlement = execute_customer_text_operation(
+                user,
+                messages=[{'role': 'user', 'content': user_prompt}],
+                system_prompt=system_prompt,
+                operation_type='context_summarization',
+                model_type='pluto',
+                legacy_model=model_name,
+                max_tokens=700,
+                temperature=0.1,
+                thread_id=thread_id,
+                customer_visible=False,
+            )
+            payload = _extract_json_response_object(raw)
+        else:
+            payload, usage = _anthropic_json_completion(
+                system_prompt,
+                user_prompt,
+                model_name=model_name,
+                max_tokens=700,
+                temperature=0.1,
+            )
         summary_text = str(payload.get("summary") or payload.get("context_summary") or "").strip()
         if summary_text:
             return summary_text[:1600], usage
@@ -4429,7 +4550,15 @@ def _original_intake_prompt_suffix(chat_history):
     return ""
 
 
-def _prepare_context_window(session, chat_history, context_budget, model_selection):
+def _prepare_context_window(
+    session,
+    chat_history,
+    context_budget,
+    model_selection,
+    *,
+    user=None,
+    thread_id=None,
+):
     max_turns = int((context_budget or {}).get("recent_turns") or 16)
     max_turns = max(8, min(80, max_turns))
     normalized = _anthropic_messages_from_history(chat_history, max_turns=0)
@@ -4471,6 +4600,8 @@ def _prepare_context_window(session, chat_history, context_budget, model_selecti
         summary_text, usage = _summarize_conversation_segment(
             segment,
             _anthropic_model_for_selection(model_selection),
+            user=user,
+            thread_id=thread_id,
         )
         if summary_text:
             new_summary = {
@@ -6731,6 +6862,8 @@ def _generate_assistant_reply_anthropic(
         chat_history,
         context_budget,
         model_selection,
+        user=user,
+        thread_id=thread_id,
     )
     system_prompt = _build_agent_system_prompt(
         context_summary_text=context_summary_text,
@@ -6967,6 +7100,8 @@ def _stream_assistant_reply_events_anthropic(
         chat_history,
         context_budget,
         model_selection,
+        user=user,
+        thread_id=thread_id,
     )
     system_prompt = _build_agent_system_prompt(
         context_summary_text=context_summary_text,
@@ -7232,6 +7367,8 @@ def _generate_assistant_reply_gemini(
         chat_history,
         context_budget,
         model_selection,
+        user=user,
+        thread_id=thread_id,
     )
     system_prompt = _build_agent_system_prompt(
         context_summary_text=context_summary_text,
@@ -7433,6 +7570,8 @@ def _stream_assistant_reply_events_gemini(
         chat_history,
         context_budget,
         model_selection,
+        user=user,
+        thread_id=thread_id,
     )
     system_prompt = _build_agent_system_prompt(
         context_summary_text=context_summary_text,
@@ -7672,7 +7811,7 @@ def _generate_assistant_reply(
     disable_mutations=False,
 ):
     if attachments:
-        return _generate_assistant_reply_anthropic(
+        result = _generate_assistant_reply_anthropic(
             user_message,
             chat_history,
             readiness,
@@ -7687,11 +7826,35 @@ def _generate_assistant_reply(
             attachments=attachments,
             disable_mutations=disable_mutations,
         )
+        reply, usage, actions, mutations, undo_snapshot = result
+        legacy_routes = [{
+            "provider": "anthropic",
+            "model_key": "attachment_required",
+            "model": usage.get("model") if isinstance(usage, dict) else model_selection.get("llm_model"),
+        }]
+        _routes, decision = _resolve_governed_routes(
+            legacy_routes,
+            operation_type="conversation",
+            text=user_message,
+            attachment_count=len(attachments),
+        )
+        usage = attach_governance(
+            usage,
+            decision=decision,
+            legacy_routes=legacy_routes,
+            operation_type="conversation",
+        )
+        return reply, usage, actions, mutations, undo_snapshot
     objective = normalize_strategy_objective(
         ((intake_context or {}).get("objective") if isinstance(intake_context, dict) else None) or "balanced"
     )
     intent = _classify_turn_intent(view_context, user_message)
-    routes = _resolve_generation_routes(model_selection, objective, intent=intent)
+    legacy_routes = _resolve_generation_routes(model_selection, objective, intent=intent)
+    routes, governance_decision = _resolve_governed_routes(
+        legacy_routes,
+        operation_type="conversation",
+        text=user_message,
+    )
     last_error = None
     failover_log = []
     for route in routes:
@@ -7739,6 +7902,12 @@ def _generate_assistant_reply(
                 attempted_providers=failover_log,
                 final_provider=route["provider"],
                 final_model=route["model"],
+            )
+            usage = attach_governance(
+                usage,
+                decision=governance_decision,
+                legacy_routes=legacy_routes,
+                operation_type="conversation",
             )
             if failover_log:
                 current_app.logger.info(
@@ -7800,6 +7969,12 @@ def _generate_assistant_reply(
         final_provider=usage.get("provider") if isinstance(usage, dict) else None,
         final_model=usage.get("model") if isinstance(usage, dict) else None,
     )
+    usage = attach_governance(
+        usage,
+        decision=governance_decision,
+        legacy_routes=legacy_routes,
+        operation_type="conversation",
+    )
     return reply, usage, actions, mutations, undo_snapshot
 
 
@@ -7821,6 +7996,17 @@ def _stream_assistant_reply_events(
     disable_mutations=False,
 ):
     if attachments:
+        legacy_routes = [{
+            "provider": "anthropic",
+            "model_key": "attachment_required",
+            "model": model_selection.get("llm_model"),
+        }]
+        _routes, governance_decision = _resolve_governed_routes(
+            legacy_routes,
+            operation_type="conversation",
+            text=user_message,
+            attachment_count=len(attachments),
+        )
         for payload in _stream_assistant_reply_events_anthropic(
             user_message,
             chat_history,
@@ -7838,12 +8024,24 @@ def _stream_assistant_reply_events(
             disable_mutations=disable_mutations,
         ):
             yield payload
+        if isinstance(state, dict) and isinstance(state.get("usage"), dict):
+            state["usage"] = attach_governance(
+                state.get("usage"),
+                decision=governance_decision,
+                legacy_routes=legacy_routes,
+                operation_type="conversation",
+            )
         return
     objective = normalize_strategy_objective(
         ((intake_context or {}).get("objective") if isinstance(intake_context, dict) else None) or "balanced"
     )
     intent = _classify_turn_intent(view_context, user_message)
-    routes = _resolve_generation_routes(model_selection, objective, intent=intent)
+    legacy_routes = _resolve_generation_routes(model_selection, objective, intent=intent)
+    routes, governance_decision = _resolve_governed_routes(
+        legacy_routes,
+        operation_type="conversation",
+        text=user_message,
+    )
     failover_log = []
     for route in routes:
         routed_selection = {**(model_selection or {}), "llm_model": route["model"]}
@@ -7895,6 +8093,12 @@ def _stream_assistant_reply_events(
                     attempted_providers=failover_log,
                     final_provider=route["provider"],
                     final_model=route["model"],
+                )
+                state["usage"] = attach_governance(
+                    state.get("usage"),
+                    decision=governance_decision,
+                    legacy_routes=legacy_routes,
+                    operation_type="conversation",
                 )
             if failover_log:
                 current_app.logger.info(
@@ -7965,6 +8169,12 @@ def _stream_assistant_reply_events(
             attempted_providers=failover_log,
             final_provider=state["usage"].get("provider"),
             final_model=state["usage"].get("model"),
+        )
+        state["usage"] = attach_governance(
+            state.get("usage"),
+            decision=governance_decision,
+            legacy_routes=legacy_routes,
+            operation_type="conversation",
         )
 
 
@@ -8214,6 +8424,15 @@ def _record_usage(
                 metadata_json={'retry_attempts_recorded': 0},
                 is_failover=bool(failover),
             ))
+            persist_operation(
+                usage_user,
+                usage=usage,
+                charged_credits=int(credits_charged or 0),
+                operation_type=operation_type,
+                thread_id=thread_id,
+                success=bool(success),
+                error_code=error_code,
+            )
     except Exception:
         current_app.logger.exception("Failed queuing usage event persistence")
 
@@ -8237,7 +8456,12 @@ def _resolve_model_selection(user, requested_model_type=None, fallback_model_typ
     default_model_type = get_default_model_type(plan_key, current_app.config)
     normalized = normalize_model_type(requested_model_type or fallback_model_type or default_model_type)
 
-    if normalized not in allowed_model_types:
+    # During shadow mode, preserve the existing Pluto/Orbit/Titan entitlement
+    # checks exactly. Once the automatic router is deliberately activated,
+    # those customer-facing labels become compatibility inputs only: plan may
+    # not cap the model capability chosen for the work itself.
+    automatic_routing_active = router_mode(current_app.config) == 'active'
+    if normalized not in allowed_model_types and not automatic_routing_active:
         return None, {
             "error": f"Model '{requested_model_type}' is not available on your {plan_key} plan.",
             "code": "model_type_not_allowed",
@@ -8247,6 +8471,8 @@ def _resolve_model_selection(user, requested_model_type=None, fallback_model_typ
         }
 
     model_catalog = get_model_catalog(current_app.config, include_backing_ids=True)
+    if normalized not in model_catalog:
+        normalized = default_model_type
     model_meta = model_catalog.get(normalized, {})
     return {
         "model_type": normalized,
@@ -8863,7 +9089,26 @@ def _extract_json_response_object(text):
         return json.loads(match.group(0))
 
 
-def _anthropic_json_completion(system_prompt, user_prompt, *, model_name, max_tokens=2400, temperature=0.2):
+def _anthropic_json_completion(
+    system_prompt,
+    user_prompt,
+    *,
+    model_name,
+    max_tokens=2400,
+    temperature=0.2,
+    model_selection=None,
+    operation_type='structured_generation',
+):
+    if isinstance(model_selection, dict):
+        text, usage = _generate_routed_chat_reply(
+            [{"role": "user", "content": user_prompt}],
+            model_selection,
+            system_prompt=system_prompt,
+            operation_type=operation_type,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        return _extract_json_response_object(text), usage
     api_key = _anthropic_api_key()
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set in environment")
@@ -8934,6 +9179,8 @@ def _rank_batch_ideas_with_ai(batch, ideas, model_selection):
         model_name=_anthropic_model_for_selection(model_selection),
         max_tokens=2600,
         temperature=0.1,
+        model_selection=model_selection,
+        operation_type='batch_ranking',
     )
     ranked_rows = ranking_payload.get("ranked_ideas") if isinstance(ranking_payload, dict) else []
     if not isinstance(ranked_rows, list):
@@ -8986,6 +9233,8 @@ def _reevaluate_batch_idea_with_ai(batch, idea, model_selection):
         model_name=_anthropic_model_for_selection(model_selection),
         max_tokens=1200,
         temperature=0.1,
+        model_selection=model_selection,
+        operation_type='batch_clarification',
     )
     return payload, usage
 
@@ -9277,15 +9526,12 @@ def _heuristic_insight_text(summary):
     return " ".join([lead, trend_sentence, anomaly_sentence, risk_sentence, opp_sentence]).strip()
 
 
-def _llm_data_insight_text(summary, user_prompt):
+def _llm_data_insight_text(summary, user_prompt, *, user=None, thread_id=None):
     api_key = _anthropic_api_key()
     if not api_key:
         return _heuristic_insight_text(summary), "heuristic"
 
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
         prompt = f"""
 You are a strategy data analyst. Summarize dataset trends, risk indicators, and opportunity recommendations.
 
@@ -9301,23 +9547,24 @@ Return concise plain text with:
 3) Top opportunities
 4) Recommended next actions (3 bullets inline)
 """.strip()
-        response = client.messages.create(
-            model=_data_insights_model(),
+        if user is None:
+            raise ValueError('User is required for governed data insight generation')
+        text, usage, _settlement = execute_customer_text_operation(
+            user,
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You are a concise strategy analytics assistant.",
+            operation_type='data_insights',
+            model_type='orbit',
+            legacy_model=_data_insights_model(),
             max_tokens=600,
             temperature=0.2,
-            system="You are a concise strategy analytics assistant.",
-            messages=[{"role": "user", "content": prompt}],
+            thread_id=thread_id,
         )
-        text_parts = []
-        for block in getattr(response, "content", []) or []:
-            if getattr(block, "type", None) == "text":
-                txt = str(getattr(block, "text", "") or "").strip()
-                if txt:
-                    text_parts.append(txt)
-        text = "\n".join(text_parts).strip()
         if not text:
             raise ValueError("empty_llm_response")
-        return text, "anthropic"
+        return text, str(usage.get('provider') or 'unknown')
+    except AIOperationPaymentRequired:
+        raise
     except Exception:
         return _heuristic_insight_text(summary), "heuristic"
 
@@ -9847,7 +10094,6 @@ def conversation_start():
     remaining = credit_settlement["remaining"]
     credits_charged = credit_settlement["charged"]
     _persist_credit_deduction(user_id, remaining)
-
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
     artifact_messages = _artifact_entries_from_actions(actions)
     _apply_rubric_action_to_session(session, actions)
@@ -10420,7 +10666,6 @@ def conversation_continue():
     remaining = credit_settlement["remaining"]
     credits_charged = credit_settlement["charged"]
     _persist_credit_deduction(user_id, remaining)
-
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
     artifact_messages = _artifact_entries_from_actions(actions)
     _apply_rubric_action_to_session(session, actions)
@@ -10657,7 +10902,7 @@ def refresh_knowledge_signals(thread_id):
     """
     user_id = get_jwt_identity()
     # Knowledge refresh rewrites the thread's connector snapshot.
-    _user, sessions, _canonical = _authorized_thread_scope(
+    knowledge_user, sessions, _canonical = _authorized_thread_scope(
         user_id, thread_id, require_write=True
     )
     session_key, session = _resolve_user_session(sessions, thread_id)
@@ -10726,18 +10971,19 @@ Rules:
 - Return ONLY the JSON object, no markdown, no explanation"""
 
     try:
-        api_key = _anthropic_api_key()
-        if not api_key:
-            raise ValueError("No API key")
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key, timeout=15.0)
-        resp = client.messages.create(
-            model="claude-haiku-4-5",
+        raw, _usage, _settlement = execute_customer_text_operation(
+            knowledge_user,
+            messages=[{"role": "user", "content": extraction_prompt}],
+            system_prompt='Extract grounded knowledge signals. Return JSON only.',
+            operation_type='knowledge_refresh',
+            model_type='pluto',
+            legacy_model='claude-haiku-4-5',
             max_tokens=800,
             temperature=0.1,
-            messages=[{"role": "user", "content": extraction_prompt}],
+            thread_id=thread_id,
+            customer_visible=False,
         )
-        raw = str(resp.content[0].text).strip()
+        raw = str(raw or '').strip()
         # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = raw.split("```")[1]
@@ -12297,6 +12543,9 @@ def analyze_data():
     """
     try:
         user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({"error": "User not found"}), 404
         thread_id = str(
             request.form.get("thread_id")
             or request.args.get("thread_id")
@@ -12313,7 +12562,12 @@ def analyze_data():
 
         df, filename = _dataset_from_upload(uploaded)
         summary = _summarize_dataset(df)
-        insight_text, _provider = _llm_data_insight_text(summary, user_prompt)
+        insight_text, _provider = _llm_data_insight_text(
+            summary,
+            user_prompt,
+            user=user,
+            thread_id=thread_id,
+        )
 
         try:
             preview_df = df.head(5).copy()
@@ -12348,6 +12602,8 @@ def analyze_data():
             "persisted": bool(persisted_event),
             "persisted_event": persisted_event,
         }), 200
+    except AIOperationPaymentRequired as payment_error:
+        return jsonify(payment_error.payload or {"error": "Thinking Power exhausted"}), 402
     except ValueError as ve:
         return jsonify({"error": str(ve)}), 400
     except RuntimeError as re_err:
@@ -12489,6 +12745,13 @@ def rank_batch_ideas(batch_id):
         ),
         "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
     }
+    persist_operation(
+        user,
+        usage=usage,
+        charged_credits=credits_charged,
+        operation_type='batch_ranking',
+        success=True,
+    )
     _save_batch_state(
         batch,
         ideas=ranked_ideas,
@@ -12652,6 +12915,13 @@ def clarify_batch_idea(batch_id, idea_id):
         ),
         "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
     }
+    persist_operation(
+        user,
+        usage=usage,
+        charged_credits=credits_charged,
+        operation_type='batch_clarification',
+        success=True,
+    )
     _save_batch_state(batch, ideas=ideas, ranking_result=ranking_record, status="clarifying")
     db.session.commit()
     _audit_ai_agent_event(

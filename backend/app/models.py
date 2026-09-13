@@ -1112,6 +1112,93 @@ class UsageEvent(db.Model):
     )
 
 
+class AIOperation(db.Model):
+    """One customer-visible AI action and its single settlement boundary."""
+
+    __tablename__ = 'ai_operations'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    thread_id = db.Column(db.String(255), nullable=True, index=True)
+    operation_type = db.Column(db.String(80), nullable=False, index=True)
+    status = db.Column(db.String(24), nullable=False, default='started', index=True)
+    customer_visible = db.Column(db.Boolean, nullable=False, default=True)
+    subsidized = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    router_mode = db.Column(db.String(16), nullable=False, default='shadow')
+    router_version = db.Column(db.String(64), nullable=False)
+    route_class = db.Column(db.String(48), nullable=True, index=True)
+    routing_reasons = db.Column(db.JSON, nullable=True, default=list)
+    legacy_provider = db.Column(db.String(32), nullable=True)
+    legacy_model = db.Column(db.String(255), nullable=True)
+    selected_provider = db.Column(db.String(32), nullable=True)
+    selected_model = db.Column(db.String(255), nullable=True)
+    final_provider = db.Column(db.String(32), nullable=True)
+    final_model = db.Column(db.String(255), nullable=True)
+    escalated = db.Column(db.Boolean, nullable=False, default=False)
+    policy_mode = db.Column(db.String(16), nullable=False, default='shadow')
+    policy_version = db.Column(db.String(64), nullable=False)
+    successful_provider_cost_usd = db.Column(db.Numeric(14, 8), nullable=True)
+    total_provider_cost_usd = db.Column(db.Numeric(14, 8), nullable=True)
+    projected_credits = db.Column(db.BigInteger, nullable=False, default=0)
+    charged_credits = db.Column(db.BigInteger, nullable=False, default=0)
+    settled_at = db.Column(db.DateTime, nullable=True)
+    error_code = db.Column(db.String(120), nullable=True)
+    metadata_json = db.Column(db.JSON, nullable=True, default=dict)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        db.Index('ix_ai_operations_user_created', 'user_id', 'created_at'),
+    )
+
+
+class AIProviderAttempt(db.Model):
+    """Every provider attempt, including failures Jaspen absorbs."""
+
+    __tablename__ = 'ai_provider_attempts'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    operation_id = db.Column(
+        db.String(36),
+        db.ForeignKey('ai_operations.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    sequence = db.Column(db.Integer, nullable=False)
+    provider = db.Column(db.String(32), nullable=False)
+    model = db.Column(db.String(255), nullable=True)
+    outcome = db.Column(db.String(40), nullable=False)
+    status_code = db.Column(db.Integer, nullable=True)
+    duration_ms = db.Column(db.Integer, nullable=True)
+    input_tokens = db.Column(db.Integer, nullable=False, default=0)
+    output_tokens = db.Column(db.Integer, nullable=False, default=0)
+    raw_provider_cost_usd = db.Column(db.Numeric(14, 8), nullable=True)
+    customer_billable = db.Column(db.Boolean, nullable=False, default=False)
+    error_code = db.Column(db.String(120), nullable=True)
+    metadata_json = db.Column(db.JSON, nullable=True, default=dict)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('operation_id', 'sequence', name='uq_ai_provider_attempt_operation_sequence'),
+    )
+
+
 class DecisionAssetEmail(db.Model):
     """Durable, idempotent delivery state for emailed decision artifacts."""
 

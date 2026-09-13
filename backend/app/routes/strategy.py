@@ -20,6 +20,8 @@ from app.decision_confidence import (
 )
 from app.evidence_references import attach_evidence_references, reference_supports_decision
 from app.models import Scorecard, UsageEvent, User
+from app.ai_audit import persist_operation
+from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_operation
 from app.scorecards import (
     COMPARISON_SESSION_LIMIT_MESSAGE,
     archive_scorecard,
@@ -95,6 +97,7 @@ def _record_claude_operation(
     attachment_count=0,
     extracted_attachment_tokens=0,
     metadata=None,
+    persist_ai_operation=True,
 ):
     usage = usage if isinstance(usage, dict) else {}
     input_tokens = int(usage.get('input_tokens') or 0)
@@ -126,6 +129,16 @@ def _record_claude_operation(
         extracted_attachment_tokens=max(0, int(extracted_attachment_tokens or 0)),
         metadata_json=dict(metadata or {}),
     ))
+    if persist_ai_operation:
+        persist_operation(
+            user,
+            usage=usage,
+            charged_credits=int(settled_credits or 0),
+            operation_type=operation_type,
+            thread_id=thread_id,
+            success=bool(success),
+            error_code=error_code,
+        )
 
 
 def _record_claude_operation_batch(user, *, evaluation_contexts, usage=None, **kwargs):
@@ -135,6 +148,15 @@ def _record_claude_operation_batch(user, *, evaluation_contexts, usage=None, **k
         _record_claude_operation(user, usage=usage, **kwargs)
         return
     usage = dict(usage or {})
+    persist_operation(
+        user,
+        usage=usage,
+        charged_credits=int(kwargs.get('settled_credits') or 0),
+        operation_type=kwargs.get('operation_type'),
+        thread_id=kwargs.get('thread_id'),
+        success=bool(kwargs.get('success', True)),
+        error_code=kwargs.get('error_code'),
+    )
     count = len(contexts)
     input_parts = split_integer(usage.get('input_tokens'), count)
     output_parts = split_integer(usage.get('output_tokens'), count)
@@ -154,6 +176,7 @@ def _record_claude_operation_batch(user, *, evaluation_contexts, usage=None, **k
             settled_credits=settled_parts[index],
             evaluation_id=context.get('evaluation_id'),
             scorecard_id=context.get('scorecard_id'),
+            persist_ai_operation=False,
             **kwargs,
         )
 
@@ -745,6 +768,7 @@ def _strategy_generate_reply(
     strategy_objective='balanced',
     max_tokens=900,
     temperature=0.2,
+    operation_type='strategy_generation',
 ):
     """
     Unified generation helper for strategy routes.
@@ -774,6 +798,7 @@ def _strategy_generate_reply(
             model_selection,
             system_prompt=system_prompt,
             strategy_objective=_normalize_strategy_objective(strategy_objective),
+            operation_type=operation_type,
             max_tokens=max_tokens,
             temperature=temperature,
         )
@@ -3238,6 +3263,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
             model_selection=model_selection,
             llm_model=llm_model,
             strategy_objective=strategy_objective,
+            operation_type='scorecard_generation',
             max_tokens=8000,
             temperature=0,
         )
@@ -3432,6 +3458,18 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
                 'input_tokens': sum(int(item.get('input_tokens') or 0) for item in chunk_usages),
                 'output_tokens': sum(int(item.get('output_tokens') or 0) for item in chunk_usages),
                 'total_tokens': sum(int(item.get('total_tokens') or 0) for item in chunk_usages),
+                'operation_id': str(uuid.uuid4()),
+                'operation_type': 'score_batch',
+                'governance': dict(chunk_usages[-1].get('governance') or {}),
+                'component_usages': [dict(item) for item in chunk_usages],
+                'failover': {
+                    'attempted_providers': [
+                        attempt
+                        for item in chunk_usages
+                        for attempt in ((item.get('failover') or {}).get('attempted_providers') or [])
+                        if isinstance(attempt, dict)
+                    ],
+                },
             }
         return (all_results, merged_summary, merged_usage) if return_usage else (all_results, merged_summary)
 
@@ -3596,6 +3634,7 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
         model_selection=model_selection,
         llm_model=llm_model,
         strategy_objective=strategy_objective,
+        operation_type='score_batch',
         max_tokens=8000,
         temperature=0,
     )
@@ -4324,6 +4363,7 @@ RESPONSE RULES
                 model_selection=model_selection,
                 llm_model=model_selection.get('llm_model'),
                 strategy_objective=strategy_objective,
+                operation_type='scorecard_assistant',
                 max_tokens=900,
                 temperature=0.2,
             )
@@ -5321,6 +5361,7 @@ Rules:
             model_selection=model_selection,
             llm_model=llm_model,
             strategy_objective=objective,
+            operation_type='scenario_generation',
             temperature=0.2,
             max_tokens=900,
         )
@@ -5881,6 +5922,7 @@ Rules:
                 model_selection=model_selection,
                 llm_model=llm_model,
                 strategy_objective=strategy_objective,
+                operation_type='execution_plan',
                 temperature=0,  # Deterministic — same scorecard/scenario/instruction → same plan
                 max_tokens=4096,
             )
@@ -10357,23 +10399,22 @@ Return one valid JSON object only:
 If no plan changes are needed, return "uiActions": [].
 """.strip()
 
-        api_key = (
-            current_app.config.get('ANTHROPIC_API_KEY')
-            or os.environ.get('ANTHROPIC_API_KEY')
-        )
-        if not api_key:
-            return jsonify({'error': 'AI service unavailable'}), 503
-        client = anthropic.Anthropic(api_key=api_key)
         model_id = model_selection.get('llm_model') or 'claude-haiku-4-5-20251001'
 
         try:
-            response = client.messages.create(
-                model=model_id,
-                max_tokens=1500,
-                system=system_prompt,
+            raw, _usage, _settlement = execute_customer_text_operation(
+                user,
                 messages=[{"role": "user", "content": editor_prompt}],
+                system_prompt=system_prompt,
+                operation_type='execution_plan_refinement',
+                model_type=model_selection.get('model_type') or 'orbit',
+                legacy_model=model_id,
+                max_tokens=1500,
+                temperature=0.2,
+                thread_id=thread_id,
             )
-            raw = response.content[0].text if response.content else '{}'
+        except AIOperationPaymentRequired as payment_error:
+            return jsonify(payment_error.payload or {'error': 'Thinking Power exhausted'}), 402
         except Exception as llm_err:
             current_app.logger.error("[execution_assistant] LLM error: %s", llm_err)
             return jsonify({'error': 'AI service unavailable'}), 503

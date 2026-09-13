@@ -15,7 +15,6 @@ from app.models import Payment, PersistentCreditGrant, StripeWebhookEvent, User
 from app.orgs import build_seat_usage, can_manage_org, resolve_active_org_for_user
 from app.billing_config import (
     apply_plan_to_user,
-    add_credits,
     bootstrap_legacy_credits,
     cap_monthly_credits,
     consume_credits,
@@ -38,10 +37,12 @@ from app.billing_config import (
 from app.connector_store import get_all_connector_settings
 from app.founder_entitlements import (
     LIMITED_TIME_300K_CREDIT_SOURCE,
+    grant_persistent_credit_pack,
     limited_time_300k_credit_balance,
     grant_limited_time_300k_offer,
     has_limited_time_300k_entitlement,
     reverse_limited_time_300k_credits,
+    reverse_persistent_credit_pack,
 )
 from app.tool_registry import get_context_budget, get_tool_entitlements
 
@@ -461,11 +462,29 @@ def _is_limited_time_300k_charge(user, charge):
     return False
 
 
+def _credit_pack_reference_for_charge(user, charge):
+    """Resolve a refunded/disputed Stripe charge to its persistent pack lot."""
+    if user is None or not isinstance(charge, dict):
+        return None
+    metadata = charge.get('metadata') if isinstance(charge.get('metadata'), dict) else {}
+    payment_reference = str(charge.get('payment_intent') or charge.get('id') or '').strip()
+    if str(metadata.get('checkout_type') or '').strip() in {'credit_pack', 'overage_pack'}:
+        return payment_reference or None
+    if not payment_reference:
+        return None
+    grant = PersistentCreditGrant.query.filter_by(
+        user_id=str(user.id),
+        source='credit_pack',
+        external_reference=f'credit-pack:{payment_reference}',
+    ).first()
+    return payment_reference if grant is not None else None
+
+
 def _fulfill_credit_pack_purchase(
     reference, metadata, *, event_type, customer_id=None, expected_user=None,
     amount_paid=None, amount_due=None, currency='usd',
 ):
-    """Add credit-pack tokens once per purchase, whatever event carries it.
+    """Grant a durable credit-pack lot once per purchase, whatever event carries it.
 
     Stripe announces one hosted-checkout purchase twice, as
     checkout.session.completed and again as payment_intent.succeeded, under two
@@ -474,10 +493,9 @@ def _fulfill_credit_pack_purchase(
     which is the one id both events agree on, and the unique index on
     stripe_webhook_events.stripe_event_id is what actually settles who grants.
 
-    Mirrors _fulfill_limited_time_300k_payment_intent. The difference is that
-    credit packs add to a counter rather than writing a grant row, so there is
-    no second unique constraint underneath this one to catch a duplicate - this
-    claim has to be right on its own.
+    The pack is stored as a non-expiring PersistentCreditGrant rather than in
+    the resettable monthly meter. Both the purchase claim and grant reference
+    are unique, so Stripe retries cannot duplicate value.
     """
     checkout_type = str(_stripe_field(metadata, 'checkout_type') or '').strip()
     if checkout_type not in {'credit_pack', 'overage_pack'}:
@@ -520,7 +538,21 @@ def _fulfill_credit_pack_purchase(
     if tokens <= 0:
         return {'granted': False, 'reason': 'missing_tokens'}
 
-    add_credits(user, tokens)
+    grant, created = grant_persistent_credit_pack(
+        user,
+        tokens,
+        payment_reference=reference,
+        checkout_id=_stripe_field(metadata, 'checkout_session_id'),
+        metadata={
+            'stripe_payment_intent_id': reference,
+            'pack_key': str(_stripe_field(metadata, 'pack_key') or '').strip() or None,
+            'checkout_type': checkout_type,
+        },
+    )
+    if not created:
+        event_row.processed = True
+        event_row.processed_at = datetime.utcnow()
+        return {'granted': False, 'reason': 'already_processed'}
     if customer_id:
         user.stripe_customer_id = customer_id
     if amount_paid is not None or amount_due is not None:
@@ -536,8 +568,8 @@ def _fulfill_credit_pack_purchase(
     event_row.processed = True
     event_row.processed_at = datetime.utcnow()
     current_app.logger.info(
-        "%s: added %s credit-pack tokens for user=%s (purchase=%s)",
-        event_type, tokens, user.id, reference,
+        "%s: granted %s persistent credit-pack tokens for user=%s (purchase=%s grant=%s)",
+        event_type, tokens, user.id, reference, grant.id,
     )
     return {'granted': True, 'tokens': tokens, 'user_id': str(user.id)}
 
@@ -2564,13 +2596,15 @@ def stripe_webhook():
     elif event_type == 'charge.refunded':
         charge = event['data']['object']
         user = _find_user_for_billing_event(customer_id=charge.get('customer'))
-        metadata = charge.get('metadata') if isinstance(charge.get('metadata'), dict) else {}
-        if user and str(metadata.get('checkout_type') or '').strip() in {'credit_pack', 'overage_pack'}:
-            refund_credits = int(metadata.get('tokens') or metadata.get('credits') or 0)
-            if refund_credits > 0 and user.credits_remaining is not None:
-                user.credits_remaining = max(0, int(user.credits_remaining or 0) - refund_credits)
-            elif refund_credits > 0 and user.credits_remaining is None:
-                consume_credits(user, refund_credits)
+        credit_pack_reference = _credit_pack_reference_for_charge(user, charge)
+        if user and credit_pack_reference:
+            reverse_persistent_credit_pack(
+                user,
+                payment_reference=credit_pack_reference,
+                reason='stripe_refund',
+                external_reference=event_id,
+            )
+            get_usage_meter_state(user, current_app.config)
         limited_time_300k_charge = _is_limited_time_300k_charge(user, charge)
         if user and limited_time_300k_charge:
             reverse_limited_time_300k_credits(
@@ -2583,6 +2617,15 @@ def stripe_webhook():
     elif event_type == 'charge.dispute.created':
         charge = event['data']['object']
         user = _find_user_for_billing_event(customer_id=charge.get('customer'))
+        credit_pack_reference = _credit_pack_reference_for_charge(user, charge)
+        if user and credit_pack_reference:
+            reverse_persistent_credit_pack(
+                user,
+                payment_reference=credit_pack_reference,
+                reason='stripe_chargeback',
+                external_reference=event_id,
+            )
+            get_usage_meter_state(user, current_app.config)
         limited_time_300k_charge = _is_limited_time_300k_charge(user, charge)
         if user and limited_time_300k_charge:
             reverse_limited_time_300k_credits(

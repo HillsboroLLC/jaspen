@@ -6,11 +6,12 @@ import textwrap
 import uuid
 from datetime import datetime
 
-import anthropic
 from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from .sessions import load_user_sessions
+from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_operation
+from app.models import User
 
 reports_bp = Blueprint('reports', __name__)
 
@@ -150,7 +151,7 @@ def _fallback_markdown(report_type, analysis):
     return f"""# {report_label}\n\n## Project\n- **Name**: {analysis.get('project_name') or 'Untitled'}\n- **Thread ID**: {analysis.get('thread_id')}\n- **Jaspen Score**: {score_text}\n- **Category**: {analysis.get('score_category') or 'N/A'}\n\n## Component Scores\n{component_lines}\n\n## Financial Impact\n{fin_lines}\n\n## Recommendations\n- Prioritize the lowest component score and define a short, measurable remediation plan.\n- Align owners and deadlines to the top 3 strategic execution tasks.\n- Re-run analysis after milestone completion to track score progression.\n"""
 
 
-def _llm_report_markdown(report_type, analysis):
+def _llm_report_markdown(user, report_type, analysis):
     api_key = (
         current_app.config.get('ANTHROPIC_API_KEY')
         or current_app.config.get('CLAUDE_API_KEY')
@@ -185,22 +186,21 @@ Output requirements:
 """.strip()
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model=model_name,
-            temperature=0.2,
-            max_tokens=1800,
-            system='You are a strategy reporting assistant. Return markdown only.',
+        content, _usage, _settlement = execute_customer_text_operation(
+            user,
             messages=[{'role': 'user', 'content': prompt}],
+            system_prompt='You are a strategy reporting assistant. Return markdown only.',
+            operation_type='report_generation',
+            model_type='orbit',
+            legacy_model=model_name,
+            max_tokens=1800,
+            temperature=0.2,
+            thread_id=analysis.get('thread_id'),
         )
-        text_parts = []
-        for block in getattr(response, 'content', []) or []:
-            if getattr(block, 'type', None) == 'text':
-                text = str(getattr(block, 'text', '') or '').strip()
-                if text:
-                    text_parts.append(text)
-        content = _safe_text('\n'.join(text_parts), max_len=20000)
+        content = _safe_text(content, max_len=20000)
         return content or _fallback_markdown(report_type, analysis)
+    except AIOperationPaymentRequired:
+        raise
     except Exception:
         return _fallback_markdown(report_type, analysis)
 
@@ -326,7 +326,13 @@ def generate_report():
         return jsonify({'error': 'Thread not found'}), 404
 
     analysis = _extract_latest_analysis(session, thread_id)
-    markdown = _llm_report_markdown(report_type, analysis)
+    user = User.query.get(user_id)
+    if user is None:
+        return jsonify({'error': 'User not found'}), 404
+    try:
+        markdown = _llm_report_markdown(user, report_type, analysis)
+    except AIOperationPaymentRequired as exc:
+        return jsonify(exc.payload or {'error': 'Thinking Power exhausted'}), 402
 
     report_id = str(uuid.uuid4())
     filename = f"{_safe_text(analysis.get('project_name') or 'jaspen-report', 100).replace(' ', '-').lower()}-{report_type}.pdf"

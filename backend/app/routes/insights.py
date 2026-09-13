@@ -7,13 +7,14 @@ import re
 import uuid
 from datetime import datetime
 
-import anthropic
 import pandas as pd
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
+from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_operation
+
 from app import db
-from app.models import UserDataset
+from app.models import User, UserDataset
 
 insights_bp = Blueprint('insights', __name__)
 
@@ -229,7 +230,7 @@ def _heuristic_analysis(summary, question=''):
     }
 
 
-def _llm_analysis(summary, question=''):
+def _llm_analysis(user, summary, question=''):
     api_key = (
         current_app.config.get('ANTHROPIC_API_KEY')
         or current_app.config.get('CLAUDE_API_KEY')
@@ -277,21 +278,17 @@ Return strict JSON with this shape:
 """.strip()
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model=model_name,
-            temperature=0.2,
-            max_tokens=1200,
-            system='You are a concise analytics assistant. Return JSON only.',
+        text, _usage, _settlement = execute_customer_text_operation(
+            user,
             messages=[{'role': 'user', 'content': prompt}],
+            system_prompt='You are a concise analytics assistant. Return JSON only.',
+            operation_type='data_insights',
+            model_type='orbit',
+            legacy_model=model_name,
+            max_tokens=1200,
+            temperature=0.2,
         )
-        text_parts = []
-        for block in getattr(response, 'content', []) or []:
-            if getattr(block, 'type', None) == 'text':
-                text = str(getattr(block, 'text', '') or '').strip()
-                if text:
-                    text_parts.append(text)
-        payload = _extract_json_object('\n'.join(text_parts))
+        payload = _extract_json_object(text)
         if not isinstance(payload, dict):
             raise ValueError('Invalid analysis response')
 
@@ -303,6 +300,8 @@ Return strict JSON with this shape:
             'risks': [str(item) for item in (payload.get('risks') or []) if str(item).strip()],
             'charts': payload.get('charts') if isinstance(payload.get('charts'), list) else [],
         }
+    except AIOperationPaymentRequired:
+        raise
     except Exception:
         return _heuristic_analysis(summary, question)
 
@@ -374,7 +373,10 @@ def analyze_dataset():
         if df.empty:
             return jsonify({'error': 'Dataset is empty'}), 400
         summary = _dataset_summary(df)
-        analysis = _llm_analysis(summary, question)
+        user = User.query.get(user_id)
+        if user is None:
+            return jsonify({'error': 'User not found'}), 404
+        analysis = _llm_analysis(user, summary, question)
 
         return jsonify({
             'summary': analysis.get('summary') or '',
@@ -384,6 +386,8 @@ def analyze_dataset():
             'risks': analysis.get('risks') if isinstance(analysis.get('risks'), list) else [],
             'charts': analysis.get('charts') if isinstance(analysis.get('charts'), list) else [],
         }), 200
+    except AIOperationPaymentRequired as err:
+        return jsonify(err.payload or {'error': 'Thinking Power exhausted'}), 402
     except ValueError as err:
         return jsonify({'error': str(err)}), 400
     except Exception as err:
