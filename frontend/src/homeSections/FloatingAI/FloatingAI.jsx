@@ -153,7 +153,12 @@ const FloatingAI = ({
     const response = await fetch(`${API_BASE}/api/v1/chat`, {
       method: 'POST',
       credentials: 'include',
-      headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
+      headers: buildAuthHeaders({
+        'Content-Type': 'application/json',
+        'X-Jaspen-Idempotency-Key': window.crypto?.randomUUID
+          ? window.crypto.randomUUID()
+          : `floating-ai-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      }, 'POST'),
       body: JSON.stringify(payload)
     });
 

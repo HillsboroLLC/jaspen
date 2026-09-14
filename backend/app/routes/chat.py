@@ -5,7 +5,6 @@ import logging
 import os
 from datetime import datetime
 
-import anthropic
 from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
@@ -50,39 +49,6 @@ def _anthropic_api_key():
     )
 
 
-def _anthropic_model_candidates(preferred=None):
-    configured = (
-        preferred,
-        current_app.config.get('AI_AGENT_ANTHROPIC_MODEL'),
-        os.getenv('AI_AGENT_ANTHROPIC_MODEL'),
-        current_app.config.get('MODEL_TYPE_BACKING_IDS', {}).get('pluto') if isinstance(current_app.config.get('MODEL_TYPE_BACKING_IDS'), dict) else None,
-    )
-    fallbacks = (
-        'claude-sonnet-4-5-20250929',
-        'claude-3-7-sonnet-latest',
-        'claude-3-7-sonnet-20250219',
-        'claude-3-5-sonnet-20241022',
-        'claude-haiku-4-5',
-    )
-    out = []
-    seen = set()
-    for model in [*configured, *fallbacks]:
-        m = str(model or '').strip()
-        if not m or m in seen:
-            continue
-        seen.add(m)
-        out.append(m)
-    return out
-
-
-# Initialize Claude client
-def get_claude_client():
-    api_key = _anthropic_api_key()
-    if not api_key:
-        raise ValueError('ANTHROPIC_API_KEY not found in configuration')
-    return anthropic.Anthropic(api_key=api_key)
-
-
 def _anthropic_text_completion(
     system_prompt,
     user_prompt,
@@ -108,37 +74,7 @@ def _anthropic_text_completion(
             temperature=temperature,
         )
         return text, usage, usage.get('model')
-    client = get_claude_client()
-    last_error = None
-    for candidate in _anthropic_model_candidates(model):
-        try:
-            response = client.messages.create(
-                model=candidate,
-                max_tokens=max(64, int(max_tokens or 1000)),
-                temperature=float(temperature if temperature is not None else 0.7),
-                system=str(system_prompt or '').strip() or None,
-                messages=[{"role": "user", "content": str(user_prompt or '').strip()}],
-            )
-            text_parts = []
-            for block in getattr(response, 'content', []) or []:
-                if getattr(block, 'type', None) == 'text':
-                    txt = str(getattr(block, 'text', '') or '').strip()
-                    if txt:
-                        text_parts.append(txt)
-            text = '\n'.join(text_parts).strip()
-            usage = getattr(response, 'usage', None)
-            usage_payload = {
-                'prompt_tokens': int(getattr(usage, 'input_tokens', 0) or 0),
-                'completion_tokens': int(getattr(usage, 'output_tokens', 0) or 0),
-                'total_tokens': int(getattr(usage, 'input_tokens', 0) or 0) + int(getattr(usage, 'output_tokens', 0) or 0),
-            }
-            return text, usage_payload, candidate
-        except Exception as exc:
-            last_error = exc
-            continue
-    if last_error:
-        raise last_error
-    raise RuntimeError('No Anthropic model candidates configured')
+    raise ValueError('A user_id is required for governed customer-visible AI generation')
 
 
 @chat_bp.route('/chat', methods=['POST'], strict_slashes=False)

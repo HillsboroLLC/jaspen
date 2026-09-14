@@ -31,10 +31,9 @@
 # present a deterministic follow-up as though it were a live AI reply.
 
 import json
-import time
-
 from flask import Response, current_app, jsonify, stream_with_context
 
+from app.ai_runtime import execute_system_text_operation
 from app.confidence_check import build_confidence_check
 from app.intake_readiness import (
     MAX_USER_MESSAGE_LENGTH,
@@ -53,8 +52,6 @@ from app.public_intake_controls import (
     stream_slot,
 )
 from .ai_agent import (
-    _anthropic_api_key,
-    _anthropic_message_create,
     _check_response_for_leak,
     _safe_instructions_reply,
 )
@@ -165,62 +162,41 @@ def _sse_payload(payload):
     return f"data: {json.dumps(payload)}\n\n"
 
 
-def _stream_ai_reply(user_message, prior_history, readiness, ready):
+def _stream_ai_reply(user_message, prior_history, readiness, ready, *, idempotency_key=None):
     """Yields {"type": "delta", "text": ...} events with REAL AI text only.
     Yields nothing at all if a reply isn't possible for any reason (no key,
     import failure, exception before any token, timeout before any token).
     The caller reports that explicitly instead of fabricating a reply.
     """
-    api_key = _anthropic_api_key()
-    if not api_key:
-        return
-
-    try:
-        import anthropic
-    except Exception:
-        return
-
     system_prompt = _PUBLIC_SYSTEM_PROMPT + _public_readiness_prompt_suffix(readiness, ready)
     # Bound prompt size independent of the char budget already enforced on
     # the total conversation.
     messages = list(prior_history)[-16:] + [{"role": "user", "content": user_message}]
-    timeout_seconds = ai_timeout_seconds()
-    client = anthropic.Anthropic(api_key=api_key, timeout=timeout_seconds)
-
-    streamed_parts = []
-    leak_detected = False
-    deadline = time.monotonic() + timeout_seconds
     try:
-        manager, _model = _anthropic_message_create(
-            client,
-            model_name=_public_preferred_model(),
-            stream=True,
+        text, _usage, _settlement = execute_system_text_operation(
+            messages=messages,
+            system_prompt=system_prompt,
+            operation_type='public_intake_chat',
+            model_type='pluto',
+            legacy_model=_public_preferred_model(),
             max_tokens=_PUBLIC_MAX_TOKENS,
             temperature=_PUBLIC_TEMPERATURE,
-            system=system_prompt,
-            messages=messages,
+            subsidy_reason='public_intake',
+            # Public intake is never billed, so it does not need a durable
+            # response replay. Disabling idempotency here keeps visitor chat
+            # content out of the AI-operation result cache.
+            idempotency_key=False,
         )
-        with manager as stream:
-            for event in stream:
-                if time.monotonic() > deadline:
-                    break
-                if event.type == "content_block_delta" and getattr(event.delta, "type", None) == "text_delta":
-                    text = str(getattr(event.delta, "text", "") or "")
-                    if not text:
-                        continue
-                    candidate = "".join(streamed_parts) + text
-                    if _check_response_for_leak(candidate):
-                        leak_detected = True
-                        continue
-                    streamed_parts.append(text)
-                    yield {"type": "delta", "text": text}
+        text = str(text or '').strip()
+        if text and not _check_response_for_leak(text):
+            yield {"type": "delta", "text": text}
+        elif text:
+            yield {"type": "delta", "text": _safe_instructions_reply()}
     except Exception:
         # No content interpolated here — never log user_message/messages.
         current_app.logger.exception("public intake AI reply failed")
         return
 
-    if leak_detected and not streamed_parts:
-        yield {"type": "delta", "text": _safe_instructions_reply()}
 
 
 def stream_public_chat_response(request):
@@ -280,7 +256,13 @@ def stream_public_chat_response(request):
             if skip_reason is None:
                 try:
                     with stream_slot():
-                        for payload in _stream_ai_reply(user_message, prior_history, readiness, ready):
+                        for payload in _stream_ai_reply(
+                            user_message,
+                            prior_history,
+                            readiness,
+                            ready,
+                            idempotency_key=request.headers.get('X-Jaspen-Idempotency-Key'),
+                        ):
                             used_ai = True
                             response_mode = "ai"
                             yield _sse_payload(payload)

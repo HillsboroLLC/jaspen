@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from limits import RateLimitItemPerDay, RateLimitItemPerHour
 import base64
 import copy
+import hashlib
 import io
 import json
 import math
@@ -52,7 +53,12 @@ from app.ai_governance import (
     shadow_comparison,
 )
 from app.ai_audit import attach_governance, persist_operation
-from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_operation
+from app.ai_runtime import (
+    AIOperationPaymentRequired,
+    execute_customer_operation,
+    execute_customer_text_operation,
+    execute_system_text_operation,
+)
 from app.connector_monitor import check_connector_health, generate_connector_insights
 from app.tool_registry import (
     get_active_connector_tools,
@@ -1926,22 +1932,23 @@ def extract_and_update_user_memory(user_id, project_name, problem_statement, sco
             f"Problem statement: {str(problem_statement)[:1200]}"
         )
         import json as _json
-        model_key = "claude_haiku"
-        model_id = _provider_model_id(model_key) or "claude-haiku-4-5-20251001"
-        api_key = _anthropic_api_key()
-        if not api_key:
+        memory_user = User.query.get(str(user_id))
+        if memory_user is None:
             return
-        import anthropic as _anthropic
-        client = _anthropic.Anthropic(api_key=api_key, timeout=15.0)
-        response, _ = _anthropic_message_create(
-            client,
-            model_name=model_id,
+        raw, _usage, _settlement = execute_customer_text_operation(
+            memory_user,
+            messages=[{"role": "user", "content": content}],
+            system_prompt=_MEMORY_EXTRACT_PROMPT,
+            operation_type='user_memory_extraction',
+            model_type='pluto',
+            legacy_model=_provider_model_id("claude_haiku") or "claude-haiku-4-5-20251001",
             max_tokens=300,
             temperature=0.1,
-            system=_MEMORY_EXTRACT_PROMPT,
-            messages=[{"role": "user", "content": content}],
+            customer_visible=False,
+            subsidy_reason='internal',
+            idempotency_key=f'user-memory:{user_id}:{hashlib.sha256(content.encode("utf-8")).hexdigest()}',
         )
-        raw = _anthropic_text(response.content).strip()
+        raw = str(raw or '').strip()
         if raw.startswith("```"):
             raw = re.sub(r"^```(?:json)?\s*", "", raw)
             raw = re.sub(r"\s*```$", "", raw)
@@ -2682,6 +2689,94 @@ def _conversation_request_payload():
         attachments = _extract_conversation_attachments()
         return data, attachments
     return request.get_json() or {}, []
+
+
+_CONVERSATION_IDEMPOTENCY_CACHE_KEY = "ai_idempotent_responses"
+
+
+def _conversation_idempotency_context(endpoint, data, attachments):
+    """Return a safe request key/fingerprint for the streaming chat boundary."""
+    key = str(request.headers.get("X-Jaspen-Idempotency-Key") or "").strip()
+    if not key:
+        return None, None
+    if len(key) > 200:
+        raise ValueError("Idempotency key is too long.")
+    attachment_descriptors = []
+    for item in attachments if isinstance(attachments, list) else []:
+        if not isinstance(item, dict):
+            continue
+        attachment_descriptors.append({
+            "name": item.get("name") or item.get("filename"),
+            "type": item.get("type") or item.get("content_type"),
+            "size": item.get("size"),
+        })
+    canonical = json.dumps(
+        {
+            "endpoint": str(endpoint or ""),
+            "payload": data if isinstance(data, dict) else {},
+            "attachments": attachment_descriptors,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        default=str,
+    )
+    return key, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _cached_conversation_payload(session, key, fingerprint):
+    if not key or not isinstance(session, dict):
+        return None
+    cache = session.get(_CONVERSATION_IDEMPOTENCY_CACHE_KEY)
+    entry = cache.get(key) if isinstance(cache, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("fingerprint") != fingerprint:
+        raise ValueError("This idempotency key was already used for a different request.")
+    payload = entry.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    replay = copy.deepcopy(payload)
+    replay["idempotent_replay"] = True
+    if isinstance(replay.get("usage"), dict):
+        replay["usage"]["idempotent_replay"] = True
+    return replay
+
+
+def _remember_conversation_payload(session, key, fingerprint, payload):
+    if not key or not isinstance(session, dict) or not isinstance(payload, dict):
+        return
+    cache = session.get(_CONVERSATION_IDEMPOTENCY_CACHE_KEY)
+    cache = dict(cache) if isinstance(cache, dict) else {}
+    cache[key] = {
+        "fingerprint": fingerprint,
+        "payload": copy.deepcopy(payload),
+        "created_at": _iso_now(),
+    }
+    # Bound durable response storage while retaining recent retry protection.
+    ordered = sorted(
+        cache.items(),
+        key=lambda item: str((item[1] or {}).get("created_at") or ""),
+        reverse=True,
+    )[:25]
+    session[_CONVERSATION_IDEMPOTENCY_CACHE_KEY] = dict(ordered)
+
+
+def _conversation_replay_response(payload, stream_requested):
+    if stream_requested:
+        def replay_stream():
+            yield _sse_payload({"type": "done", **payload})
+
+        return Response(
+            replay_stream(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+    return jsonify(payload), 200
 
 
 def _user_chat_entry(content, *, attachments=None):
@@ -3476,6 +3571,12 @@ def _log_injection_signals(*, user, thread_id, user_message, injection_signals, 
 
 
 def _anthropic_api_key():
+    # Tests must never inherit a developer's real shell/.env credential and
+    # accidentally make a billable network call.  A test that exercises the
+    # adapter can still inject a key explicitly through app.config or monkeypatch
+    # this helper.
+    if current_app.config.get("TESTING") and not current_app.config.get("ANTHROPIC_API_KEY"):
+        return None
     return (
         current_app.config.get("ANTHROPIC_API_KEY")
         or os.getenv("ANTHROPIC_API_KEY")
@@ -3526,6 +3627,8 @@ def _anthropic_model_candidates(preferred_model=None):
 
 
 def _gemini_api_key():
+    if current_app.config.get("TESTING") and not current_app.config.get("GEMINI_API_KEY"):
+        return None
     return (
         current_app.config.get("GEMINI_API_KEY")
         or os.getenv("GEMINI_API_KEY")
@@ -3629,6 +3732,7 @@ def _generate_routed_chat_reply(
     operation_type="strategy_generation",
     max_tokens=700,
     temperature=0.2,
+    routing_signals=None,
 ):
     sanitized_messages = []
     for item in messages or []:
@@ -3650,15 +3754,24 @@ def _generate_routed_chat_reply(
     user_text = "\n".join(
         item["content"] for item in sanitized_messages if item.get("role") == "user"
     )
+    signals = dict(routing_signals or {})
+    estimated_context_tokens = _rough_token_count_from_text(system_prompt)
+    estimated_context_tokens += sum(
+        _rough_token_count_from_text(item.get("content")) for item in sanitized_messages
+    )
     routes, governance_decision = _resolve_governed_routes(
         legacy_routes,
         operation_type=operation_type,
         text=user_text,
+        attachment_count=int(signals.get("attachment_count") or 0),
+        context_tokens=max(int(signals.get("context_tokens") or 0), estimated_context_tokens),
+        alternatives_count=int(signals.get("alternatives_count") or 0),
         structured_output=operation_type in {
             "scorecard_generation", "score_next", "score_batch", "batch_ranking",
             "batch_clarification", "scenario_generation", "execution_plan",
             "execution_plan_refinement", "report_generation",
         },
+        validation_failures=int(signals.get("validation_failures") or 0),
     )
     last_error = None
     failover_log = []
@@ -3736,8 +3849,18 @@ def _generate_routed_chat_reply(
                 "outcome": classification["reason"],
                 "status_code": classification.get("status_code"),
                 "duration_ms": elapsed_ms,
+                **_failed_attempt_cost_fields(
+                    exc,
+                    model=route["model"],
+                    estimated_input_tokens=estimated_context_tokens,
+                    estimated_output_tokens=max(200, int(max_tokens or 700)),
+                    estimate_method="prompt_chars_div_4_plus_max_output",
+                ),
             })
             if not classification["retryable"]:
+                exc.jaspen_usage = _attach_failover_usage(
+                    {}, attempted_providers=failover_log,
+                )
                 raise
             current_app.logger.warning(
                 "portfolio agent provider failed (retryable) | provider=%s model=%s reason=%s elapsed=%dms; trying next route",
@@ -3750,6 +3873,9 @@ def _generate_routed_chat_reply(
 
     if last_error:
         current_app.logger.error("portfolio agent all provider routes exhausted | attempts=%s", json.dumps(failover_log))
+        last_error.jaspen_usage = _attach_failover_usage(
+            {}, attempted_providers=failover_log,
+        )
         raise last_error
     raise RuntimeError("No provider routes available")
 
@@ -3930,6 +4056,34 @@ def _attach_failover_usage(usage, *, attempted_providers=None, final_provider=No
         "failover_count": len(attempts),
     }
     return payload
+
+
+def _failed_attempt_cost_fields(exc, *, model, estimated_input_tokens, estimated_output_tokens,
+                                estimate_method):
+    """Prefer provider-reported failed usage; otherwise record a conservative estimate."""
+    usage = getattr(exc, 'usage', None)
+    if usage is None:
+        usage = getattr(getattr(exc, 'response', None), 'usage', None)
+    if isinstance(usage, dict):
+        input_tokens = usage.get('input_tokens') or usage.get('prompt_tokens')
+        output_tokens = usage.get('output_tokens') or usage.get('completion_tokens')
+    else:
+        input_tokens = getattr(usage, 'input_tokens', None) if usage is not None else None
+        output_tokens = getattr(usage, 'output_tokens', None) if usage is not None else None
+    if input_tokens is not None or output_tokens is not None:
+        input_tokens = max(0, int(input_tokens or 0))
+        output_tokens = max(0, int(output_tokens or 0))
+        return {
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'raw_provider_cost_usd': provider_cost_usd(model, input_tokens, output_tokens),
+            'estimate_method': None,
+        }
+    return {
+        'input_tokens': max(0, int(estimated_input_tokens or 0)),
+        'output_tokens': max(0, int(estimated_output_tokens or 0)),
+        'estimate_method': estimate_method,
+    }
 
 
 def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn, view_context=None):
@@ -5658,60 +5812,42 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     code="comparison_session_limit_reached",
                 )
         client = get_llm_client()
-        reservation = _reserve_preflight_credits(
-            user,
-            model_selection["model_type"],
-            token_hint=8000,
-        )
-        if not reservation.get("ok"):
+        try:
+            scorecard_payload, provider_usage, ai_settlement = execute_customer_operation(
+                user,
+                generate=lambda: _generate_jaspen_scorecard(
+                    client,
+                    idea_description,
+                    llm_model=model_selection["llm_model"],
+                    model_selection=model_selection,
+                    strategy_objective=strategy_objective,
+                    rubric=rubric,
+                    return_usage=True,
+                    # The user's own turns, not the summary this tool wrote.
+                    evidence_corpus=_thread_user_corpus(user_id, thread_id),
+                ),
+                operation_type="score_next",
+                request_payload={
+                    "thread_id": thread_id,
+                    "description": idea_description,
+                    "rubric": rubric,
+                    "strategy_objective": strategy_objective,
+                    "rescore_scorecard_id": rescore_id,
+                },
+                model_type=model_selection["model_type"],
+                max_tokens=4000,
+                thread_id=thread_id,
+            )
+        except AIOperationPaymentRequired as payment_error:
             return _tool_error(
-                str((reservation.get("payload") or {}).get("error") or "Thinking Power exhausted."),
+                str((payment_error.payload or {}).get("error") or "Thinking Power exhausted."),
                 code="thinking_power_exhausted",
             )
-        reserved_credits = int(reservation.get("reserved") or 0)
-        db.session.commit()
-        try:
-            scorecard_payload, provider_usage = _generate_jaspen_scorecard(
-                client,
-                idea_description,
-                llm_model=model_selection["llm_model"],
-                model_selection=model_selection,
-                strategy_objective=strategy_objective,
-                rubric=rubric,
-                return_usage=True,
-                # The user's own turns, not the summary this tool wrote. Without
-                # this the scorer only ever saw `idea_description` and every
-                # evidence quote was checked against a paraphrase, so all of
-                # them were discarded as unverifiable.
-                evidence_corpus=_thread_user_corpus(user_id, thread_id),
-            )
-        except Exception as generation_error:
-            _release_reserved_credits(user, reserved_credits)
-            _record_claude_operation(
-                user,
-                thread_id=thread_id,
-                endpoint="generate_scorecard",
-                operation_type="score_next",
-                reserved_credits=reserved_credits,
-                settled_credits=0,
-                success=False,
-                error_code=type(generation_error).__name__,
-                evaluation_id=evaluation_id,
-            )
-            db.session.commit()
-            raise
 
         provider_usage = dict(provider_usage or {})
         provider_usage.setdefault("provider", "anthropic")
         provider_usage.setdefault("model", model_selection.get("llm_model"))
         provider_usage.setdefault("model_type", model_selection.get("model_type"))
-        actual_credits = _charge_for_usage(provider_usage, model_selection["model_type"], user)
-        settlement = _settle_reserved_credits(
-            user,
-            reserved_credits=reserved_credits,
-            actual_credits=actual_credits,
-        )
-
         analysis_id = str(uuid.uuid4())
         _record_claude_operation(
             user,
@@ -5719,19 +5855,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             endpoint="generate_scorecard",
             operation_type="score_next",
             usage=provider_usage,
-            reserved_credits=reserved_credits,
-            settled_credits=int(settlement.get("charged") or 0),
-            success=bool(settlement.get("ok")),
-            error_code=None if settlement.get("ok") else "thinking_power_exhausted",
+            reserved_credits=0,
+            settled_credits=int(ai_settlement.get("charged_credits") or 0),
+            success=True,
+            error_code=None,
             scorecard_id=analysis_id,
             evaluation_id=evaluation_id,
+            persist_ai_operation=False,
         )
         db.session.commit()
-        if not settlement.get("ok"):
-            return _tool_error(
-                str((settlement.get("payload") or {}).get("error") or "Thinking Power exhausted."),
-                code="thinking_power_exhausted",
-            )
         generated_at = _iso_now()
         scorecard = {
             **(scorecard_payload if isinstance(scorecard_payload, dict) else {}),
@@ -7795,6 +7927,30 @@ def _stream_assistant_reply_events_gemini(
     })
 
 
+def _conversation_routing_signals(user_message, chat_history, *, attachments=None,
+                                  session=None, view_context=None):
+    context_tokens = _rough_token_count_from_text(user_message)
+    for item in chat_history or []:
+        context_tokens += _rough_token_count_from_text(_message_text_for_estimate(item))
+    alternatives = []
+    for source in (session, view_context):
+        if not isinstance(source, dict):
+            continue
+        for key in ('scenarios', 'alternatives', 'options'):
+            value = source.get(key)
+            if isinstance(value, (list, dict)):
+                alternatives.extend(list(value))
+    validation_failures = 0
+    if isinstance(session, dict):
+        validation_failures = int(session.get('ai_validation_failures') or 0)
+    return {
+        'attachment_count': len(attachments or []),
+        'context_tokens': context_tokens,
+        'alternatives_count': len(alternatives),
+        'validation_failures': validation_failures,
+    }
+
+
 def _generate_assistant_reply(
     user_message,
     chat_history,
@@ -7810,6 +7966,13 @@ def _generate_assistant_reply(
     attachments=None,
     disable_mutations=False,
 ):
+    routing_signals = _conversation_routing_signals(
+        user_message,
+        chat_history,
+        attachments=attachments,
+        session=session,
+        view_context=view_context,
+    )
     if attachments:
         result = _generate_assistant_reply_anthropic(
             user_message,
@@ -7836,7 +7999,7 @@ def _generate_assistant_reply(
             legacy_routes,
             operation_type="conversation",
             text=user_message,
-            attachment_count=len(attachments),
+            **routing_signals,
         )
         usage = attach_governance(
             usage,
@@ -7854,6 +8017,7 @@ def _generate_assistant_reply(
         legacy_routes,
         operation_type="conversation",
         text=user_message,
+        **routing_signals,
     )
     last_error = None
     failover_log = []
@@ -7928,6 +8092,15 @@ def _generate_assistant_reply(
                 "outcome": classification["reason"],
                 "status_code": classification.get("status_code"),
                 "duration_ms": elapsed_ms,
+                **_failed_attempt_cost_fields(
+                    exc,
+                    model=route["model"],
+                    estimated_input_tokens=int(routing_signals.get('context_tokens') or 0),
+                    estimated_output_tokens=_max_output_tokens_for_plan(
+                        effective_plan_key(user, current_app.config) if user else 'free'
+                    ),
+                    estimate_method="conversation_context_plus_plan_output_cap",
+                ),
             })
             if not classification["retryable"]:
                 current_app.logger.warning(
@@ -7936,6 +8109,7 @@ def _generate_assistant_reply(
                     route["model"],
                     classification["reason"],
                 )
+                exc.jaspen_usage = _attach_failover_usage({}, attempted_providers=failover_log)
                 raise
             current_app.logger.warning(
                 "ai_agent provider failed (retryable) | provider=%s model=%s reason=%s elapsed=%dms; trying next route",
@@ -7946,28 +8120,25 @@ def _generate_assistant_reply(
             )
             continue
 
+    # A deterministic, non-provider response remains available when no route
+    # is configured (local/test) or every provider is unavailable. This is not
+    # a legacy direct-Anthropic bypass: it incurs no provider call, is marked
+    # degraded, and carries every failed attempt into the cost ledger.
     if last_error:
         current_app.logger.error("ai_agent all provider routes exhausted | attempts=%s", json.dumps(failover_log))
-    reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply_anthropic(
-        user_message,
-        chat_history,
-        readiness,
-        model_selection,
-        context_budget=context_budget,
-        session=session,
-        user=user,
-        user_id=user_id,
-        thread_id=thread_id,
-        intake_context=intake_context,
-        view_context=view_context,
-        attachments=attachments,
-        disable_mutations=disable_mutations,
-    )
+    fallback_reply = _direct_connector_fallback_reply(user_id, user_message, readiness)
     usage = _attach_failover_usage(
-        usage,
+        {
+            "provider": "heuristic",
+            "model": None,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "degraded": True,
+        },
         attempted_providers=failover_log,
-        final_provider=usage.get("provider") if isinstance(usage, dict) else None,
-        final_model=usage.get("model") if isinstance(usage, dict) else None,
+        final_provider="heuristic",
+        final_model=None,
     )
     usage = attach_governance(
         usage,
@@ -7975,7 +8146,7 @@ def _generate_assistant_reply(
         legacy_routes=legacy_routes,
         operation_type="conversation",
     )
-    return reply, usage, actions, mutations, undo_snapshot
+    return fallback_reply, usage, [], [], None
 
 
 def _stream_assistant_reply_events(
@@ -7995,6 +8166,13 @@ def _stream_assistant_reply_events(
     attachments=None,
     disable_mutations=False,
 ):
+    routing_signals = _conversation_routing_signals(
+        user_message,
+        chat_history,
+        attachments=attachments,
+        session=session,
+        view_context=view_context,
+    )
     if attachments:
         legacy_routes = [{
             "provider": "anthropic",
@@ -8005,7 +8183,7 @@ def _stream_assistant_reply_events(
             legacy_routes,
             operation_type="conversation",
             text=user_message,
-            attachment_count=len(attachments),
+            **routing_signals,
         )
         for payload in _stream_assistant_reply_events_anthropic(
             user_message,
@@ -8041,6 +8219,7 @@ def _stream_assistant_reply_events(
         legacy_routes,
         operation_type="conversation",
         text=user_message,
+        **routing_signals,
     )
     failover_log = []
     for route in routes:
@@ -8125,6 +8304,15 @@ def _stream_assistant_reply_events(
                     "outcome": classification["reason"],
                     "status_code": classification.get("status_code"),
                     "duration_ms": elapsed_ms,
+                    **_failed_attempt_cost_fields(
+                        exc,
+                        model=route["model"],
+                        estimated_input_tokens=int(routing_signals.get('context_tokens') or 0),
+                        estimated_output_tokens=_max_output_tokens_for_plan(
+                            effective_plan_key(user, current_app.config) if user else 'free'
+                        ),
+                        estimate_method="conversation_context_plus_plan_output_cap",
+                    ),
                 })
                 if not classification["retryable"]:
                     current_app.logger.warning(
@@ -8133,6 +8321,7 @@ def _stream_assistant_reply_events(
                         route["model"],
                         classification["reason"],
                     )
+                    exc.jaspen_usage = _attach_failover_usage({}, attempted_providers=failover_log)
                     raise
                 current_app.logger.warning(
                     "ai_agent stream provider failed (retryable) | provider=%s model=%s reason=%s elapsed=%dms; trying next route",
@@ -8143,39 +8332,37 @@ def _stream_assistant_reply_events(
                 )
                 continue
 
-    if failover_log:
-        current_app.logger.error("ai_agent all stream provider routes exhausted | attempts=%s", json.dumps(failover_log))
-
-    for payload in _stream_assistant_reply_events_anthropic(
-        user_message,
-        chat_history,
-        readiness,
-        model_selection,
-        session=session,
-        user=user,
-        user_id=user_id,
-        thread_id=thread_id,
-        intake_context=intake_context,
-        view_context=view_context,
-        context_budget=context_budget,
-        state=state,
-        attachments=attachments,
-        disable_mutations=disable_mutations,
-    ):
-        yield payload
-    if isinstance(state, dict) and isinstance(state.get("usage"), dict):
-        state["usage"] = _attach_failover_usage(
-            state.get("usage"),
-            attempted_providers=failover_log,
-            final_provider=state["usage"].get("provider"),
-            final_model=state["usage"].get("model"),
-        )
-        state["usage"] = attach_governance(
-            state.get("usage"),
-            decision=governance_decision,
-            legacy_routes=legacy_routes,
-            operation_type="conversation",
-        )
+    current_app.logger.error("ai_agent all stream provider routes exhausted | attempts=%s", json.dumps(failover_log))
+    fallback_reply = _direct_connector_fallback_reply(user_id, user_message, readiness)
+    fallback_usage = _attach_failover_usage(
+        {
+            "provider": "heuristic",
+            "model": None,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "degraded": True,
+        },
+        attempted_providers=failover_log,
+        final_provider="heuristic",
+        final_model=None,
+    )
+    fallback_usage = attach_governance(
+        fallback_usage,
+        decision=governance_decision,
+        legacy_routes=legacy_routes,
+        operation_type="conversation",
+    )
+    if isinstance(state, dict):
+        state.update({
+            "reply": fallback_reply,
+            "usage": fallback_usage,
+            "actions": [],
+            "mutations": [],
+            "undo_snapshot": None,
+        })
+    if fallback_reply:
+        yield {"type": "delta", "delta": fallback_reply}
 
 
 def _model_label_for_type(model_type):
@@ -8321,6 +8508,8 @@ def _record_usage(
     regenerated=False,
     success=True,
     error_code=None,
+    idempotency_key=None,
+    request_fingerprint=None,
 ):
     if not isinstance(session, dict):
         return
@@ -8347,6 +8536,11 @@ def _record_usage(
         actions,
         attachment_count=attachment_count,
         regenerated=regenerated,
+    )
+    audit_idempotency_key = (
+        hashlib.sha256(f"{operation_type}:{idempotency_key}".encode("utf-8")).hexdigest()
+        if idempotency_key
+        else None
     )
 
     summary = session.get("usage_summary")
@@ -8421,7 +8615,10 @@ def _record_usage(
                 scorecard_id=scorecard_id,
                 attachment_count=attachment_count,
                 extracted_attachment_tokens=extracted_attachment_tokens,
-                metadata_json={'retry_attempts_recorded': 0},
+                metadata_json={
+                    'retry_attempts_recorded': 0,
+                    'idempotency_protected': bool(idempotency_key),
+                },
                 is_failover=bool(failover),
             ))
             persist_operation(
@@ -8432,6 +8629,8 @@ def _record_usage(
                 thread_id=thread_id,
                 success=bool(success),
                 error_code=error_code,
+                idempotency_key=audit_idempotency_key,
+                request_fingerprint=request_fingerprint,
             )
     except Exception:
         current_app.logger.exception("Failed queuing usage event persistence")
@@ -9109,42 +9308,17 @@ def _anthropic_json_completion(
             temperature=temperature,
         )
         return _extract_json_response_object(text), usage
-    api_key = _anthropic_api_key()
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set in environment")
-
-    try:
-        import anthropic
-    except Exception as exc:
-        raise RuntimeError(f"anthropic SDK unavailable: {exc}")
-
-    client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
-    last_error = None
-    for candidate in _anthropic_model_candidates(model_name):
-        try:
-            response = client.messages.create(
-                model=candidate,
-                max_tokens=max(300, int(max_tokens or 2400)),
-                temperature=float(temperature if temperature is not None else 0.2),
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
-            )
-            return _extract_json_response_object(_anthropic_text(response.content)), {
-                "input_tokens": int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0),
-                "output_tokens": int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0),
-                "total_tokens": int(
-                    (int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0))
-                    + (int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0))
-                ),
-                "provider": "anthropic",
-                "model": candidate,
-            }
-        except Exception as exc:
-            last_error = exc
-            continue
-    if last_error:
-        raise last_error
-    raise RuntimeError("No valid Anthropic model candidates configured")
+    text, usage, _settlement = execute_system_text_operation(
+        messages=[{"role": "user", "content": user_prompt}],
+        system_prompt=system_prompt,
+        operation_type=operation_type,
+        model_type='orbit',
+        legacy_model=model_name,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        subsidy_reason='internal',
+    )
+    return _extract_json_response_object(text), usage
 
 
 def _batch_ranking_prompt_payload(ideas):
@@ -9285,22 +9459,38 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
     thread_id = str(idea.get("thread_id") or f"thread_{uuid.uuid4().hex[:12]}")
     generated_at = datetime.utcnow().isoformat()
     project_description = _batch_idea_summary_text(idea)
-    analysis_credit_cost = int(current_app.config.get("MARKET_IQ_ANALYSIS_CREDIT_COST", 25))
-    charged, remaining = consume_credits(user, analysis_credit_cost)
-    if not charged:
-        return None, _insufficient_credits_payload(user, analysis_credit_cost), 402
-
     client = get_llm_client()
     try:
-        analysis_result = _generate_jaspen_scorecard(
-            client,
-            project_description,
-            llm_model=model_selection["llm_model"],
+        routing_signals = {
+            'context_tokens': _rough_token_count_from_text(project_description),
+            'alternatives_count': len(batch.ideas()),
+        }
+        analysis_result, _usage, settlement = execute_customer_operation(
+            user,
+            generate=lambda: _generate_jaspen_scorecard(
+                client,
+                project_description,
+                llm_model=model_selection["llm_model"],
+                model_selection=model_selection,
+                strategy_objective=objective,
+                return_usage=True,
+                routing_signals=routing_signals,
+            ),
+            operation_type='scorecard_generation',
+            request_payload={
+                'batch_id': batch.id,
+                'idea_id': idea.get('idea_id'),
+                'description': project_description,
+                'routing_signals': routing_signals,
+            },
+            model_type=model_selection.get('model_type') or 'orbit',
+            max_tokens=8000,
+            thread_id=thread_id,
         )
-    except Exception:
-        # Refund preflight reservation when generation fails.
-        _release_reserved_credits(user, analysis_credit_cost)
-        raise
+    except AIOperationPaymentRequired as payment_error:
+        return None, payment_error.payload or _insufficient_credits_payload(user, 0), 402
+    remaining = user.credits_remaining
+    credits_charged = int(settlement.get('charged_credits') or 0)
     analysis_id = str(uuid.uuid4())
     prior_meta = analysis_result.get("meta") if isinstance(analysis_result.get("meta"), dict) else {}
     analysis = {
@@ -9321,7 +9511,7 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
             "conversation_turns": 1,
             "generated_at": generated_at,
             "model_type": model_selection["model_type"],
-            "credits_charged": analysis_credit_cost,
+            "credits_charged": credits_charged,
             "credits_remaining": remaining,
             "source": "batch_idea_upload",
             "batch_id": batch.id,
@@ -9385,7 +9575,7 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
         "thread_id": thread_id,
         "analysis_id": analysis_id,
         "project_name": title,
-        "credits_charged": analysis_credit_cost,
+        "credits_charged": credits_charged,
         "credits_remaining": remaining,
         "analysis": analysis,
     }, None, None
@@ -9741,6 +9931,19 @@ def conversation_start():
         existing_snapshot=session.get("connector_context_snapshot"),
     )
 
+    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
+    try:
+        idempotency_key, request_fingerprint = _conversation_idempotency_context(
+            "conversation_start", data, attachments,
+        )
+        cached_payload = _cached_conversation_payload(
+            session, idempotency_key, request_fingerprint,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc), "code": "idempotency_conflict"}), 409
+    if cached_payload is not None:
+        return _conversation_replay_response(cached_payload, stream_requested)
+
     chat_history = session.get("chat_history")
     if not isinstance(chat_history, list):
         chat_history = []
@@ -9799,7 +10002,6 @@ def conversation_start():
         previous_readiness,
         _compute_readiness(chat_history, session.get("strategy_objective")),
     )
-    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
     if _is_objective_offtopic_turn(user_message):
         assistant_reply = _objective_refocus_reply(session.get("strategy_objective"))
         chat_history.append(_assistant_chat_entry(assistant_reply))
@@ -9982,6 +10184,8 @@ def conversation_start():
                     credits_charged,
                     actions=actions,
                     attachments=attachments,
+                    idempotency_key=idempotency_key,
+                    request_fingerprint=request_fingerprint,
                 )
                 sessions[thread_id] = session
                 if not save_user_sessions(user_id, sessions):
@@ -10044,6 +10248,13 @@ def conversation_start():
                     "visibility": session.get("visibility") or "private",
                     "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
                 }
+                _remember_conversation_payload(
+                    session, idempotency_key, request_fingerprint, done_payload,
+                )
+                sessions[thread_id] = session
+                if not save_user_sessions(user_id, sessions):
+                    yield _sse_payload({"type": "error", "error": "Failed to persist idempotency state"})
+                    return
                 yield _sse_payload(done_payload)
             except Exception as generation_error:
                 if not credits_settled:
@@ -10129,6 +10340,8 @@ def conversation_start():
         credits_charged,
         actions=actions,
         attachments=attachments,
+        idempotency_key=idempotency_key,
+        request_fingerprint=request_fingerprint,
     )
     sessions[thread_id] = session
     if not save_user_sessions(user_id, sessions):
@@ -10149,7 +10362,7 @@ def conversation_start():
 
     _start_base_actions = actions if isinstance(actions, list) else []
 
-    return jsonify({
+    response_payload = {
         "thread_id": thread_id,
         "session_id": thread_id,
         "reply": assistant_reply,
@@ -10186,7 +10399,14 @@ def conversation_start():
         "organization_id": session.get("organization_id"),
         "visibility": session.get("visibility") or "private",
         "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-    }), 200
+    }
+    _remember_conversation_payload(
+        session, idempotency_key, request_fingerprint, response_payload,
+    )
+    sessions[thread_id] = session
+    if not save_user_sessions(user_id, sessions):
+        return jsonify({"error": "Failed to persist idempotency state"}), 500
+    return jsonify(response_payload), 200
 
 
 @ai_agent_bp.route("/conversation/continue", methods=["POST"])
@@ -10329,6 +10549,18 @@ def conversation_continue():
         thread_id=thread_id,
         existing_snapshot=session.get("connector_context_snapshot"),
     )
+    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
+    try:
+        idempotency_key, request_fingerprint = _conversation_idempotency_context(
+            "conversation_continue", data, attachments,
+        )
+        cached_payload = _cached_conversation_payload(
+            session, idempotency_key, request_fingerprint,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc), "code": "idempotency_conflict"}), 409
+    if cached_payload is not None:
+        return _conversation_replay_response(cached_payload, stream_requested)
     chat_history = session.get("chat_history")
     if not isinstance(chat_history, list):
         chat_history = []
@@ -10387,7 +10619,6 @@ def conversation_continue():
         previous_readiness,
         _compute_readiness(chat_history, session.get("strategy_objective")),
     )
-    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
     if _is_objective_offtopic_turn(user_message):
         assistant_reply = _objective_refocus_reply(session.get("strategy_objective"))
         chat_history.append(_assistant_chat_entry(assistant_reply))
@@ -10554,6 +10785,8 @@ def conversation_continue():
                     credits_charged,
                     actions=actions,
                     attachments=attachments,
+                    idempotency_key=idempotency_key,
+                    request_fingerprint=request_fingerprint,
                 )
                 sessions[thread_id] = session
                 if not save_user_sessions(user_id, sessions):
@@ -10616,6 +10849,13 @@ def conversation_continue():
                     "visibility": session.get("visibility") or "private",
                     "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
                 }
+                _remember_conversation_payload(
+                    session, idempotency_key, request_fingerprint, done_payload,
+                )
+                sessions[thread_id] = session
+                if not save_user_sessions(user_id, sessions):
+                    yield _sse_payload({"type": "error", "error": "Failed to persist idempotency state"})
+                    return
                 yield _sse_payload(done_payload)
             except Exception as generation_error:
                 if not credits_settled:
@@ -10700,6 +10940,8 @@ def conversation_continue():
         credits_charged,
         actions=actions,
         attachments=attachments,
+        idempotency_key=idempotency_key,
+        request_fingerprint=request_fingerprint,
     )
     sessions[thread_id] = session
     if not save_user_sessions(user_id, sessions):
@@ -10720,7 +10962,7 @@ def conversation_continue():
 
     _cont_base_actions = actions if isinstance(actions, list) else []
 
-    return jsonify({
+    response_payload = {
         "thread_id": thread_id,
         "session_id": thread_id,
         "reply": assistant_reply,
@@ -10757,7 +10999,14 @@ def conversation_continue():
         "organization_id": session.get("organization_id"),
         "visibility": session.get("visibility") or "private",
         "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-    }), 200
+    }
+    _remember_conversation_payload(
+        session, idempotency_key, request_fingerprint, response_payload,
+    )
+    sessions[thread_id] = session
+    if not save_user_sessions(user_id, sessions):
+        return jsonify({"error": "Failed to persist idempotency state"}), 500
+    return jsonify(response_payload), 200
 
 
 @ai_agent_bp.route("/uploads", methods=["POST"])
@@ -12150,6 +12399,19 @@ def conversation_regenerate():
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
 
+    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
+    try:
+        idempotency_key, request_fingerprint = _conversation_idempotency_context(
+            "conversation_regenerate", data, [],
+        )
+        cached_payload = _cached_conversation_payload(
+            session, idempotency_key, request_fingerprint,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc), "code": "idempotency_conflict"}), 409
+    if cached_payload is not None:
+        return _conversation_replay_response(cached_payload, stream_requested)
+
     chat_history = _session_chat_history(session)
     if len(chat_history) < 2:
         return jsonify({"error": "Nothing to regenerate"}), 400
@@ -12214,8 +12476,6 @@ def conversation_regenerate():
     if not credit_reservation["ok"]:
         return jsonify(credit_reservation["payload"]), 402
     reserved_credits = int(credit_reservation["reserved"] or 0)
-    stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
-
     if stream_requested:
         @stream_with_context
         def event_stream():
@@ -12290,7 +12550,14 @@ def conversation_regenerate():
                 session["chat_history"] = chat_history
                 session["timestamp"] = _iso_now()
                 session["readiness"] = final_readiness
-                _record_usage(session, usage, credits_charged, regenerated=True)
+                _record_usage(
+                    session,
+                    usage,
+                    credits_charged,
+                    regenerated=True,
+                    idempotency_key=idempotency_key,
+                    request_fingerprint=request_fingerprint,
+                )
                 sessions[session_key or thread_id] = session
                 if not save_user_sessions(user_id, sessions):
                     yield _sse_payload({"type": "error", "error": "Failed to persist regenerated response"})
@@ -12306,7 +12573,7 @@ def conversation_regenerate():
                     },
                 )
 
-                yield _sse_payload({
+                done_payload = {
                     "type": "done",
                     "thread_id": thread_id,
                     "session_id": thread_id,
@@ -12341,7 +12608,15 @@ def conversation_regenerate():
                     "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
                     "organization_id": session.get("organization_id"),
                     "visibility": session.get("visibility") or "private",
-                })
+                }
+                _remember_conversation_payload(
+                    session, idempotency_key, request_fingerprint, done_payload,
+                )
+                sessions[session_key or thread_id] = session
+                if not save_user_sessions(user_id, sessions):
+                    yield _sse_payload({"type": "error", "error": "Failed to persist idempotency state"})
+                    return
+                yield _sse_payload(done_payload)
             except Exception as generation_error:
                 if not credits_settled:
                     _release_reserved_credits(user, reserved_credits)
@@ -12403,7 +12678,14 @@ def conversation_regenerate():
 
     session["chat_history"] = chat_history
     session["timestamp"] = _iso_now()
-    _record_usage(session, usage, credits_charged, regenerated=True)
+    _record_usage(
+        session,
+        usage,
+        credits_charged,
+        regenerated=True,
+        idempotency_key=idempotency_key,
+        request_fingerprint=request_fingerprint,
+    )
     final_readiness = _clamp_readiness_with_delta(
         previous_readiness,
         _compute_readiness(chat_history, session.get("strategy_objective")),
@@ -12423,7 +12705,7 @@ def conversation_regenerate():
         },
     )
 
-    return jsonify({
+    response_payload = {
         "thread_id": thread_id,
         "session_id": thread_id,
         "reply": assistant_reply,
@@ -12457,7 +12739,14 @@ def conversation_regenerate():
         "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
         "organization_id": session.get("organization_id"),
         "visibility": session.get("visibility") or "private",
-    }), 200
+    }
+    _remember_conversation_payload(
+        session, idempotency_key, request_fingerprint, response_payload,
+    )
+    sessions[session_key or thread_id] = session
+    if not save_user_sessions(user_id, sessions):
+        return jsonify({"error": "Failed to persist idempotency state"}), 500
+    return jsonify(response_payload), 200
 
 
 @ai_agent_bp.route("/threads/<thread_id>/usage", methods=["GET"])
@@ -12704,34 +12993,31 @@ def rank_batch_ideas(batch_id):
     ideas = _load_batch_ideas(batch)
     if not ideas:
         return jsonify({"error": "Batch contains no ideas."}), 400
-    preflight_token_hint = _preflight_token_hint_for_batch_ideas(ideas, include_metadata=True)
-    credit_reservation = _reserve_preflight_credits(
-        user,
-        model_selection["model_type"],
-        token_hint=preflight_token_hint,
-    )
-    if not credit_reservation["ok"]:
-        return jsonify(credit_reservation["payload"]), 402
-    reserved_credits = int(credit_reservation["reserved"] or 0)
-
     try:
-        ranking_payload, usage = _rank_batch_ideas_with_ai(batch, ideas, model_selection)
+        ranking_payload, usage, operation_settlement = execute_customer_operation(
+            user,
+            generate=lambda: _rank_batch_ideas_with_ai(batch, ideas, model_selection),
+            operation_type="batch_ranking",
+            request_payload={"batch_id": batch.id, "ideas": ideas},
+            model_type=model_selection["model_type"],
+            max_tokens=max(900, _preflight_token_hint_for_batch_ideas(ideas, include_metadata=True) // 2),
+            thread_id=batch.id,
+        )
+    except AIOperationPaymentRequired as exc:
+        return jsonify(exc.payload or {"error": "Thinking Power exhausted"}), 402
     except Exception as exc:
-        _release_reserved_credits(user, reserved_credits)
         current_app.logger.exception("Failed ranking batch ideas")
         return jsonify({"error": f"Failed to rank ideas: {exc}"}), 500
-
-    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-    credit_settlement = _settle_reserved_credits(
-        user,
-        reserved_credits=reserved_credits,
-        actual_credits=credits_charged,
-    )
-    if not credit_settlement["ok"]:
-        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
-    remaining = credit_settlement["remaining"]
-    credits_charged = credit_settlement["charged"]
-    _persist_credit_deduction(user_id, remaining)
+    credits_charged = int(operation_settlement.get("charged_credits") or 0)
+    remaining = operation_settlement.get("remaining")
+    if operation_settlement.get("idempotent_replay"):
+        existing_record = _load_batch_ranking_result(batch)
+        return jsonify({
+            **existing_record,
+            "batch_id": batch.id,
+            "status": batch.status,
+            "idempotent_replay": True,
+        }), 200
 
     ranked_ideas = ranking_payload.get("ranked_ideas") if isinstance(ranking_payload, dict) else []
     ranking_record = {
@@ -12745,13 +13031,6 @@ def rank_batch_ideas(batch_id):
         ),
         "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
     }
-    persist_operation(
-        user,
-        usage=usage,
-        charged_credits=credits_charged,
-        operation_type='batch_ranking',
-        success=True,
-    )
     _save_batch_state(
         batch,
         ideas=ranked_ideas,
@@ -12860,34 +13139,39 @@ def clarify_batch_idea(batch_id, idea_id):
     )
     if model_error:
         return jsonify(model_error), 403
-    preflight_token_hint = _preflight_token_hint_for_batch_ideas([updated_idea], include_metadata=True)
-    credit_reservation = _reserve_preflight_credits(
-        user,
-        model_selection["model_type"],
-        token_hint=preflight_token_hint,
-    )
-    if not credit_reservation["ok"]:
-        return jsonify(credit_reservation["payload"]), 402
-    reserved_credits = int(credit_reservation["reserved"] or 0)
-
     try:
-        reevaluated, usage = _reevaluate_batch_idea_with_ai(batch, updated_idea, model_selection)
+        reevaluated, usage, operation_settlement = execute_customer_operation(
+            user,
+            generate=lambda: _reevaluate_batch_idea_with_ai(batch, updated_idea, model_selection),
+            operation_type="batch_clarification",
+            request_payload={
+                "batch_id": batch.id,
+                "idea_id": idea_id,
+                "answers": payload.get("answers"),
+            },
+            model_type=model_selection["model_type"],
+            max_tokens=max(
+                900,
+                _preflight_token_hint_for_batch_ideas([updated_idea], include_metadata=True) // 2,
+            ),
+            thread_id=batch.id,
+        )
+    except AIOperationPaymentRequired as exc:
+        return jsonify(exc.payload or {"error": "Thinking Power exhausted"}), 402
     except Exception as exc:
-        _release_reserved_credits(user, reserved_credits)
         current_app.logger.exception("Failed reevaluating clarified batch idea")
         return jsonify({"error": f"Failed to reevaluate idea: {exc}"}), 500
-
-    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-    credit_settlement = _settle_reserved_credits(
-        user,
-        reserved_credits=reserved_credits,
-        actual_credits=credits_charged,
-    )
-    if not credit_settlement["ok"]:
-        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
-    remaining = credit_settlement["remaining"]
-    credits_charged = credit_settlement["charged"]
-    _persist_credit_deduction(user_id, remaining)
+    credits_charged = int(operation_settlement.get("charged_credits") or 0)
+    remaining = operation_settlement.get("remaining")
+    if operation_settlement.get("idempotent_replay"):
+        current_ideas = _load_batch_ideas(batch)
+        _current_index, current_idea = _find_batch_idea(current_ideas, idea_id)
+        return jsonify({
+            "batch_id": batch.id,
+            "idea": current_idea,
+            "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
+            "idempotent_replay": True,
+        }), 200
 
     updated_idea.update({
         "preliminary_score": _coerce_score_int(reevaluated.get("preliminary_score")),
@@ -12915,13 +13199,6 @@ def clarify_batch_idea(batch_id, idea_id):
         ),
         "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
     }
-    persist_operation(
-        user,
-        usage=usage,
-        charged_credits=credits_charged,
-        operation_type='batch_clarification',
-        success=True,
-    )
     _save_batch_state(batch, ideas=ideas, ranking_result=ranking_record, status="clarifying")
     db.session.commit()
     _audit_ai_agent_event(

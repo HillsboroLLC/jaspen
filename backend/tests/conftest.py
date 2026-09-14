@@ -59,6 +59,9 @@ def app(tmp_path_factory):
         "ENV",
         "FLASK_ENV",
         "DECISION_IMPACT_NARRATIVE",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_API_KEY",
+        "GEMINI_API_KEY",
     )}
 
     os.environ["DATABASE_URL"] = f"sqlite:///{db_file}"
@@ -76,6 +79,11 @@ def app(tmp_path_factory):
     # template is the behaviour worth asserting anyway — the model path has its
     # own tests, with the call stubbed.
     os.environ["DECISION_IMPACT_NARRATIVE"] = "off"
+    # Never let the test app inherit billable developer credentials from the
+    # repository's local environment. Provider-adapter tests inject fakes.
+    os.environ.pop("ANTHROPIC_API_KEY", None)
+    os.environ.pop("CLAUDE_API_KEY", None)
+    os.environ.pop("GEMINI_API_KEY", None)
     os.environ.pop("ENV", None)
     os.environ.pop("FLASK_ENV", None)
 

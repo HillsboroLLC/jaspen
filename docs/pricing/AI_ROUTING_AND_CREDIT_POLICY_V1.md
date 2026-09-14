@@ -12,8 +12,9 @@ Status: development-only; both policies default to `shadow`.
   retains 1,000 internal units per displayed credit.
 - A customer-visible operation is settled once from the successful result's
   provider cost. Failed attempts and internal support calls are Jaspen costs.
-- Free, test, admin/unlimited, and fully-comped use is marked subsidized. It is
-  not treated as revenue-backed margin.
+- Free, test, admin/unlimited, promotional, fully-comped, anonymous public
+  intake, and internal use is classified explicitly as subsidized. It is not
+  treated as revenue-backed margin.
 - Purchased credit packs are persistent, non-expiring lots. Monthly resets do
   not remove them; refunds and disputes reverse only unused value and retain
   the transaction history.
@@ -37,8 +38,37 @@ the route class/reason, selected and final provider/model, failover/escalation,
 successful and total known cost, projected and charged credits, subsidized
 status, and router/policy versions.
 
-If a provider fails before returning token usage, its cost is recorded as
-unknown—not zero—and is marked as Jaspen-absorbed.
+If a failed provider attempt returns usage, the ledger records its actual
+cost. If it does not, the gateway records a conservative token/cost estimate,
+labels the estimate method, and marks that cost as Jaspen-absorbed.
+
+Customer-visible operations accept `X-Jaspen-Idempotency-Key`. The shared
+runtime claims a namespaced operation before generation and replays its stored
+successful result on retry. The tool-capable streaming conversation boundary
+is the documented exception to the generic executor: it uses the same router,
+provider adapters, pricing, settlement, and audit ledger, but keeps a bounded
+durable response cache in the thread because its tool loop must stream partial
+events. In both paths a completed retry does not generate or charge again.
+Anonymous public intake is non-billable and deliberately does not retain a
+durable response replay; this keeps visitor chat content out of the operation
+result cache.
+
+## Gateway coverage
+
+- Authenticated chat, reports, insights, connector generation, scorecards,
+  scorecard assistants, portfolio analysis, score batches, and execution-plan
+  generation use the shared governed runtime or the governed streaming
+  conversation boundary.
+- Anonymous public-intake chat uses the system runtime and is classified as
+  `public_intake`; it never debits a customer.
+- Feedback digests and user-memory extraction use the system runtime and are
+  classified as `internal`.
+- Decision-impact narrative model generation is retired. The current
+  deterministic narrative remains authoritative; the dormant model seam is
+  retained only for test compatibility and returns no model content.
+- Legacy direct-Anthropic fallbacks have been removed. A deterministic
+  heuristic response may be used when no provider is configured or all routes
+  fail; it is explicitly marked `degraded` and is not a hidden provider call.
 
 ## Runtime controls
 
@@ -63,3 +93,14 @@ validation; changing one must not implicitly change the other.
 8. Keep Pluto/Orbit/Titan visible until the replacement UI is validated.
 
 Do not promote by toggling both policies and migrating the database in one step.
+
+## Margin interpretation
+
+The 3,600-credit conversion guarantees the intended direct-cost floor for the
+successful customer-visible completion at current catalog economics. It cannot
+guarantee that every individual request retains a 90% all-in margin after an
+expensive failed provider attempt because the customer is charged only once.
+The ledger therefore reports successful cost and Jaspen-absorbed attempt cost
+separately. Production activation requires observing the failure distribution
+in shadow mode and applying operational retry/circuit-breaker limits if the
+aggregate paid-workflow margin falls below target.

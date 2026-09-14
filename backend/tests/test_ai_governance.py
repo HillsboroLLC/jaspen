@@ -1,8 +1,9 @@
 from decimal import Decimal
 
 import pytest
+import requests
 
-from app.ai_audit import attach_governance, persist_operation
+from app.ai_audit import attach_governance, persist_operation, subsidy_classification
 from app.ai_governance import (
     CREDIT_POLICY_VERSION,
     CREDITS_PER_PROVIDER_DOLLAR,
@@ -15,7 +16,10 @@ from app.ai_governance import (
     routing_decision,
 )
 from app.models import AIOperation, AIProviderAttempt
-from app.ai_runtime import execute_customer_text_operation
+from app.ai_runtime import (
+    AIOperationIdempotencyConflict,
+    execute_customer_text_operation,
+)
 
 
 def test_3600_policy_uses_internal_ledger_precision_and_ceiling():
@@ -119,17 +123,21 @@ def test_operation_audit_records_failover_cost_as_jaspen_cost_and_charges_once(a
         assert len(attempts) == 2
         assert attempts[0].outcome == 'timeout'
         assert attempts[0].customer_billable is False
-        assert attempts[0].raw_provider_cost_usd is None
+        assert attempts[0].raw_provider_cost_usd == 0
+        assert attempts[0].metadata_json['provider_cost_estimated'] is True
         assert attempts[1].outcome == 'succeeded'
         assert attempts[1].customer_billable is True
 
 
-def test_shared_runtime_shadow_records_projection_without_changing_balance(
+def test_shared_runtime_shadow_records_projection_and_preserves_legacy_charge(
     app, db, test_user, monkeypatch
 ):
     from app.routes import ai_agent
+    from app.billing_config import bootstrap_legacy_credits
 
     monkeypatch.setitem(app.config, 'JASPEN_CREDIT_POLICY_MODE', 'shadow')
+    bootstrap_legacy_credits(test_user, app.config)
+    db.session.commit()
     starting_balance = test_user.credits_remaining
     monkeypatch.setattr(
         ai_agent,
@@ -158,10 +166,10 @@ def test_shared_runtime_shadow_records_projection_without_changing_balance(
     )
 
     operation = AIOperation.query.order_by(AIOperation.created_at.desc()).first()
-    assert settlement['charged_credits'] == 0
+    assert settlement['charged_credits'] > 0
     assert settlement['projected_credits'] > 0
-    assert test_user.credits_remaining == starting_balance
-    assert operation.charged_credits == 0
+    assert test_user.credits_remaining == starting_balance - settlement['charged_credits']
+    assert operation.charged_credits == settlement['charged_credits']
     assert operation.projected_credits == settlement['projected_credits']
     assert operation.metadata_json['legacy_charge_preserved'] is True
 
@@ -278,4 +286,197 @@ def test_multi_call_batch_sums_provider_cost_but_has_one_settlement(
     assert operation.successful_provider_cost_usd == sum(
         attempt.raw_provider_cost_usd for attempt in attempts
     )
-    assert operation.charged_credits == 20_000
+
+
+def test_idempotent_retry_returns_cached_result_without_second_generation_or_charge(
+    app, db, test_user, monkeypatch
+):
+    from app.routes import ai_agent
+
+    monkeypatch.setitem(app.config, 'JASPEN_CREDIT_POLICY_MODE', 'active')
+    calls = {'generate': 0, 'reserve': 0, 'settle': 0}
+
+    def generated(*_args, **_kwargs):
+        calls['generate'] += 1
+        return 'one result', attach_governance(
+            {
+                'provider': 'anthropic',
+                'model': 'claude-sonnet-4-6',
+                'input_tokens': 400,
+                'output_tokens': 100,
+            },
+            decision=routing_decision(operation_type='report_generation', text='same request'),
+            legacy_routes=[{'provider': 'anthropic', 'model': 'claude-sonnet-4-6'}],
+            operation_type='report_generation',
+        )
+
+    def reserve(*_args, **_kwargs):
+        calls['reserve'] += 1
+        return {'ok': True, 'reserved': 20_000}
+
+    def settle(*_args, **kwargs):
+        calls['settle'] += 1
+        return {'ok': True, 'charged': kwargs['actual_credits'], 'remaining': 200_000}
+
+    monkeypatch.setattr(ai_agent, '_generate_routed_chat_reply', generated)
+    monkeypatch.setattr(ai_agent, '_reserve_preflight_credits', reserve)
+    monkeypatch.setattr(ai_agent, '_settle_reserved_credits', settle)
+    monkeypatch.setattr(ai_agent, '_charge_for_usage', lambda *_args, **_kwargs: 9_000)
+
+    kwargs = dict(
+        messages=[{'role': 'user', 'content': 'same request'}],
+        system_prompt='Return a report.',
+        operation_type='report_generation',
+        idempotency_key='test-retry-1',
+    )
+    first = execute_customer_text_operation(test_user, **kwargs)
+    second = execute_customer_text_operation(test_user, **kwargs)
+
+    assert first[0] == second[0] == 'one result'
+    assert second[2]['idempotent_replay'] is True
+    assert calls == {'generate': 1, 'reserve': 1, 'settle': 1}
+    assert AIOperation.query.filter_by(operation_type='report_generation').count() == 1
+    assert AIProviderAttempt.query.count() == 1
+
+
+def test_idempotency_key_cannot_be_reused_for_different_request(app, db, test_user, monkeypatch):
+    from app.routes import ai_agent
+
+    monkeypatch.setattr(
+        ai_agent,
+        '_generate_routed_chat_reply',
+        lambda *_args, **_kwargs: (
+            'result',
+            attach_governance(
+                {'provider': 'anthropic', 'model': 'claude-sonnet-4-6', 'input_tokens': 10, 'output_tokens': 5},
+                decision=routing_decision(operation_type='conversation', text='first'),
+                legacy_routes=[{'provider': 'anthropic', 'model': 'claude-sonnet-4-6'}],
+                operation_type='conversation',
+            ),
+        ),
+    )
+    execute_customer_text_operation(
+        test_user,
+        messages=[{'role': 'user', 'content': 'first'}],
+        system_prompt='Help.',
+        operation_type='conversation',
+        idempotency_key='reused-key',
+    )
+    with pytest.raises(AIOperationIdempotencyConflict):
+        execute_customer_text_operation(
+            test_user,
+            messages=[{'role': 'user', 'content': 'different'}],
+            system_prompt='Help.',
+            operation_type='conversation',
+            idempotency_key='reused-key',
+        )
+
+
+def test_failed_attempt_estimate_is_included_in_all_in_cost(app, db, test_user):
+    usage = attach_governance(
+        {
+            'provider': 'gemini',
+            'model': 'gemini-2.5-pro',
+            'input_tokens': 1000,
+            'output_tokens': 300,
+            'failover': {'attempted_providers': [{
+                'provider': 'anthropic',
+                'model': 'claude-sonnet-4-6',
+                'outcome': 'timeout',
+                'input_tokens': 1800,
+                'output_tokens': 900,
+                'estimate_method': 'test_conservative_estimate',
+            }]},
+        },
+        decision=routing_decision(operation_type='report_generation', text='report'),
+        legacy_routes=[{'provider': 'anthropic', 'model': 'claude-sonnet-4-6'}],
+        operation_type='report_generation',
+    )
+    operation = persist_operation(test_user, usage=usage, charged_credits=1)
+    db.session.commit()
+    assert operation.total_provider_cost_usd > operation.successful_provider_cost_usd
+    assert operation.metadata_json['failed_attempt_cost_estimated'] is True
+
+
+@pytest.mark.parametrize('classification', [
+    'free', 'test', 'admin', 'promotional', 'fully_comped', 'internal', 'public_intake',
+])
+def test_explicit_subsidy_classifications_are_persisted(app, db, test_user, classification):
+    customer_visible = classification not in {'internal'}
+    user = None if classification == 'public_intake' else test_user
+    operation = persist_operation(
+        user,
+        usage={'provider': 'anthropic', 'model': 'claude-haiku-4-5', 'input_tokens': 1, 'output_tokens': 1},
+        charged_credits=0,
+        subsidy_reason=classification,
+        customer_visible=customer_visible,
+    )
+    db.session.commit()
+    assert operation.subsidized is True
+    assert operation.subsidy_classification == classification
+
+
+def test_real_scorecard_routing_signals_can_reach_opus(app, monkeypatch):
+    from app.routes import ai_agent
+
+    monkeypatch.setitem(app.config, 'JASPEN_AI_ROUTER_MODE', 'active')
+    monkeypatch.setattr(ai_agent, '_anthropic_api_key', lambda: 'configured')
+    monkeypatch.setattr(ai_agent, '_gemini_api_key', lambda: 'configured')
+    legacy = [{'provider': 'anthropic', 'model': 'claude-sonnet-4-6'}]
+    routes, decision = ai_agent._resolve_governed_routes(
+        legacy,
+        operation_type='scorecard_generation',
+        text=(
+            'Board acquisition investment with regulatory security trade-offs, '
+            'conflicting assumptions, uncertain downside, and irreversible commitment.'
+        ),
+        attachment_count=3,
+        context_tokens=20_000,
+        alternatives_count=4,
+        structured_output=True,
+    )
+    assert decision['route_class'] == ROUTE_EXCEPTIONAL
+    assert routes[0]['provider'] == 'anthropic'
+    assert 'opus' in routes[0]['model']
+
+
+def test_live_provider_adapter_fails_over_from_claude_to_gemini(app, monkeypatch):
+    """Exercise the real adapter loop without making either provider request."""
+    from app.routes import ai_agent
+
+    class GeminiResponse:
+        @staticmethod
+        def json():
+            return {
+                'choices': [{'message': {'content': 'Gemini fallback result'}}],
+                'usage': {'prompt_tokens': 120, 'completion_tokens': 30, 'total_tokens': 150},
+            }
+
+    monkeypatch.setitem(app.config, 'JASPEN_AI_ROUTER_MODE', 'active')
+    monkeypatch.setattr(ai_agent, '_anthropic_api_key', lambda: 'configured')
+    monkeypatch.setattr(ai_agent, '_gemini_api_key', lambda: 'configured')
+    monkeypatch.setattr(
+        ai_agent,
+        '_anthropic_message_create',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(requests.Timeout('provider timeout')),
+    )
+    monkeypatch.setattr(ai_agent, '_gemini_openai_request', lambda **_kwargs: GeminiResponse())
+
+    with app.app_context():
+        reply, usage = ai_agent._generate_routed_chat_reply(
+            [{'role': 'user', 'content': 'Evaluate this decision.'}],
+            system_prompt='Return a concise assessment.',
+            model_selection={'model_type': 'orbit', 'llm_model': 'claude-sonnet-4-6'},
+            operation_type='conversation',
+        )
+
+    assert reply == 'Gemini fallback result'
+    assert usage['provider'] == 'gemini'
+    assert usage['failover']['final_provider'] == 'gemini'
+    attempts = usage['failover']['attempted_providers']
+    assert len(attempts) == 1
+    assert attempts[0]['provider'] == 'anthropic'
+    assert attempts[0]['outcome'] == 'timeout'
+    assert attempts[0]['input_tokens'] > 0
+    assert attempts[0]['output_tokens'] > 0
+    assert attempts[0]['estimate_method'] == 'prompt_chars_div_4_plus_max_output'

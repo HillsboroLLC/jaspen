@@ -260,6 +260,11 @@ function shouldRetryRequest(method, opts = {}, error) {
   return true;
 }
 
+function makeAIRequestIdempotencyKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `jaspen-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 async function fetchWithRetry(url, fetchOptions, { method = 'GET', retryable = false } = {}) {
   let lastError = null;
   for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt += 1) {
@@ -292,10 +297,16 @@ async function fetchWithRetry(url, fetchOptions, { method = 'GET', retryable = f
 
 async function _fetch(url, opts = {}) {
   const method = String(opts.method || 'GET').toUpperCase();
+  const mutationKey = !['GET', 'HEAD', 'OPTIONS'].includes(method)
+    ? makeAIRequestIdempotencyKey()
+    : null;
   const headers = {
     ...buildAuthHeaders({ 'Content-Type': 'application/json' }, method),
     ...(opts.sidOverride ? { 'X-Session-ID': opts.sidOverride } : opts.withSid ? { 'X-Session-ID': getSid() } : {}),
     ...(opts.headers || {}),
+    ...(mutationKey && !(opts.headers || {})['X-Jaspen-Idempotency-Key']
+      ? { 'X-Jaspen-Idempotency-Key': mutationKey }
+      : {}),
   };
   let lastError = null;
   for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt += 1) {
@@ -408,6 +419,7 @@ async function postForm(url, form, { withSid = false, sidOverride, retryable = f
   const headers = {
     ...buildAuthHeaders({}, 'POST'),
     ...(sidOverride ? { 'X-Session-ID': sidOverride } : withSid ? { 'X-Session-ID': getSid() } : {}),
+    'X-Jaspen-Idempotency-Key': makeAIRequestIdempotencyKey(),
   };
   const resp = await fetchWithRetry(url, {
     method: 'POST',
@@ -449,6 +461,7 @@ async function openRetriedStream(url, { body, sid, isForm = false, signal = null
     headers: {
       ...baseHeaders,
       'X-Session-ID': sid || getSid(),
+      'X-Jaspen-Idempotency-Key': makeAIRequestIdempotencyKey(),
     },
     body,
     signal,

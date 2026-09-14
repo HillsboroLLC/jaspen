@@ -1120,8 +1120,8 @@ class AIOperation(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = db.Column(
         db.String(36),
-        db.ForeignKey('users.id', ondelete='CASCADE'),
-        nullable=False,
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
         index=True,
     )
     organization_id = db.Column(
@@ -1132,9 +1132,12 @@ class AIOperation(db.Model):
     )
     thread_id = db.Column(db.String(255), nullable=True, index=True)
     operation_type = db.Column(db.String(80), nullable=False, index=True)
+    idempotency_key = db.Column(db.String(255), nullable=True, unique=True)
+    request_fingerprint = db.Column(db.String(64), nullable=True)
     status = db.Column(db.String(24), nullable=False, default='started', index=True)
     customer_visible = db.Column(db.Boolean, nullable=False, default=True)
     subsidized = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    subsidy_classification = db.Column(db.String(40), nullable=True, index=True)
     router_mode = db.Column(db.String(16), nullable=False, default='shadow')
     router_version = db.Column(db.String(64), nullable=False)
     route_class = db.Column(db.String(48), nullable=True, index=True)
@@ -1154,6 +1157,7 @@ class AIOperation(db.Model):
     charged_credits = db.Column(db.BigInteger, nullable=False, default=0)
     settled_at = db.Column(db.DateTime, nullable=True)
     error_code = db.Column(db.String(120), nullable=True)
+    result_json = db.Column(db.JSON, nullable=True)
     metadata_json = db.Column(db.JSON, nullable=True, default=dict)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = db.Column(

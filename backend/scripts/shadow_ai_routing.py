@@ -33,6 +33,13 @@ def _margin(price, public_credits):
     return ((Decimal(str(price)) - provider_capacity) / Decimal(str(price))) * 100
 
 
+def _operation_margin(*, public_credits, revenue_per_credit, all_in_provider_cost):
+    revenue = Decimal(str(public_credits)) * Decimal(str(revenue_per_credit))
+    if revenue <= 0:
+        return None
+    return ((revenue - Decimal(str(all_in_provider_cost))) / revenue) * 100
+
+
 def main():
     routing = []
     for name, operation, text, legacy_type, legacy_model, input_tokens, output_tokens in CASES:
@@ -82,6 +89,22 @@ def main():
         })
     products.append({'product': 'limited_time_300k', 'margin_percent': round(float(_margin(999, 300000)), 2)})
 
+    lowest_credit_price = min(
+        Decimal(str(item['price_usd'])) / Decimal(int(item['credits']) / 1000)
+        for item in DEFAULT_CREDIT_PACKS.values()
+    )
+    # Forced failover example: a Sonnet attempt consumes estimated work before
+    # a Gemini Pro response succeeds. The customer is charged only for Gemini;
+    # the Claude attempt remains Jaspen cost.
+    failed_attempt_cost = Decimal(str(provider_cost_usd('claude-sonnet-4-6', 5000, 1000)))
+    successful_cost = Decimal(str(provider_cost_usd('gemini-2.5-pro', 5000, 1000)))
+    successful_public_credits = credits_for_provider_cost(successful_cost, internal=False)
+    forced_failover_margin = _operation_margin(
+        public_credits=successful_public_credits,
+        revenue_per_credit=lowest_credit_price,
+        all_in_provider_cost=failed_attempt_cost + successful_cost,
+    )
+
     payload = {
         'routing_cases': routing,
         'route_distribution': {
@@ -92,7 +115,18 @@ def main():
         'paid_products': products,
         'minimum_direct_ai_cost_margin_percent': min(item['margin_percent'] for item in products),
         'all_paid_products_meet_90_percent_floor': all(item['margin_percent'] >= 90 for item in products),
-        'subsidized_categories': ['free', 'test', 'admin', 'fully_comped'],
+        'forced_failover_example': {
+            'failed_attempt_provider_cost_usd': float(failed_attempt_cost),
+            'successful_provider_cost_usd': float(successful_cost),
+            'customer_public_credits_charged_once': successful_public_credits,
+            'lowest_catalog_revenue_per_credit_usd': float(lowest_credit_price),
+            'all_in_margin_percent': round(float(forced_failover_margin), 2),
+            'meets_90_percent_floor': bool(forced_failover_margin >= Decimal('90')),
+        },
+        'subsidized_categories': [
+            'free', 'test', 'admin', 'promotional', 'fully_comped',
+            'internal', 'public_intake',
+        ],
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
 

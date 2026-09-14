@@ -219,55 +219,14 @@ def passes_containment(text, grounded):
 
 
 def _model_paragraph(grounded):
-    """One attempt at model prose. Returns (text, model_id) or (None, None)."""
-    if str(os.getenv('DECISION_IMPACT_NARRATIVE', 'on')).strip().lower() in ('off', '0', 'false'):
-        return None, None
+    """Dormant model prose is intentionally retired; deterministic copy is canonical.
 
-    api_key = (
-        current_app.config.get('ANTHROPIC_API_KEY')
-        or current_app.config.get('CLAUDE_API_KEY')
-        or os.getenv('ANTHROPIC_API_KEY')
-        or os.getenv('CLAUDE_API_KEY')
-    )
-    if not api_key:
-        return None, None
-
-    # Same resolution chain as the existing report renderer, so the model in
-    # use is configured in one place rather than pinned here.
-    model_name = (
-        current_app.config.get('AI_REPORT_MODEL')
-        or os.getenv('AI_REPORT_MODEL')
-        or current_app.config.get('AI_AGENT_ANTHROPIC_MODEL')
-        or os.getenv('AI_AGENT_ANTHROPIC_MODEL')
-    )
-    if not model_name:
-        return None, None
-
-    try:
-        import json
-
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model=model_name,
-            temperature=0.1,
-            max_tokens=500,
-            system=SYSTEM_PROMPT,
-            messages=[{'role': 'user', 'content': json.dumps(grounded, indent=2)}],
-        )
-        parts = [
-            str(getattr(block, 'text', '') or '').strip()
-            for block in (getattr(response, 'content', []) or [])
-            if getattr(block, 'type', None) == 'text'
-        ]
-        return ' '.join(part for part in parts if part).strip() or None, model_name
-    except Exception:  # noqa: BLE001 — the template is always a valid answer
-        current_app.logger.info(
-            'decision_impact: narrative model unavailable, using the template',
-            exc_info=True,
-        )
-        return None, None
+    The decision-impact report already has a grounded deterministic narrative,
+    and this optional path had no customer-controlled invocation or cost audit.
+    Keeping the seam lets old tests and callers remain stable without reviving
+    a second narrative generator.
+    """
+    return None, None
 
 
 def compose(impact, context, *, template):

@@ -7,6 +7,7 @@ from flask import current_app
 from flask_mail import Message
 
 from app import mail
+from app.ai_runtime import execute_system_text_operation
 from app.models import User, UserSession
 
 
@@ -232,20 +233,6 @@ def _deterministic_digest_text(items, start_at, end_at):
 
 
 def _anthropic_digest_text(items, start_at, end_at):
-    api_key = (
-        current_app.config.get("ANTHROPIC_API_KEY")
-        or current_app.config.get("CLAUDE_API_KEY")
-        or os.getenv("ANTHROPIC_API_KEY")
-        or os.getenv("CLAUDE_API_KEY")
-    )
-    if not api_key:
-        return None
-    try:
-        import anthropic
-    except Exception:
-        current_app.logger.warning("Anthropic SDK unavailable; using deterministic feedback digest")
-        return None
-
     summary = summarize_feedback_items(items)
     compact_items = [
         {
@@ -267,7 +254,6 @@ def _anthropic_digest_text(items, start_at, end_at):
         f"Feedback JSON: {json.dumps(compact_items, default=str)}"
     )
     try:
-        client = anthropic.Anthropic(api_key=api_key, timeout=20.0)
         model = (
             current_app.config.get("FEEDBACK_DIGEST_ANTHROPIC_MODEL")
             or current_app.config.get("AI_AGENT_ANTHROPIC_MODEL")
@@ -275,19 +261,18 @@ def _anthropic_digest_text(items, start_at, end_at):
             or os.getenv("AI_AGENT_ANTHROPIC_MODEL")
             or "claude-sonnet-4-6"
         )
-        response = client.messages.create(
-            model=model,
+        text, _usage, _settlement = execute_system_text_operation(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="You write concise product-operations feedback digests for a founder.",
+            operation_type='feedback_digest',
+            model_type='orbit',
+            legacy_model=model,
             max_tokens=1800,
             temperature=0.2,
-            system="You write concise product-operations feedback digests for a founder.",
-            messages=[{"role": "user", "content": prompt}],
+            subsidy_reason='internal',
+            idempotency_key=f'feedback-digest:{start_at.date().isoformat()}:{end_at.date().isoformat()}',
         )
-        parts = []
-        for block in getattr(response, "content", []) or []:
-            text = getattr(block, "text", None)
-            if text:
-                parts.append(text)
-        return "\n".join(parts).strip() or None
+        return str(text or '').strip() or None
     except Exception:
         current_app.logger.exception("AI feedback digest synthesis failed; using deterministic digest")
         return None

@@ -72,6 +72,49 @@ def _signup(client, email=None):
 
 
 class TestHomepageHandoffIntegration:
+    def test_same_idempotency_key_replays_without_generating_or_charging_twice(
+        self, client, db, monkeypatch
+    ):
+        from app.routes import ai_agent
+
+        _signup(client)
+        thread_id = f"thread_{uuid.uuid4().hex[:16]}"
+        calls = {"generate": 0}
+
+        def fake_generate(*_args, **_kwargs):
+            calls["generate"] += 1
+            return (
+                "A single governed response.",
+                {
+                    "provider": "heuristic",
+                    "model": None,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                },
+                [],
+                [],
+                None,
+            )
+
+        monkeypatch.setattr(ai_agent, "_generate_assistant_reply", fake_generate)
+        payload = {
+            "message": HOMEPAGE_CONTEXT,
+            "thread_id": thread_id,
+            "strategy_objective": "balanced",
+        }
+        headers = {"X-Jaspen-Idempotency-Key": f"test-{uuid.uuid4().hex}"}
+
+        first = client.post(START_URL, json=payload, headers=headers)
+        replay = client.post(START_URL, json=payload, headers=headers)
+
+        assert first.status_code == 200
+        assert replay.status_code == 200
+        assert calls["generate"] == 1
+        assert replay.get_json()["idempotent_replay"] is True
+        assert replay.get_json()["reply"] == first.get_json()["reply"]
+        assert replay.get_json()["credits"] == first.get_json()["credits"]
+
     def test_signup_then_conversation_start_succeeds(self, client, db):
         """The full seam: fresh signup (cookie auth, exactly like the real
         flow) → conversation/start with the homepage handoff payload → 200

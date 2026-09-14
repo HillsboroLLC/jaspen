@@ -432,20 +432,21 @@ class _FakeStreamManager:
 
 
 def _patch_ai_success(monkeypatch, chunks=("Tell me more about the timeline.",)):
-    monkeypatch.setattr("app.routes._public_intake_chat._anthropic_api_key", lambda: "test-key")
     monkeypatch.setattr(
-        "app.routes._public_intake_chat._anthropic_message_create",
-        lambda client, **kwargs: (_FakeStreamManager(chunks), "fake-model"),
+        "app.routes._public_intake_chat.execute_system_text_operation",
+        lambda **kwargs: (
+            ''.join(chunks),
+            {'provider': 'anthropic', 'model': 'fake-model'},
+            {'charged_credits': 0},
+        ),
     )
 
 
 def _patch_ai_exception(monkeypatch):
-    monkeypatch.setattr("app.routes._public_intake_chat._anthropic_api_key", lambda: "test-key")
-
     def _raise(*args, **kwargs):
         raise RuntimeError("simulated model failure")
 
-    monkeypatch.setattr("app.routes._public_intake_chat._anthropic_message_create", _raise)
+    monkeypatch.setattr("app.routes._public_intake_chat.execute_system_text_operation", _raise)
 
 
 def _parse_sse(response):

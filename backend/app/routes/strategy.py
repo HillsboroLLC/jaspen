@@ -1,15 +1,12 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-import anthropic
 import hashlib
 import json
 import os
 import re
-import threading
 import time
 from datetime import datetime, timedelta
 import uuid
-from types import SimpleNamespace
 from app import db, limiter
 from app.admin_audit import append_user_audit_event
 from app.decision_confidence import (
@@ -21,7 +18,11 @@ from app.decision_confidence import (
 from app.evidence_references import attach_evidence_references, reference_supports_decision
 from app.models import Scorecard, UsageEvent, User
 from app.ai_audit import persist_operation
-from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_operation
+from app.ai_runtime import (
+    AIOperationPaymentRequired,
+    execute_customer_operation,
+    execute_customer_text_operation,
+)
 from app.scorecards import (
     COMPARISON_SESSION_LIMIT_MESSAGE,
     archive_scorecard,
@@ -148,15 +149,17 @@ def _record_claude_operation_batch(user, *, evaluation_contexts, usage=None, **k
         _record_claude_operation(user, usage=usage, **kwargs)
         return
     usage = dict(usage or {})
-    persist_operation(
-        user,
-        usage=usage,
-        charged_credits=int(kwargs.get('settled_credits') or 0),
-        operation_type=kwargs.get('operation_type'),
-        thread_id=kwargs.get('thread_id'),
-        success=bool(kwargs.get('success', True)),
-        error_code=kwargs.get('error_code'),
-    )
+    persist_ai_operation = bool(kwargs.pop('persist_ai_operation', True))
+    if persist_ai_operation:
+        persist_operation(
+            user,
+            usage=usage,
+            charged_credits=int(kwargs.get('settled_credits') or 0),
+            operation_type=kwargs.get('operation_type'),
+            thread_id=kwargs.get('thread_id'),
+            success=bool(kwargs.get('success', True)),
+            error_code=kwargs.get('error_code'),
+        )
     count = len(contexts)
     input_parts = split_integer(usage.get('input_tokens'), count)
     output_parts = split_integer(usage.get('output_tokens'), count)
@@ -657,106 +660,9 @@ def _scores_analysis_entries(session, thread_id):
         }]
     return []
 
-def _anthropic_api_key():
-    return (
-        current_app.config.get('ANTHROPIC_API_KEY')
-        or current_app.config.get('CLAUDE_API_KEY')
-        or os.getenv('ANTHROPIC_API_KEY')
-        or os.getenv('CLAUDE_API_KEY')
-    )
-
-
-def _anthropic_model_candidates(preferred_model=None):
-    configured = (
-        preferred_model,
-        current_app.config.get('AI_AGENT_ANTHROPIC_MODEL'),
-        os.getenv('AI_AGENT_ANTHROPIC_MODEL'),
-    )
-    fallbacks = (
-        'claude-sonnet-4-5-20250929',
-        'claude-3-7-sonnet-latest',
-        'claude-3-7-sonnet-20250219',
-        'claude-3-5-sonnet-20241022',
-        'claude-haiku-4-5',
-    )
-    seen = set()
-    out = []
-    for model_name in [*configured, *fallbacks]:
-        cleaned = str(model_name or '').strip()
-        if not cleaned or cleaned in seen:
-            continue
-        seen.add(cleaned)
-        out.append(cleaned)
-    return out
-
-
-class _AnthropicCompatClient:
-    def __init__(self, api_key):
-        self._client = anthropic.Anthropic(api_key=api_key)
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
-
-    def _create(self, model=None, messages=None, max_tokens=800, temperature=0.2, **_kwargs):
-        prompt_messages = messages if isinstance(messages, list) else []
-        system_parts = []
-        turn_messages = []
-        for msg in prompt_messages:
-            if not isinstance(msg, dict):
-                continue
-            role = str(msg.get('role') or '').strip().lower()
-            content = str(msg.get('content') or '').strip()
-            if not content:
-                continue
-            if role == 'system':
-                system_parts.append(content)
-                continue
-            if role in {'user', 'assistant'}:
-                turn_messages.append({'role': role, 'content': content})
-        if not turn_messages:
-            turn_messages = [{'role': 'user', 'content': ''}]
-
-        last_error = None
-        for candidate in _anthropic_model_candidates(model):
-            try:
-                response = self._client.messages.create(
-                    model=candidate,
-                    system='\n'.join(system_parts).strip() or None,
-                    messages=turn_messages,
-                    max_tokens=max(64, int(max_tokens or 800)),
-                    temperature=float(temperature if temperature is not None else 0.2),
-                )
-                text_parts = []
-                for block in getattr(response, 'content', []) or []:
-                    if getattr(block, 'type', None) == 'text':
-                        txt = str(getattr(block, 'text', '') or '')
-                        if txt:
-                            text_parts.append(txt)
-                text = '\n'.join(text_parts).strip()
-                usage = getattr(response, 'usage', None)
-                prompt_tokens = int(getattr(usage, 'input_tokens', 0) or 0)
-                completion_tokens = int(getattr(usage, 'output_tokens', 0) or 0)
-                total_tokens = prompt_tokens + completion_tokens
-                return SimpleNamespace(
-                    choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
-                    usage=SimpleNamespace(
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        total_tokens=total_tokens,
-                    ),
-                    model=candidate,
-                )
-            except Exception as exc:
-                last_error = exc
-                continue
-        if last_error:
-            raise last_error
-        raise RuntimeError('No valid Anthropic model candidates configured')
-
-
 def get_llm_client():
-    api_key = _anthropic_api_key()
-    if not api_key:
-        raise RuntimeError('ANTHROPIC_API_KEY not set in environment')
-    return _AnthropicCompatClient(api_key)
+    """Compatibility placeholder; provider calls live in the governed gateway."""
+    return None
 
 
 def _strategy_generate_reply(
@@ -769,10 +675,10 @@ def _strategy_generate_reply(
     max_tokens=900,
     temperature=0.2,
     operation_type='strategy_generation',
+    routing_signals=None,
 ):
     """
-    Unified generation helper for strategy routes.
-    Prefer routed generation when model_selection is available; fall back to legacy compat client.
+    Unified governed generation helper for strategy routes.
     Returns tuple: (reply_text, usage_dict_or_none)
     """
     sanitized = []
@@ -790,44 +696,19 @@ def _strategy_generate_reply(
     if not sanitized:
         raise ValueError('At least one user/assistant message is required.')
 
-    if isinstance(model_selection, dict):
-        from .ai_agent import _generate_routed_chat_reply
-
-        return _generate_routed_chat_reply(
-            sanitized,
-            model_selection,
-            system_prompt=system_prompt,
-            strategy_objective=_normalize_strategy_objective(strategy_objective),
-            operation_type=operation_type,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-
-    client = get_llm_client()
-    model_name = str(llm_model or '').strip()
-    if not model_name:
-        raise ValueError('llm_model is required for legacy fallback generation.')
-    response = client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {'role': 'system', 'content': system_prompt},
-            *sanitized,
-        ],
-        temperature=temperature,
+    if not isinstance(model_selection, dict):
+        raise ValueError('model_selection is required for governed AI generation.')
+    from .ai_agent import _generate_routed_chat_reply
+    return _generate_routed_chat_reply(
+        sanitized,
+        model_selection,
+        system_prompt=system_prompt,
+        strategy_objective=_normalize_strategy_objective(strategy_objective),
+        operation_type=operation_type,
         max_tokens=max_tokens,
+        temperature=temperature,
+        routing_signals=routing_signals,
     )
-    usage_payload = getattr(response, 'usage', None)
-    usage = None
-    if usage_payload is not None:
-        if isinstance(usage_payload, dict):
-            usage = usage_payload
-        else:
-            usage = {
-                'input_tokens': int(getattr(usage_payload, 'input_tokens', 0) or 0),
-                'output_tokens': int(getattr(usage_payload, 'output_tokens', 0) or 0),
-                'total_tokens': int(getattr(usage_payload, 'total_tokens', 0) or 0),
-            }
-    return response.choices[0].message.content, usage
 
 
 def _repair_json_text(text):
@@ -2972,6 +2853,7 @@ def _generate_jaspen_scorecard(
     rubric=None,
     return_usage=False,
     evidence_corpus=None,
+    routing_signals=None,
 ):
     """Run the existing LLM scoring flow and return parsed scorecard JSON.
 
@@ -3266,31 +3148,10 @@ The executive_summary must read like a concise leadership briefing. It should ne
             operation_type='scorecard_generation',
             max_tokens=8000,
             temperature=0,
+            routing_signals=routing_signals,
         )
-    except Exception as routed_exc:
-        if isinstance(model_selection, dict):
-            current_app.logger.warning(
-                "[strategy.analyze] routed scorecard generation failed, falling back to legacy client: %s",
-                routed_exc,
-            )
-        response = client.chat.completions.create(
-            model=llm_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": analysis_prompt}
-            ],
-            temperature=0,  # Deterministic — same input → same scores
-            max_tokens=4000
-        )
-        analysis_text = response.choices[0].message.content
-        usage_payload = getattr(response, 'usage', None)
-        generation_usage = {
-            'provider': 'anthropic',
-            'model': getattr(response, 'model', None) or llm_model,
-            'input_tokens': int(getattr(usage_payload, 'prompt_tokens', 0) or 0),
-            'output_tokens': int(getattr(usage_payload, 'completion_tokens', 0) or 0),
-            'total_tokens': int(getattr(usage_payload, 'total_tokens', 0) or 0),
-        }
+    except Exception:
+        raise
 
     parsed = _normalize_scorecard_payload(_extract_json_object(analysis_text))
 
@@ -3852,17 +3713,6 @@ def analyze_project():
 
         effective_description = "\n\n".join(analysis_input_parts)
 
-        analysis_credit_cost = int(current_app.config.get('MARKET_IQ_ANALYSIS_CREDIT_COST', 25))
-        if user.credits_remaining is not None and user.credits_remaining < analysis_credit_cost:
-            return jsonify({
-                'error': 'Thinking power limit reached',
-                'required_credits': analysis_credit_cost,
-                'credits_remaining': user.credits_remaining,
-                'plan_key': to_public_plan(effective_plan_key(user, current_app.config)),
-                'monthly_credit_limit': get_monthly_credit_limit(effective_plan_key(user, current_app.config), current_app.config),
-                'suggestion': 'Purchase a credit pack or upgrade your plan.',
-            }), 402
-
         model_selection, model_error = _resolve_user_model_selection(
             user,
             requested_model_type=data.get('model_type'),
@@ -3880,6 +3730,7 @@ def analyze_project():
             'user_id': str(current_user_id),
         }
         resolved_capacity_thread_id = str(thread_id or '').strip()
+        existing_peers = []
         if resolved_capacity_thread_id:
             existing_peers = collect_peer_scorecards(
                 current_user_id,
@@ -3904,27 +3755,35 @@ def analyze_project():
             or (current_session or {}).get('strategy_objective')
             or 'balanced'
         )
+        routing_signals = {
+            'context_tokens': max(1, len(effective_description) // 4),
+            'alternatives_count': len(existing_peers) if resolved_capacity_thread_id else 0,
+        }
         try:
-            analysis_result, provider_usage = _generate_jaspen_scorecard(
-                client,
-                effective_description,
-                llm_model=model_selection['llm_model'],
-                model_selection=model_selection,
-                strategy_objective=strategy_objective,
-                return_usage=True,
-            )
-        except Exception as generation_error:
-            _record_claude_operation(
+            analysis_result, provider_usage, ai_settlement = execute_customer_operation(
                 user,
-                thread_id=thread_id,
-                endpoint='/analyze',
+                generate=lambda: _generate_jaspen_scorecard(
+                    client,
+                    effective_description,
+                    llm_model=model_selection['llm_model'],
+                    model_selection=model_selection,
+                    strategy_objective=strategy_objective,
+                    return_usage=True,
+                    routing_signals=routing_signals,
+                ),
                 operation_type='scorecard_generation',
-                evaluation_id=evaluation_id,
-                success=False,
-                error_code=type(generation_error).__name__,
+                request_payload={
+                    'description': effective_description,
+                    'strategy_objective': strategy_objective,
+                    'framework_id': framework_id,
+                    'routing_signals': routing_signals,
+                },
+                model_type=model_selection['model_type'],
+                max_tokens=8000,
+                thread_id=thread_id,
             )
-            db.session.commit()
-            raise
+        except AIOperationPaymentRequired as payment_error:
+            return jsonify(payment_error.payload or {'error': 'Thinking Power exhausted'}), 402
 
         analysis_id = str(uuid.uuid4())
         generated_at = datetime.utcnow().isoformat()
@@ -4000,7 +3859,6 @@ def analyze_project():
             }
         }
 
-        charged, remaining = consume_credits(user, analysis_credit_cost)
         provider_usage = dict(provider_usage or {})
         provider_usage.setdefault('provider', 'anthropic')
         provider_usage.setdefault('model', model_selection.get('llm_model'))
@@ -4011,24 +3869,17 @@ def analyze_project():
             endpoint='/analyze',
             operation_type='scorecard_generation',
             usage=provider_usage,
-            reserved_credits=analysis_credit_cost,
-            settled_credits=analysis_credit_cost if charged else 0,
-            success=bool(charged),
-            error_code=None if charged else 'thinking_power_exhausted',
+            reserved_credits=int(ai_settlement.get('charged_credits') or 0),
+            settled_credits=int(ai_settlement.get('charged_credits') or 0),
+            success=True,
             scorecard_id=analysis_id,
             evaluation_id=evaluation_id,
+            persist_ai_operation=False,
         )
-        if not charged:
-            db.session.commit()
-            return jsonify({
-                'error': 'Thinking power limit reached',
-                'required_credits': analysis_credit_cost,
-                'credits_remaining': user.credits_remaining,
-            }), 402
 
         db.session.commit()
-        analysis['meta']['credits_charged'] = analysis_credit_cost
-        analysis['meta']['credits_remaining'] = remaining
+        analysis['meta']['credits_charged'] = int(ai_settlement.get('charged_credits') or 0)
+        analysis['meta']['credits_remaining'] = user.credits_remaining
         try:
             upsert_scorecard(
                 analysis_pass=True,   # a real scoring pass: may write ledger events
@@ -4192,7 +4043,9 @@ def analyze_project():
                 "[decision_record] failed for thread %s", resolved_thread_id
             )
 
-        # Fire-and-forget: extract business facts from this score into persistent user memory.
+        # Best-effort internal extraction through the governed AI gateway. This
+        # is synchronous so the application/DB context remains valid and its
+        # provider cost is captured before the request context disappears.
         # Unchanged by Phase 3: personal memory and the organization's Decision
         # Record are separate layers and both continue to run.
         try:
@@ -4203,21 +4056,16 @@ def analyze_project():
                 or (session.get('result') or {}).get('industry')
                 or ''
             ).strip()
-            _mem_thread = threading.Thread(
-                target=extract_and_update_user_memory,
-                args=(
-                    current_user_id,
-                    project_name,
-                    effective_description,
-                    _score_val,
-                    _industry_val,
-                    model_selection,
-                ),
-                daemon=True,
+            extract_and_update_user_memory(
+                current_user_id,
+                project_name,
+                effective_description,
+                _score_val,
+                _industry_val,
+                model_selection,
             )
-            _mem_thread.start()
         except Exception:
-            current_app.logger.exception("Failed to start user memory extraction thread")
+            current_app.logger.exception("Failed to update user memory")
 
         # Ensure scenario-thread storage exists, even before any scenario/WBS is created.
         all_data = _load_scenarios(current_user_id)
@@ -4252,7 +4100,7 @@ def analyze_project():
                 'thread_id': resolved_thread_id,
                 'analysis_id': analysis_id,
                 'project_name': project_name,
-                'credits_charged': analysis_credit_cost,
+                'credits_charged': int(ai_settlement.get('charged_credits') or 0),
                 'model_type': model_selection['model_type'],
             },
         )
@@ -4295,31 +4143,6 @@ def chat_with_analysis():
         if model_error:
             return jsonify(model_error), 403
 
-        from .ai_agent import (
-            _estimate_usage_credit_charge,
-            _persist_credit_deduction,
-            _release_reserved_credits,
-            _reserve_preflight_credits,
-            _settle_reserved_credits,
-        )
-
-        preflight_token_hint = int(current_app.config.get('AI_AGENT_PREFLIGHT_TOKEN_HINT') or 2500)
-        credit_reservation = _reserve_preflight_credits(
-            user,
-            model_selection['model_type'],
-            token_hint=preflight_token_hint,
-        )
-        if not credit_reservation.get('ok'):
-            payload = dict(credit_reservation.get('payload') or {})
-            payload['code'] = payload.get('code') or 'thinking_power_exhausted'
-            payload['remaining_credits'] = int(user.credits_remaining or 0)
-            return jsonify(payload), 402
-        reserved_credits = int(
-            credit_reservation.get('reserved')
-            or credit_reservation.get('required')
-            or 0
-        )
-        
         # Create context from analysis
         strategy_objective = analysis_context.get('strategy_objective') or 'balanced'
         key_insights = analysis_context.get('key_insights') if isinstance(analysis_context.get('key_insights'), list) else []
@@ -4357,44 +4180,22 @@ RESPONSE RULES
 
         # Call LLM API
         try:
-            ai_response, usage = _strategy_generate_reply(
-                [{"role": "user", "content": context_prompt}],
+            ai_response, usage, credit_settlement = execute_customer_text_operation(
+                user,
+                messages=[{"role": "user", "content": context_prompt}],
                 system_prompt="You are a Jaspen strategy assistant specializing in commercialization strategy and financial optimization.",
-                model_selection=model_selection,
-                llm_model=model_selection.get('llm_model'),
+                model_type=model_selection['model_type'],
+                legacy_model=model_selection.get('llm_model'),
                 strategy_objective=strategy_objective,
                 operation_type='scorecard_assistant',
                 max_tokens=900,
                 temperature=0.2,
             )
-        except Exception:
-            _release_reserved_credits(user, reserved_credits)
-            db.session.commit()
-            raise
+        except AIOperationPaymentRequired as payment_error:
+            return jsonify(payment_error.payload or {'error': 'Thinking Power exhausted'}), 402
 
-        total_tokens = (usage or {}).get('total_tokens') if isinstance(usage, dict) else None
-
-        credits_charged = _estimate_usage_credit_charge(
-            total_tokens,
-            model_selection['model_type'],
-            (usage or {}).get('provider') if isinstance(usage, dict) else None,
-        )
-        credit_settlement = _settle_reserved_credits(
-            user,
-            reserved_credits=reserved_credits,
-            actual_credits=credits_charged,
-        )
-        if not credit_settlement.get('ok'):
-            db.session.rollback()
-            return jsonify({
-                'error': 'Thinking power limit reached.',
-                'code': 'thinking_power_exhausted',
-                'required_credits': credits_charged,
-                'remaining_credits': int(user.credits_remaining or 0),
-            }), 402
-        remaining = credit_settlement.get('remaining')
-        credits_charged = int(credit_settlement.get('charged') or 0)
-        _persist_credit_deduction(current_user_id, remaining)
+        credits_charged = int(credit_settlement.get('charged_credits') or 0)
+        remaining = user.credits_remaining
 
         return jsonify({
             'response': ai_response,
@@ -4659,67 +4460,23 @@ def portfolio_scores_agent():
             {'role': 'user', 'content': f"{context_prompt}\n\nUser request: {message}"},
         ]
 
-        from .ai_agent import (
-            _estimate_usage_credit_charge,
-            _generate_routed_chat_reply,
-            _persist_credit_deduction,
-            _release_reserved_credits,
-            _reserve_preflight_credits,
-            _settle_reserved_credits,
-        )
-
-        preflight_token_hint = int(current_app.config.get('AI_AGENT_PREFLIGHT_TOKEN_HINT') or 2500)
-        credit_reservation = _reserve_preflight_credits(
-            user,
-            model_selection['model_type'],
-            token_hint=preflight_token_hint,
-        )
-        if not credit_reservation.get('ok'):
-            payload = dict(credit_reservation.get('payload') or {})
-            payload['code'] = payload.get('code') or 'thinking_power_exhausted'
-            payload['remaining_credits'] = int(user.credits_remaining or 0)
-            return jsonify(payload), 402
-        reserved_credits = int(
-            credit_reservation.get('reserved')
-            or credit_reservation.get('required')
-            or 0
-        )
-
         try:
-            reply, usage = _generate_routed_chat_reply(
-                routed_messages,
-                model_selection,
+            reply, usage, credit_settlement = execute_customer_text_operation(
+                user,
+                messages=routed_messages,
                 system_prompt=system_prompt,
+                operation_type='portfolio_analysis',
+                model_type=model_selection['model_type'],
+                legacy_model=model_selection.get('llm_model'),
                 strategy_objective=strategy_objective,
                 max_tokens=900,
                 temperature=0.2,
+                routing_signals={'alternatives_count': len(summarized_rows)},
             )
-        except Exception:
-            _release_reserved_credits(user, reserved_credits)
-            db.session.commit()
-            raise
-
-        credits_charged = _estimate_usage_credit_charge(
-            (usage or {}).get('total_tokens'),
-            model_selection['model_type'],
-            (usage or {}).get('provider'),
-        )
-        credit_settlement = _settle_reserved_credits(
-            user,
-            reserved_credits=reserved_credits,
-            actual_credits=credits_charged,
-        )
-        if not credit_settlement.get('ok'):
-            db.session.rollback()
-            return jsonify({
-                'error': 'Thinking power limit reached.',
-                'code': 'thinking_power_exhausted',
-                'required_credits': credits_charged,
-                'remaining_credits': int(user.credits_remaining or 0),
-            }), 402
-        remaining = credit_settlement.get('remaining')
-        credits_charged = int(credit_settlement.get('charged') or 0)
-        _persist_credit_deduction(current_user_id, remaining)
+        except AIOperationPaymentRequired as payment_error:
+            return jsonify(payment_error.payload or {'error': 'Thinking Power exhausted'}), 402
+        credits_charged = int(credit_settlement.get('charged_credits') or 0)
+        remaining = user.credits_remaining
 
         _audit_strategy_event(
             'scores.portfolio_agent_used',
@@ -7216,13 +6973,40 @@ def score_batch_queued(thread_id):
             }
             for index, _idea in enumerate(ideas_to_generate)
         ]
-        reservation = _reserve_preflight_credits(
-            user,
-            model_selection['model_type'],
-            token_hint=max(4000, len(ideas_to_generate) * 1800),
-        )
-        if not reservation.get('ok'):
-            payload = dict(reservation.get('payload') or {})
+        client = get_llm_client()
+
+        try:
+            def generate_score_batch():
+                cards, portfolio_summary, provider_usage = _generate_batch_scorecards(
+                    client, ideas_to_generate, rubric=rubric, strategy_objective=strategy_objective,
+                    model_selection=model_selection, llm_model=model_selection['llm_model'],
+                    return_usage=True,
+                    # What the user actually said, so quotes have somewhere real to
+                    # come from and verification has somewhere real to look.
+                    evidence_corpus=_thread_user_corpus(user_id, thread_id),
+                )
+                return {
+                    'cards': cards,
+                    'portfolio_summary': portfolio_summary,
+                    'evaluation_contexts': evaluation_contexts,
+                }, provider_usage
+
+            generated, provider_usage, ai_settlement = execute_customer_operation(
+                user,
+                generate=generate_score_batch,
+                operation_type='score_batch',
+                request_payload={
+                    'thread_id': thread_id,
+                    'ideas': ideas_to_generate,
+                    'rubric': rubric,
+                    'strategy_objective': strategy_objective,
+                },
+                model_type=model_selection['model_type'],
+                max_tokens=max(2000, len(ideas_to_generate) * 1800),
+                thread_id=thread_id,
+            )
+        except AIOperationPaymentRequired as payment_error:
+            payload = dict(payment_error.payload or {})
             payload.update({
                 'requested_project_count': requested_count,
                 'generated_project_count': 0,
@@ -7230,46 +7014,20 @@ def score_batch_queued(thread_id):
                 'not_persisted_project_names': [str(item.get('name') or '').strip() for item in ideas],
             })
             return jsonify(payload), 402
-        reserved_credits = int(reservation.get('reserved') or 0)
-        db.session.commit()
-        client = get_llm_client()
 
-        try:
-            cards, portfolio_summary, provider_usage = _generate_batch_scorecards(
-                client, ideas_to_generate, rubric=rubric, strategy_objective=strategy_objective,
-                model_selection=model_selection, llm_model=model_selection['llm_model'],
-                return_usage=True,
-                # What the user actually said, so quotes have somewhere real to
-                # come from and verification has somewhere real to look.
-                evidence_corpus=_thread_user_corpus(user_id, thread_id),
-            )
-        except Exception as generation_error:
-            _release_reserved_credits(user, reserved_credits)
-            _record_claude_operation_batch(
-                user,
-                evaluation_contexts=evaluation_contexts,
-                thread_id=thread_id,
-                endpoint='/threads/<id>/score-batch',
-                operation_type='score_batch',
-                reserved_credits=reserved_credits,
-                settled_credits=0,
-                success=False,
-                error_code=type(generation_error).__name__,
-            )
-            db.session.commit()
-            raise
-
+        generated = generated if isinstance(generated, dict) else {}
+        cards = generated.get('cards') if isinstance(generated.get('cards'), list) else []
+        portfolio_summary = generated.get('portfolio_summary') if isinstance(generated.get('portfolio_summary'), dict) else {}
+        evaluation_contexts = (
+            generated.get('evaluation_contexts')
+            if isinstance(generated.get('evaluation_contexts'), list)
+            else evaluation_contexts
+        )
         provider_usage = dict(provider_usage or {})
         provider_usage.setdefault('model', model_selection.get('llm_model'))
         provider_usage.setdefault('model_type', model_selection.get('model_type'))
         provider_usage.setdefault('provider', 'anthropic')
-        actual_credits = _charge_for_usage(provider_usage, model_selection['model_type'], user)
-        settlement = _settle_reserved_credits(
-            user,
-            reserved_credits=reserved_credits,
-            actual_credits=actual_credits,
-        )
-        settled_credits = int(settlement.get('charged') or 0)
+        settled_credits = int(ai_settlement.get('charged_credits') or 0)
         _record_claude_operation_batch(
             user,
             evaluation_contexts=evaluation_contexts,
@@ -7277,22 +7035,14 @@ def score_batch_queued(thread_id):
             endpoint='/threads/<id>/score-batch',
             operation_type='score_batch',
             usage=provider_usage,
-            reserved_credits=reserved_credits,
+            reserved_credits=int(ai_settlement.get('reserved_credits') or 0),
             settled_credits=settled_credits,
-            success=bool(settlement.get('ok')),
-            error_code=None if settlement.get('ok') else 'thinking_power_exhausted',
+            success=True,
+            error_code=None,
             metadata={'requested_projects': requested_count, 'generated_slots': len(ideas_to_generate)},
+            persist_ai_operation=False,
         )
         db.session.commit()
-        if not settlement.get('ok'):
-            payload = dict(settlement.get('payload') or {})
-            payload.update({
-                'requested_project_count': requested_count,
-                'generated_project_count': sum(1 for item in cards if isinstance(item, dict)),
-                'persisted_project_count': 0,
-                'not_persisted_project_names': [str(item.get('name') or '').strip() for item in ideas],
-            })
-            return jsonify(payload), 402
 
         scored_out = []
         persistence_failures = []
@@ -7620,41 +7370,55 @@ def generate_ai_wbs(thread_id):
             wbs_scorecard['project_name'] = session_name
 
         client = get_llm_client()
-        from .ai_agent import (
-            _charge_for_usage,
-            _reserve_preflight_credits,
-            _settle_reserved_credits,
-        )
-        reservation = _reserve_preflight_credits(
-            user,
-            model_selection['model_type'],
-            token_hint=5000,
-        )
-        if not reservation.get('ok'):
-            return jsonify(reservation.get('payload') or {'error': 'Thinking Power exhausted.'}), 402
-        reserved_credits = int(reservation.get('reserved') or 0)
-        db.session.commit()
-        raw_wbs, provider_usage, provider_success, provider_error = _generate_ai_wbs_suggestion(
-            client,
-            model_selection['llm_model'],
-            scorecard=wbs_scorecard,
-            instruction=instruction,
-            scenario_payload=adopted_scenario,
-            model_selection=model_selection,
-            strategy_objective=_strategy_objective,
-            chat_history=chat_turns,
-            return_usage=True,
-        )
+        try:
+            def generate_wbs():
+                raw_wbs, provider_usage, provider_success, provider_error = _generate_ai_wbs_suggestion(
+                    client,
+                    model_selection['llm_model'],
+                    scorecard=wbs_scorecard,
+                    instruction=instruction,
+                    scenario_payload=adopted_scenario,
+                    model_selection=model_selection,
+                    strategy_objective=_strategy_objective,
+                    chat_history=chat_turns,
+                    return_usage=True,
+                )
+                return {
+                    'wbs': raw_wbs,
+                    'provider_success': bool(provider_success),
+                    'provider_error': provider_error,
+                }, provider_usage
+
+            generated_wbs, provider_usage, ai_settlement = execute_customer_operation(
+                user,
+                generate=generate_wbs,
+                operation_type=(
+                    'execution_plan_refinement'
+                    if bool(payload.get('force') or payload.get('regenerate'))
+                    else 'execution_plan'
+                ),
+                request_payload={
+                    'thread_id': thread_id,
+                    'scorecard_id': scorecard_id,
+                    'instruction': instruction,
+                    'scenario': adopted_scenario,
+                    'force': bool(payload.get('force') or payload.get('regenerate')),
+                },
+                model_type=model_selection['model_type'],
+                max_tokens=2500,
+                thread_id=thread_id,
+            )
+        except AIOperationPaymentRequired as payment_error:
+            return jsonify(payment_error.payload or {'error': 'Thinking Power exhausted.'}), 402
+
+        generated_wbs = generated_wbs if isinstance(generated_wbs, dict) else {}
+        raw_wbs = generated_wbs.get('wbs') if isinstance(generated_wbs.get('wbs'), dict) else {}
+        provider_success = bool(generated_wbs.get('provider_success'))
+        provider_error = generated_wbs.get('provider_error')
         provider_usage = dict(provider_usage or {})
         provider_usage.setdefault('provider', 'anthropic')
         provider_usage.setdefault('model', model_selection.get('llm_model'))
         provider_usage.setdefault('model_type', model_selection.get('model_type'))
-        actual_credits = _charge_for_usage(provider_usage, model_selection['model_type'], user) if provider_usage else 0
-        settlement = _settle_reserved_credits(
-            user,
-            reserved_credits=reserved_credits,
-            actual_credits=actual_credits,
-        )
         telemetry_scorecard_id = str(
             scorecard_id
             or current_scorecard.get('id')
@@ -7672,17 +7436,16 @@ def generate_ai_wbs(thread_id):
                 else 'execution_plan'
             ),
             usage=provider_usage,
-            reserved_credits=reserved_credits,
-            settled_credits=int(settlement.get('charged') or 0),
-            success=bool(provider_success and settlement.get('ok')),
-            error_code=provider_error or (None if settlement.get('ok') else 'thinking_power_exhausted'),
+            reserved_credits=int(ai_settlement.get('reserved_credits') or 0),
+            settled_credits=int(ai_settlement.get('charged_credits') or 0),
+            success=bool(provider_success),
+            error_code=provider_error,
             scorecard_id=telemetry_scorecard_id,
             evaluation_id=execution_evaluation_id,
             metadata={'heuristic_fallback': not provider_success},
+            persist_ai_operation=False,
         )
         db.session.commit()
-        if not settlement.get('ok'):
-            return jsonify(settlement.get('payload') or {'error': 'Thinking Power exhausted.'}), 402
         materialized = _materialize_ai_wbs(raw_wbs, start_date=requested_start_date)
         normalized_wbs = _normalize_project_wbs({'project_wbs': materialized}, existing=None)
         normalized_wbs['ai_generated'] = True
@@ -10147,34 +9910,25 @@ Rules:
 - Keep the reply crisp and professional.
 """.strip()
 
-        assistant_text = None
         try:
-            from .ai_agent import _generate_routed_chat_reply
-
-            assistant_text, _usage = _generate_routed_chat_reply(
-                [{"role": "user", "content": editor_prompt}],
-                model_selection,
+            assistant_text, _usage, assistant_settlement = execute_customer_text_operation(
+                user,
+                messages=[{"role": "user", "content": editor_prompt}],
                 system_prompt=system_prompt,
+                operation_type='scorecard_assistant',
+                model_type=model_selection['model_type'],
+                legacy_model=model_selection.get('llm_model'),
                 strategy_objective=objective,
                 max_tokens=2200,
                 temperature=0.2,
+                thread_id=thread_id,
+                routing_signals={
+                    'context_tokens': max(1, len(editor_prompt) // 4),
+                    'alternatives_count': len(snapshot_state.get('snapshots') or []),
+                },
             )
-        except Exception as routed_exc:
-            current_app.logger.warning(
-                "[strategy.scorecard_assistant] routed generation failed, falling back to legacy client: %s",
-                routed_exc,
-            )
-            client = get_llm_client()
-            legacy_response = client.chat.completions.create(
-                model=model_selection['llm_model'],
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": editor_prompt},
-                ],
-                temperature=0.2,
-                max_tokens=2200,
-            )
-            assistant_text = legacy_response.choices[0].message.content
+        except AIOperationPaymentRequired as payment_error:
+            return jsonify(payment_error.payload or {'error': 'Thinking Power exhausted'}), 402
 
         parsed = _extract_json_object(assistant_text)
         reply = _clean_scorecard_text(parsed.get('reply')) or 'Updated the scorecard wording.'
@@ -10272,6 +10026,10 @@ Rules:
             'updated_sections': updated_sections,
             'selected_scorecard_id': selected_scorecard_id,
             'persisted': persisted,
+            'credits': {
+                'charged': int(assistant_settlement.get('charged_credits') or 0),
+                'remaining': user.credits_remaining,
+            },
         }), 200
 
     except Exception as e:

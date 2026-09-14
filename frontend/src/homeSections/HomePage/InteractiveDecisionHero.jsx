@@ -232,7 +232,12 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
     try {
       const res = await fetch(`${API_BASE}/api/v1/public/intake/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Jaspen-Idempotency-Key': window.crypto?.randomUUID
+            ? window.crypto.randomUUID()
+            : `public-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        },
         body: JSON.stringify({ history: nextMessages }),
       });
 
