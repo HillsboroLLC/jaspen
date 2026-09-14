@@ -80,6 +80,61 @@ def test_exceptional_route_is_reserved_for_multiple_depth_signals():
     assert any(reason.startswith('depth_score:') for reason in reasons)
 
 
+def test_router_replaces_retired_configured_models_without_changing_route_tier():
+    configured = {
+        'claude_haiku': 'claude-3-5-haiku-20241022',
+        'claude_sonnet': 'claude-3-7-sonnet-20250219',
+        'claude_opus': 'claude-opus-4-20250514',
+    }
+    routine = routing_decision(
+        provider_models=configured, operation_type='conversation', text='Thanks',
+    )
+    standard = routing_decision(
+        provider_models=configured,
+        operation_type='conversation',
+        text='Compare these operating approaches and explain their practical trade-offs.',
+    )
+    exceptional = routing_decision(
+        provider_models=configured,
+        operation_type='scenario_generation',
+        text=(
+            'Board acquisition investment with regulatory security trade-offs, '
+            'conflicting assumptions, uncertain downside, and irreversible commitment.'
+        ),
+        attachment_count=3,
+        alternatives_count=4,
+    )
+    assert routine['selected_model'] == 'claude-haiku-4-5-20251001'
+    assert standard['selected_model'] == 'claude-sonnet-4-6'
+    assert exceptional['selected_model'] == 'claude-opus-4-8'
+
+
+def test_governed_anthropic_call_never_falls_through_to_another_claude_tier(app):
+    from app.routes import ai_agent
+
+    attempted = []
+
+    class Messages:
+        @staticmethod
+        def create(*, model, **_kwargs):
+            attempted.append(model)
+            raise RuntimeError('selected model unavailable')
+
+    class Client:
+        messages = Messages()
+
+    with app.app_context(), pytest.raises(RuntimeError, match='selected model unavailable'):
+        ai_agent._anthropic_message_create(
+            Client(),
+            model_name='claude-sonnet-4-6',
+            strict_model=True,
+            max_tokens=200,
+            messages=[{'role': 'user', 'content': 'test'}],
+        )
+
+    assert attempted == ['claude-sonnet-4-6']
+
+
 def test_operation_audit_records_failover_cost_as_jaspen_cost_and_charges_once(app, db, test_user):
     with app.app_context():
         decision = routing_decision(operation_type='scorecard_generation', text='Enterprise migration')

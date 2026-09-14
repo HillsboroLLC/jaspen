@@ -3807,6 +3807,7 @@ def _generate_routed_chat_reply(
                 response, actual_model = _anthropic_message_create(
                     client,
                     model_name=route["model"],
+                    strict_model=True,
                     max_tokens=max(200, int(max_tokens or 700)),
                     temperature=float(temperature if temperature is not None else 0.2),
                     system=system_prompt,
@@ -6940,9 +6941,12 @@ def _sse_payload(payload):
     return f"data: {json.dumps(payload)}\n\n"
 
 
-def _anthropic_message_create(client, *, model_name, stream=False, **kwargs):
+def _anthropic_message_create(client, *, model_name, stream=False, strict_model=False, **kwargs):
     last_error = None
-    for candidate in _anthropic_model_candidates(model_name):
+    candidates = [str(model_name or "").strip()] if strict_model else _anthropic_model_candidates(model_name)
+    for candidate in candidates:
+        if not candidate:
+            continue
         try:
             if stream:
                 return client.messages.stream(model=candidate, **kwargs), candidate

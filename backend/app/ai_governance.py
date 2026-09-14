@@ -66,6 +66,18 @@ _ROUTINE_PHRASES = frozenset({
     "what does that mean", "explain that", "summarize", "rename it",
 })
 
+# Provider configuration can outlive a model retirement. Normalize only known
+# Anthropic retirements here so automatic routing cannot select an unavailable
+# model or silently drift into a different capability tier downstream.
+_RETIRED_ANTHROPIC_MODEL_REPLACEMENTS = {
+    "claude-3-5-haiku-20241022": "claude-haiku-4-5-20251001",
+    "claude-3-7-sonnet-latest": "claude-sonnet-4-6",
+    "claude-3-7-sonnet-20250219": "claude-sonnet-4-6",
+    "claude-sonnet-4-20250514": "claude-sonnet-4-6",
+    "claude-opus-4-20250514": "claude-opus-4-8",
+    "claude-opus-4-1-20250805": "claude-opus-4-8",
+}
+
 
 def _mode(value, default="shadow"):
     normalized = str(value or default).strip().lower()
@@ -192,7 +204,8 @@ def classify_request(
 
 def _configured_model(models, key, fallback):
     value = (models or {}).get(key) if isinstance(models, dict) else None
-    return str(value or fallback).strip()
+    configured = str(value or fallback).strip()
+    return _RETIRED_ANTHROPIC_MODEL_REPLACEMENTS.get(configured, configured)
 
 
 def routing_decision(
