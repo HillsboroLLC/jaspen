@@ -135,6 +135,15 @@ def test_governed_anthropic_call_never_falls_through_to_another_claude_tier(app)
     assert attempted == ['claude-sonnet-4-6']
 
 
+def test_anthropic_temperature_compatibility_tracks_selected_model_generation():
+    from app.routes import ai_agent
+
+    assert ai_agent._anthropic_model_accepts_temperature('claude-haiku-4-5') is True
+    assert ai_agent._anthropic_model_accepts_temperature('claude-sonnet-4-6') is True
+    assert ai_agent._anthropic_model_accepts_temperature('claude-opus-4-8') is False
+    assert ai_agent._anthropic_model_accepts_temperature('claude-opus-5') is False
+
+
 def test_operation_audit_records_failover_cost_as_jaspen_cost_and_charges_once(app, db, test_user):
     with app.app_context():
         decision = routing_decision(operation_type='scorecard_generation', text='Enterprise migration')

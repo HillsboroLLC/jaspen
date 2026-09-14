@@ -3804,14 +3804,20 @@ def _generate_routed_chat_reply(
                 import anthropic
 
                 client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
+                anthropic_request = {
+                    "max_tokens": max(200, int(max_tokens or 700)),
+                    "system": system_prompt,
+                    "messages": sanitized_messages,
+                }
+                if _anthropic_model_accepts_temperature(route["model"]):
+                    anthropic_request["temperature"] = float(
+                        temperature if temperature is not None else 0.2
+                    )
                 response, actual_model = _anthropic_message_create(
                     client,
                     model_name=route["model"],
                     strict_model=True,
-                    max_tokens=max(200, int(max_tokens or 700)),
-                    temperature=float(temperature if temperature is not None else 0.2),
-                    system=system_prompt,
-                    messages=sanitized_messages,
+                    **anthropic_request,
                 )
                 reply = _anthropic_text(response.content)
                 if not reply:
@@ -6957,6 +6963,18 @@ def _anthropic_message_create(client, *, model_name, stream=False, strict_model=
     if last_error:
         raise last_error
     raise RuntimeError("No valid Anthropic model candidates configured")
+
+
+def _anthropic_model_accepts_temperature(model_name):
+    """Return False for current Claude generations that reject temperature."""
+    normalized = str(model_name or "").strip().lower()
+    return not (
+        normalized.startswith("claude-opus-4-7")
+        or normalized.startswith("claude-opus-4-8")
+        or normalized.startswith("claude-opus-5")
+        or normalized.startswith("claude-fable-5")
+        or normalized.startswith("claude-mythos-5")
+    )
 
 
 def _generate_assistant_reply_anthropic(
