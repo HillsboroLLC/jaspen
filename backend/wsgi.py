@@ -6,13 +6,13 @@ from database_secret import load_database_url_secret
 # keeps production credentials out of systemd's inspectable Environment data.
 load_database_url_secret()
 
-# Production rollout begins in observation-only mode. These explicit process
-# defaults preserve any deliberate environment override for a later, separately
-# authorized activation while ensuring an unset service can never activate.
+# Production defaults use the validated automatic router and provider-cost
+# credit policy. Explicit environment overrides remain available for a rapid
+# rollback to shadow mode without changing code.
 import os  # noqa: E402
 
-os.environ.setdefault("JASPEN_AI_ROUTER_MODE", "shadow")
-os.environ.setdefault("JASPEN_CREDIT_POLICY_MODE", "shadow")
+os.environ.setdefault("JASPEN_AI_ROUTER_MODE", "active")
+os.environ.setdefault("JASPEN_CREDIT_POLICY_MODE", "active")
 
 from flask_migrate import Migrate  # noqa: E402
 from app import create_app, db  # noqa: E402
