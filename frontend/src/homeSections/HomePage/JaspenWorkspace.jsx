@@ -351,7 +351,7 @@ export default function JaspenWorkspace({ demo, onStage, loop = true, onDone }) 
             </div>
             <div className="wj-input-foot">
               <div className="wj-input-ctx">
-                <span className="wj-model">Pluto-1.0</span>
+                <span className="wj-model">Automatic AI routing</span>
                 <span className="wj-ctx-tag" data-jd="ctxobj">{activeObjective}</span>
                 <span className="wj-ctx-tag" data-jd="ctxdata"><span className="wj-ctx-ck" aria-hidden="true">✓</span>{activeData}</span>
               </div>

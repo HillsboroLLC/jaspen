@@ -22,4 +22,14 @@ describe('FAQSection Thinking Power copy', () => {
     await user.click(screen.getByRole('button', { name: /free plan just a trial/i }));
     expect(screen.getByText(/not a promise of a complete typical or heavy evaluation/i)).toBeInTheDocument();
   });
+
+  it('explains automatic routing without asking customers to choose horsepower', async () => {
+    const user = userEvent.setup();
+    render(<FAQSection />);
+
+    await user.click(screen.getByRole('button', { name: /how does jaspen choose the right ai model/i }));
+    expect(screen.getByText(/you do not need to choose one/i)).toBeInTheDocument();
+    expect(screen.getByText(/automatically selects the appropriate reasoning depth/i)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/Pluto|Orbit|Titan/);
+  });
 });

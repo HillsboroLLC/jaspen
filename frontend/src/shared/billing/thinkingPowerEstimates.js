@@ -1,5 +1,5 @@
 export const THINKING_POWER_VARIABILITY_NOTE =
-  'Actual usage varies based on model selection, input completeness, attachments, analysis depth, revisions, and follow-up.';
+  'Actual usage varies based on request complexity, input completeness, attachments, analysis depth, revisions, and follow-up.';
 
 export const THINKING_POWER_PROJECT_ESTIMATES = Object.freeze({
   free: '~1 focused evaluation with complete inputs',

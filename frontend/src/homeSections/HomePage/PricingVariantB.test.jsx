@@ -62,6 +62,16 @@ describe('PricingVariantB', () => {
     expect(comparisonRow).toHaveTextContent('~17–29 typical project evaluations');
     expect(comparisonRow).toHaveTextContent('~57–96 typical project evaluations across the shared allowance');
   });
+
+  it('describes automatic routing without presenting model tiers', async () => {
+    const user = userEvent.setup();
+    render(<PricingVariantB onOpenModal={jest.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: /compare plans/i }));
+    expect(screen.getByText('Automatic model routing')).toBeInTheDocument();
+    expect(screen.getByText(/selects the reasoning depth each request needs/i)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/Pluto|Orbit|Titan/);
+  });
 });
 
 describe('Advisory Partnerships tab', () => {
@@ -174,7 +184,7 @@ describe('Advisory Partnerships tab', () => {
 
     // The comparison table still carries the existing planning context.
     expect(screen.getByText(/approximate planning estimates, not guaranteed quantities/i)).toBeInTheDocument();
-    expect(screen.getByText(/Actual usage varies based on model selection/i)).toBeInTheDocument();
+    expect(screen.getByText(/Actual usage varies based on request complexity/i)).toBeInTheDocument();
   });
 
   it('never invites a reader to divide the fee by the hours', async () => {

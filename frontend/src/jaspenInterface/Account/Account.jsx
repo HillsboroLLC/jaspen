@@ -24,7 +24,7 @@ import {
   faUsers,
 } from '@fortawesome/free-solid-svg-icons';
 import FieldError from '../../shared/components/FieldError';
-import { PLAN_ORDER, PLAN_RANK } from '../../shared/constants/appConstants';
+import { PLAN_ORDER } from '../../shared/constants/appConstants';
 import './Account.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
@@ -219,30 +219,6 @@ function printReceipt(inv) {
   printWindow.document.close();
 }
 const PACK_ORDER = ['credits_3000', 'credits_8000', 'credits_18000'];
-const MODEL_ORDER = ['pluto', 'orbit', 'titan'];
-const FALLBACK_MODEL_TYPES = {
-  pluto: {
-    model_type: 'pluto',
-    label: 'Pluto',
-    version: '1.0',
-    description: 'Fastest model for core intake and scorecard workflows.',
-    min_plan: 'free',
-  },
-  orbit: {
-    model_type: 'orbit',
-    label: 'Orbit',
-    version: '1.0',
-    description: 'Balanced depth and speed for broader cross-functional synthesis.',
-    min_plan: 'essential',
-  },
-  titan: {
-    model_type: 'titan',
-    label: 'Titan',
-    version: '1.0',
-    description: 'Highest-depth reasoning for complex multi-team initiatives.',
-    min_plan: 'business',
-  },
-};
 // Billing page tabs (unified). connectors/knowledge/models/admin were removed —
 // they each have their own page. Deep-links to those now fall back to overview.
 const ACCOUNT_TAB_KEYS = new Set([
@@ -519,7 +495,7 @@ function hasJiraModalUnsavedChanges(modalState) {
 export default function Account() {
   const navigate = useNavigate();
   const [status, setStatus] = useState(null);
-  const [catalog, setCatalog] = useState({ plans: {}, credit_packs: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
+  const [catalog, setCatalog] = useState({ plans: {}, credit_packs: {}, overage_packs: {} });
   const [connectorState, setConnectorState] = useState({
     loading: true,
     items: [],
@@ -746,7 +722,7 @@ export default function Account() {
           const connectorItems = Array.isArray(connectorsData?.connectors) ? connectorsData.connectors : [];
           setStatus(statusData);
           setBillingInterval(statusData?.billing_interval === 'annual' ? 'annual' : 'monthly');
-          setCatalog(catalogData || { plans: {}, credit_packs: {}, overage_packs: {}, model_types: FALLBACK_MODEL_TYPES });
+          setCatalog(catalogData || { plans: {}, credit_packs: {}, overage_packs: {} });
           setConnectorState({
             loading: false,
             items: connectorItems,
@@ -2274,18 +2250,6 @@ export default function Account() {
   })();
   // Low-power warning threshold: ≤ 20 %
   const thinkingPowerLow = thinkingPowerPct != null && thinkingPowerPct <= 20;
-  const modelTypes = catalog?.model_types || FALLBACK_MODEL_TYPES;
-  const orderedModelTypes = MODEL_ORDER.map((key) => modelTypes?.[key]).filter(Boolean);
-  const formatModelDisplayName = (model) => {
-    const label = model?.label || model?.model_type || 'Model';
-    const version = String(model?.version || '1.0').trim();
-    return `${label}-${version}`;
-  };
-  const isModelAvailableForPlan = (minPlan, planKey) => {
-    const requiredRank = PLAN_RANK[String(minPlan || 'free').toLowerCase()] ?? 0;
-    const planRank = PLAN_RANK[String(planKey || 'free').toLowerCase()] ?? 0;
-    return planRank >= requiredRank;
-  };
   const isAdminUser = adminState.checked && adminState.isAdmin;
   // Unified billing page: money + plan + usage only. Connectors live on Data Sources
   // (/connectors-manage), Knowledge on /knowledge, Models in app settings, Admin on
@@ -3638,42 +3602,6 @@ export default function Account() {
               )}
             </div>
           )}
-        </section>
-        )}
-
-        {activeTab === 'models' && (
-        <section className="account-section">
-          <h2 className="account-tab-title">Model access by plan</h2>
-          <div className="account-model-table-wrap">
-            <table className="account-model-table">
-              <thead>
-                <tr>
-                  <th scope="col">Model</th>
-                  {PLAN_ORDER.map((key) => (
-                    <th scope="col" key={key}>{plans[key]?.label || key}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {orderedModelTypes.map((model) => (
-                  <tr key={model.model_type || model.label}>
-                    <th scope="row">
-                      <div className="account-model-name">{formatModelDisplayName(model)}</div>
-                      <div className="account-model-desc">{model.description || ''}</div>
-                    </th>
-                    {PLAN_ORDER.map((key) => (
-                      <td
-                        key={`${model.model_type}-${key}`}
-                        className={key === currentPlan ? 'is-current-plan' : ''}
-                      >
-                        {isModelAvailableForPlan(model.min_plan, key) ? 'Included' : 'Upgrade'}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </section>
         )}
 

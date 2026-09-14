@@ -100,11 +100,9 @@ const FEATURES = [
     ],
   },
   {
-    category: 'AI models',
+    category: 'AI reasoning',
     rows: [
-      { label: 'Pluto',                      sub: 'Fastest, lowest credit burn',        free: true,      starter: true,      essential: true,     team: true,          business: true        },
-      { label: 'Orbit',                      sub: 'Deeper reasoning, moderate burn',    free: true,      starter: true,      essential: true,     team: true,          business: true        },
-      { label: 'Titan',                      sub: 'Highest depth, highest burn',        free: true,      starter: true,      essential: true,     team: true,          business: true        },
+      { label: 'Automatic model routing',    sub: 'Jaspen selects the reasoning depth each request needs', free: true, starter: true, essential: true, team: true, business: true },
     ],
   },
   {

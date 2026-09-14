@@ -44,10 +44,10 @@ export default function FAQSection() {
       </>
     },
     {
-      q: 'Which model should I use: Pluto, Orbit, or Titan?',
+      q: 'How does Jaspen choose the right AI model?',
       a: <>
-        <p>All three are available on every plan. Pluto is fastest and burns the fewest credits. Orbit reasons more deeply at a moderate burn. Titan goes deepest and burns the most.</p>
-        <p>Start on Pluto and move up when a decision needs more depth.</p>
+        <p>You do not need to choose one. Jaspen evaluates the work each request requires and automatically selects the appropriate reasoning depth.</p>
+        <p>Your plan does not determine answer quality. Credits are based on the provider cost of the successful result.</p>
       </>
     },
     {

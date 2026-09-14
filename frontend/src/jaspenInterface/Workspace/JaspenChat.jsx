@@ -487,8 +487,6 @@ const parseHistoryTimestamp = (value) => {
 // === Header Icon Helpers =====================================================
 const PM_VARIANT  = "monitor-check";
 const LSS_VARIANT = "chart-scatter";
-const MODEL_DISPLAY_ORDER = ['pluto', 'orbit', 'titan'];
-const MODEL_VERSION_BY_TYPE = { pluto: '1.0', orbit: '1.0', titan: '1.0' };
 const ADMIN_PREVIEW_PLAN_KEYS = new Set(['free', 'starter', 'essential', 'team', 'business', 'enterprise_custom']);
 const OBJECTIVE_OPTIONS = [
   { key: 'balanced', label: 'Balanced' },
@@ -568,8 +566,8 @@ const ONBOARDING_OBJECTIVE_BY_EVALUATION = {
 const INITIAL_NOTIFICATION_UPDATES = [
   {
     id: 'notif-model-access',
-    title: 'Model access by plan',
-    body: 'Pluto-1.0 is available now. Orbit-1.0 and Titan-1.0 show upgrade guidance when locked.',
+    title: 'Automatic reasoning depth',
+    body: 'Jaspen now selects the appropriate AI reasoning depth for each request automatically.',
     stamp: 'Today',
   },
   {
@@ -3820,8 +3818,9 @@ useEffect(() => {
   const [nameError, setNameError] = useState('');
   const [billingStatus, setBillingStatus] = useState(null);
   const [billingCatalog, setBillingCatalog] = useState({ plans: {}, credit_packs: {}, overage_packs: {}, model_types: {} });
+  // Retained only as a legacy request/session compatibility value. In active
+  // mode the backend router selects provider and reasoning depth automatically.
   const [selectedModelType, setSelectedModelType] = useState('pluto');
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [billingLoading, setBillingLoading] = useState(true);
   const [billingMessage, setBillingMessage] = useState('');
   const [billingActionLoading, setBillingActionLoading] = useState('');
@@ -3902,7 +3901,6 @@ useEffect(() => {
   }, [user?.id, user?.email]);
   const [welcomeNow, setWelcomeNow] = useState(() => new Date());
   const plans = billingCatalog?.plans || {};
-  const modelTypes = useMemo(() => billingCatalog?.model_types || {}, [billingCatalog]);
   const currentPlanKey = String(billingStatus?.plan_key || 'free').toLowerCase();
   useEffect(() => {
     setFreeTierWelcomeHidden(Boolean(user?.ui_preferences?.free_tier_welcome_dismissed));
@@ -4353,51 +4351,11 @@ useEffect(() => {
     if (fromStatus.length > 0) return fromStatus;
     return ['pluto'];
   }, [billingStatus]);
-  const allModelTypeKeys = useMemo(() => {
-    const catalogKeys = Object.keys(modelTypes || {}).map((key) => String(key || '').toLowerCase()).filter(Boolean);
-    const merged = Array.from(new Set([...MODEL_DISPLAY_ORDER, ...catalogKeys]));
-    return merged.sort((a, b) => {
-      const ai = MODEL_DISPLAY_ORDER.indexOf(a);
-      const bi = MODEL_DISPLAY_ORDER.indexOf(b);
-      const rankA = ai === -1 ? Number.MAX_SAFE_INTEGER : ai;
-      const rankB = bi === -1 ? Number.MAX_SAFE_INTEGER : bi;
-      if (rankA !== rankB) return rankA - rankB;
-      return a.localeCompare(b);
-    });
-  }, [modelTypes]);
-  const modelOptions = useMemo(() => {
-    return allModelTypeKeys.map((modelTypeKey) => {
-      const normalizedKey = String(modelTypeKey || '').toLowerCase();
-      const item = modelTypes?.[normalizedKey] || {};
-      const fallbackLabel = normalizedKey
-        ? normalizedKey.charAt(0).toUpperCase() + normalizedKey.slice(1)
-        : 'Model';
-      const label = item?.label || fallbackLabel;
-      const version = String(item?.version || MODEL_VERSION_BY_TYPE[normalizedKey] || '1.0').trim();
-      const withVersion = `${label}-${version}`;
-      const isAllowed = allowedModelTypes.includes(normalizedKey);
-      return {
-        key: normalizedKey,
-        label,
-        withVersion,
-        isAllowed,
-      };
-    });
-  }, [allModelTypeKeys, modelTypes, allowedModelTypes]);
-  const selectedModelOption = useMemo(
-    () => modelOptions.find((option) => option.key === selectedModelType) || modelOptions[0] || null,
-    [modelOptions, selectedModelType]
-  );
   const defaultModelType = useMemo(() => {
     const candidate = String(billingStatus?.default_model_type || '').toLowerCase();
     if (candidate && allowedModelTypes.includes(candidate)) return candidate;
     return allowedModelTypes[0] || 'pluto';
   }, [billingStatus, allowedModelTypes]);
-  const modelTypeStorageKey = useMemo(() => {
-    if (user?.id) return `jaspen_model_type_id_${user.id}`;
-    if (user?.email) return `jaspen_model_type_email_${String(user.email).toLowerCase()}`;
-    return 'jaspen_model_type_last';
-  }, [user?.id, user?.email]);
   const activeThreadId = currentSessionId || sessionId || null;
 
   // When a chat turn finishes streaming, refresh the bundle once so any scorecards
@@ -4847,49 +4805,8 @@ useEffect(() => {
   }, [sidebarState.settings, activeThreadId, messages.length, loadThreadUsage]);
 
   useEffect(() => {
-    let saved = '';
-    try {
-      saved = String(localStorage.getItem(modelTypeStorageKey) || '').toLowerCase();
-    } catch {
-      saved = '';
-    }
-    if (saved && allowedModelTypes.includes(saved)) {
-      setSelectedModelType(saved);
-      return;
-    }
     setSelectedModelType(defaultModelType);
-  }, [modelTypeStorageKey, allowedModelTypes, defaultModelType]);
-
-  useEffect(() => {
-    const normalized = String(selectedModelType || '').toLowerCase();
-    if (!normalized || !allowedModelTypes.includes(normalized)) return;
-    try {
-      localStorage.setItem(modelTypeStorageKey, normalized);
-    } catch {}
-  }, [modelTypeStorageKey, selectedModelType, allowedModelTypes]);
-
-  useEffect(() => {
-    if (!modelMenuOpen) return;
-    const onPointerDown = (event) => {
-      if (!(event.target instanceof Node)) return;
-      if (!modelMenuRef.current?.contains(event.target)) {
-        setModelMenuOpen(false);
-      }
-    };
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') setModelMenuOpen(false);
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [modelMenuOpen]);
-
-  useEffect(() => {
-    if (busy) setModelMenuOpen(false);
-  }, [busy]);
+  }, [defaultModelType]);
 
   const dismissSidebars = useCallback(() => {
     dispatchSidebar({ type: 'CLOSE_ALL' });
@@ -5803,10 +5720,6 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
       setConfirmDialog(null);
       return true;
     }
-    if (modelMenuOpen) {
-      setModelMenuOpen(false);
-      return true;
-    }
     if (threadEditOpen) {
       setThreadEditOpen(false);
       return true;
@@ -5849,7 +5762,6 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
     confirmDialog,
     dismissSidebars,
     helpOpen,
-    modelMenuOpen,
     notificationsOpen,
     saveStarterModalOpen,
     threadEditOpen,
@@ -6711,7 +6623,6 @@ if (rawHistory.length > 0) {
   const fileInputRef = useRef(null);
   const chatTabInputRef = useRef(null);
   const intakeInputRef = useRef(null);
-  const modelMenuRef = useRef(null);
 
 const hasConversationMessages = Array.isArray(messages)
   && messages.some((m) => String(m?.text || '').trim().length > 0);
@@ -7215,49 +7126,6 @@ useEffect(() => {
     setTradeoffRequested(true);
   }
 }, [tradeoffRequested, tradeoffEligibleScoredItems.length]);
-
-const renderModelTypeInlinePicker = (className = '') => (
-  <div className={`jas-model-picker-inline ${className}`.trim()} ref={modelMenuRef}>
-    <button
-      type="button"
-      className={`jas-model-picker-trigger ${modelMenuOpen ? 'is-open' : ''}`}
-      aria-haspopup="listbox"
-      aria-expanded={modelMenuOpen}
-      aria-label="Select model"
-      title="Select model"
-      onClick={() => setModelMenuOpen((prev) => !prev)}
-      disabled={busy} aria-disabled={busy}
-    >
-      <span className="jas-model-picker-trigger-text">{selectedModelOption?.withVersion || 'Model'}</span>
-      <FontAwesomeIcon icon={faChevronDown} className={`jas-model-picker-caret ${modelMenuOpen ? 'is-open' : ''}`} />
-    </button>
-    {modelMenuOpen && (
-      <div className="jas-model-picker-menu" role="listbox" aria-label="Model options">
-        {modelOptions.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            role="option"
-            aria-selected={selectedModelType === option.key}
-            className={`jas-model-picker-option ${selectedModelType === option.key ? 'is-selected' : ''}`}
-            disabled={!option.isAllowed} aria-disabled={!option.isAllowed}
-            onClick={() => {
-              if (!option.isAllowed) return;
-              setSelectedModelType(option.key);
-              setModelMenuOpen(false);
-            }}
-          >
-            <span className="jas-model-picker-option-main">{option.withVersion}</span>
-            {!option.isAllowed && <span className="jas-model-picker-option-meta">(Upgrade to access)</span>}
-            {option.isAllowed && selectedModelType === option.key && (
-              <FontAwesomeIcon icon={faCheck} className="jas-model-picker-option-check" />
-            )}
-          </button>
-        ))}
-      </div>
-    )}
-  </div>
-);
 
 const renderObjectiveTags = (className = '') => {
   if (objectiveLocked) return null;
@@ -14115,7 +13983,6 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 >
                   <FontAwesomeIcon icon={faPaperclip} />
                 </button>
-                {renderModelTypeInlinePicker()}
                 {renderSelectedObjectivePill()}
                 {renderSelectedDataContextPills()}
               </div>
