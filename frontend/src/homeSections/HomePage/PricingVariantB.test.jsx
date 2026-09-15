@@ -37,18 +37,18 @@ describe('PricingVariantB', () => {
     render(<PricingVariantB onOpenModal={jest.fn()} />);
 
     expect(screen.getByText('300 credits/month')).toBeInTheDocument();
-    expect(screen.getByText('~1 focused evaluation with complete inputs')).toBeInTheDocument();
+    expect(screen.getByText('~1–2 evaluations')).toBeInTheDocument();
     expect(screen.getByText('1,000 credits/month')).toBeInTheDocument();
-    expect(screen.getByText('~3–4 typical project evaluations')).toBeInTheDocument();
+    expect(screen.getByText('~5–8 evaluations')).toBeInTheDocument();
     expect(screen.getByText('7,000 credits/month')).toBeInTheDocument();
-    expect(screen.getByText('~17–29 typical project evaluations')).toBeInTheDocument();
+    expect(screen.getByText('~40–55 evaluations')).toBeInTheDocument();
     expect(screen.getByText('29,000 shared credits/month')).toBeInTheDocument();
-    expect(screen.getByText('~57–96 typical project evaluations across the shared allowance')).toBeInTheDocument();
+    expect(screen.getByText('~165–230 evaluations')).toBeInTheDocument();
     expect(screen.getByText(/Estimates are approximate, not guaranteed/)).toHaveTextContent(/attachments, analysis depth, revisions, and follow-up/);
 
     await user.click(screen.getByRole('tab', { name: /business & enterprise/i }));
     expect(screen.getByText('80,000 shared credits/month')).toBeInTheDocument();
-    expect(screen.getByText('~133–222 typical project evaluations across the shared allowance')).toBeInTheDocument();
+    expect(screen.getByText('~455–640 evaluations')).toBeInTheDocument();
   });
 
   it('includes approximate project value in the plan comparison', async () => {
@@ -57,10 +57,10 @@ describe('PricingVariantB', () => {
 
     await user.click(screen.getByRole('button', { name: /compare plans/i }));
     const comparisonRow = screen.getByText('Approximate project evaluations').closest('tr');
-    expect(comparisonRow).toHaveTextContent('~1 focused evaluation with complete inputs');
-    expect(comparisonRow).toHaveTextContent('~3–4 typical project evaluations');
-    expect(comparisonRow).toHaveTextContent('~17–29 typical project evaluations');
-    expect(comparisonRow).toHaveTextContent('~57–96 typical project evaluations across the shared allowance');
+    expect(comparisonRow).toHaveTextContent('~1–2 evaluations');
+    expect(comparisonRow).toHaveTextContent('~5–8 evaluations');
+    expect(comparisonRow).toHaveTextContent('~40–55 evaluations');
+    expect(comparisonRow).toHaveTextContent('~165–230 evaluations');
   });
 
   it('describes automatic routing without presenting model tiers', async () => {
@@ -184,7 +184,7 @@ describe('Advisory Partnerships tab', () => {
 
     // The comparison table still carries the existing planning context.
     expect(screen.getByText(/approximate planning estimates, not guaranteed quantities/i)).toBeInTheDocument();
-    expect(screen.getByText(/Actual usage varies based on request complexity/i)).toBeInTheDocument();
+    expect(screen.getByText(/Actual usage varies based on evaluation complexity/i)).toBeInTheDocument();
   });
 
   it('never invites a reader to divide the fee by the hours', async () => {

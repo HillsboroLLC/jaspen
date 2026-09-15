@@ -54,7 +54,7 @@ describe.each(Object.values(FOUNDER_CAMPAIGNS))('$id campaign page', (campaign) 
       screen.getAllByRole('button', { name: `${campaign.primaryCta} · $999` }).length
     ).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText(/300,000 AI-Powered Usage Credits/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Approximately ~750–1,200 typical project evaluations/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Approximately ~1,700\+ evaluations/).length).toBeGreaterThan(0);
     expect(
       screen.getAllByText(/Compare up to 30 projects in one focused session/).length
     ).toBeGreaterThan(0);

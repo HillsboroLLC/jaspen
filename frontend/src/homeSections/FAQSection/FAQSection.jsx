@@ -26,7 +26,7 @@ export default function FAQSection() {
     {
       q: 'What is a credit, and how many will I need?',
       a: <>
-        <p>Credits are how Thinking Power usage is measured. Every plan includes a monthly allowance: Free 300 supports ~1 focused evaluation with complete inputs; Starter 1,000 supports ~3–4 typical project evaluations; Essential 7,000 supports ~17–29 typical project evaluations; Team 29,000 shared supports ~57–96 typical evaluations across the shared allowance; and Business 80,000 shared supports ~133–222 typical evaluations across the shared allowance.</p>
+        <p>Credits are how Thinking Power usage is measured. Every plan includes a monthly allowance: Free 300 supports ~1–2 evaluations; Starter 1,000 supports ~5–8 evaluations; Essential 7,000 supports ~40–55 evaluations; Team 29,000 shared supports ~165–230 evaluations; and Business 80,000 shared supports ~455–640 evaluations.</p>
         <p>These ranges are approximate, not guaranteed. {THINKING_POWER_VARIABILITY_NOTE} You can top up any time.</p>
       </>
     },
@@ -40,7 +40,7 @@ export default function FAQSection() {
     {
       q: 'Is the Free plan just a trial?',
       a: <>
-        <p>No. Free is a real plan with 300 credits every month, not a countdown. That supports ~1 focused evaluation with complete inputs; it is not a promise of a complete typical or heavy evaluation.</p>
+        <p>No. Free is a real plan with 300 credits every month, not a countdown. Based on representative workflow testing, that supports approximately 1–2 evaluations. Actual usage varies.</p>
       </>
     },
     {

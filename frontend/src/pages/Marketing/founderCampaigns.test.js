@@ -35,15 +35,15 @@ describe('Founder campaign content', () => {
   it('keeps the limited-time offer values and limitations consistent across every variant', () => {
     expect(FOUNDER_PRICE).toBe(999);
     expect(FOUNDER_CREDITS).toBe('300,000');
-    expect(FOUNDER_PROJECT_ESTIMATE).toBe('~750–1,200 typical project evaluations over the life of the credit balance');
+    expect(FOUNDER_PROJECT_ESTIMATE).toBe('~1,700+ evaluations over the life of the credit balance');
     expect(FOUNDER_VARIABILITY_NOTE).toContain('Actual usage varies');
     expect(SHARED_OFFER_ITEMS.map((item) => `${item.value} ${item.label} ${item.detail}`).join(' ')).toContain(
       'Compare up to 30 projects in one focused session. Continue evaluating and retaining additional projects across sessions.',
     );
     expect(SHARED_OFFER_ITEMS[1]).toEqual({
-      value: '~750-1,200',
-      label: 'Average number of projects',
-      detail: 'A planning estimate based on typical evaluations, not a guaranteed quantity.',
+      value: '~1,700+',
+      label: 'evaluations',
+      detail: 'A planning estimate based on representative workflow testing, not a guaranteed quantity.',
     });
 
     const disclosures = SHARED_OFFER_DISCLOSURES.join(' ');

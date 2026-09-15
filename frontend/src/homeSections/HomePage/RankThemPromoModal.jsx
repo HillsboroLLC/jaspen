@@ -182,6 +182,7 @@ export default function RankThemPromoModal() {
         </p>
         <p className="rank-them-price">
           <strong>300,000 AI-powered usage credits for $999.</strong>
+          <span className="rank-them-terms">~1,700+ evaluations.</span>
           <span className="rank-them-terms">One payment. No subscription. Credits never expire.</span>
         </p>
         <div className="rank-them-actions">

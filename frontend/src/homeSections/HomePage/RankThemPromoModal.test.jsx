@@ -66,6 +66,8 @@ describe('pressure-test promotion modal', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /PRESSURE-TEST THE PLAN/i })).toBeInTheDocument();
     expect(screen.getByText(/expose the assumptions, blind spots, and weak points/i)).toBeInTheDocument();
+    expect(screen.getByText('~1,700+ evaluations.')).toBeInTheDocument();
+    expect(screen.getByText(/credits never expire/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Pressure-test my decision' })).toBeInTheDocument();
   });
 

@@ -52,9 +52,9 @@ export const SHARED_OFFER_ITEMS = [
     detail: 'A personal balance that remains available until used.',
   },
   {
-    value: '~750-1,200',
-    label: 'Average number of projects',
-    detail: 'A planning estimate based on typical evaluations, not a guaranteed quantity.',
+    value: '~1,700+',
+    label: 'evaluations',
+    detail: 'A planning estimate based on representative workflow testing, not a guaranteed quantity.',
   },
   {
     value: '30 projects',
@@ -87,8 +87,8 @@ export const SHARED_FAQ = [
     a: 'Usage credits meter the AI-powered analysis Jaspen performs. Deeper analysis, larger inputs, attachments, and revisions generally use more credits.',
   },
   {
-    q: 'How was the 750–1,200 estimate calculated?',
-    a: 'It is based on reasonable estimates for a typical evaluation that includes framing the project, refining a rubric, reviewing evidence, generating a scorecard, reviewing the recommendation, and creating an initial execution plan. Actual usage varies.',
+    q: 'How was the 1,700+ estimate calculated?',
+    a: 'It is based on representative Jaspen workflow testing of approximately 125–175 credits per evaluation. Actual usage varies.',
   },
   { q: 'Do the 300,000 credits expire?', a: 'No. They remain available to the purchaser until used, subject to the current Jaspen terms and account status.' },
   { q: 'Is a subscription required?', a: 'No. This is a one-time purchase and does not enroll you in Essential or another recurring plan.' },

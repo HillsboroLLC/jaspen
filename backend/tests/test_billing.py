@@ -32,13 +32,13 @@ def test_catalog_exposes_project_estimates_and_shared_allowance_wording(client):
     plans = response.get_json()['plans']
 
     assert plans['free']['monthly_credits'] == 300
-    assert plans['free']['project_evaluation_estimate'] == '~1 focused evaluation with complete inputs'
-    assert plans['starter']['project_evaluation_estimate'] == '~3–4 typical project evaluations'
-    assert plans['essential']['project_evaluation_estimate'] == '~17–29 typical project evaluations'
+    assert plans['free']['project_evaluation_estimate'] == '~1–2 evaluations'
+    assert plans['starter']['project_evaluation_estimate'] == '~5–8 evaluations'
+    assert plans['essential']['project_evaluation_estimate'] == '~40–55 evaluations'
     assert plans['team']['monthly_credits'] == 29_000
-    assert plans['team']['project_evaluation_estimate'] == '~57–96 typical project evaluations across the shared allowance'
+    assert plans['team']['project_evaluation_estimate'] == '~165–230 evaluations'
     assert plans['business']['monthly_credits'] == 80_000
-    assert plans['business']['project_evaluation_estimate'] == '~133–222 typical project evaluations across the shared allowance'
+    assert plans['business']['project_evaluation_estimate'] == '~455–640 evaluations'
 
 
 def test_catalog_exposes_every_configured_annual_plan(client, app):
