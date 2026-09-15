@@ -1,10 +1,12 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 import requests
 
 from app.ai_audit import attach_governance, persist_operation, subsidy_classification
 from app.ai_governance import (
+    CANONICAL_ANTHROPIC_MODELS,
     CREDIT_POLICY_VERSION,
     CREDITS_PER_PROVIDER_DOLLAR,
     ROUTE_EXCEPTIONAL,
@@ -15,6 +17,7 @@ from app.ai_governance import (
     credits_for_provider_cost,
     routing_decision,
 )
+from app.billing_config import provider_cost_usd
 from app.models import AIOperation, AIProviderAttempt
 from app.ai_runtime import (
     AIOperationIdempotencyConflict,
@@ -105,7 +108,7 @@ def test_router_replaces_retired_configured_models_without_changing_route_tier()
         alternatives_count=4,
     )
     assert routine['selected_model'] == 'claude-haiku-4-5-20251001'
-    assert standard['selected_model'] == 'claude-sonnet-4-6'
+    assert standard['selected_model'] == 'claude-sonnet-5'
     assert exceptional['selected_model'] == 'claude-opus-4-8'
 
 
@@ -126,13 +129,13 @@ def test_governed_anthropic_call_never_falls_through_to_another_claude_tier(app)
     with app.app_context(), pytest.raises(RuntimeError, match='selected model unavailable'):
         ai_agent._anthropic_message_create(
             Client(),
-            model_name='claude-sonnet-4-6',
+            model_name='claude-3-7-sonnet-20250219',
             strict_model=True,
             max_tokens=200,
             messages=[{'role': 'user', 'content': 'test'}],
         )
 
-    assert attempted == ['claude-sonnet-4-6']
+    assert attempted == ['claude-sonnet-5']
 
 
 def test_anthropic_temperature_compatibility_tracks_selected_model_generation():
@@ -140,8 +143,239 @@ def test_anthropic_temperature_compatibility_tracks_selected_model_generation():
 
     assert ai_agent._anthropic_model_accepts_temperature('claude-haiku-4-5') is True
     assert ai_agent._anthropic_model_accepts_temperature('claude-sonnet-4-6') is True
+    assert ai_agent._anthropic_model_accepts_temperature('claude-sonnet-5') is False
     assert ai_agent._anthropic_model_accepts_temperature('claude-opus-4-8') is False
     assert ai_agent._anthropic_model_accepts_temperature('claude-opus-5') is False
+
+
+def test_application_model_map_is_the_single_canonical_anthropic_source(app, monkeypatch):
+    from app.routes import ai_agent
+
+    monkeypatch.setitem(app.config, 'LLM_PROVIDER_MODELS', dict(CANONICAL_ANTHROPIC_MODELS))
+    monkeypatch.setitem(app.config, 'AI_AGENT_ANTHROPIC_MODEL', 'claude-3-7-sonnet-20250219')
+    monkeypatch.setenv('AI_AGENT_ANTHROPIC_MODEL', 'claude-3-7-sonnet-20250219')
+    monkeypatch.setenv('MODEL_ORBIT_ID', 'claude-3-7-sonnet-20250219')
+    monkeypatch.setenv('MODEL_TITAN_ID', 'claude-opus-4-20250514')
+
+    assert ai_agent._anthropic_model_for_selection({'llm_model': 'orbit'}) == 'claude-sonnet-5'
+    assert ai_agent._anthropic_model_for_selection({'llm_model': 'claude-3-7-sonnet-20250219'}) == 'claude-sonnet-5'
+    assert ai_agent._anthropic_model_for_selection({'llm_model': 'claude-opus-4-20250514'}) == 'claude-opus-4-8'
+
+
+def test_shadow_mode_can_audit_legacy_route_without_sending_retired_model(app, monkeypatch):
+    from app.routes import ai_agent
+
+    monkeypatch.setitem(app.config, 'JASPEN_AI_ROUTER_MODE', 'shadow')
+    monkeypatch.setattr(ai_agent, '_anthropic_api_key', lambda: 'configured')
+    monkeypatch.setattr(ai_agent, '_gemini_api_key', lambda: 'configured')
+    with app.app_context():
+        routes, decision = ai_agent._resolve_governed_routes(
+            [{'provider': 'anthropic', 'model': 'claude-3-7-sonnet-20250219'}],
+            operation_type='conversation',
+            text='Review this decision.',
+        )
+
+    assert routes == [{'provider': 'anthropic', 'model': 'claude-sonnet-5'}]
+    assert decision['shadow_comparison']['legacy_model'] == 'claude-3-7-sonnet-20250219'
+
+
+def test_sonnet5_request_disables_thinking_and_preserves_tools(app):
+    from app.routes import ai_agent
+
+    captured = {}
+
+    class Messages:
+        @staticmethod
+        def create(*, model, **kwargs):
+            captured.update(model=model, **kwargs)
+            return SimpleNamespace(content=[], usage=SimpleNamespace(input_tokens=12, output_tokens=3))
+
+    class Client:
+        messages = Messages()
+
+    tools = [{'name': 'lookup', 'description': 'Look up evidence', 'input_schema': {'type': 'object'}}]
+    with app.app_context():
+        _response, resolved = ai_agent._anthropic_message_create(
+            Client(),
+            model_name='claude-sonnet-5',
+            strict_model=True,
+            max_tokens=300,
+            temperature=0.2,
+            top_p=0.9,
+            top_k=10,
+            system='Return a concise answer.',
+            tools=tools,
+            messages=[{'role': 'user', 'content': 'Review this.'}],
+        )
+
+    assert resolved == 'claude-sonnet-5'
+    assert captured['model'] == 'claude-sonnet-5'
+    assert captured['thinking'] == {'type': 'disabled'}
+    assert captured['tools'] == tools
+    assert captured['max_tokens'] == 300
+    assert 'temperature' not in captured
+    assert 'top_p' not in captured
+    assert 'top_k' not in captured
+
+
+def test_sonnet5_stream_request_uses_same_request_policy(app):
+    from app.routes import ai_agent
+
+    captured = {}
+    manager = object()
+
+    class Messages:
+        @staticmethod
+        def stream(*, model, **kwargs):
+            captured.update(model=model, **kwargs)
+            return manager
+
+    class Client:
+        messages = Messages()
+
+    with app.app_context():
+        actual_manager, resolved = ai_agent._anthropic_message_create(
+            Client(),
+            model_name='claude-sonnet-4-6',
+            strict_model=True,
+            stream=True,
+            max_tokens=250,
+            temperature=0.2,
+            messages=[{'role': 'user', 'content': 'Stream this.'}],
+        )
+
+    assert actual_manager is manager
+    assert resolved == captured['model'] == 'claude-sonnet-5'
+    assert captured['thinking'] == {'type': 'disabled'}
+    assert 'temperature' not in captured
+
+
+def test_http_200_refusal_is_visible_and_does_not_fail_over(app, monkeypatch):
+    from app.routes import ai_agent
+
+    response = SimpleNamespace(
+        content=[],
+        stop_reason='refusal',
+        usage=SimpleNamespace(input_tokens=25, output_tokens=2),
+    )
+    gemini_calls = []
+    monkeypatch.setitem(app.config, 'JASPEN_AI_ROUTER_MODE', 'active')
+    monkeypatch.setitem(app.config, 'LLM_PROVIDER_MODELS', dict(CANONICAL_ANTHROPIC_MODELS))
+    monkeypatch.setattr(ai_agent, '_anthropic_api_key', lambda: 'configured')
+    monkeypatch.setattr(ai_agent, '_gemini_api_key', lambda: 'configured')
+    monkeypatch.setattr(
+        ai_agent,
+        '_anthropic_message_create',
+        lambda *_args, **_kwargs: (response, 'claude-sonnet-5'),
+    )
+    monkeypatch.setattr(
+        ai_agent,
+        '_gemini_openai_request',
+        lambda **_kwargs: gemini_calls.append(True),
+    )
+
+    with app.app_context():
+        reply, usage = ai_agent._generate_routed_chat_reply(
+            [{'role': 'user', 'content': 'Analyze this business decision.'}],
+            {'model_type': 'orbit', 'llm_model': 'claude-sonnet-5'},
+            system_prompt='Be safe and concise.',
+            operation_type='conversation',
+        )
+
+    assert reply == 'I’m unable to help with that request.'
+    assert usage['provider'] == 'anthropic'
+    assert usage['model'] == 'claude-sonnet-5'
+    assert usage['refused'] is True
+    assert gemini_calls == []
+
+
+def test_structured_json_completion_preserves_parsing_and_sonnet5_usage(app, monkeypatch):
+    from app.routes import ai_agent
+
+    monkeypatch.setattr(
+        ai_agent,
+        '_generate_routed_chat_reply',
+        lambda *_args, **_kwargs: (
+            '{"score": 82, "status": "supported"}',
+            {'provider': 'anthropic', 'model': 'claude-sonnet-5', 'input_tokens': 20, 'output_tokens': 10},
+        ),
+    )
+    with app.app_context():
+        payload, usage = ai_agent._anthropic_json_completion(
+            'Return JSON only.',
+            'Score this.',
+            model_name='claude-sonnet-5',
+            model_selection={'model_type': 'orbit', 'llm_model': 'claude-sonnet-5'},
+        )
+
+    assert payload == {'score': 82, 'status': 'supported'}
+    assert usage['model'] == 'claude-sonnet-5'
+
+
+def test_attachment_conversation_uses_governed_canonical_model(app, monkeypatch):
+    from app.routes import ai_agent
+
+    captured = {}
+    monkeypatch.setitem(app.config, 'JASPEN_AI_ROUTER_MODE', 'active')
+    monkeypatch.setitem(app.config, 'LLM_PROVIDER_MODELS', dict(CANONICAL_ANTHROPIC_MODELS))
+    monkeypatch.setattr(ai_agent, '_anthropic_api_key', lambda: 'configured')
+    monkeypatch.setattr(ai_agent, '_gemini_api_key', lambda: 'configured')
+
+    def generate(_message, _history, _readiness, selection, **_kwargs):
+        captured.update(selection)
+        return (
+            'Attachment reviewed.',
+            {'provider': 'anthropic', 'model': selection['llm_model'], 'input_tokens': 30, 'output_tokens': 8},
+            [],
+            [],
+            None,
+        )
+
+    monkeypatch.setattr(ai_agent, '_generate_assistant_reply_anthropic', generate)
+    with app.app_context():
+        reply, usage, _actions, _mutations, _undo = ai_agent._generate_assistant_reply(
+            'Review the attached plan and identify the main assumption.',
+            [],
+            {},
+            {'model_type': 'orbit', 'llm_model': 'claude-3-7-sonnet-20250219'},
+            attachments=[{'name': 'plan.pdf', 'text_content': 'Evidence for the plan.'}],
+        )
+
+    assert reply == 'Attachment reviewed.'
+    assert captured['llm_model'] == 'claude-sonnet-5'
+    assert usage['model'] == 'claude-sonnet-5'
+    assert usage['governance']['route_class'] in {'standard_judgment', 'structured_consequential'}
+
+
+def test_pdf_attachment_payload_remains_valid_for_anthropic_messages():
+    from app.routes import ai_agent
+
+    payload = ai_agent._anthropic_user_message_content(
+        'Review the evidence.',
+        attachments=[{
+            'name': 'evidence.pdf',
+            'kind': 'pdf',
+            'type': 'application/pdf',
+            'data': 'JVBERi0xLjQK',
+        }],
+    )
+
+    assert isinstance(payload, list)
+    assert payload[0]['type'] == 'text'
+    assert payload[1] == {
+        'type': 'document',
+        'source': {
+            'type': 'base64',
+            'media_type': 'application/pdf',
+            'data': 'JVBERi0xLjQK',
+        },
+    }
+
+
+def test_sonnet5_provider_cost_and_3600_credit_projection():
+    cost = provider_cost_usd('claude-sonnet-5', 1_000_000, 100_000)
+    assert cost == pytest.approx(3.0)
+    assert credits_for_provider_cost(cost, internal=False) == 10_800
 
 
 def test_operation_audit_records_failover_cost_as_jaspen_cost_and_charges_once(app, db, test_user):

@@ -164,7 +164,9 @@ ANTHROPIC_PRICES_USD_PER_M = {
     'claude-opus-4-7':             {'input': 5.00,  'output': 25.00},
     'claude-opus-4-1-20250805':    {'input': 15.00, 'output': 75.00},
     'claude-opus-4-20250514':      {'input': 15.00, 'output': 75.00},
-    # Sonnet 4.x — workhorse
+    # Sonnet — workhorse. Sonnet 5 uses its published provider rate so the
+    # active 3,600-credit policy and cost telemetry reflect actual direct cost.
+    'claude-sonnet-5':             {'input': 2.00,  'output': 10.00},
     'claude-sonnet-4-6':           {'input': 3.00,  'output': 15.00},
     'claude-sonnet-4-5-20250929':  {'input': 3.00,  'output': 15.00},
     'claude-sonnet-4-20250514':    {'input': 3.00,  'output': 15.00},
@@ -295,7 +297,7 @@ DEFAULT_MODEL_CATALOG = {
         'version': '1.0',
         'description': 'Balanced depth and speed for broader cross-functional synthesis.',
         'min_plan': 'free',
-        'default_llm_model': 'claude-sonnet-4-6',
+        'default_llm_model': 'claude-sonnet-5',
     },
     'titan': {
         'label': 'Titan',

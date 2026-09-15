@@ -21,6 +21,7 @@ from app.rate_limits import (
     assert_rate_limit_storage_available,
     resolve_rate_limit_storage_uri,
 )
+from app.ai_governance import CANONICAL_ANTHROPIC_MODELS, resolve_anthropic_model
 
 load_dotenv()  # pull in .env
 
@@ -336,33 +337,35 @@ def create_app():
                 )
     app.config['LLM_PROVIDER_MODELS'] = {
         'claude_haiku': (
-            os.getenv('MODEL_CLAUDE_HAIKU')
-            or os.getenv('ANTHROPIC_MODEL_PLUTO')
-            or os.getenv('MODEL_PLUTO_ID')
-            or 'claude-haiku-4-5'
+            resolve_anthropic_model(
+                os.getenv('MODEL_CLAUDE_HAIKU'), model_key='claude_haiku'
+            )
         ),
         'claude_sonnet': (
-            os.getenv('MODEL_CLAUDE_SONNET')
-            or os.getenv('ANTHROPIC_MODEL_ORBIT')
-            or os.getenv('MODEL_ORBIT_ID')
-            or 'claude-sonnet-4-6'
+            resolve_anthropic_model(
+                os.getenv('MODEL_CLAUDE_SONNET'), model_key='claude_sonnet'
+            )
         ),
         'claude_opus': (
-            os.getenv('MODEL_CLAUDE_OPUS')
-            or os.getenv('ANTHROPIC_MODEL_TITAN')
-            or os.getenv('MODEL_TITAN_ID')
-            or 'claude-opus-4-8'
+            resolve_anthropic_model(
+                os.getenv('MODEL_CLAUDE_OPUS'), model_key='claude_opus'
+            )
         ),
         'gemini_flash': os.getenv('GEMINI_MODEL_FLASH') or 'gemini-2.5-flash',
         'gemini_pro': os.getenv('GEMINI_MODEL_PRO') or 'gemini-2.5-pro',
     }
     app.config['MODEL_TYPE_BACKING_IDS'] = {
-        'pluto': os.getenv('MODEL_PLUTO_ID') or os.getenv('ANTHROPIC_MODEL_PLUTO') or app.config['LLM_PROVIDER_MODELS']['claude_haiku'],
-        'orbit': os.getenv('MODEL_ORBIT_ID') or os.getenv('ANTHROPIC_MODEL_ORBIT') or app.config['LLM_PROVIDER_MODELS']['claude_sonnet'],
-        'titan': os.getenv('MODEL_TITAN_ID') or os.getenv('ANTHROPIC_MODEL_TITAN') or app.config['LLM_PROVIDER_MODELS']['claude_opus'],
+        # Customer-facing labels are retained only for historical API/session
+        # compatibility. They no longer have separate model configuration.
+        'pluto': app.config['LLM_PROVIDER_MODELS']['claude_haiku'],
+        'orbit': app.config['LLM_PROVIDER_MODELS']['claude_sonnet'],
+        'titan': app.config['LLM_PROVIDER_MODELS']['claude_opus'],
     }
     app.config['GEMINI_API_KEY'] = os.getenv('GEMINI_API_KEY', '')
-    app.config['AI_AGENT_ANTHROPIC_MODEL'] = os.getenv('AI_AGENT_ANTHROPIC_MODEL') or app.config['LLM_PROVIDER_MODELS']['claude_sonnet']
+    # One canonical Sonnet source: all compatibility helpers resolve through
+    # the provider model map rather than their own environment override.
+    app.config['AI_AGENT_ANTHROPIC_MODEL'] = app.config['LLM_PROVIDER_MODELS']['claude_sonnet']
+    app.config['ANTHROPIC_MODEL'] = app.config['LLM_PROVIDER_MODELS']['claude_sonnet']
     app.config['AI_AGENT_MAX_OUTPUT_TOKENS'] = int(os.getenv('AI_AGENT_MAX_OUTPUT_TOKENS', '1500'))
     app.config['AI_AGENT_TEMPERATURE'] = float(os.getenv('AI_AGENT_TEMPERATURE', '0.2'))
     app.config['AI_AGENT_CREDITS_PER_1K_TOKENS'] = float(os.getenv('AI_AGENT_CREDITS_PER_1K_TOKENS', '1.0'))
@@ -374,7 +377,6 @@ def create_app():
     app.config['JASPEN_CREDIT_POLICY_MODE'] = os.getenv('JASPEN_CREDIT_POLICY_MODE', 'shadow')
     app.config['FEEDBACK_DIGEST_RECIPIENTS'] = os.getenv('FEEDBACK_DIGEST_RECIPIENTS', '')
     app.config['FEEDBACK_DIGEST_USE_AI'] = _as_bool(os.getenv('FEEDBACK_DIGEST_USE_AI'), default=True)
-    app.config['FEEDBACK_DIGEST_ANTHROPIC_MODEL'] = os.getenv('FEEDBACK_DIGEST_ANTHROPIC_MODEL', '')
     app.config['ADMIN_USER_IDS'] = os.getenv('ADMIN_USER_IDS', '')
     app.config['ADMIN_EMAILS'] = os.getenv('ADMIN_EMAILS', '')
     app.config['ADMIN_BLOCKED_EMAILS'] = os.getenv('ADMIN_BLOCKED_EMAILS', '')

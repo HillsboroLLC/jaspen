@@ -68,7 +68,7 @@ def _anthropic_text_completion(
             messages=[{'role': 'user', 'content': str(user_prompt or '').strip()}],
             system_prompt=system_prompt,
             operation_type=operation_type,
-            model_type=_model_type_from_resolved_model(model or 'claude-sonnet-4-6'),
+            model_type=_model_type_from_resolved_model(model or 'claude-sonnet-5'),
             legacy_model=model,
             max_tokens=max_tokens,
             temperature=temperature,

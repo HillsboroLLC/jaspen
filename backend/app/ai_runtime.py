@@ -287,7 +287,9 @@ def execute_customer_text_operation(user, *, messages, system_prompt, operation_
     selection = {
         'model_type': str(model_type or 'orbit'),
         'llm_model': str(
-            legacy_model or current_app.config.get('ANTHROPIC_MODEL') or 'claude-sonnet-4-6'
+            legacy_model
+            or (current_app.config.get('LLM_PROVIDER_MODELS') or {}).get('claude_sonnet')
+            or 'claude-sonnet-5'
         ),
     }
     signals = dict(routing_signals or {})

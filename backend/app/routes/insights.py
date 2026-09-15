@@ -238,11 +238,8 @@ def _llm_analysis(user, summary, question=''):
         or os.getenv('CLAUDE_API_KEY')
     )
     model_name = (
-        current_app.config.get('AI_DATA_INSIGHTS_MODEL')
-        or os.getenv('AI_DATA_INSIGHTS_MODEL')
-        or current_app.config.get('AI_AGENT_ANTHROPIC_MODEL')
-        or os.getenv('AI_AGENT_ANTHROPIC_MODEL')
-        or 'claude-3-7-sonnet-latest'
+        (current_app.config.get('LLM_PROVIDER_MODELS') or {}).get('claude_sonnet')
+        or 'claude-sonnet-5'
     )
     if not api_key:
         return _heuristic_analysis(summary, question)

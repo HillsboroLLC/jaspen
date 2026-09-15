@@ -46,8 +46,10 @@ from app.billing_config import (
     THINKING_POWER_LOW_WARNING_PCT,
 )
 from app.ai_governance import (
+    CANONICAL_ANTHROPIC_MODELS,
     credit_policy_mode,
     credits_for_provider_cost,
+    resolve_anthropic_model,
     router_mode,
     routing_decision,
     shadow_comparison,
@@ -3587,43 +3589,31 @@ def _anthropic_api_key():
 
 def _anthropic_model_for_selection(model_selection):
     selected = str((model_selection or {}).get("llm_model") or "").strip()
-    if selected.lower().startswith("claude"):
-        return selected
-    return str(
-        current_app.config.get("AI_AGENT_ANTHROPIC_MODEL")
-        or os.getenv("AI_AGENT_ANTHROPIC_MODEL")
-        or "claude-3-7-sonnet-latest"
-    ).strip()
+    normalized = selected.lower()
+    if "haiku" in normalized:
+        model_key = "claude_haiku"
+    elif "opus" in normalized:
+        model_key = "claude_opus"
+    else:
+        model_key = "claude_sonnet"
+    provider_models = current_app.config.get("LLM_PROVIDER_MODELS")
+    configured = (
+        provider_models.get(model_key)
+        if isinstance(provider_models, dict)
+        else None
+    )
+    return resolve_anthropic_model(configured, model_key=model_key)
 
 
 def _anthropic_model_candidates(preferred_model=None):
-    backing_ids = current_app.config.get("MODEL_TYPE_BACKING_IDS")
-    if not isinstance(backing_ids, dict):
-        backing_ids = {}
-    configured = (
-        preferred_model,
-        current_app.config.get("AI_AGENT_ANTHROPIC_MODEL"),
-        os.getenv("AI_AGENT_ANTHROPIC_MODEL"),
-        backing_ids.get("pluto"),
-        backing_ids.get("orbit"),
-        backing_ids.get("titan"),
-    )
-    fallbacks = (
-        "claude-sonnet-4-5-20250929",
-        "claude-3-7-sonnet-latest",
-        "claude-3-7-sonnet-20250219",
-        "claude-3-5-sonnet-20241022",
-        "claude-haiku-4-5",
-    )
-    seen = set()
-    output = []
-    for model_name in [*configured, *fallbacks]:
-        cleaned = str(model_name or "").strip()
-        if not cleaned or cleaned in seen:
-            continue
-        seen.add(cleaned)
-        output.append(cleaned)
-    return output
+    selected = str(preferred_model or "").strip().lower()
+    if "haiku" in selected:
+        model_key = "claude_haiku"
+    elif "opus" in selected:
+        model_key = "claude_opus"
+    else:
+        model_key = "claude_sonnet"
+    return [_anthropic_model_for_selection({"llm_model": preferred_model, "model_key": model_key})]
 
 
 def _gemini_api_key():
@@ -3670,12 +3660,18 @@ def _resolve_generation_routes(model_selection, strategy_objective="balanced", i
     fallback_model = str((model_selection or {}).get("llm_model") or "").strip()
     if fallback_model:
         provider = "gemini" if fallback_model.startswith("gemini") else "anthropic"
+        if provider == "anthropic":
+            normalized = fallback_model.lower()
+            model_key = "claude_haiku" if "haiku" in normalized else (
+                "claude_opus" if "opus" in normalized else "claude_sonnet"
+            )
+            fallback_model = resolve_anthropic_model(fallback_model, model_key=model_key)
         return [{"provider": provider, "model_key": "", "model": fallback_model}]
 
     return [{
         "provider": "anthropic",
         "model_key": "claude_sonnet",
-        "model": _provider_model_id("claude_sonnet") or "claude-sonnet-4-6",
+        "model": _provider_model_id("claude_sonnet") or CANONICAL_ANTHROPIC_MODELS["claude_sonnet"],
     }]
 
 
@@ -3719,7 +3715,17 @@ def _resolve_governed_routes(
             continue
         if provider not in {"anthropic", "gemini"}:
             continue
-        routes.append(dict(route))
+        normalized_route = dict(route)
+        if provider == "anthropic":
+            requested_model = str(normalized_route.get("model") or "").strip()
+            lowered = requested_model.lower()
+            model_key = "claude_haiku" if "haiku" in lowered else (
+                "claude_opus" if "opus" in lowered else "claude_sonnet"
+            )
+            normalized_route["model"] = resolve_anthropic_model(
+                requested_model, model_key=model_key
+            )
+        routes.append(normalized_route)
     return routes, decision
 
 
@@ -3819,7 +3825,7 @@ def _generate_routed_chat_reply(
                     strict_model=True,
                     **anthropic_request,
                 )
-                reply = _anthropic_text(response.content)
+                reply = _anthropic_response_text(response)
                 if not reply:
                     raise ValueError("invalid_response")
                 usage = {
@@ -3831,6 +3837,7 @@ def _generate_routed_chat_reply(
                     ),
                     "provider": "anthropic",
                     "model": actual_model,
+                    "refused": str(getattr(response, "stop_reason", "") or "").lower() == "refusal",
                 }
 
             usage = _attach_failover_usage(
@@ -6943,20 +6950,43 @@ def _anthropic_text(content_blocks):
     return "\n".join(out).strip()
 
 
+def _anthropic_response_text(response):
+    """Return visible text while treating an HTTP-200 refusal as a result."""
+    text = _anthropic_text(getattr(response, "content", None))
+    if text:
+        return text
+    if str(getattr(response, "stop_reason", "") or "").strip().lower() == "refusal":
+        return "I’m unable to help with that request."
+    return ""
+
+
 def _sse_payload(payload):
     return f"data: {json.dumps(payload)}\n\n"
 
 
 def _anthropic_message_create(client, *, model_name, stream=False, strict_model=False, **kwargs):
     last_error = None
-    candidates = [str(model_name or "").strip()] if strict_model else _anthropic_model_candidates(model_name)
+    candidates = (
+        [_anthropic_model_for_selection({"llm_model": model_name})]
+        if strict_model
+        else _anthropic_model_candidates(model_name)
+    )
     for candidate in candidates:
         if not candidate:
             continue
         try:
+            request_kwargs = dict(kwargs)
+            if not _anthropic_model_accepts_temperature(candidate):
+                request_kwargs.pop("temperature", None)
+                request_kwargs.pop("top_p", None)
+                request_kwargs.pop("top_k", None)
+            if str(candidate).strip().lower().startswith("claude-sonnet-5"):
+                # Preserve pre-migration latency, output budgets, and economics.
+                # Adaptive thinking can be benchmarked and enabled separately.
+                request_kwargs["thinking"] = {"type": "disabled"}
             if stream:
-                return client.messages.stream(model=candidate, **kwargs), candidate
-            return client.messages.create(model=candidate, **kwargs), candidate
+                return client.messages.stream(model=candidate, **request_kwargs), candidate
+            return client.messages.create(model=candidate, **request_kwargs), candidate
         except Exception as exc:
             last_error = exc
             continue
@@ -6969,10 +6999,11 @@ def _anthropic_model_accepts_temperature(model_name):
     """Return False for current Claude generations that reject temperature."""
     normalized = str(model_name or "").strip().lower()
     return not (
-        normalized.startswith("claude-opus-4-7")
+        normalized.startswith("claude-sonnet-5")
+        or normalized.startswith("claude-fable-5")
+        or normalized.startswith("claude-opus-4-7")
         or normalized.startswith("claude-opus-4-8")
         or normalized.startswith("claude-opus-5")
-        or normalized.startswith("claude-fable-5")
         or normalized.startswith("claude-mythos-5")
     )
 
@@ -7158,7 +7189,7 @@ def _generate_assistant_reply_anthropic(
             total_output_tokens += int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0)
 
         reply = _finalize_agent_reply(
-            _anthropic_text(response.content),
+            _anthropic_response_text(response),
             fallback_reply,
             tool_confirmations,
             user_id=user_id,
@@ -7182,7 +7213,7 @@ def _generate_assistant_reply_anthropic(
                 thread_id,
             )
             reply = _finalize_agent_reply(
-                _anthropic_text(getattr(response, "content", None)),
+                _anthropic_response_text(response),
                 fallback_reply,
                 tool_confirmations,
                 user_id=user_id,
@@ -7346,7 +7377,7 @@ def _stream_assistant_reply_events_anthropic(
             ]
             if not tool_blocks:
                 reply = _finalize_agent_reply(
-                    _anthropic_text(getattr(final_message, "content", None)) if not leak_detected else "",
+                    _anthropic_response_text(final_message) if not leak_detected else "",
                     "".join(streamed_reply_parts).strip() or fallback_reply,
                     tool_confirmations,
                     user_id=user_id,
@@ -7467,6 +7498,7 @@ def _stream_assistant_reply_events_anthropic(
                 "usage": {
                     "provider": "anthropic",
                     "model": resolved_model_name,
+                    "refused": str(getattr(final_message, "stop_reason", "") or "").lower() == "refusal",
                     "input_tokens": total_input_tokens,
                     "output_tokens": total_output_tokens,
                     "total_tokens": total_input_tokens + total_output_tokens,
@@ -7996,11 +8028,28 @@ def _generate_assistant_reply(
         view_context=view_context,
     )
     if attachments:
+        legacy_model = _anthropic_model_for_selection(model_selection)
+        legacy_routes = [{
+            "provider": "anthropic",
+            "model_key": "attachment_required",
+            "model": legacy_model,
+        }]
+        routes, decision = _resolve_governed_routes(
+            legacy_routes,
+            operation_type="conversation",
+            text=user_message,
+            **routing_signals,
+        )
+        selected_route = next(
+            (route for route in routes if route.get("provider") == "anthropic"),
+            legacy_routes[0],
+        )
+        routed_selection = {**(model_selection or {}), "llm_model": selected_route["model"]}
         result = _generate_assistant_reply_anthropic(
             user_message,
             chat_history,
             readiness,
-            model_selection,
+            routed_selection,
             context_budget=context_budget,
             session=session,
             user=user,
@@ -8012,17 +8061,6 @@ def _generate_assistant_reply(
             disable_mutations=disable_mutations,
         )
         reply, usage, actions, mutations, undo_snapshot = result
-        legacy_routes = [{
-            "provider": "anthropic",
-            "model_key": "attachment_required",
-            "model": usage.get("model") if isinstance(usage, dict) else model_selection.get("llm_model"),
-        }]
-        _routes, decision = _resolve_governed_routes(
-            legacy_routes,
-            operation_type="conversation",
-            text=user_message,
-            **routing_signals,
-        )
         usage = attach_governance(
             usage,
             decision=decision,
@@ -8196,22 +8234,28 @@ def _stream_assistant_reply_events(
         view_context=view_context,
     )
     if attachments:
+        legacy_model = _anthropic_model_for_selection(model_selection)
         legacy_routes = [{
             "provider": "anthropic",
             "model_key": "attachment_required",
-            "model": model_selection.get("llm_model"),
+            "model": legacy_model,
         }]
-        _routes, governance_decision = _resolve_governed_routes(
+        routes, governance_decision = _resolve_governed_routes(
             legacy_routes,
             operation_type="conversation",
             text=user_message,
             **routing_signals,
         )
+        selected_route = next(
+            (route for route in routes if route.get("provider") == "anthropic"),
+            legacy_routes[0],
+        )
+        routed_selection = {**(model_selection or {}), "llm_model": selected_route["model"]}
         for payload in _stream_assistant_reply_events_anthropic(
             user_message,
             chat_history,
             readiness,
-            model_selection,
+            routed_selection,
             session=session,
             user=user,
             user_id=user_id,
@@ -8960,13 +9004,7 @@ def _find_session_by_thread(thread_id, user_id=None):
 
 
 def _data_insights_model():
-    return (
-        current_app.config.get("AI_DATA_INSIGHTS_MODEL")
-        or os.getenv("AI_DATA_INSIGHTS_MODEL")
-        or current_app.config.get("AI_AGENT_ANTHROPIC_MODEL")
-        or os.getenv("AI_AGENT_ANTHROPIC_MODEL")
-        or "claude-3-7-sonnet-latest"
-    )
+    return _provider_model_id("claude_sonnet") or CANONICAL_ANTHROPIC_MODELS["claude_sonnet"]
 
 
 def _dataset_from_upload(uploaded_file):

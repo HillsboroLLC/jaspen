@@ -255,11 +255,8 @@ def _anthropic_digest_text(items, start_at, end_at):
     )
     try:
         model = (
-            current_app.config.get("FEEDBACK_DIGEST_ANTHROPIC_MODEL")
-            or current_app.config.get("AI_AGENT_ANTHROPIC_MODEL")
-            or os.getenv("FEEDBACK_DIGEST_ANTHROPIC_MODEL")
-            or os.getenv("AI_AGENT_ANTHROPIC_MODEL")
-            or "claude-sonnet-4-6"
+            (current_app.config.get("LLM_PROVIDER_MODELS") or {}).get("claude_sonnet")
+            or "claude-sonnet-5"
         )
         text, _usage, _settlement = execute_system_text_operation(
             messages=[{"role": "user", "content": prompt}],

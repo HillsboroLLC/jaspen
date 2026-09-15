@@ -159,11 +159,8 @@ def _llm_report_markdown(user, report_type, analysis):
         or os.getenv('CLAUDE_API_KEY')
     )
     model_name = (
-        current_app.config.get('AI_REPORT_MODEL')
-        or os.getenv('AI_REPORT_MODEL')
-        or current_app.config.get('AI_AGENT_ANTHROPIC_MODEL')
-        or os.getenv('AI_AGENT_ANTHROPIC_MODEL')
-        or 'claude-3-7-sonnet-latest'
+        (current_app.config.get('LLM_PROVIDER_MODELS') or {}).get('claude_sonnet')
+        or 'claude-sonnet-5'
     )
     if not api_key:
         return _fallback_markdown(report_type, analysis)

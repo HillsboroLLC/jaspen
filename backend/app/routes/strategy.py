@@ -2861,14 +2861,11 @@ def _generate_jaspen_scorecard(
     regardless of the user's chat tier. Haiku models (including 4.5) produce
     unreliable JSON at this output size.
     """
-    # Force a high-reliability, currently-valid model for structured scoring
-    # output, ignoring whatever Pluto/chat tier the user has selected.
-    # ANTHROPIC_MODEL takes precedence (set to claude-sonnet-4-5 in prod);
-    # AI_AGENT_ANTHROPIC_MODEL may point at a deprecated alias.
+    # Force the canonical Sonnet route for structured scoring output, ignoring
+    # historical customer model labels and their retired environment aliases.
     _scoring_model = (
-        os.getenv('ANTHROPIC_MODEL')
-        or current_app.config.get('ANTHROPIC_MODEL')
-        or 'claude-sonnet-4-6'
+        (current_app.config.get('LLM_PROVIDER_MODELS') or {}).get('claude_sonnet')
+        or 'claude-sonnet-5'
     )
     llm_model = _scoring_model
     if isinstance(model_selection, dict):

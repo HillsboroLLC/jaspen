@@ -10,18 +10,18 @@ from app.billing_config import DEFAULT_CREDIT_PACKS, DEFAULT_PLAN_CATALOG, provi
 
 CASES = [
     ('acknowledgement', 'conversation', 'Thanks', 'pluto', 'claude-haiku-4-5', 200, 40),
-    ('general_advice', 'conversation', 'Help me think through the options and trade-offs.', 'orbit', 'claude-sonnet-4-6', 1200, 350),
-    ('scorecard', 'scorecard_generation', 'Evaluate this migration before we commit.', 'orbit', 'claude-sonnet-4-6', 9000, 2600),
-    ('batch', 'score_batch', 'Compare five investment alternatives.', 'orbit', 'claude-sonnet-4-6', 16000, 5000),
-    ('scenario', 'scenario_generation', 'Model the downside and assumptions.', 'orbit', 'claude-sonnet-4-6', 5000, 1200),
-    ('report', 'report_generation', 'Create the executive decision report.', 'orbit', 'claude-sonnet-4-6', 6000, 1800),
-    ('connector', 'connector_idea_generation', 'Find grounded initiatives in this data.', 'orbit', 'claude-sonnet-4-6', 5000, 1400),
+    ('general_advice', 'conversation', 'Help me think through the options and trade-offs.', 'orbit', 'claude-sonnet-5', 1200, 350),
+    ('scorecard', 'scorecard_generation', 'Evaluate this migration before we commit.', 'orbit', 'claude-sonnet-5', 9000, 2600),
+    ('batch', 'score_batch', 'Compare five investment alternatives.', 'orbit', 'claude-sonnet-5', 16000, 5000),
+    ('scenario', 'scenario_generation', 'Model the downside and assumptions.', 'orbit', 'claude-sonnet-5', 5000, 1200),
+    ('report', 'report_generation', 'Create the executive decision report.', 'orbit', 'claude-sonnet-5', 6000, 1800),
+    ('connector', 'connector_idea_generation', 'Find grounded initiatives in this data.', 'orbit', 'claude-sonnet-5', 5000, 1400),
     (
         'exceptional',
         'scenario_generation',
         'Board acquisition investment with regulatory and security trade-offs, conflicting assumptions, uncertain downside, and irreversible commitment.',
         'orbit',
-        'claude-sonnet-4-6',
+        'claude-sonnet-5',
         18000,
         5000,
     ),
@@ -96,7 +96,7 @@ def main():
     # Forced failover example: a Sonnet attempt consumes estimated work before
     # a Gemini Pro response succeeds. The customer is charged only for Gemini;
     # the Claude attempt remains Jaspen cost.
-    failed_attempt_cost = Decimal(str(provider_cost_usd('claude-sonnet-4-6', 5000, 1000)))
+    failed_attempt_cost = Decimal(str(provider_cost_usd('claude-sonnet-5', 5000, 1000)))
     successful_cost = Decimal(str(provider_cost_usd('gemini-2.5-pro', 5000, 1000)))
     successful_public_credits = credits_for_provider_cost(successful_cost, internal=False)
     forced_failover_margin = _operation_margin(

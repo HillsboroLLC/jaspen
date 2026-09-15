@@ -30,6 +30,12 @@ ROUTE_STANDARD = "standard_judgment"
 ROUTE_STRUCTURED = "structured_consequential"
 ROUTE_EXCEPTIONAL = "exceptional_depth"
 
+CANONICAL_ANTHROPIC_MODELS = {
+    "claude_haiku": "claude-haiku-4-5",
+    "claude_sonnet": "claude-sonnet-5",
+    "claude_opus": "claude-opus-4-8",
+}
+
 _STRUCTURED_OPERATIONS = frozenset({
     "scorecard_generation",
     "score_next",
@@ -71,12 +77,31 @@ _ROUTINE_PHRASES = frozenset({
 # model or silently drift into a different capability tier downstream.
 _RETIRED_ANTHROPIC_MODEL_REPLACEMENTS = {
     "claude-3-5-haiku-20241022": "claude-haiku-4-5-20251001",
-    "claude-3-7-sonnet-latest": "claude-sonnet-4-6",
-    "claude-3-7-sonnet-20250219": "claude-sonnet-4-6",
-    "claude-sonnet-4-20250514": "claude-sonnet-4-6",
+    "claude-3-7-sonnet-latest": CANONICAL_ANTHROPIC_MODELS["claude_sonnet"],
+    "claude-3-7-sonnet-20250219": CANONICAL_ANTHROPIC_MODELS["claude_sonnet"],
+    "claude-3-5-sonnet-20241022": CANONICAL_ANTHROPIC_MODELS["claude_sonnet"],
+    "claude-sonnet-4-20250514": CANONICAL_ANTHROPIC_MODELS["claude_sonnet"],
+    "claude-sonnet-4-5-20250929": CANONICAL_ANTHROPIC_MODELS["claude_sonnet"],
+    "claude-sonnet-4-6": CANONICAL_ANTHROPIC_MODELS["claude_sonnet"],
     "claude-opus-4-20250514": "claude-opus-4-8",
     "claude-opus-4-1-20250805": "claude-opus-4-8",
 }
+
+
+def resolve_anthropic_model(model_name, *, model_key="claude_sonnet"):
+    """Resolve configured/legacy Anthropic IDs to one supported production ID.
+
+    The current model map is the source of truth. Known retired IDs are
+    accepted only as inbound compatibility values and are never sent to the
+    provider. Empty values fall back to the canonical model for the requested
+    routing tier.
+    """
+    fallback = CANONICAL_ANTHROPIC_MODELS.get(
+        str(model_key or "claude_sonnet").strip(),
+        CANONICAL_ANTHROPIC_MODELS["claude_sonnet"],
+    )
+    configured = str(model_name or fallback).strip()
+    return _RETIRED_ANTHROPIC_MODEL_REPLACEMENTS.get(configured, configured)
 
 
 def _mode(value, default="shadow"):
@@ -205,7 +230,9 @@ def classify_request(
 def _configured_model(models, key, fallback):
     value = (models or {}).get(key) if isinstance(models, dict) else None
     configured = str(value or fallback).strip()
-    return _RETIRED_ANTHROPIC_MODEL_REPLACEMENTS.get(configured, configured)
+    if str(key or "").startswith("claude_"):
+        return resolve_anthropic_model(configured, model_key=key)
+    return configured
 
 
 def routing_decision(
@@ -229,9 +256,9 @@ def routing_decision(
         validation_failures=validation_failures,
     )
     models = provider_models if isinstance(provider_models, dict) else {}
-    haiku = _configured_model(models, "claude_haiku", "claude-haiku-4-5")
-    sonnet = _configured_model(models, "claude_sonnet", "claude-sonnet-4-6")
-    opus = _configured_model(models, "claude_opus", "claude-opus-4-8")
+    haiku = _configured_model(models, "claude_haiku", CANONICAL_ANTHROPIC_MODELS["claude_haiku"])
+    sonnet = _configured_model(models, "claude_sonnet", CANONICAL_ANTHROPIC_MODELS["claude_sonnet"])
+    opus = _configured_model(models, "claude_opus", CANONICAL_ANTHROPIC_MODELS["claude_opus"])
     flash = _configured_model(models, "gemini_flash", "gemini-2.5-flash")
     pro = _configured_model(models, "gemini_pro", "gemini-2.5-pro")
 
