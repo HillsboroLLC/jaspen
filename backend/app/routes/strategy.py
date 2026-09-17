@@ -8490,6 +8490,7 @@ def _sanitize_workspace_chat(raw, max_messages=200):
 
 
 _EXECUTION_SENTINEL = '__execution__'
+_TRADEOFF_SENTINEL = '__tradeoff__'
 
 
 def _canonical_workspace_artifact_id(td, artifact_id):
@@ -9077,6 +9078,19 @@ def _find_scorecard_carrier(user_id, thread_id, scorecard_id):
     _key, session = _resolve_session_entry(sessions, thread_id)
     sid = str(scorecard_id or '').strip()
 
+    # The trade-off workspace is a thread-level view rather than a stored
+    # scorecard, so it needs a dedicated persistence cell on the session.
+    if sid == _TRADEOFF_SENTINEL:
+        if not isinstance(session, dict):
+            return (None, None, None, None)
+        view = session.get('tradeoff_view')
+        if not isinstance(view, dict):
+            view = {}
+        if not isinstance(view.get('result'), dict):
+            view['result'] = {}
+        session['tradeoff_view'] = view
+        return ('tradeoff', sessions, _key or thread_id, view)
+
     peer_row = Scorecard.query.filter_by(
         id=sid,
         user_id=str(user_id),
@@ -9309,6 +9323,11 @@ def scorecard_display_overrides(thread_id, scorecard_id):
         elif kind == 'baseline':
             # container is the sessions dict, key is the session_key
             container[key]['result'] = result_blob
+            container[key]['timestamp'] = datetime.utcnow().isoformat()
+            save_user_sessions(user_id, container)
+        elif kind == 'tradeoff':
+            # result_blob is the dict inside carrier and was mutated above.
+            container[key]['tradeoff_view'] = carrier
             container[key]['timestamp'] = datetime.utcnow().isoformat()
             save_user_sessions(user_id, container)
         elif kind == 'chat_artifact':
