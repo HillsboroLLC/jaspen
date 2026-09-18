@@ -34,6 +34,7 @@ import JaspenExecutionCanvas from './JaspenExecutionCanvas';
 import { userMessageWhitespaceStyle } from './messageFormatting';
 import { downloadRenderedWorkspacePdf } from './scorecardPdf';
 import EmailResultsButton from './EmailResultsButton';
+import { mergePersistedSectionLayout } from './scorecardSectionLayout';
 
 // Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
 // drag the corner to resize to ANY size (not 4 fixed widths). WidthProvider makes
@@ -108,34 +109,11 @@ const _SECTION_LAYOUT_FIELDS = ['x', 'y', 'w', 'h', 'cols', 'dimCols', 'dimOrder
 /** Merge a saved layout onto the defaults, keyed by section. Unknown/missing
  *  sections fall back to their default so an older saved layout still opens. */
 function _mergeSectionLayout(saved) {
-  const rows = Array.isArray(saved) ? saved : [];
-  const merged = DEFAULT_SCORECARD_SECTIONS.map((d) => {
-    const found = rows.find((p) => p && p.key === d.key);
-    return found ? { ...d, ...found } : { ...d, collapsed: false };
-  });
-  // Saved layouts predate today's section set: one written before Decision
-  // Confidence existed carries stale y positions for everything after it, and
-  // merging those against current defaults leaves a hole where the newer
-  // section was inserted. Re-flowing full-width sections in their saved order
-  // removes that class of gap outright, and keeps a user's ORDER, which is the
-  // part of a saved layout worth preserving.
-  // Generated sections are not in the defaults, so carry saved ones through or
-  // every merge would discard a user's arrangement of exactly the cards they
-  // arranged.
-  rows.forEach((row) => {
-    if (row && typeof row.key === 'string' && row.key.startsWith(CRITERION_SECTION_PREFIX)) {
-      if (!merged.some((m) => m.key === row.key)) merged.push({ ...row });
-    }
-  });
-  const ordered = merged.slice().sort((a, b) => (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0));
-  let cursor = 0;
-  ordered.forEach((section) => {
-    if ((section.w || 12) >= 12) {
-      section.y = cursor;
-      cursor += section.h || 5;
-    }
-  });
-  return merged;
+  return mergePersistedSectionLayout(
+    saved,
+    DEFAULT_SCORECARD_SECTIONS,
+    CRITERION_SECTION_PREFIX,
+  );
 }
 
 /** Strip the layout down to the persisted fields — labels and `locked` come

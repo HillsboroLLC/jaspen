@@ -38,7 +38,7 @@ function report() {
       activity: { available: true, counts_by_type: { evidence_requested: 2 } },
       narrative: { what_changed: 'The team compared more alternatives and retained the same owner.' },
       measure_catalog: {
-        A1: { label: 'Alternatives evaluated', class: 'state' },
+        A1: { label: 'Alternatives evaluated', class: 'state', kind: 'count' },
       },
       provenance_note: 'Compared from the sealed intake record.',
     },
@@ -56,14 +56,45 @@ it('leads with a flat decision story and keeps the before/challenge/after detail
 
   const audit = container.querySelector('.dir-audit');
   expect(audit).not.toHaveAttribute('open');
-  expect(screen.getByText('What you brought to the decision')).toBeInTheDocument();
-  expect(screen.getByText('1 · Before analysis')).toBeInTheDocument();
-  expect(screen.getByText("2 · Jaspen's challenge")).toBeInTheDocument();
+  expect(screen.getByText('What was provided before analysis')).toBeInTheDocument();
+  expect(screen.getByText('1 · Starting point')).toBeInTheDocument();
+  expect(screen.getByText('2 · Analysis')).toBeInTheDocument();
   expect(screen.getByText('requests for supporting evidence').closest('li'))
     .toHaveTextContent('2 requests for supporting evidence');
-  expect(screen.getByText('3 · After analysis')).toBeInTheDocument();
-  fireEvent.click(screen.getByText('See the before, challenge, and after'));
+  expect(screen.getByText('3 · Current record')).toBeInTheDocument();
+  fireEvent.click(screen.getByText('Review the verified change record'));
   expect(audit).toHaveAttribute('open');
   expect(screen.getByText('What did not move')).toBeInTheDocument();
-  expect(screen.getByText(/STRONG_PP 20/)).toBeInTheDocument();
+  expect(screen.getByText('1 alternative')).toBeInTheDocument();
+  expect(screen.getByText(/20 percentage points for a strong evidence change/)).toBeInTheDocument();
+});
+
+
+it('shows no pseudo-comparison or reconstruction date for a legacy scorecard', async () => {
+  const legacy = report();
+  legacy.report.baseline = {
+    ...legacy.report.baseline,
+    sealed_at: '2026-09-18T12:00:00Z',
+    capture: 'reconstructed',
+    capture_reason: 'no_baseline_before_analysis',
+    verified_comparison: false,
+  };
+  legacy.report.impact = {
+    ...legacy.report.impact,
+    verified_comparison: false,
+    verdict: 'unverified_baseline',
+    moved: [],
+    unmoved: [],
+  };
+  legacy.report.reconstruction_note = 'Legacy reconstruction details.';
+  jasApi.getDecisionImpactReport.mockResolvedValue(legacy);
+
+  const { container } = render(<DecisionImpactReport threadId="legacy-thread" />);
+
+  await waitFor(() => expect(screen.getByText('No verified starting point')).toBeInTheDocument());
+  expect(screen.getByText(/cannot honestly show what changed/)).toBeInTheDocument();
+  expect(screen.queryByText(/Sealed/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/9\/18\/2026/)).not.toBeInTheDocument();
+  expect(screen.queryByText('Review the verified change record')).not.toBeInTheDocument();
+  expect(container.querySelector('.dir-reconstructed')).not.toBeInTheDocument();
 });

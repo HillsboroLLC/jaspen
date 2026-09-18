@@ -32,9 +32,6 @@ const VERDICT_LABELS = {
   material: 'Material change',
   limited: 'Limited change',
   no_material_change: 'No material change',
-  // Not a degree of the other three. The comparison could not be made, which
-  // is a different statement from "it was made and found little".
-  unverified_baseline: 'Baseline unavailable for verified impact comparison',
 };
 
 // "No material change" renders in the same visual weight as the others. It is
@@ -43,7 +40,6 @@ const VERDICT_CLASS = {
   material: 'dir-verdict-material',
   limited: 'dir-verdict-limited',
   no_material_change: 'dir-verdict-none',
-  unverified_baseline: 'dir-verdict-unverified',
 };
 
 const GRADE_ORDER = ['high', 'medium', 'low', 'assumed'];
@@ -62,12 +58,50 @@ function activityLabel(type, count) {
   return Number(count) === 1 ? labels[0] : labels[1];
 }
 
-function formatValue(value) {
+function thresholdSummary(thresholds) {
+  const rules = [];
+  if (thresholds?.MATERIALITY_COUNT !== undefined) {
+    rules.push(`${thresholds.MATERIALITY_COUNT} additional documented item`);
+  }
+  if (thresholds?.MATERIALITY_PP !== undefined) {
+    rules.push(`${thresholds.MATERIALITY_PP} percentage-point evidence change`);
+  }
+  if (thresholds?.STRONG_PP !== undefined) {
+    rules.push(`${thresholds.STRONG_PP} percentage points for a strong evidence change`);
+  }
+  if (thresholds?.STRONG_ASSUMPTIONS_VALIDATED !== undefined) {
+    rules.push(`${thresholds.STRONG_ASSUMPTIONS_VALIDATED} validated assumptions for a strong validation signal`);
+  }
+  return rules.join(' · ');
+}
+
+const COUNT_UNITS = {
+  A1: ['alternative', 'alternatives'],
+  A2: ['criterion', 'criteria'],
+  A3: ['weighted criterion', 'weighted criteria'],
+  A4: ['risk', 'risks'],
+  A5: ['dependency', 'dependencies'],
+  A6: ['readiness category', 'readiness categories'],
+  B4: ['assumption', 'assumptions'],
+  B5: ['uncertainty', 'uncertainties'],
+  B6: ['exposure', 'exposures'],
+};
+
+function formatValue(value, measureId, catalog) {
   if (value === null || value === undefined) return '—';
   if (typeof value === 'object') {
     return GRADE_ORDER.filter((grade) => value[grade])
-      .map((grade) => `${value[grade]} ${grade}`)
+      .map((grade) => {
+        const count = Number(value[grade]);
+        return `${count} ${count === 1 ? 'criterion' : 'criteria'} rated ${grade}`;
+      })
       .join(' · ') || '—';
+  }
+  if (catalog?.[measureId]?.kind === 'pct') return `${value}%`;
+  if (catalog?.[measureId]?.kind === 'count' && COUNT_UNITS[measureId]) {
+    const count = Number(value);
+    const [singular, plural] = COUNT_UNITS[measureId];
+    return `${value} ${count === 1 ? singular : plural}`;
   }
   return String(value);
 }
@@ -91,7 +125,7 @@ function StateList({ measures, catalog }) {
       {rows.map(([id, entry]) => (
         <li key={id} className="dir-state-row">
           <span className="dir-state-label">{catalog?.[id]?.label || id}</span>
-          <span className="dir-state-value">{formatValue(entry.value)}</span>
+          <span className="dir-state-value">{formatValue(entry.value, id, catalog)}</span>
           {entry.basis === 'proposed_unconfirmed' && (
             <span className="dir-state-basis">not confirmed</span>
           )}
@@ -156,6 +190,30 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
   // it may be shown, but never under a heading that claims it preceded
   // anything (spec §7.4).
   const verified = impact.verified_comparison;
+
+  // Older decisions have no trustworthy snapshot of what the user supplied
+  // before analysis. A reconstructed row can support internal provenance, but
+  // showing its current-state counts beneath "before / challenge / after"
+  // makes those counts look like a comparison. Be explicit and stop there.
+  // In particular, do not show the reconstruction date as a "sealed" date: it
+  // records when the legacy row was created, not when the decision was made.
+  if (!verified) {
+    return (
+      <section className="dir dir-unavailable" ref={rootRef} aria-labelledby="dir-title">
+        <h3 className="dir-title" id="dir-title">No verified starting point</h3>
+        <p className="dir-narrative">
+          This scorecard was created before Jaspen preserved a snapshot of the
+          information provided before analysis. The current scorecard is still
+          available, but Jaspen cannot honestly show what changed during the
+          analysis without that starting point.
+        </p>
+        <p className="dir-block-note">
+          No before-and-after comparison or impact claim is shown for this scorecard.
+        </p>
+      </section>
+    );
+  }
+
   // Counts of work Jaspen did. Never movement, so never in the delta lists.
   const interventions = (impact.interventions || []).filter((entry) => entry.qualifying);
   const hasActivity = Object.keys(activity?.counts_by_type || {}).length > 0;
@@ -163,14 +221,7 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
   return (
     <section className="dir" ref={rootRef} aria-labelledby="dir-title">
       <header className="dir-head">
-        <h3 className="dir-title" id="dir-title">
-          {verified ? 'What changed about this decision' : 'Decision record — current state'}
-        </h3>
-        {/* The qualification comes FIRST for a reconstructed baseline, above
-            anything a reader could mistake for a before state. */}
-        {report.reconstruction_note && (
-          <p className="dir-reconstructed">{report.reconstruction_note}</p>
-        )}
+        <h3 className="dir-title" id="dir-title">What changed during analysis</h3>
       </header>
 
       <div className="dir-executive">
@@ -178,9 +229,7 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
           <p className={`dir-verdict ${VERDICT_CLASS[impact.verdict]}`}>
             {VERDICT_LABELS[impact.verdict]}
           </p>
-          <h4 className="dir-block-title">
-            {verified ? 'The decision story so far' : 'What the current record shows'}
-          </h4>
+          <h4 className="dir-block-title">The decision story so far</h4>
         </div>
         {impact.withheld_reason && (
           <p className="dir-block-note">{impact.withheld_reason}</p>
@@ -195,20 +244,21 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
       </div>
 
       <details className="dir-audit">
-        <summary>See the before, challenge, and after</summary>
+        <summary>Review the verified change record</summary>
         <div className="dir-audit-body">
 
-      {verified ? (
-        /* Read as a sequence, not a dashboard comparison. The report is a
+        {/* Read as a sequence, not a dashboard comparison. The report is a
            story about one decision moving through three states, and each step
-           should be understandable before the reader reaches the next. */
+           should be understandable before the reader reaches the next. */}
         <div className="dir-story">
           <section className="dir-panel">
-            <p className="dir-step-label">1 · Before analysis</p>
-            <h4 className="dir-block-title">What you brought to the decision</h4>
+            <p className="dir-step-label">1 · Starting point</p>
+            <h4 className="dir-block-title">What was provided before analysis</h4>
             <p className="dir-block-note">
-              Sealed {new Date(baseline.sealed_at).toLocaleDateString()}
-              {baseline.sealed_by === 'user_confirmed' ? ', confirmed by you' : ', recorded at analysis'}
+              Captured {new Date(baseline.sealed_at).toLocaleDateString()}
+              {baseline.sealed_by === 'user_confirmed'
+                ? ', confirmed by you before analysis'
+                : ' when analysis began'}
               {' · '}
               {baseline.submission_ref?.turn_count || 0} submitted{' '}
               {baseline.submission_ref?.turn_count === 1 ? 'message' : 'messages'}
@@ -220,8 +270,8 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
           </section>
 
           <section className="dir-panel">
-            <p className="dir-step-label">2 · Jaspen's challenge</p>
-            <h4 className="dir-block-title">What Jaspen challenged</h4>
+            <p className="dir-step-label">2 · Analysis</p>
+            <h4 className="dir-block-title">What Jaspen tested or surfaced</h4>
             {interventions.length === 0 && !activity?.available && (
               <p className="dir-block-note">
                 No challenge or validation activity is recorded for this decision
@@ -260,8 +310,8 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
           </section>
 
           <section className="dir-panel">
-            <p className="dir-step-label">3 · After analysis</p>
-            <h4 className="dir-block-title">What the record shows now</h4>
+            <p className="dir-step-label">3 · Current record</p>
+            <h4 className="dir-block-title">What the decision contains now</h4>
             {current.leading_option && (
               <p className="dir-block-note">Leading option: {current.leading_option}</p>
             )}
@@ -275,7 +325,8 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
                   <li key={movement.id} className="dir-delta dir-delta-stacked">
                     <span className="dir-delta-label">{movement.label}</span>
                     <span className="dir-delta-figures">
-                      {formatValue(movement.from)} → {formatValue(movement.to)}
+                      {formatValue(movement.from, movement.id, catalog)} →{' '}
+                      {formatValue(movement.to, movement.id, catalog)}
                     </span>
                   </li>
                 ))}
@@ -283,20 +334,9 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
             )}
           </section>
         </div>
-      ) : (
-        <div className="dir-block">
-          <h4 className="dir-block-title">
-            Recorded after analysis — not a record of what was submitted
-          </h4>
-          <p className="dir-block-note">
-            Sealed {new Date(baseline.sealed_at).toLocaleDateString()} · {baseline.capture_reason}
-          </p>
-          <StateList measures={current.measures} catalog={catalog} />
-        </div>
-      )}
 
       <div className="dir-block">
-        <h4 className="dir-block-title">Comparison details</h4>
+        <h4 className="dir-block-title">Verified comparison details</h4>
 
         {impact.unmoved.length > 0 && (
           <>
@@ -306,7 +346,8 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
                 <li key={entry.id} className="dir-delta dir-delta-flat">
                   <span className="dir-delta-label">{entry.label}</span>
                   <span className="dir-delta-figures">
-                    {formatValue(entry.from)} → {formatValue(entry.to)}
+                    {formatValue(entry.from, entry.id, catalog)} →{' '}
+                    {formatValue(entry.to, entry.id, catalog)}
                   </span>
                 </li>
               ))}
@@ -341,19 +382,11 @@ export default function DecisionImpactReport({ threadId, onMeasure }) {
           </>
         )}
 
-        {/* Thresholds are published so a reader can recompute the verdict.
-            There is no verdict to recompute when the comparison was withheld,
-            and printing them anyway would imply one was applied. */}
-        {verified && (
         <p className="dir-thresholds">
-          Thresholds applied:{' '}
-          {Object.entries(impact.thresholds)
-            .map(([name, value]) => `${name} ${value}`)
-            .join(' · ')}
+          Comparison rules: {thresholdSummary(impact.thresholds)}
           {' · '}
           {impact.methodology_version}
         </p>
-        )}
       </div>
       <p className="dir-provenance">{report.provenance_note}</p>
         </div>
