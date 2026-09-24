@@ -69,6 +69,37 @@ def test_short_turn_routes_to_haiku_then_gemini_flash():
     assert 'flash' in decision['routes'][1]['model']
 
 
+def test_standard_route_uses_current_ga_gemini_fallback():
+    decision = routing_decision(
+        operation_type='conversation',
+        text='Compare these options and explain the trade-offs.',
+    )
+    assert decision['routes'][1] == {
+        'provider': 'gemini',
+        'model_key': 'gemini_pro',
+        'model': 'gemini-3.8-flash',
+    }
+
+
+def test_provider_model_not_found_is_eligible_for_route_failover(app):
+    from app.routes import ai_agent
+
+    response = requests.Response()
+    response.status_code = 404
+    error = requests.exceptions.HTTPError(
+        'configured model is unavailable', response=response,
+    )
+
+    with app.app_context():
+        classification = ai_agent._classify_provider_error(error)
+
+    assert classification == {
+        'retryable': True,
+        'reason': 'model_unavailable',
+        'status_code': 404,
+    }
+
+
 def test_exceptional_route_is_reserved_for_multiple_depth_signals():
     route_class, reasons = classify_request(
         operation_type='scenario_generation',

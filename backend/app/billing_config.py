@@ -180,6 +180,8 @@ ANTHROPIC_PRICES_USD_PER_M = {
 # Google AI standard paid-tier prices ($ per million tokens). Gemini output
 # pricing includes thinking tokens.
 GEMINI_PRICES_USD_PER_M = {
+    # Introductory standard pricing through 2026-12-31.
+    'gemini-3.8-flash': {'input': 0.75, 'output': 3.75},
     'gemini-2.5-flash': {'input': 0.30, 'output': 2.50},
     'gemini-2.5-pro': {'input': 1.25, 'output': 10.00},
     '__default_gemini__': {'input': 1.25, 'output': 10.00},

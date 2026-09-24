@@ -260,7 +260,7 @@ def routing_decision(
     sonnet = _configured_model(models, "claude_sonnet", CANONICAL_ANTHROPIC_MODELS["claude_sonnet"])
     opus = _configured_model(models, "claude_opus", CANONICAL_ANTHROPIC_MODELS["claude_opus"])
     flash = _configured_model(models, "gemini_flash", "gemini-2.5-flash")
-    pro = _configured_model(models, "gemini_pro", "gemini-2.5-pro")
+    pro = _configured_model(models, "gemini_pro", "gemini-3.8-flash")
 
     if route_class == ROUTE_ROUTINE:
         routes = [

@@ -352,7 +352,9 @@ def create_app():
             )
         ),
         'gemini_flash': os.getenv('GEMINI_MODEL_FLASH') or 'gemini-2.5-flash',
-        'gemini_pro': os.getenv('GEMINI_MODEL_PRO') or 'gemini-2.5-pro',
+        # Gemini 2.5 Pro is unavailable to this production API project. Use
+        # Google's current GA complex-work fallback instead.
+        'gemini_pro': os.getenv('GEMINI_MODEL_PRO') or 'gemini-3.8-flash',
     }
     app.config['MODEL_TYPE_BACKING_IDS'] = {
         # Customer-facing labels are retained only for historical API/session

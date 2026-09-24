@@ -583,7 +583,11 @@ _INJECTION_PATTERNS = [
     re.compile(r"override\s+(safety|instructions|rules|guidelines)", re.I),
     re.compile(r"\[INST\]|\[/INST\]|<<\s*SYS\s*>>", re.I),
 ]
-_RETRYABLE_HTTP_STATUS_CODES = {408, 429, 500, 502, 503, 504, 529}
+# A provider-level 404 usually means that one configured model was retired or
+# is unavailable to the API project. It is not recoverable on that route, but
+# it is failover-eligible: the next configured model/provider can still serve
+# the customer's request.
+_RETRYABLE_HTTP_STATUS_CODES = {404, 408, 429, 500, 502, 503, 504, 529}
 _SYSTEM_PROMPT_LEAK_FRAGMENTS = [
     "system_instructions",
     "important rules",
@@ -2939,11 +2943,21 @@ def _classify_provider_error(exc):
         return {"retryable": True, "reason": "connection_error", "status_code": status_code}
 
     if isinstance(exc, requests.exceptions.HTTPError) and status_code in _RETRYABLE_HTTP_STATUS_CODES:
-        reason = "overloaded" if status_code == 529 else ("rate_limited" if status_code == 429 else "server_error")
+        reason = (
+            "model_unavailable" if status_code == 404
+            else "overloaded" if status_code == 529
+            else "rate_limited" if status_code == 429
+            else "server_error"
+        )
         return {"retryable": True, "reason": reason, "status_code": status_code}
 
     if status_code in _RETRYABLE_HTTP_STATUS_CODES:
-        reason = "overloaded" if status_code == 529 else ("rate_limited" if status_code == 429 else f"api_status_{status_code}")
+        reason = (
+            "model_unavailable" if status_code == 404
+            else "overloaded" if status_code == 529
+            else "rate_limited" if status_code == 429
+            else f"api_status_{status_code}"
+        )
         return {"retryable": True, "reason": reason, "status_code": status_code}
 
     if status_code in {401, 403} or "authenticationerror" in class_name:
