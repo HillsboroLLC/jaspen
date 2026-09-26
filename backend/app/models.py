@@ -292,6 +292,14 @@ class User(db.Model):
         db.Integer,
         nullable=True
     )
+    # Admin kill switch for public share links: blocks new links and stops
+    # existing ones from being served.
+    sharing_disabled = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default=db.false(),
+    )
 
     # Credits
     # None = unlimited, else track remaining
@@ -1245,6 +1253,61 @@ class DecisionAssetEmail(db.Model):
         db.UniqueConstraint('user_id', 'idempotency_key', name='uq_decision_asset_email_user_key'),
         db.Index('ix_decision_asset_email_user_created', 'user_id', 'created_at'),
     )
+
+
+class SharedArtifact(db.Model):
+    """A frozen, read-only public copy of a scorecard or trade-off comparison.
+
+    The snapshot is sanitized when the link is created; the public page only
+    ever sees ``snapshot_json``, never the live thread.
+    """
+
+    __tablename__ = 'shared_artifacts'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    token = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    owner_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    thread_id = db.Column(db.String(255), nullable=False, index=True)
+    artifact_type = db.Column(db.String(24), nullable=False)
+    source_id = db.Column(db.String(255), nullable=True)
+    title = db.Column(db.String(255), nullable=False, default='')
+    snapshot_json = db.Column(db.JSON, nullable=False)
+    include_evidence = db.Column(db.Boolean, nullable=False, default=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    expires_at = db.Column(db.DateTime, nullable=True)
+    revoked_at = db.Column(db.DateTime, nullable=True)
+    revoked_by = db.Column(db.String(16), nullable=True)
+    revoked_reason = db.Column(db.String(255), nullable=True)
+    view_count = db.Column(db.Integer, nullable=False, default=0)
+    last_viewed_at = db.Column(db.DateTime, nullable=True)
+
+    __table_args__ = (
+        db.Index('ix_shared_artifacts_owner_created', 'owner_user_id', 'created_at'),
+    )
+
+
+class SharedArtifactReport(db.Model):
+    """A viewer's abuse report against a public share link."""
+
+    __tablename__ = 'shared_artifact_reports'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    shared_artifact_id = db.Column(
+        db.String(36),
+        db.ForeignKey('shared_artifacts.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    reason = db.Column(db.String(40), nullable=False)
+    details = db.Column(db.Text, nullable=True)
+    reporter_fingerprint = db.Column(db.String(64), nullable=True)
+    status = db.Column(db.String(24), nullable=False, default='open', index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
 class StripeWebhookEvent(db.Model):
