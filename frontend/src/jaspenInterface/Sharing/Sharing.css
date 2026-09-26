@@ -1,0 +1,453 @@
+/* Public share page + Share dialog. Colors follow the workspace palette. */
+:root {
+  --share-navy: #161f3b;
+  --share-rose: #a0036c;
+  --share-slate: #5a6585;
+  --share-muted: #8a93ad;
+  --share-line: #e3e8f0;
+  --share-bg: #f8fafc;
+}
+
+/* ── Public page ─────────────────────────────────────────────────────────── */
+.shared-page {
+  min-height: 100vh;
+  background: var(--share-bg);
+  color: var(--share-navy);
+  font-family: 'Inter Tight', system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+.shared-page__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 24px clamp(16px, 4vw, 40px) 16px;
+  background: #fff;
+  border-bottom: 1px solid var(--share-line);
+}
+
+.shared-page__brand {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: var(--share-rose);
+  text-decoration: none;
+}
+
+.shared-page__kicker {
+  margin-top: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--share-muted);
+}
+
+.shared-page__title {
+  margin: 4px 0 0;
+  font-size: clamp(22px, 3vw, 30px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.shared-page__meta {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--share-slate);
+}
+
+.shared-page__body {
+  flex: 1;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 20px clamp(8px, 2vw, 24px);
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.shared-page__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px clamp(16px, 4vw, 40px);
+  border-top: 1px solid var(--share-line);
+  background: #fff;
+  font-size: 12.5px;
+  color: var(--share-muted);
+}
+
+.shared-page__made-with {
+  font-weight: 600;
+  color: var(--share-navy);
+  text-decoration: none;
+}
+
+.shared-page__report {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--share-muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.shared-page--empty {
+  align-items: center;
+  justify-content: center;
+}
+
+.shared-page__notice {
+  max-width: 420px;
+  padding: 32px 24px;
+  text-align: center;
+  font-size: 15px;
+  color: var(--share-slate);
+}
+
+.shared-portfolio-summary {
+  margin: 0 0 14px;
+  padding: 16px 20px;
+  background: #fff;
+  border: 1px solid var(--share-line);
+  border-radius: 12px;
+}
+
+.shared-portfolio-summary__kicker {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--share-muted);
+}
+
+.shared-portfolio-summary__structure {
+  margin-top: 6px;
+  font-weight: 600;
+}
+
+.shared-portfolio-summary p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+/* The trade-off layout was built for the wide workspace; let it scroll
+   sideways inside the page on small screens instead of widening the page. */
+.shared-artifact--tradeoff {
+  overflow-x: auto;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.share-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--share-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--share-navy);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.share-btn:hover { background: var(--share-bg); }
+.share-btn:disabled { opacity: 0.55; cursor: default; }
+
+.share-btn--primary {
+  background: var(--share-navy);
+  border-color: var(--share-navy);
+  color: #fff;
+}
+
+.share-btn--primary:hover { background: #26315a; }
+.share-btn--block { width: 100%; margin-top: 14px; }
+
+.share-icon-btn {
+  appearance: none;
+  border: none;
+  background: none;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--share-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.share-link-btn {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--share-navy);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.share-link-btn.is-danger { color: #b42318; }
+
+/* ── Modal ───────────────────────────────────────────────────────────────── */
+.share-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(22, 31, 59, 0.45);
+}
+
+.share-modal {
+  width: min(1180px, 100%);
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(22, 31, 59, 0.25);
+  color: var(--share-navy);
+  font-family: 'Inter Tight', system-ui, sans-serif;
+  overflow: hidden;
+}
+
+.share-modal--narrow { width: min(460px, 100%); }
+
+.share-modal__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--share-line);
+}
+
+.share-modal__head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.share-modal__body {
+  padding: 16px 20px 20px;
+  overflow: auto;
+  font-size: 14px;
+}
+
+.share-modal__body--split {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 20px;
+  min-height: 0;
+}
+
+.share-modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.share-options { min-width: 0; }
+
+.share-label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--share-slate);
+}
+
+.share-select,
+.share-url,
+.share-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--share-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--share-navy);
+  background: #fff;
+}
+
+.share-subhead {
+  margin: 18px 0 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--share-slate);
+}
+
+.share-includes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.share-include {
+  display: flex;
+  gap: 8px;
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+
+.share-include__mark { width: 14px; flex: none; font-weight: 700; }
+.share-include.is-in .share-include__mark { color: #067647; }
+.share-include.is-out { color: var(--share-muted); }
+
+.share-check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--share-line);
+  border-radius: 8px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.share-check small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--share-muted);
+}
+
+.share-check.is-disabled { opacity: 0.6; cursor: default; }
+.share-check input { margin-top: 3px; }
+
+.share-never {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--share-slate);
+}
+
+.share-never summary { cursor: pointer; }
+.share-never ul { margin: 6px 0 0; padding-left: 18px; }
+
+.share-muted { margin: 4px 0 0; font-size: 12.5px; color: var(--share-muted); }
+.share-warning { margin: 6px 0 0; font-size: 12.5px; color: #b54708; }
+.share-error { margin: 10px 0 0; font-size: 13px; color: #b42318; }
+.share-success { margin: 0 0 10px; }
+
+.share-link-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.share-existing { margin-top: 18px; }
+
+.share-existing__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--share-line);
+  font-size: 13px;
+}
+
+.share-existing__actions { display: flex; flex: none; }
+
+.share-preview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.share-preview__label {
+  margin-bottom: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--share-muted);
+}
+
+.share-preview__frame {
+  flex: 1;
+  min-height: 360px;
+  max-height: 62vh;
+  overflow: auto;
+  border: 1px solid var(--share-line);
+  border-radius: 10px;
+  background: var(--share-bg);
+  padding: 12px;
+}
+
+.share-preview__empty { padding: 24px; text-align: center; }
+
+.share-fieldset {
+  border: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.share-fieldset legend { margin-bottom: 8px; font-weight: 600; }
+
+.share-radio {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 14px;
+}
+
+.share-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 860px) {
+  .share-modal__body--split { grid-template-columns: 1fr; }
+  .share-preview__frame { max-height: 50vh; }
+}
+
+/* ── Print / "Download PDF" ──────────────────────────────────────────────── */
+@media print {
+  @page { margin: 12mm; }
+
+  .shared-page { min-height: 0; background: #fff; }
+  .shared-page__actions,
+  .shared-page__report,
+  .share-modal-backdrop { display: none !important; }
+  .shared-page__header,
+  .shared-page__footer { border: none; padding-left: 0; padding-right: 0; }
+  .shared-page__body { max-width: none; padding: 8px 0; }
+  .shared-artifact--tradeoff { overflow: visible; }
+  .shared-page .score-section-card,
+  .shared-page [data-workspace-pdf-break] {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .shared-page * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

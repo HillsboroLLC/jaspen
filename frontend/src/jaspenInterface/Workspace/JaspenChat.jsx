@@ -52,6 +52,7 @@ import {
   REVISION_CONFLICT_MESSAGE,
 } from './JaspenClient';
 import EmailResultsButton from './EmailResultsButton';
+import ShareButton from '../Sharing/ShareButton';
 import IntakeReceipt from './IntakeReceipt';
 
 // Tab components
@@ -2922,20 +2923,16 @@ const renderScorecardCard = (result, opts = {}) => {
       {/* Footer: action buttons */}
       <div className="jas-scorecard-footer">
         <div className="jas-scorecard-footer-actions">
-          {opts.onExportScorecardPdf && (
-            <button
-              type="button"
+          {/* Share (Copy link / Download PDF / Email) replaces the old
+              server-drawn PDF: the PDF now prints the shared-page design. */}
+          {opts.threadId && (result?.id || result?.analysis_id) && (
+            <ShareButton
+              threadId={opts.threadId}
+              artifactType="scorecard"
+              scorecardId={result?.id || result?.analysis_id}
+              title={title}
               className="jas-scorecard-action-ghost"
-              title="Download scorecard as PDF"
-              disabled={opts.exportBusyType === 'pdf' || opts.exportBusyType === 'pptx'}
-              onClick={() => opts.onExportScorecardPdf({
-                threadBundleId: opts.threadId,
-                scorecardId: result?.id || result?.analysis_id,
-                projectName: title,
-              })}
-            >
-              {opts.exportBusyType === 'pdf' ? 'Downloading PDF…' : '↓ Download PDF'}
-            </button>
+            />
           )}
           {opts.onExportScorecardPptx && (
             <button
@@ -3113,6 +3110,10 @@ const renderInlineTradeoffArtifact = (data, opts = {}) => {
             Session avg: <strong style={{ color: '#161f3b' }}>{avg}</strong>
           </div>
         </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        {opts.threadId && (
+          <ShareButton threadId={opts.threadId} artifactType="tradeoff" className="share-btn" />
+        )}
         {wsHref && (
           <button
             type="button"
@@ -3130,6 +3131,7 @@ const renderInlineTradeoffArtifact = (data, opts = {}) => {
             }}
           >Open in Workspace ↗</button>
         )}
+        </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         {top3.map((s, i) => {

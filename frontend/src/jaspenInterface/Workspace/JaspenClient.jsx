@@ -1495,6 +1495,18 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   appendMessages: async (threadId, messages = []) =>
     postJSON(endpoints.appendMessages(threadId), { messages }, { withSid: true }),
 
+  // Public share links. `payload` = { artifact_type, thread_id, scorecard_id?,
+  // include_evidence, expires_in_days? }. Preview builds the exact frozen copy
+  // without creating a link.
+  previewShare: async (payload = {}) =>
+    postJSON(`${API_BASE}/api/v1/shares/preview`, payload),
+  createShare: async (payload = {}) =>
+    postJSON(`${API_BASE}/api/v1/shares`, payload),
+  listShares: async (threadId) =>
+    getJSON(`${API_BASE}/api/v1/shares${threadId ? `?thread_id=${encodeURIComponent(threadId)}` : ''}`),
+  revokeShare: async (linkId) =>
+    del(`${API_BASE}/api/v1/shares/${encodeURIComponent(linkId)}`),
+
   // Connector settings
   getConnectorStatus: async () =>
     getJSON(endpoints.connectorStatus, { withSid: true }),

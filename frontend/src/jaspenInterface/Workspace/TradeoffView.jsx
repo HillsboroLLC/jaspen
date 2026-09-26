@@ -227,7 +227,7 @@ const DimBar = ({ v, alt }) => {
 // Excluded rows render at 50% opacity, drop the rank/pick badge, and the
 // eye icon flips to eye-slash. Clicking the eye toggles include/exclude
 // (persists via Jaspen.patchScorecardOverrides, fired by the parent).
-const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan, onOpenWorkspace, buildingPlan, colCount = 6, showDimLabels = false }) => {
+const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan, onOpenWorkspace, buildingPlan, colCount = 6, showDimLabels = false, readOnly = false }) => {
   const excluded = !d.included;
   return (
   <div
@@ -240,7 +240,7 @@ const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan
       padding: '13px 18px',
       borderBottom: `1px solid ${LINE}`,
       background: selected ? '#fdf3f9' : alt ? BG_ALT : '#fff',
-      position: 'relative', cursor: 'pointer',
+      position: 'relative', cursor: readOnly ? 'default' : 'pointer',
       opacity: excluded ? 0.5 : 1,
       transition: 'background 0.1s, opacity 0.18s',
     }}
@@ -273,6 +273,10 @@ const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan
       <span style={{ fontFamily:'JetBrains Mono,monospace', fontSize: d.pick ? 18 : 16, fontWeight:600, color:NAVY, letterSpacing:'-0.02em' }}>{d.score}</span>
     </div>
     <div style={{ textAlign:'right' }}><StatusLabel s={d.status} /></div>
+    {readOnly ? (
+      // Keep the three action columns so the row lines up with the header.
+      <><span /><span /><span /></>
+    ) : (<>
     <button
       type="button"
       onClick={(e) => {
@@ -339,6 +343,7 @@ const PortfolioRow = ({ d, alt, onSelect, selected, onToggleInclude, onBuildPlan
     >
       <FontAwesomeIcon icon={excluded ? faEyeSlash : faEye} style={{ fontSize: 13 }} />
     </button>
+    </>)}
   </div>
 );
 };
@@ -579,6 +584,7 @@ const TradeoffView = ({
   flow = false,        // true = grow to content + let the PARENT scroll (workspace
                        // full page); false = fixed-viewport card with inner scroll
                        // (inline chat). Avoids trapping rows in a short box.
+  readOnly = false,    // shared/public view: no decision panel or row actions
 }) => {
   const [selected, setSelected] = useState(null);
 
@@ -681,10 +687,12 @@ const TradeoffView = ({
             reader has first -- and because it must never look like an output
             of the scoring below it. Renders nothing until a Decision Record
             exists for the thread. */}
-        <RecordDecisionPanel
-          threadId={threadId}
-          alternatives={ideas.map((idea) => idea && idea.name).filter(Boolean)}
-        />
+        {!readOnly && (
+          <RecordDecisionPanel
+            threadId={threadId}
+            alternatives={ideas.map((idea) => idea && idea.name).filter(Boolean)}
+          />
+        )}
 
         {/* Hero + quadrant */}
         <div data-workspace-pdf-break style={{ display:'grid', gridTemplateColumns:'1fr 390px', gap:14 }}>
@@ -756,6 +764,7 @@ const TradeoffView = ({
                 onBuildPlan={onBuildExecutionPlan}
                 onOpenWorkspace={onOpenIdeaWorkspace}
                 buildingPlan={buildingPlanId != null}
+                readOnly={readOnly}
               />
             ))}
           </div>

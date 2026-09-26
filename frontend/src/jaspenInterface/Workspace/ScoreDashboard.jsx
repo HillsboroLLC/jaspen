@@ -83,6 +83,8 @@ export default function ScoreDashboard({
   drawerOpen = false,
   onEditField = null,
   editEnabled = false,
+  // Shared/public view: no toolbar, drag, resize, or edit affordances.
+  readOnly = false,
 }) {
   const getGridColumns = useCallback(() => {
     if (typeof window === 'undefined') return 6;
@@ -449,15 +451,13 @@ export default function ScoreDashboard({
       .sort((a, b) => a.order - b.order);
   }, [componentScores, smartExplanations]);
 
+  // categoryScoreRows is rebuilt every render (smartExplanations is not
+  // memoized), so this runs every render. Returning the SAME array when
+  // nothing changed is what stops it from re-rendering forever.
   useEffect(() => {
-    if (categoryScoreRows.length === 0) {
-      setExpandedCategoryKeys([]);
-      return;
-    }
-
     setExpandedCategoryKeys((current) => {
       const valid = current.filter((key) => categoryScoreRows.some((row) => row.key === key));
-      return valid;
+      return valid.length === current.length ? current : valid;
     });
   }, [categoryScoreRows]);
 
@@ -1337,8 +1337,8 @@ export default function ScoreDashboard({
   if (!selectedSnapshot && !analysisResult) return <div className="score-dashboard-container"><div className="empty-state"><p>Start a conversation to get your Jaspen Score - describe your idea, and the AI will build your scorecard.</p></div></div>;
 
   return (
-    <div className={`score-dashboard-container ${drawerOpen ? 'drawer-open' : ''}`} data-project-name={result.project_name || 'Strategy Scorecard'}>
-        <div className="score-toolbar">
+    <div className={`score-dashboard-container ${drawerOpen ? 'drawer-open' : ''} ${readOnly ? 'is-read-only' : ''}`} data-project-name={result.project_name || 'Strategy Scorecard'}>
+        {!readOnly && <div className="score-toolbar">
           <div className="score-toolbar-copy">
             <span className="score-toolbar-kicker">{selectedSnapshot ? 'Selected scorecard' : 'Current scorecard'}</span>
             <span className="score-toolbar-title">{selectedScorecardLabel}</span>
@@ -1411,13 +1411,13 @@ export default function ScoreDashboard({
             </div>
             )}
           </div>
-        </div>
+        </div>}
         <div className={`score-body-grid unified-layout ${drawerOpen ? 'drawer-open' : ''}`} ref={dashboardGridRef}>
           {orderedSectionCards.map((section) => (
             <section
               key={section.key}
               className={`score-section-card ${dragOverCardKey === section.key ? 'is-drag-target' : ''} ${dragOverCardKey === section.key ? `drag-placement-${dragOverPlacement}` : ''}`}
-              onDragOver={(event) => {
+              onDragOver={readOnly ? undefined : (event) => {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
                 const rect = event.currentTarget.getBoundingClientRect();
@@ -1429,7 +1429,7 @@ export default function ScoreDashboard({
                   setDragOverCardKey(section.key);
                 }
               }}
-              onDrop={(event) => {
+              onDrop={readOnly ? undefined : (event) => {
                 const sourceKey = draggedCardKey || event.dataTransfer.getData('text/plain');
                 moveCard(sourceKey, section.key, dragOverPlacement);
                 setDraggedCardKey(null);
@@ -1449,9 +1449,9 @@ export default function ScoreDashboard({
             >
               <div
                 className={`section-card-head ${draggedCardKey === section.key ? 'is-dragging' : ''}`}
-                draggable
-                title="Drag card to reorder"
-                aria-label={`Drag ${section.title} card to reorder`}
+                draggable={!readOnly}
+                title={readOnly ? undefined : 'Drag card to reorder'}
+                aria-label={readOnly ? undefined : `Drag ${section.title} card to reorder`}
                 onDragStart={(event) => {
                   setDraggedCardKey(section.key);
                   setDragOverCardKey(null);
@@ -1484,27 +1484,29 @@ export default function ScoreDashboard({
                       <FontAwesomeIcon icon={editingCardKey === section.key ? faTimes : faPencil} />
                     </button>
                   )}
-                  <div
-                    className={`card-drag-handle ${draggedCardKey === section.key ? 'is-dragging' : ''}`}
-                    aria-hidden="true"
-                  >
-                    <FontAwesomeIcon icon={faGripVertical} />
-                  </div>
+                  {!readOnly && (
+                    <div
+                      className={`card-drag-handle ${draggedCardKey === section.key ? 'is-dragging' : ''}`}
+                      aria-hidden="true"
+                    >
+                      <FontAwesomeIcon icon={faGripVertical} />
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="section-card-body">{section.render()}</div>
-              <div
+              {!readOnly && <div
                 className="card-resize-handle-x"
                 data-direction="x"
                 onPointerDown={(event) => handleResizeStart(event, section.key)}
                 title="Drag to resize width"
-              />
-              <div
+              />}
+              {!readOnly && <div
                 className="card-resize-handle"
                 data-direction="both"
                 onPointerDown={(event) => handleResizeStart(event, section.key)}
                 title="Drag to resize"
-              />
+              />}
             </section>
           ))}
         </div>

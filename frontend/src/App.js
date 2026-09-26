@@ -40,6 +40,7 @@ import OfflineBanner from './shared/components/OfflineBanner';
 
 // Lazily loaded internal routes for bundle splitting.
 const PricingResult = lazy(() => import('./jaspenInterface/PricingResult/PricingResult'));
+const SharedPage = lazy(() => import('./jaspenInterface/Sharing/SharedPage'));
 const Dashboard = lazy(() => import('./jaspenInterface/Jaspen Cleanup/Dashboard/Dashboard'));
 const Projects = lazy(() => import('./jaspenInterface/Projects/Projects'));
 const Scores = lazy(() => import('./jaspenInterface/Scores/Scores'));
@@ -118,6 +119,8 @@ function AnimatedAppRoutes({ withShell }) {
             <Route path="/review/articles/:slug" element={withShell(<ArticleReviewPage reviewMode />, { title: 'Article Editorial Review', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/auth/callback"  element={withShell(<AuthCallback />, { title: 'Authentication', showHeader: false, fullBleed: true, noPadding: true })} />
             <Route path="/api/v1/connectors/salesforce/oauth/callback" element={<SalesforceOAuthBridge />} />
+            {/* Public, read-only share links. No app shell, no login. */}
+            <Route path="/s/:token" element={<SharedPage />} />
             <Route path="/reset-password" element={withShell(<ResetPasswordPage />, { title: 'Reset password', showHeader: false, fullBleed: true, noPadding: true })} />
 
             {/* Public business utilities (tools) */}

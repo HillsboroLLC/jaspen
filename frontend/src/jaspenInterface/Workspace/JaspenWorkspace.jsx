@@ -34,6 +34,7 @@ import JaspenExecutionCanvas from './JaspenExecutionCanvas';
 import { userMessageWhitespaceStyle } from './messageFormatting';
 import { downloadRenderedWorkspacePdf } from './scorecardPdf';
 import EmailResultsButton from './EmailResultsButton';
+import ShareButton from '../Sharing/ShareButton';
 
 // Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
 // drag the corner to resize to ANY size (not 4 fixed widths). WidthProvider makes
@@ -2066,6 +2067,16 @@ export default function JaspenWorkspace() {
                     : ['scorecard_detail']}
               />
             )}
+            {(isScorecard || isTradeoff) && (
+              // Share is the primary way to send a scorecard or trade-off out:
+              // Copy link, Download PDF, and Email all use the same frozen copy.
+              <ShareButton
+                threadId={threadId}
+                artifactType={isTradeoff ? 'tradeoff' : 'scorecard'}
+                scorecardId={isScorecard ? scorecardId : null}
+                className="share-btn share-btn--primary"
+              />
+            )}
             {(isScorecard || isTradeoff || isExecution) && (() => {
               // One "Export" menu everywhere: Email (opens the same dialog the
               // old standalone "Email this to me" button used, and now also
@@ -2082,7 +2093,7 @@ export default function JaspenWorkspace() {
                 ]
                 : isTradeoff
                   ? [
-                    { label: 'PDF', act: () => { void downloadExport('pdf', 'pdf', 'PDF'); } },
+                    // PDF now comes from Share, which prints the shared-page design.
                     { label: 'Email', act: () => { emailResultsRef.current?.open(); } },
                   ]
                   : [
