@@ -450,4 +450,22 @@
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+
+  /* ScoreDashboard.css has a chat-era print pipeline that hides everything
+     except the scorecard and adds its own title and footer. On the shared
+     page the header and "Made with Jaspen" footer are part of the document,
+     so undo that here (same :has() specificity plus the page class). */
+  body:has(.shared-page) .shared-page,
+  body:has(.shared-page) .shared-page * {
+    visibility: visible !important;
+  }
+  body:has(.shared-page) .shared-page .shared-page__actions,
+  body:has(.shared-page) .shared-page .shared-page__report {
+    display: none !important;
+  }
+  body:has(.shared-page)::after,
+  .shared-page .score-dashboard-container::before {
+    content: none !important;
+    display: none !important;
+  }
 }

@@ -549,7 +549,7 @@ const TradeoffSidebar = ({ ideas, portfolioAnalysis, onAsk, asking }) => {
 // ── Table header ──────────────────────────────────────────────────────────────
 // Last two columns host the build-execution-plan and include/exclude (eye)
 // controls.
-const TableHeader = ({ dimDefs = DIM_KEYS }) => (
+const TableHeader = ({ dimDefs = DIM_KEYS, readOnly = false }) => (
   <div style={{
     display:'grid',
     gridTemplateColumns: tableGrid(dimDefs.length),
@@ -564,9 +564,11 @@ const TableHeader = ({ dimDefs = DIM_KEYS }) => (
     {dimDefs.map(d => <span key={d.key} style={{ textAlign:'center' }} title={d.label}>{d.short}</span>)}
     <span style={{ textAlign:'right' }}>Score</span>
     <span style={{ textAlign:'right' }}>Status</span>
-    <span style={{ textAlign:'center' }} title="Open this idea in its workspace">Open</span>
-    <span style={{ textAlign:'center' }} title="Build an execution plan from this idea">Plan</span>
-    <span style={{ textAlign:'center' }} title="Include / exclude from trade-off">In</span>
+    {readOnly ? <><span /><span /><span /></> : <>
+      <span style={{ textAlign:'center' }} title="Open this idea in its workspace">Open</span>
+      <span style={{ textAlign:'center' }} title="Build an execution plan from this idea">Plan</span>
+      <span style={{ textAlign:'center' }} title="Include / exclude from trade-off">In</span>
+    </>}
   </div>
 );
 
@@ -749,7 +751,7 @@ const TradeoffView = ({
             (workspace canvas) scrolls the whole page; otherwise it's a fixed box
             with its own inner scroll (inline chat). */}
         <div style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, overflow:'hidden', display:'flex', flexDirection:'column', ...(flow ? {} : { flex:1, minHeight:0 }) }}>
-          <TableHeader dimDefs={dimDefs} />
+          <TableHeader dimDefs={dimDefs} readOnly={readOnly} />
           <div style={flow ? undefined : { overflow:'auto', flex:1 }}>
             {ideas.map((d, i) => (
               <PortfolioRow
