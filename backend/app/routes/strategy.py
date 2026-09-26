@@ -3237,6 +3237,50 @@ def _thread_user_corpus(user_id, thread_id, *, max_chars=20000):
         return ""
 
 
+def _portfolio_summary_from_cards(ideas, cards, *, rubric=None):
+    """Deterministic cross-option summary for options that were scored separately."""
+    scored = []
+    for idea, card in zip(ideas or [], cards or []):
+        if not isinstance(card, dict):
+            continue
+        name = str((idea or {}).get('name') or '').strip()
+        if not name:
+            continue
+        scored.append((name, float(card.get('jaspen_score') or 0.0), str(card.get('tier') or '')))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: item[1], reverse=True)
+
+    tier_order = ['Strategic Necessity', 'Leading Candidate', 'Secondary Candidate', 'Monitor / Niche']
+    counts = {tier: sum(1 for _n, _s, t in scored if t == tier) for tier in tier_order}
+    structure = ', '.join(f'{count} {tier}' for tier, count in counts.items() if count)
+
+    top_criterion = None
+    criteria = rubric.get('criteria') if isinstance(rubric, dict) else None
+    if isinstance(criteria, list):
+        weighted = [c for c in criteria if isinstance(c, dict) and (c.get('label') or c.get('key'))]
+        if weighted:
+            def _weight(c):
+                try:
+                    return float(c.get('weight') or 0.0)
+                except (TypeError, ValueError):
+                    return 0.0
+            top = max(weighted, key=_weight)
+            top_criterion = str(top.get('label') or top.get('key')).strip()
+
+    def _fmt(item):
+        return f'{item[0]} ({round(item[1])})'
+
+    sentences = [f'Commit first to {_fmt(scored[0])}, the highest weighted score.']
+    if len(scored) > 1:
+        sentences.append(f'Develop next: {", ".join(_fmt(item) for item in scored[1:3])}.')
+    if len(scored) > 3:
+        sentences.append(f'Monitor: {", ".join(_fmt(item) for item in scored[3:])}.')
+    if top_criterion:
+        sentences.append(f'Rankings follow the weighted rubric, led by {top_criterion}.')
+    return {'structure': structure, 'recommended_sequence': ' '.join(sentences)}
+
+
 def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective='balanced', evidence_corpus=None,
                                model_selection=None, llm_model=None, return_usage=False):
     """Score MANY ideas in a SINGLE model pass — the 'build the Excel' approach.
@@ -3254,32 +3298,40 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
     if not ideas:
         return ([], None, None) if return_usage else ([], None)
 
-    # CHUNKING: scoring every idea in ONE pass overflows the model's output budget
-    # once there are many ideas (10+ truncates the JSON at max_tokens=8000 → parse
-    # fails → the whole batch errors). Split large sets into sub-batches scored against
-    # the SAME rubric, then merge. Each chunk re-enters this function at a safe size
-    # (<= BATCH_CHUNK_SIZE) and runs the single-pass body below. A failed chunk is
-    # skipped so the ideas that DID score still render (partial success > total fail).
-    BATCH_CHUNK_SIZE = 5
+    # PARALLEL CHUNKING: one model pass that writes every option's full dossier is
+    # too slow — five options already exceed the 60s provider timeout, and gunicorn
+    # (75s) kills the request mid-call, so no cards are produced at all. Score each
+    # option in its OWN call against the SAME rubric and run those calls
+    # concurrently: the batch then takes about as long as one option. A failed
+    # option is padded with None so the ones that DID score still render.
+    BATCH_CHUNK_SIZE = 1
+    BATCH_MAX_PARALLEL = 5
     if len(ideas) > BATCH_CHUNK_SIZE:
-        all_results = []
-        chunk_summaries = []
-        chunk_usages = []
-        for start in range(0, len(ideas), BATCH_CHUNK_SIZE):
-            chunk = ideas[start:start + BATCH_CHUNK_SIZE]
-            try:
-                c_results, c_summary, c_usage = _generate_batch_scorecards(
+        app = current_app._get_current_object()
+        chunks = [ideas[start:start + BATCH_CHUNK_SIZE] for start in range(0, len(ideas), BATCH_CHUNK_SIZE)]
+
+        def _score_chunk(chunk):
+            with app.app_context():
+                return _generate_batch_scorecards(
                     client, chunk, rubric=rubric, strategy_objective=strategy_objective,
                     model_selection=model_selection, llm_model=llm_model, return_usage=True,
-                    # Carried into every chunk: a long batch would otherwise
-                    # lose evidence for every option past the first chunk.
+                    # Carried into every chunk: otherwise every option past the
+                    # first would lose the user's words as evidence.
                     evidence_corpus=evidence_corpus,
                 )
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(BATCH_MAX_PARALLEL, len(chunks))) as pool:
+            futures = [pool.submit(_score_chunk, chunk) for chunk in chunks]
+
+        all_results = []
+        chunk_usages = []
+        for index, (chunk, future) in enumerate(zip(chunks, futures)):
+            try:
+                c_results, _c_summary, c_usage = future.result()
             except Exception:
-                current_app.logger.exception(
-                    '[_generate_batch_scorecards] chunk %s-%s failed', start, start + len(chunk)
-                )
-                c_results, c_summary, c_usage = [], None, None
+                current_app.logger.exception('[_generate_batch_scorecards] option %s failed', index)
+                c_results, c_usage = [], None
             # Keep positional alignment with `ideas`: the caller zips ideas↔cards and
             # adds each idea's name by position, so a failed/short chunk MUST be padded
             # with None (the caller skips non-dict payloads) or names would shift.
@@ -3287,8 +3339,6 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
             if len(c_results) < len(chunk):
                 c_results = c_results + [None] * (len(chunk) - len(c_results))
             all_results.extend(c_results[:len(chunk)])
-            if c_summary:
-                chunk_summaries.append(c_summary)
             if isinstance(c_usage, dict):
                 chunk_usages.append(c_usage)
         # Re-derive tiers from the GLOBAL absolute score bands so per-chunk relativity
@@ -3304,9 +3354,9 @@ def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective
                 else 'Secondary Candidate' if js >= 68
                 else 'Monitor / Niche'
             )
-        # Portfolio summary is per-chunk; surface the first as a stopgap (a true
-        # all-ideas summary would need a second synthesis pass — deferred).
-        merged_summary = chunk_summaries[0] if chunk_summaries else None
+        # Each call only saw one option, so the cross-option summary is built
+        # here from the finished cards instead of from any single call.
+        merged_summary = _portfolio_summary_from_cards(ideas, all_results, rubric=rubric)
         merged_usage = None
         if chunk_usages:
             merged_usage = {
