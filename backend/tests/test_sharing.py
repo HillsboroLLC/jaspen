@@ -240,3 +240,9 @@ def test_unknown_token_looks_the_same_as_a_revoked_one(client):
     response = client.get('/api/v1/shares/public/not-a-real-token')
     assert response.status_code == 404
     assert response.get_json()['code'] == 'share_unavailable'
+
+
+def test_admin_can_read_an_accounts_sharing_setting(client, paid_user, auth_headers, admin_auth_headers):
+    url = f'/api/v1/shares/admin/users/{paid_user.id}'
+    assert client.get(url, headers=auth_headers).status_code == 403
+    assert client.get(url, headers=admin_auth_headers).get_json()['sharing_disabled'] is False

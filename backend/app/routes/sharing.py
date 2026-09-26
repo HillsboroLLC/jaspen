@@ -428,6 +428,22 @@ def admin_revoke_link(link_id):
     return jsonify({'link': _link_json(link)})
 
 
+@sharing_bp.route('/admin/users/<user_id>', methods=['GET'])
+@jwt_required()
+def admin_get_user_sharing(user_id):
+    _admin, error = _require_admin()
+    if error:
+        return error
+    target = User.query.filter_by(id=user_id).first()
+    if not target:
+        return jsonify({'error': 'User not found.'}), 404
+    return jsonify({
+        'user_id': target.id,
+        'sharing_disabled': bool(target.sharing_disabled),
+        'block_reason': sharing_block_reason(target),
+    })
+
+
 @sharing_bp.route('/admin/users/<user_id>', methods=['PATCH'])
 @jwt_required()
 def admin_set_user_sharing(user_id):

@@ -5,6 +5,7 @@ import { buildAuthHeaders } from '../../shared/auth/http';
 import ConfirmDialog from '../../shared/components/ConfirmDialog';
 import FieldError from '../../shared/components/FieldError';
 import Feedback from './Feedback';
+import AdminSharing from './AdminSharing';
 import './JaspenAdmin.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
@@ -1176,6 +1177,8 @@ export default function JaspenAdmin() {
           </div>
         </section>
 
+        <AdminSharing />
+
         <section className="jas-admin-subsection">
           <div className="jas-admin-section-head">
             <div>
@@ -1512,6 +1515,8 @@ export default function JaspenAdmin() {
                     </div>
                   )}
                 </section>
+
+                <AdminSharing userId={draft.id} />
 
                 <section className="jas-admin-subsection">
                   <h3>Recovery Tools</h3>
