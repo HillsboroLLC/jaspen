@@ -21,6 +21,7 @@ from app.sharing import (
     REPORT_REASONS,
     active_link_limit,
     build_snapshot,
+    config_value,
     content_summary,
     daily_create_limit,
     expiry_from_days,
@@ -54,11 +55,11 @@ def _client_ip():
 
 
 def _view_rate_limit():
-    return str(current_app.config.get('SHARE_PUBLIC_VIEW_RATE_LIMIT') or '60 per minute')
+    return str(config_value('SHARE_PUBLIC_VIEW_RATE_LIMIT', '60 per minute'))
 
 
 def _report_rate_limit():
-    return str(current_app.config.get('SHARE_REPORT_RATE_LIMIT') or '5 per hour')
+    return str(config_value('SHARE_REPORT_RATE_LIMIT', '5 per hour'))
 
 
 def _token_key():

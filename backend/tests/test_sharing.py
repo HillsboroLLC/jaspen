@@ -246,3 +246,10 @@ def test_admin_can_read_an_accounts_sharing_setting(client, paid_user, auth_head
     url = f'/api/v1/shares/admin/users/{paid_user.id}'
     assert client.get(url, headers=auth_headers).status_code == 403
     assert client.get(url, headers=admin_auth_headers).get_json()['sharing_disabled'] is False
+
+
+def test_limits_can_come_from_the_server_environment(app, monkeypatch):
+    from app.sharing import daily_create_limit
+    monkeypatch.setenv('SHARE_LINK_DAILY_CREATE_LIMIT', '7')
+    with app.app_context():
+        assert daily_create_limit() == 7

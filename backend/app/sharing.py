@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import secrets
 from datetime import datetime, timedelta
@@ -65,9 +66,17 @@ _PRIVATE_KEY = re.compile(
 )
 
 
+def config_value(key, default=None):
+    """App config first (tests), then the server environment."""
+    value = current_app.config.get(key)
+    if value in (None, ''):
+        value = os.getenv(key)
+    return default if value in (None, '') else value
+
+
 def _config_int(key, default):
     try:
-        return max(0, int(current_app.config.get(key) or default))
+        return max(0, int(config_value(key, default)))
     except (TypeError, ValueError):
         return default
 
