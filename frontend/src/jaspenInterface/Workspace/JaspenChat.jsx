@@ -6813,6 +6813,18 @@ const displayMessages = useMemo(() => {
         anchor = findAnchorIndex(/\b(execution plan|wbs|work breakdown|build execution)\b/i);
       }
     }
+    // The trade-off compares the scorecards, so it always follows the last one.
+    // Its timestamp is the newest card's creation time, which is a few ms
+    // earlier than that card's own chat entry, so time order alone would slot
+    // it just before the final card.
+    if (artifactType === 'tradeoff') {
+      for (let i = composed.length - 1; i > anchor; i -= 1) {
+        if (String(composed[i]?.artifact?.type || '').trim() === 'scorecard') {
+          anchor = i;
+          break;
+        }
+      }
+    }
     if (anchor >= 0) {
       composed.splice(anchor + 1, 0, artifactEntry);
     } else {
