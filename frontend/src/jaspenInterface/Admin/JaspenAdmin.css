@@ -878,3 +878,29 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Share link tables (AdminSharing) */
+.jas-admin-table-wrap {
+  overflow-x: auto;
+  margin-top: 10px;
+}
+
+.jas-admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.jas-admin-table th,
+.jas-admin-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e6eaf2;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.jas-admin-table th {
+  font-weight: 600;
+  color: #5a6585;
+}

@@ -1514,3 +1514,8 @@
     flex-wrap: wrap;
   }
 }
+
+/* Shared/public view: nothing on the card is draggable. */
+.score-dashboard-container.is-read-only .section-card-head {
+  cursor: default;
+}
