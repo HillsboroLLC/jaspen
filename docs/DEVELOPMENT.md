@@ -28,7 +28,7 @@ Written for humans and AI coding agents alike. Last verified: 2026-07-05.
 
 ## 2. First-time setup (one command)
 
-Prereqs: Node 20+, Homebrew Python 3.12 (`brew install python@3.12`).
+Prereqs: Node 24.3.0 (`frontend/.nvmrc`), npm 11.4.2 (`frontend/package.json`), and Homebrew Python 3.12. Use `nvm install` / `nvm use` from `frontend/` if you use nvm. CI uses the same Node/npm versions.
 
 ```bash
 ./scripts/dev_setup.sh
@@ -38,7 +38,7 @@ This idempotently:
 1. Creates `backend/venv` (Python 3.12) and installs `requirements.txt`.
 2. Creates `backend/.env` from `.env.example` with freshly generated secrets (skipped if `.env` exists).
 3. Creates the local SQLite DB (`backend/instance/jaspen_dev.db`) via `db.create_all()` and seeds two users.
-4. Runs `npm install` in `frontend/` if needed.
+4. Runs `npm ci` in `frontend/` if dependencies are absent.
 
 ## 3. Running dev
 
@@ -90,30 +90,41 @@ Production values live **only** in the DigitalOcean server's `.env`
 
 ## 5. Database & migrations
 
-- Dev DB: `backend/instance/jaspen_dev.db` (SQLite, gitignored). Delete it and
-  re-run `python scripts/init_dev_db.py` for a clean slate — it's disposable.
-- **Alembic history: single head** (`a6c9e2d4f7b1`), verified 2026-09-09 with
-  `flask db heads`. `flask db upgrade` is unambiguous, and the production
-  deploy runs it (`.github/workflows/deploy.yml`). The multiple-head tangle
-  described in `docs/NEXT_STEPS.md` C13 has since been resolved. Keep it that
-  way: after generating a migration, run `flask db heads` and confirm it still
-  reports one.
-- Dev still bootstraps with `db.create_all()` (creates missing tables only,
-  never alters/drops). That is independent of head count —
-  `scripts/init_dev_db.py` has not changed, and its inline comment still cites
-  the old multi-head reason.
-- **Adding a model/column in dev:** add the model, then either delete + rebuild
-  the dev DB, or write a proper Alembic migration and test it on SQLite first.
-- `scripts/init_dev_db.py` refuses to run against anything that isn't SQLite.
-  A localhost Postgres needs an explicit `--allow-non-sqlite` flag, and remote
-  hosts are always refused. Caution: an SSH tunnel to production also looks
-  like localhost — check what the port points at before using the flag.
+The supported SQLite bootstrap is `scripts/init_dev_db.py`, which creates
+schema from current models and seeds local users. Historical migrations contain
+constraint operations that cannot be replayed from zero on SQLite.
+
+For a **new, separate** development database with verified migration tracking:
 
 ```bash
 cd backend
-./venv/bin/python scripts/init_dev_db.py     # create/refresh schema + seed users
-./venv/bin/flask --app wsgi:app db heads     # confirm the history is still single-headed
+DATABASE_URL=sqlite:///jaspen_baseline.db ./venv/bin/python scripts/init_dev_db.py --fresh-baseline
 ```
+
+Persist that DATABASE_URL in your local, ignored `backend/.env` before starting
+the server. The option exclusively creates a new SQLite file, checks its schema
+against current model metadata, then records the single current Alembic head.
+It refuses existing databases, including empty files; it never adopts an
+unversioned database. If initialization fails, inspect the new file and choose
+a different filename for another attempt rather than stamping a partial schema.
+This is a fresh-schema baseline, not a rehearsal of PostgreSQL migration history.
+
+For existing databases, ordinary initialization retains its previous behavior:
+create missing tables and seed missing dev users, without altering existing
+columns or stamping migration history. Preserve or back up existing data before
+any schema change. Do not blindly stamp or replay migrations against an
+unversioned database. Future SQLite migrations may need Alembic batch operations.
+
+The migration graph must retain a single head; inspect it dynamically instead
+of relying on an old revision listed in documentation:
+
+```bash
+./venv/bin/flask --app wsgi:app db heads
+./venv/bin/flask --app wsgi:app db current
+```
+
+The production owner-credential migration helper is for production deployment,
+not local SQLite setup. Never copy its credential into a local environment.
 
 ## 6. Tests & builds
 
@@ -123,7 +134,7 @@ cd frontend && CI=true npm test -- --watchAll=false  # frontend tests
 cd frontend && npm run build                         # production build check
 ```
 
-CI (GitHub Actions `ci.yml`) runs the same on Python 3.12 / Node 20 for every
+CI (GitHub Actions `ci.yml`) runs the same on Python 3.12 / Node 24.3.0 and npm 11.4.2 for every
 push and PR.
 
 ## 7. Testing specific areas safely in dev
@@ -152,8 +163,8 @@ push and PR.
 | CORS errors in browser console | Frontend origin missing from `CORS_ORIGINS`, or `ENABLE_FLASK_CORS` not `true` |
 | Frontend calls `https://api.jaspen.ai` in dev | `.env.development` missing/overridden — check `frontend/.env.development.local`; restart `npm start` after env changes (CRA reads env at boot) |
 | 401s with `CSRF` messages on POST | Cookie `csrf_access_token` missing; log out/in. Frontend sends `X-CSRF-TOKEN` automatically (`src/shared/auth/http.js`) |
-| `flask db upgrade` errors about multiple heads | Known tangle (NEXT_STEPS C13). Use `scripts/init_dev_db.py` for dev |
-| `no such table: ...` | Model added after DB was created — delete `backend/instance/jaspen_dev.db`, re-run `init_dev_db.py` |
+| SQLite migration fails on ALTER constraints | Historical migrations target PostgreSQL. Use the guarded fresh-baseline initializer for a new SQLite DB; preserve existing databases |
+| `no such table: ...` | Confirm the selected database and schema. Preserve it before reconciling schema or choosing a new baseline file |
 | AI scoring returns 500 `ANTHROPIC_API_KEY not set` | Expected without a key; set one in `backend/.env` to exercise AI paths |
 | Port already in use | Backend: `PORT=8001 ./scripts/dev_backend.sh` and update `frontend/.env.development.local`; frontend: `PORT=3001 npm start` (already in `CORS_ORIGINS`) |
 
@@ -168,8 +179,8 @@ push and PR.
 3. **Secrets:** `backend/.env` and `frontend/.env*.local` are gitignored — keep
    it that way. Before committing, check `git status` for env files and check
    diffs for keys (`sk_live_`, `sk_test_`, API keys).
-4. **Database:** dev DB is disposable SQLite. The Alembic history is
-   single-headed (`b7e2d91a4c03`) — a schema change needs a proper migration,
+4. **Database:** local SQLite may contain user work; preserve it. The Alembic
+   history must remain single-headed — a schema change needs a proper migration,
    and after generating one run `flask db heads` to confirm it still reports a
    single head. Never restructure or renumber existing migration history as a
    side effect of another task.

@@ -2,11 +2,11 @@
 #
 # Bootstrap a LOCAL development database (idempotent, safe to re-run).
 #
-# Why db.create_all() instead of `flask db upgrade`: the Alembic history
-# currently has multiple heads (see docs/NEXT_STEPS.md item C13), which makes
-# `upgrade` ambiguous. create_all() only creates MISSING tables — it never
-# alters, drops, or touches existing tables or data. Once the migration heads
-# are merged, this script can switch to running migrations.
+# Historical migrations contain PostgreSQL constraint operations that cannot be
+# replayed on SQLite. create_all() remains the supported local bootstrap.
+# --fresh-baseline additionally verifies the schema and records the current
+# Alembic head, but ONLY for a brand-new SQLite file. Existing databases are
+# never stamped by this script; ordinary mode keeps its previous behavior.
 #
 # Guard: refuses to run against anything that is not SQLite. A localhost
 # Postgres is allowed ONLY with --allow-non-sqlite (substring tricks and SSH
@@ -22,6 +22,11 @@
 
 import os
 import sys
+from pathlib import Path
+
+from alembic.autogenerate import compare_metadata
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -74,7 +79,37 @@ def assert_local_database(uri, allow_non_sqlite=False):
         )
 
 
+def reserve_fresh_database(engine):
+    """Reserve a new SQLite file exclusively; never adopt an existing schema."""
+    if engine.url.get_backend_name() != "sqlite" or not engine.url.database or engine.url.database == ":memory:":
+        raise SystemExit("--fresh-baseline requires a new local SQLite file")
+    path = Path(engine.url.database)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.touch(mode=0o600, exist_ok=False)
+    except FileExistsError:
+        raise SystemExit("--fresh-baseline refuses an existing database; choose a new file")
+
+
+def record_verified_baseline(engine):
+    """Mark only a freshly initialized, schema-verified database as current."""
+    migrations = Path(__file__).resolve().parents[1] / "migrations"
+    head = ScriptDirectory(str(migrations)).get_current_head()
+    if not head:
+        raise RuntimeError("A single migration head is required")
+    with engine.begin() as connection:
+        context = MigrationContext.configure(connection, opts={"compare_type": True})
+        differences = compare_metadata(context, db.metadata)
+        if differences:
+            raise RuntimeError(f"Fresh schema differs from current models: {differences}")
+        # MigrationContext.stamp records this verified schema; it does not replay
+        # historical data migrations. The new database contains only dev seeds.
+        context.stamp(ScriptDirectory(str(migrations)), head)
+    print(f"Verified fresh schema; Alembic baseline: {head}")
+
+
 def main():
+    fresh_baseline = "--fresh-baseline" in sys.argv
     allow_non_sqlite = "--allow-non-sqlite" in sys.argv[1:]
     app = create_app()
     with app.app_context():
@@ -82,6 +117,9 @@ def main():
             app.config["SQLALCHEMY_DATABASE_URI"],
             allow_non_sqlite=allow_non_sqlite,
         )
+
+        if fresh_baseline:
+            reserve_fresh_database(db.engine)
 
         before = set(db.inspect(db.engine).get_table_names())
         db.create_all()
@@ -107,6 +145,9 @@ def main():
             db.session.add(user)
             print(f"Seed user created: {spec['email']} (password: {DEV_PASSWORD})")
         db.session.commit()
+
+        if fresh_baseline:
+            record_verified_baseline(db.engine)
 
         print("\nDev database ready:", app.config["SQLALCHEMY_DATABASE_URI"])
 

@@ -4,27 +4,25 @@
 #   ./scripts/dev_setup.sh
 #
 # Does: backend venv (Python 3.12) + deps, backend/.env with generated secrets
-# (if missing), local SQLite dev DB + seed users, frontend npm install.
+# (if missing), local SQLite dev DB + seed users, frontend npm ci.
 # Touches NOTHING outside this repo. Never contacts production.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
-# ---- 0. Check Node (CI uses Node 20 — see .github/workflows/ci.yml) --------
-if ! command -v node >/dev/null 2>&1; then
-  echo "ERROR: Node.js not found. Install Node 20+ (e.g. 'brew install node@20')." >&2
+# ---- 0. Match the frontend toolchain pinned for CI -------------------------
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+  echo "ERROR: Install the Node/npm versions in frontend/.nvmrc and package.json." >&2
   exit 1
 fi
-NODE_MAJOR=$(node --version | sed 's/^v//' | cut -d. -f1)
-if [ "$NODE_MAJOR" -lt 18 ]; then
-  echo "ERROR: Node $(node --version) is too old — react-scripts needs 18+, CI uses 20." >&2
+EXPECTED_NODE="v$(cat frontend/.nvmrc)"
+EXPECTED_NPM=$(node -p "require('./frontend/package.json').packageManager.split('@')[1]")
+if [ "$(node --version)" != "$EXPECTED_NODE" ] || [ "$(npm --version)" != "$EXPECTED_NPM" ]; then
+  echo "ERROR: Use Node $EXPECTED_NODE and npm $EXPECTED_NPM to match CI." >&2
   exit 1
 fi
-if [ "$NODE_MAJOR" -lt 20 ]; then
-  echo "WARNING: Node $(node --version) is older than CI (Node 20). Builds may differ." >&2
-fi
-echo "==> Using Node $(node --version)"
+echo "==> Using Node $(node --version), npm $(npm --version)"
 
 # ---- 1. Find Python 3.10+ -------------------------------------------------
 PY=""
@@ -69,9 +67,9 @@ echo "==> Initializing local dev database (SQLite, idempotent)"
 cd "$ROOT/frontend"
 if [ ! -d node_modules ]; then
   echo "==> Installing frontend dependencies"
-  npm install
+  npm ci
 else
-  echo "==> frontend/node_modules present — skipping npm install (run 'npm install' manually to refresh)"
+  echo "==> frontend/node_modules present — skipping npm install (run 'npm ci' to reproduce the lockfile)"
 fi
 
 cat <<'EOF'
