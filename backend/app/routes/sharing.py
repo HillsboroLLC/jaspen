@@ -25,9 +25,11 @@ from app.sharing import (
     content_summary,
     daily_create_limit,
     expiry_from_days,
+    is_sharing_disabled,
     link_is_live,
     new_token,
     parse_expiry_days,
+    set_sharing_disabled,
     sharing_block_reason,
     snapshot_size_ok,
 )
@@ -440,7 +442,7 @@ def admin_get_user_sharing(user_id):
         return jsonify({'error': 'User not found.'}), 404
     return jsonify({
         'user_id': target.id,
-        'sharing_disabled': bool(target.sharing_disabled),
+        'sharing_disabled': is_sharing_disabled(target),
         'block_reason': sharing_block_reason(target),
     })
 
@@ -457,13 +459,13 @@ def admin_set_user_sharing(user_id):
     body = request.get_json(silent=True) or {}
     if not isinstance(body.get('sharing_disabled'), bool):
         return jsonify({'error': 'sharing_disabled must be true or false.'}), 400
-    target.sharing_disabled = body['sharing_disabled']
+    disabled = set_sharing_disabled(target, body['sharing_disabled'])
     append_admin_audit_event(
         actor_user_id=admin.id,
         actor_email=admin.email,
-        action='sharing_disabled' if target.sharing_disabled else 'sharing_enabled',
+        action='sharing_disabled' if disabled else 'sharing_enabled',
         target_user_id=target.id,
         target_email=target.email,
     )
     db.session.commit()
-    return jsonify({'user_id': target.id, 'sharing_disabled': bool(target.sharing_disabled)})
+    return jsonify({'user_id': target.id, 'sharing_disabled': disabled})
