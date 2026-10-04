@@ -94,11 +94,28 @@ def new_token():
     return secrets.token_urlsafe(32)
 
 
+def is_sharing_disabled(user):
+    from .models import AccountSharingControl
+    control = AccountSharingControl.query.filter_by(user_id=str(user.id)).first()
+    return bool(control and control.sharing_disabled)
+
+
+def set_sharing_disabled(user, disabled):
+    from . import db
+    from .models import AccountSharingControl
+    control = AccountSharingControl.query.filter_by(user_id=str(user.id)).first()
+    if control is None:
+        control = AccountSharingControl(user_id=str(user.id))
+        db.session.add(control)
+    control.sharing_disabled = bool(disabled)
+    return control.sharing_disabled
+
+
 def sharing_block_reason(user):
     """Why ``user`` cannot share right now, or None when they can."""
     if user is None:
         return 'user_not_found'
-    if bool(getattr(user, 'sharing_disabled', False)):
+    if is_sharing_disabled(user):
         return 'sharing_disabled'
     plan_key = normalize_plan_key(effective_plan_key(user, current_app.config))
     if PLAN_RANK.get(plan_key, 0) < PLAN_RANK['starter']:

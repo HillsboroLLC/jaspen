@@ -16,9 +16,15 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column(
-        'users',
-        sa.Column('sharing_disabled', sa.Boolean(), nullable=False, server_default=sa.false()),
+    # A separate table, not a users column: the production role can create
+    # tables but does not own users, so ALTER TABLE users is refused.
+    op.create_table(
+        'account_sharing_controls',
+        sa.Column('user_id', sa.String(length=36), nullable=False),
+        sa.Column('sharing_disabled', sa.Boolean(), nullable=False),
+        sa.Column('updated_at', sa.DateTime(), nullable=False),
+        sa.ForeignKeyConstraint(['user_id'], ['users.id'], ondelete='CASCADE'),
+        sa.PrimaryKeyConstraint('user_id'),
     )
 
     op.create_table(
@@ -76,4 +82,4 @@ def downgrade():
     op.drop_index('ix_shared_artifacts_owner_user_id', table_name='shared_artifacts')
     op.drop_index('ix_shared_artifacts_token', table_name='shared_artifacts')
     op.drop_table('shared_artifacts')
-    op.drop_column('users', 'sharing_disabled')
+    op.drop_table('account_sharing_controls')

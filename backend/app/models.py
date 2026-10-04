@@ -292,14 +292,6 @@ class User(db.Model):
         db.Integer,
         nullable=True
     )
-    # Admin kill switch for public share links: blocks new links and stops
-    # existing ones from being served.
-    sharing_disabled = db.Column(
-        db.Boolean,
-        nullable=False,
-        default=False,
-        server_default=db.false(),
-    )
 
     # Credits
     # None = unlimited, else track remaining
@@ -1289,6 +1281,25 @@ class SharedArtifact(db.Model):
     __table_args__ = (
         db.Index('ix_shared_artifacts_owner_created', 'owner_user_id', 'created_at'),
     )
+
+
+class AccountSharingControl(db.Model):
+    """Admin kill switch for an account's public share links.
+
+    Kept in its own table rather than as a column on ``users``: the production
+    database role can create tables but does not own ``users``, so it cannot
+    alter it.
+    """
+
+    __tablename__ = 'account_sharing_controls'
+
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        primary_key=True,
+    )
+    sharing_disabled = db.Column(db.Boolean, nullable=False, default=False)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class SharedArtifactReport(db.Model):
