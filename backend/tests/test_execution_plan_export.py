@@ -134,13 +134,13 @@ def test_wbs_xlsx_has_overview_and_filterable_task_table(export_routes):
     tasks = workbook["Tasks"]
     assert tasks.freeze_panes is None
     assert list(tasks.tables) == ["ExecutionTasks"]
-    assert tasks.tables["ExecutionTasks"].ref == "A1:T4"
+    assert tasks.tables["ExecutionTasks"].ref == "A1:U4"
     assert tasks.auto_filter.ref is None
-    assert [tasks.cell(row=1, column=column).value for column in range(1, 21)] == [
+    assert [tasks.cell(row=1, column=column).value for column in range(1, 22)] == [
         "Phase #", "Phase", "Task", "Status", "Priority", "Owner", "Suggested Role",
         "Start Date", "Due Date", "Duration (days)", "Dependencies",
         "Description / Acceptance Criteria", "Risk Area", "Rationale", "Jira Key",
-        "Function", "Activity Type", "Task ID", "Dependency IDs", "Task Order",
+        "Function", "Activity Type", "Task ID", "Dependency IDs", "Task Order", "Decision Lineage",
     ]
 
     assert tasks["A2"].value == 1
@@ -166,7 +166,7 @@ def test_wbs_xlsx_has_overview_and_filterable_task_table(export_routes):
         task_sheet_xml = archive.read("xl/worksheets/sheet2.xml")
         table_xml = archive.read("xl/tables/table1.xml")
     assert b"<autoFilter" not in task_sheet_xml
-    assert b'<autoFilter ref="A1:T4"' in table_xml
+    assert b'<autoFilter ref="A1:U4"' in table_xml
 
 
 def test_wbs_xlsx_returns_none_without_tasks(export_routes):

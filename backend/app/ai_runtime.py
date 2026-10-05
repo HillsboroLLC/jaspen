@@ -70,7 +70,7 @@ def _claim_operation(user, *, operation_type, thread_id, customer_visible,
             raise AIOperationIdempotencyConflict(
                 'This idempotency key was already used for a different AI request.'
             )
-        if existing.status == 'succeeded' and isinstance(existing.result_json, dict):
+        if existing.status in {'succeeded', 'degraded'} and isinstance(existing.result_json, dict):
             return existing, dict(existing.result_json)
         if existing.status == 'started':
             raise AIOperationInProgress('The same AI request is already in progress.')
@@ -212,7 +212,7 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
         usage['operation_id'] = claimed.id
     projected_credits, successful_cost = projected_charge_for_usage(usage)
     if should_charge:
-        actual_credits = _charge_for_usage(usage, str(model_type or 'orbit'), user)
+        actual_credits = 0 if usage.get('degraded') else _charge_for_usage(usage, str(model_type or 'orbit'), user)
         credit_settlement = _settle_reserved_credits(
             user, reserved_credits=reserved, actual_credits=actual_credits,
         )

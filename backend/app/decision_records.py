@@ -32,6 +32,7 @@ _DERIVED_FIELDS = (
     'decision_statement', 'conversation_summary', 'evidence_summary',
     'objectives', 'rubric', 'alternatives', 'scorecards', 'scorecard_ids',
     'recommendation', 'confidence', 'execution_plan', 'attribution', 'source',
+    'decision_kit', 'decision_kit_version', 'kit_context',
 )
 # NOT derived, deliberately: `human_decision` mirrors the human-owned
 # final_decision column. Refreshing it from a re-derivation would reset a
@@ -298,6 +299,9 @@ def assemble_record_payload(user_id, thread_id, *, actor_user_id=None):
         'conversation_summary': _summarize_conversation(session),
         'evidence_summary': _summarize_evidence(cards),
         'objectives': {'strategy_objective': objective},
+        'decision_kit': session.get('decision_kit'),
+        'decision_kit_version': session.get('decision_kit_version'),
+        'kit_context': session.get('kit_context') if isinstance(session.get('kit_context'), dict) else {},
         'rubric': rubric,
         'alternatives': [c['name'] for c in cards],
         'scorecards': cards,                       # flat peer list, no baseline flag
@@ -478,6 +482,7 @@ def create_or_refresh_record(user, thread_id):
         flag_modified(existing, 'record')
         existing.schema_version = DECISION_RECORD_SCHEMA_VERSION
         existing.title = promoted['title']
+        existing.decision_type = payload.get('decision_kit') or existing.decision_type
         if not existing.decision_statement:
             existing.decision_statement = promoted['decision_statement']
         # Only advance in_analysis → recorded; never regress a decided record.
@@ -497,6 +502,7 @@ def create_or_refresh_record(user, thread_id):
         thread_id=str(thread_id),
         title=promoted['title'],
         decision_statement=promoted['decision_statement'],
+        decision_type=payload.get('decision_kit'),
         # 'recorded' means the analysis is captured. It is NOT 'decided':
         # advancing that far requires an actual human decision signal, which
         # only record_final_decision() supplies.

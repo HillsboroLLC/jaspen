@@ -1,6 +1,7 @@
 # The Jaspen Decision Intelligence Framework
 ### Foundational Design Specification — reverse-engineered from the implementation
 
+*Version 1.1 — 2026-10-04: §4.2 revised so plan shape is guidance (see Revision Log).*
 *Version 1.0 — captured 2026-07-05 from the codebase as source of truth.*
 *This document records how Jaspen actually thinks today. File and line references point to the implementing code. It is a description, not a proposal.*
 
@@ -129,8 +130,8 @@ Plans are **derived from the decision, mechanically** (WBS prompt, strategy.py:4
 
 The plan is therefore an **argument in task form**: this is what the scorecard says is weak, risky, and promised — and here is the work that answers each item.
 
-### 4.2 Phase logic and shape
-10–18 tasks across 4–6 phases following a fixed arc: **Discovery → Planning → Build/Execute → Validate → Launch → Operate.** Each task carries a structured taxonomy: `priority`, `estimated_days`, `suggested_role`, `function` (PMO/Finance/Operations/HR/IT/Marketing/Sales/Product/Legal/Security/Other), `activity_type` (governance/planning/delivery/risk_management/financial_modeling/change_management/training/integration/quality/reporting/other), `dependencies` (by task id), and `risk_area` — *which component score this task addresses*, keeping the plan traceable back to the decision.
+### 4.2 Phase logic and shape *(revised v1.1, 2026-10-04)*
+Plans are sized and phased by the derived work. The arc **Discovery → Planning → Build/Execute → Validate → Launch → Operate** and a typical envelope of 10–18 tasks across 4–6 phases are **guidance** the planner may use when they fit the decision. They are not a required structure. Derived work takes precedence: every lineage item (§4.1 and Constitution Article 18) must be covered, phases are named for the work they group, and no task is added to fill a phase or reach a count. Each task carries a structured taxonomy: `priority`, `estimated_days`, `suggested_role`, `function` (PMO/Finance/Operations/HR/IT/Marketing/Sales/Product/Legal/Security/Other), `activity_type` (governance/planning/delivery/risk_management/financial_modeling/change_management/training/integration/quality/reporting/other), `dependencies` (by task id), `risk_area` (*which component score this task addresses*), and `lineage` (*the decision elements the task derives from*), keeping the plan traceable back to the decision.
 
 ### 4.3 Decision gates and lifecycle
 The scorecard→plan→(re-plan) loop has one formal gate today: the human accepts, edits (via the plan-editor prompt, strategy.py:8794), or regenerates. Executed plans render in three synchronized views — List (by phase), Board (Kanban by status: To Do / In Progress / Blocked / Done), Timeline (Gantt) — and sync bidirectionally with execution systems (§5), where real-world status becomes the ongoing gate.
@@ -407,11 +408,25 @@ Everything below is a natural extrapolation of machinery that already exists; no
 2. **Two scoring registers exist**: the single-scorecard prompt carries a commercialization framing (EBITDA protection, ROI, time-to-market), while the batch dossier is rubric-neutral. RUBRIC_ENGINE_SPEC already declares the intended unification; the methodology should state when each register applies.
 3. **Two dimension sets coexist**: the six-dimension rubric and a legacy four-component mirror (`financial_health`, `operational_efficiency`, `market_position`, `execution_readiness`) kept in sync via `_COMPONENT_DIMENSION_MIRROR` and used by the scenario lever engine. The canonical set — and the lever engine's relationship to the six dimensions — should be made explicit.
 4. **Threshold provenance**: tier cut-offs (78/68), category bands (80/60/40), confidence caps (100/75/60/45), and the WBS remediation trigger (<75) are asserted constants. Formalizing *why these numbers* (and per-org configurability policy) belongs in the methodology.
-5. **The 10–18 task / 4–6 phase plan envelope** is a fixed shape independent of initiative scale — an implicit "one plan size" assumption the methodology should either endorse or scope.
+5. ~~**The 10–18 task / 4–6 phase plan envelope** is a fixed shape independent of initiative scale — an implicit "one plan size" assumption the methodology should either endorse or scope.~~ **Resolved in v1.1 (2026-10-04):** the envelope and arc are guidance, and derived work takes precedence (§4.2).
 6. **Confidence grades are AI-attested.** The model both judges a dimension and grades its own evidence; the cap system disciplines the consequence, but the grading itself is self-reported. The methodology should state this and its intended evolution (connector-verified grading).
 7. **A second persona ("Kii") persists in legacy tool prompts** (`chat.py`) alongside the Jaspen identity — the canonical voice should be formalized as part of the methodology's identity layer.
 8. **The disclaimer doctrine** ("Confidence doesn't preclude mistakes. Please verify important details") functions as the liability boundary of the whole framework and deserves elevation from UI copy to stated principle: *Jaspen prepares decisions; humans make them.*
 
 ---
+
+---
+
+## Revision Log
+
+**v1.1 — 2026-10-04 — §4.2 Phase logic and shape.** Owner-approved revision.
+The six-phase arc and the 10–18 task / 4–6 phase envelope change from fixed
+structure to guidance. Derived work takes precedence: every lineage item must be
+covered, and no task is added to fill a phase or reach a count. `lineage` is
+added to the task taxonomy. This keeps §4.2 consistent with Constitution Article
+18 v1.1. Appendix A item 5 is marked resolved. Note: this section now states the
+intended methodology ahead of implementation. The current planner prompt still
+enforces the fixed arc until `docs/specs/RFP_MVP_SPEC.md` G7 ships. No other
+section changed.
 
 *End of specification.*

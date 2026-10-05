@@ -17,13 +17,13 @@ an objective from the text and cost-heavy briefs silently open the
 workspace under a different profile than the visitor was shown. If
 conversation/start's contract changes, this test failing is the alarm.
 
-No ANTHROPIC_API_KEY is configured in the test environment, so the agent's
-reply comes from its deterministic fallback path — which is exactly what
-makes this a pure test of the endpoint's own plumbing (session creation,
-readiness computation, persistence, response contract) rather than of any
-model's output.
+No provider credential is configured in the test environment. Tests that
+exercise successful endpoint plumbing inject a controlled provider result;
+provider-unavailable behavior is covered explicitly and must never masquerade
+as a normal assistant response.
 """
 
+import json
 import uuid
 
 import pytest
@@ -43,6 +43,24 @@ def _disable_rate_limiting_for_this_file():
 
 
 START_URL = "/api/v1/ai-agent/conversation/start"
+
+
+def _sse_events(response):
+    return [
+        json.loads(line[6:])
+        for line in response.get_data(as_text=True).splitlines()
+        if line.startswith("data: ")
+    ]
+
+
+def _patch_generation_success(monkeypatch):
+    from app.routes import ai_agent
+
+    monkeypatch.setattr(ai_agent, "_generate_assistant_reply", lambda *_args, **_kwargs: (
+        "What outcome and time horizon should guide this decision?",
+        {"provider": "test", "model": "test", "input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        [], [], None,
+    ))
 
 # Representative homepage context: the canonical "\n\n"-joined user turns the
 # hero writes to sessionStorage after each successful analyze (see
@@ -72,6 +90,119 @@ def _signup(client, email=None):
 
 
 class TestHomepageHandoffIntegration:
+    @pytest.mark.parametrize("message", [
+        "Should we respond to the state’s RFP?",
+        "Should we pursue this opportunity?",
+        "Help me decide whether to bid.",
+        "We received an RFP and need to decide whether to respond.",
+    ])
+    def test_common_response_side_phrasing_resolves_rfp_bid(self, message):
+        from app.routes.ai_agent import _infer_rfp_decision_kit
+
+        assert _infer_rfp_decision_kit(message) == "rfp_bid"
+
+    @pytest.mark.parametrize("message", [
+        "Our committee is evaluating three contractor bids.",
+        "We received vendor proposals and need to select one.",
+        "Help us evaluate these proposals.",
+    ])
+    def test_common_buyer_side_phrasing_resolves_vendor_selection(self, message):
+        from app.routes.ai_agent import _infer_rfp_decision_kit
+
+        assert _infer_rfp_decision_kit(message) == "rfp_vendor_selection"
+
+    def test_rfp_selection_persists_through_new_thread_and_subtype_resolves_in_discovery(
+        self, client, db, monkeypatch
+    ):
+        from app.routes import ai_agent
+
+        _signup(client)
+        thread_id = f"thread_{uuid.uuid4().hex[:16]}"
+
+        started = client.post(START_URL, json={
+            "message": "Help me with this RFP.",
+            "thread_id": thread_id,
+            "strategy_objective": "growth",
+            "decision_kit": "rfp",
+        })
+        assert started.status_code == 200, started.get_data(as_text=True)
+        payload = started.get_json()
+        assert payload["thread_id"] == thread_id
+        assert payload["strategy_objective"] == "growth"
+        assert payload["decision_kit_family"] == "rfp"
+        assert payload["decision_kit"] is None
+        assert payload["reply"] == ai_agent.RFP_SUBTYPE_QUESTION
+
+        stored = client.get(f"/api/v1/ai-agent/threads/{thread_id}")
+        assert stored.status_code == 200
+        thread = stored.get_json()["thread"]
+        assert thread["strategy_objective"] == "growth"
+        assert thread["decision_kit_family"] == "rfp"
+
+        monkeypatch.setattr(ai_agent, "_generate_assistant_reply", lambda *_args, **_kwargs: (
+            "I’ll evaluate the submitted vendors.",
+            {"provider": "test", "model": "test", "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            [], [], None,
+        ))
+        continued = client.post("/api/v1/ai-agent/conversation/continue", json={
+            "thread_id": thread_id,
+            "message": "We are selecting a vendor.",
+            "strategy_objective": "growth",
+        })
+        assert continued.status_code == 200, continued.get_data(as_text=True)
+        resolved = client.get(f"/api/v1/ai-agent/threads/{thread_id}").get_json()["thread"]
+        assert resolved["strategy_objective"] == "growth"
+        assert resolved["decision_kit"] == "rfp_vendor_selection"
+        assert resolved["decision_kit_family"] == "rfp"
+
+    def test_stream_provider_unavailable_preserves_message_and_records_failed_zero_credit_operation(
+        self, client, db, monkeypatch
+    ):
+        from app.models import AIOperation, UsageEvent, User
+        from app.routes import ai_agent
+
+        signup = _signup(client)
+        user_id = signup["user"]["id"]
+        user = User.query.get(user_id)
+        credits_before = user.credits_remaining
+        thread_id = f"thread_{uuid.uuid4().hex[:16]}"
+        user_message = "Evaluate this expansion decision using the evidence I provided."
+
+        monkeypatch.setattr(ai_agent, "_resolve_governed_routes", lambda *_args, **_kwargs: ([], {}))
+
+        response = client.post(f"{START_URL}?stream=true", json={
+            "message": user_message,
+            "thread_id": thread_id,
+            "strategy_objective": "balanced",
+        })
+        assert response.status_code == 200
+        events = _sse_events(response)
+        assert [event["type"] for event in events] == ["error"]
+        failure = events[0]
+        assert failure["code"] == "analysis_unavailable"
+        assert failure["failure_state"] is True
+        assert failure["retryable"] is True
+        assert failure["action"] == {"type": "retry", "label": "Retry"}
+        assert failure["message_saved"] is True
+        assert failure["error"] == ai_agent.ANALYSIS_UNAVAILABLE_MESSAGE
+        assert failure["credits"]["charged"] == 0
+        assert "specific initiative goal" not in response.get_data(as_text=True)
+
+        from app.routes.sessions import load_user_sessions
+        stored = load_user_sessions(user_id)[thread_id]
+        assert [entry["content"] for entry in stored["chat_history"] if entry["role"] == "user"] == [user_message]
+        assert not [entry for entry in stored["chat_history"] if entry["role"] == "assistant"]
+
+        db.session.expire_all()
+        assert User.query.get(user_id).credits_remaining == credits_before
+        operation = AIOperation.query.filter_by(thread_id=thread_id).one()
+        assert operation.status == "failed"
+        assert operation.charged_credits == 0
+        assert operation.error_code == "provider_unavailable"
+        usage = UsageEvent.query.filter_by(thread_id=thread_id).one()
+        assert usage.success is False
+        assert usage.credits_charged == 0
+
     def test_same_idempotency_key_replays_without_generating_or_charging_twice(
         self, client, db, monkeypatch
     ):
@@ -115,11 +246,12 @@ class TestHomepageHandoffIntegration:
         assert replay.get_json()["reply"] == first.get_json()["reply"]
         assert replay.get_json()["credits"] == first.get_json()["credits"]
 
-    def test_signup_then_conversation_start_succeeds(self, client, db):
+    def test_signup_then_conversation_start_succeeds(self, client, db, monkeypatch):
         """The full seam: fresh signup (cookie auth, exactly like the real
         flow) → conversation/start with the homepage handoff payload → 200
         with a usable thread. This is the test that would have caught the
         _iso_now 500."""
+        _patch_generation_success(monkeypatch)
         _signup(client)
         thread_id = f"thread_{uuid.uuid4().hex[:16]}"
 
@@ -137,7 +269,7 @@ class TestHomepageHandoffIntegration:
         assert data["thread_id"] == thread_id
         assert data["session_id"] == thread_id
 
-        # A real assistant reply must come back (fallback path, non-empty).
+        # A successful provider response must come back non-empty.
         assert str(data.get("reply") or data.get("message") or "").strip()
 
         # Readiness must be the deterministic engine's output, computed
@@ -157,10 +289,11 @@ class TestHomepageHandoffIntegration:
         # opened as Cost Optimization via this same inference path.
         assert data.get("strategy_objective") == "balanced"
 
-    def test_handoff_readiness_matches_public_analyze(self, app, client, db):
+    def test_handoff_readiness_matches_public_analyze(self, app, client, db, monkeypatch):
         """One Jaspen: the readiness the workspace computes for the handed-off
         context must equal what the public /analyze endpoint told the
         anonymous visitor moments earlier for the same words."""
+        _patch_generation_success(monkeypatch)
         public = client.post(
             "/api/v1/public/intake/analyze",
             json={"history": [{"role": "user", "content": HOMEPAGE_CONTEXT}]},
@@ -183,10 +316,11 @@ class TestHomepageHandoffIntegration:
         public_completed.update({c["key"]: False for c in public["missing"]})
         assert workspace_completed == public_completed
 
-    def test_repeated_start_with_same_thread_id_reuses_thread(self, client, db):
+    def test_repeated_start_with_same_thread_id_reuses_thread(self, client, db, monkeypatch):
         """The handoff retries with a persisted thread_id (double-click,
         login/signup race) — the server must converge on ONE thread, not
         mint duplicates."""
+        _patch_generation_success(monkeypatch)
         _signup(client)
         thread_id = f"thread_{uuid.uuid4().hex[:16]}"
 

@@ -253,11 +253,51 @@ def update_record(record_id):
 
     try:
         if 'final_decision' in data:
+            kit_verdict = data.get('kit_verdict')
+            if kit_verdict is not None:
+                if not isinstance(kit_verdict, dict):
+                    return jsonify({'error': 'kit_verdict must be an object', 'code': 'invalid_kit_verdict'}), 400
+                from ..decision_kits import get_decision_kit
+                record_payload = record.record if isinstance(record.record, dict) else {}
+                kit_key = record_payload.get('decision_kit') or record.decision_type
+                if not kit_key:
+                    return jsonify({'error': 'This decision does not use a Decision Kit', 'code': 'missing_decision_kit'}), 400
+                kit = get_decision_kit(kit_key, record_payload.get('decision_kit_version'))
+                verdict_key = str(kit_verdict.get('verdict_key') or '').strip()
+                if verdict_key not in kit.get('verdict_vocabulary', {}):
+                    return jsonify({'error': 'Invalid verdict for this Decision Kit', 'code': 'invalid_kit_verdict'}), 400
+                scorecard_id = str(kit_verdict.get('scorecard_id') or '').strip()
+                option_key = str(kit_verdict.get('option_key') or '').strip()
+                cards = [item for item in (record_payload.get('scorecards') or []) if isinstance(item, dict)]
+                card = next((item for item in cards if str(item.get('id') or item.get('analysis_id')) == scorecard_id), None)
+                if card is None or (option_key and str(card.get('option_key') or '') != option_key):
+                    return jsonify({'error': 'The recorded verdict must target a canonical option in this decision', 'code': 'kit_verdict_target_mismatch'}), 400
+                recommendation = card.get('recommendation') if isinstance(card.get('recommendation'), dict) else {}
+                recommended_key = str(recommendation.get('verdict_key') or '')
+                override_reason = str(kit_verdict.get('override_reason') or '').strip()
+                if recommended_key and verdict_key != recommended_key and not override_reason:
+                    return jsonify({'error': 'Give a reason when the human decision differs from Jaspen’s recommendation', 'code': 'override_reason_required'}), 400
+                kit_verdict = {
+                    'verdict_key': verdict_key,
+                    'label': kit['verdict_vocabulary'][verdict_key],
+                    'option_key': str(card.get('option_key') or option_key),
+                    'scorecard_id': scorecard_id,
+                    'recommendation_snapshot': recommendation,
+                    'conditions_accepted': list(kit_verdict.get('conditions_accepted') or []),
+                    'override_reason': override_reason or None,
+                }
             # The human decision signal. Capture WHO decided, so the record can
             # show that a person made this call rather than a model.
             record_final_decision(
                 record, data.get('final_decision'), decided_by_user_id=user.id
             )
+            if kit_verdict is not None:
+                from sqlalchemy.orm.attributes import flag_modified
+                record_json = {**(record.record if isinstance(record.record, dict) else {})}
+                record_json['kit_verdict'] = kit_verdict
+                record.record = record_json
+                record.decision_type = record_json.get('decision_kit') or record.decision_type
+                flag_modified(record, 'record')
         if 'status' in data:
             set_status(record, data.get('status'))
     except ValueError as exc:

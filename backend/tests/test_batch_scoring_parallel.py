@@ -79,3 +79,20 @@ def test_a_failed_option_keeps_the_others_aligned(app, monkeypatch):
     assert [card['primary_role'] if card else None for card in cards] == [
         'role-Alpha', None, 'role-Charlie', 'role-Delta', 'role-Echo',
     ]
+
+
+def test_seven_options_automatically_drain_bounded_concurrency(app, monkeypatch):
+    strategy = _strategy_module()
+    calls = []
+    names = list(SCORES) + ['Foxtrot', 'Golf']
+    monkeypatch.setitem(SCORES, 'Foxtrot', 55)
+    monkeypatch.setitem(SCORES, 'Golf', 65)
+    monkeypatch.setattr(strategy, '_strategy_generate_reply', _fake_reply_factory(calls, delay=0.01))
+    with app.app_context():
+        cards, summary, usage = strategy._generate_batch_scorecards(
+            None, [{'name': n} for n in names], rubric=RUBRIC,
+            model_selection={'model_type': 'orbit'}, return_usage=True,
+        )
+    assert sorted(calls) == sorted(names)
+    assert [card['primary_role'] for card in cards] == [f'role-{n}' for n in names]
+    assert usage['total_tokens'] == 105

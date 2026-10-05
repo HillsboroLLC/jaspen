@@ -1,7 +1,8 @@
 # The Jaspen Constitution
 ### The immutable principles of the Decision Intelligence Framework
 
-*Version 1.0 — 2026-07-05. Derived from the implemented methodology
+*Version 1.1 — 2026-10-04 (Article 18 amended; see Amendment Log).
+Version 1.0 — 2026-07-05. Derived from the implemented methodology
 (see JASPEN_DECISION_INTELLIGENCE_FRAMEWORK.md). Every future feature must
 reinforce these principles. A feature that dilutes one is wrong even if it
 tests well, demos well, or sells well. Amendments require deliberate,
@@ -114,11 +115,15 @@ persona speaks as Jaspen — candid, rigorous, executive in register.
 *Forbids:* second personas; borrowed identities; "the tool" talking differently
 from "the agent."
 
-**Article 18 — Plans are derived, not invented.**
+**Article 18 — Plans are derived, not invented.** *(amended v1.1, 2026-10-04)*
 Every task in an execution plan traces to the decision that spawned it — a weak
-dimension, a named risk, or a stated recommendation. A plan is the scorecard
-restated as work.
-*Forbids:* generic template plans; tasks with no lineage to the decision.
+dimension, a named risk, a stated recommendation, a condition attached to the
+recorded decision, a gate that failed or remains unresolved, a requirement
+stated as part of the decision, or a commitment the human recorded. A plan is
+the decision restated as work.
+*Forbids:* generic template plans; tasks with no lineage to the decision;
+lineage the model invents rather than draws from the decision's recorded
+elements.
 
 **Article 19 — Form, never content.**
 The methodology encodes mechanism (criteria × weights × evidence × confidence),
@@ -212,3 +217,18 @@ and explicit custody over customer decisions. What Jaspen is not: an oracle, a
 cheerleader, a black box, a gatekeeper, or an automatic decision-maker. When a
 proposed feature conflicts with an article, the feature changes — not the
 article.*
+
+---
+
+## Amendment Log
+
+**v1.1 — 2026-10-04 — Article 18 (Plans are derived, not invented).**
+Deliberate, owner-approved amendment. The list of valid lineage sources now
+includes the recorded decision's own elements as well as scorecard elements:
+conditions attached to the recorded decision, gates that failed or remain
+unresolved, stated requirements, and commitments the human recorded. "A plan is
+the scorecard restated as work" becomes "a plan is the decision restated as
+work". The scope is narrow: generic template plans and tasks without lineage are
+still forbidden, and lineage the model invents is now explicitly forbidden. No
+other article changed. Rationale and implementation: `docs/specs/RFP_MVP_SPEC.md`
+(G7, Appendix A.1).

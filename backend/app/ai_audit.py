@@ -46,7 +46,7 @@ def attach_governance(usage, *, decision, legacy_routes=None, operation_type=Non
 
 def projected_charge_for_usage(usage):
     usage = usage if isinstance(usage, dict) else {}
-    cost = _successful_provider_cost(usage)
+    cost = 0.0 if usage.get('degraded') else _successful_provider_cost(usage)
     return credits_for_provider_cost(cost, internal=True), cost
 
 
@@ -152,6 +152,11 @@ def persist_operation(
     governance = usage.get('governance') if isinstance(usage.get('governance'), dict) else {}
     failover = usage.get('failover') if isinstance(usage.get('failover'), dict) else {}
     failed_attempts = [item for item in (failover.get('attempted_providers') or []) if isinstance(item, dict)]
+    if usage.get('degraded') and (usage.get('input_tokens') or usage.get('output_tokens')):
+        # A syntactically invalid/thin plan may still incur provider cost.
+        # Retain that attempt as absorbed cost, never as a successful generation.
+        failed_attempts.append({**usage, 'outcome': 'invalid_response', 'error_code': usage.get('error_code')})
+    success = bool(success and not usage.get('degraded'))
     successful_cost = _successful_provider_cost(usage) if success else 0.0
     failed_costs = [_attempt_cost(item) for item in failed_attempts]
     failed_cost = sum(item[0] for item in failed_costs)
@@ -173,7 +178,7 @@ def persist_operation(
     operation.operation_type = str(operation_type or usage.get('operation_type') or 'ai_operation')
     operation.idempotency_key = str(idempotency_key or operation.idempotency_key or '').strip() or None
     operation.request_fingerprint = str(request_fingerprint or operation.request_fingerprint or '').strip() or None
-    operation.status = 'succeeded' if success else 'failed'
+    operation.status = 'degraded' if usage.get('degraded') else ('succeeded' if success else 'failed')
     operation.customer_visible = bool(customer_visible)
     operation.subsidized = subsidized
     operation.subsidy_classification = classification
@@ -195,9 +200,11 @@ def persist_operation(
     operation.projected_credits = int(projected)
     operation.charged_credits = int(charged_credits or 0)
     operation.settled_at = datetime.utcnow()
-    operation.error_code = str(error_code or '').strip() or None
+    operation.error_code = str(error_code or usage.get('error_code') or ('provider_fallback' if usage.get('degraded') else '')).strip() or None
     operation.result_json = result_json
     operation.metadata_json = {
+        'degraded': bool(usage.get('degraded')),
+        'generation_failed': bool(usage.get('generation_failed')),
         'failed_attempt_costs_absorbed': True,
         'failed_attempt_cost_known': bool(failed_attempts) and not any(estimated for _cost, estimated in failed_costs),
         'failed_attempt_cost_estimated': any(estimated for _cost, estimated in failed_costs),

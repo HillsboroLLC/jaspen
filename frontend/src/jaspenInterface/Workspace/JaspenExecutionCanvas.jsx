@@ -443,6 +443,19 @@ export function TaskRow({ task, onUpdate, onReorder, isFirst, isLast, phaseName 
             />
           </div>
         )}
+        {Array.isArray(task.lineage) && task.lineage.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 6 }}>
+            {task.lineage.map((link, index) => (
+              <span key={`${link?.type || 'source'}:${link?.ref || index}`} style={{
+                fontFamily: 'JetBrains Mono, monospace', fontSize: 9.5,
+                color: COLOR.ink, background: COLOR.line2, border: `1px solid ${COLOR.line}`,
+                borderRadius: 999, padding: '2px 6px',
+              }} title={`${link?.type || 'source'}: ${link?.ref || ''}`}>
+                {link?.label || link?.ref || link?.type}
+              </span>
+            ))}
+          </div>
+        )}
         {!task.description && !task.acceptance && (
           <div style={{ fontSize: 11.5, color: COLOR.mute, lineHeight: 1.5, marginTop: 4 }}>
             <EditableText
@@ -1384,6 +1397,20 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
     ? (score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk')
     : null;
 
+  // Legacy template fallbacks are invalid under Article 18. Never render
+  // their tasks as a plan; give the user an explicit retry path instead.
+  if (wbs?.generation_status === 'heuristic_fallback') {
+    return (
+      <div role="alert" style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', background:COLOR.bg, padding:48 }}>
+        <div style={{ background:'#fff', border:'1px solid #fecaca', borderRadius:14, padding:'36px 40px', maxWidth:560, textAlign:'center' }}>
+          <div style={{ fontSize:18, fontWeight:600, color:'#991b1b' }}>Execution plan generation failed</div>
+          <p style={{ color:COLOR.ink }}>The template fallback is not a valid execution plan. Retry to generate a plan from this decision.</p>
+          {onAskJaspen && <button type="button" onClick={() => onAskJaspen('Retry generating the execution plan.')}>Retry</button>}
+        </div>
+      </div>
+    );
+  }
+
   // Empty state — no execution plan yet. Must come AFTER all hooks.
   if (totalTasks === 0) {
     return (
@@ -1417,6 +1444,12 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
       background: COLOR.bg, minWidth: 0, overflow: 'hidden',
       fontFamily: "'Inter Tight', system-ui, sans-serif",
     }}>
+      {wbs?.compression_warning && (
+        <div role="alert" style={{ margin:'12px 32px 0', padding:'10px 14px', border:'1px solid #f59e0b', borderRadius:8, background:'#fff8e8', color:COLOR.navy, fontSize:12.5 }}>
+          <strong>Deadline compression:</strong> {wbs.compression_warning.message}
+          {wbs.compression_warning.shortfall_business_days ? ` Shortfall: ${wbs.compression_warning.shortfall_business_days} business day(s).` : ''}
+        </div>
+      )}
       {/* Canvas header */}
       <div style={{ padding: '24px 32px 18px', flex: '0 0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 18 }}>

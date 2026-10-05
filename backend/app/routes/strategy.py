@@ -1279,33 +1279,28 @@ def _normalize_scorecard_payload(payload):
     elif isinstance(source.get('evidence_profile'), dict):
         normalized['evidence_profile'] = source['evidence_profile']
 
-    score_value = _safe_int(normalized.get('jaspen_score')) or 0
-    risks = normalized.get('top_risks') if isinstance(normalized.get('top_risks'), list) else []
-    recommendations = normalized.get('recommendations') if isinstance(normalized.get('recommendations'), list) else []
-    top_risk = risks[0] if risks and isinstance(risks[0], dict) else {}
-    top_rec = recommendations[0] if recommendations and isinstance(recommendations[0], dict) else {}
-    top_rec_action = _clean_scorecard_text(top_rec.get('action')) or 'refine the financial model'
-    top_risk_label = _clean_scorecard_text(top_risk.get('risk')) or 'execution risk'
-    weakest_component = 'execution_readiness'
-    if isinstance(component_scores, dict) and component_scores:
-        weakest_component = min(component_scores, key=lambda key: _safe_int(component_scores.get(key)) or 0)
+    # The card already explains the active rubric and current evidence. Do not
+    # append legacy coaching as a second, potentially stale score representation.
+    normalized.pop('proactive_next_step', None)
 
-    if score_value >= 75:
-        proactive_hint = (
-            f"This scores {score_value} — strong execution candidate. "
-            f"Your highest-priority action: {top_rec_action}."
+    # Decision Kit data remains structured and code-derived. General scorecards
+    # take this branch with no kit and remain byte-compatible with prior behavior.
+    decision_kit = source.get('decision_kit')
+    if decision_kit:
+        from ..decision_processing import apply_decision_kit
+        for key in ('option_key', 'attributes', 'gates', 'recommendation', 'decision_kit', 'decision_kit_version', 'kit_context'):
+            if key in source:
+                normalized[key] = source[key]
+        normalized = apply_decision_kit(
+            normalized,
+            decision_kit=decision_kit,
+            decision_kit_version=source.get('decision_kit_version'),
+            kit_context=source.get('kit_context'),
+            evidence_corpus=source.get('_evidence_corpus') or '',
+            force_recommendation=bool(source.get('_force_recommendation')),
         )
-    elif score_value >= 55:
-        proactive_hint = (
-            f"This scores {score_value} — promising, but the biggest lever is {top_risk_label}. "
-            f"Want me to score a version where you address that?"
-        )
-    else:
-        proactive_hint = (
-            f"This scores {score_value} — the gap is primarily in {weakest_component}. "
-            "Want me to walk through how to close that gap and re-score?"
-        )
-    normalized['proactive_next_step'] = proactive_hint
+        normalized.pop('_evidence_corpus', None)
+        normalized.pop('_force_recommendation', None)
 
     return normalized
 
@@ -2854,6 +2849,7 @@ def _generate_jaspen_scorecard(
     return_usage=False,
     evidence_corpus=None,
     routing_signals=None,
+    structured_context=None,
 ):
     """Run the existing LLM scoring flow and return parsed scorecard JSON.
 
@@ -3134,6 +3130,15 @@ The executive_summary must read like a concise leadership briefing. It should ne
 """
 
     analysis_text = None
+    if isinstance(structured_context, dict) and structured_context:
+        analysis_prompt += (
+            "\n\nDECISION KIT STRUCTURED FACTS (authoritative; do not recompute metrics):\n"
+            + json.dumps(structured_context, indent=2, default=str)
+            + "\nJudge the weighted criteria from these facts and the evidence. "
+              "Return top-level gates as [{key,status,confidence,source,evidence,basis}] for approved gate criteria only. "
+              "Do not emit attributes, metrics, a recommendation, or any arithmetic; code supplies those."
+        )
+
     generation_usage = None
     try:
         analysis_text, generation_usage = _strategy_generate_reply(
@@ -5278,333 +5283,6 @@ def _infer_wbs_planning_mode(scorecard, instruction, scenario_payload=None):
     return 'program' if any(marker in haystack for marker in program_markers) else 'project'
 
 
-def _heuristic_wbs_text(value, limit=140):
-    """Pull readable text out of a risk/recommendation entry (str or dict)."""
-    if isinstance(value, str):
-        return value.strip()[:limit]
-    if isinstance(value, dict):
-        for key in ('text', 'risk', 'recommendation', 'action', 'description', 'title', 'name'):
-            candidate = value.get(key)
-            if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()[:limit]
-    return ''
-
-
-def _heuristic_wbs_suggestion(scorecard, instruction, scenario_payload=None, chat_history=None):
-    comps = (scorecard or {}).get('component_scores') if isinstance(scorecard, dict) else {}
-    comps = comps if isinstance(comps, dict) else {}
-    planning_mode = _infer_wbs_planning_mode(scorecard, instruction, scenario_payload=scenario_payload)
-    is_program_mode = planning_mode == 'program'
-
-    # Pull the idea-specific drivers so even the deterministic fallback varies
-    # with THIS scorecard: its weak dimensions, its named risks, and its
-    # recommendations — not a one-size-fits-all skeleton.
-    _sc = scorecard if isinstance(scorecard, dict) else {}
-    top_risks_raw = _sc.get('top_risks') if isinstance(_sc.get('top_risks'), list) else _sc.get('risks')
-    top_risks = [t for t in (_heuristic_wbs_text(r) for r in (top_risks_raw or [])) if t][:4]
-    recommendations_raw = _sc.get('recommendations') if isinstance(_sc.get('recommendations'), list) else []
-    recommendations = [t for t in (_heuristic_wbs_text(r, 160) for r in recommendations_raw) if t][:3]
-
-    initiative = str(
-        (scorecard or {}).get('initiative_name')
-        or (scorecard or {}).get('project_name')
-        or (scorecard or {}).get('business_description', '')[:60]
-        or 'the initiative'
-    ).strip()
-
-    # Phase 1: Discovery & Alignment
-    discovery_tasks = [
-        {
-            'id': 'kickoff_alignment',
-            'title': f'Kickoff alignment and success criteria for {initiative}',
-            'description': 'Align stakeholders on scope, objectives, and measurable outcomes. Define RACI and communication cadence.',
-            'priority': 'high',
-            'estimated_days': 5,
-            'suggested_role': 'Project Manager',
-            'function': 'PMO',
-            'activity_type': 'governance',
-            'depends_on': [],
-            'risk_area': 'execution_readiness',
-        },
-        {
-            'id': 'current_state_assessment',
-            'title': 'Current state assessment and gap analysis',
-            'description': 'Document as-is state, identify gaps against target, and validate assumptions from the scorecard.',
-            'priority': 'high',
-            'estimated_days': 7,
-            'suggested_role': 'Business Analyst',
-            'function': 'PMO',
-            'activity_type': 'planning',
-            'depends_on': ['kickoff_alignment'],
-            'risk_area': 'execution_readiness',
-        },
-    ]
-
-    # Phase 2: Planning & Design
-    planning_tasks = [
-        {
-            'id': 'dependency_map',
-            'title': 'Create execution roadmap and dependency map',
-            'description': 'Map workstream dependencies, establish execution cadence, and sequence deliverables.',
-            'priority': 'high',
-            'estimated_days': 5,
-            'suggested_role': 'Program Manager' if is_program_mode else 'Project Manager',
-            'function': 'PMO',
-            'activity_type': 'planning',
-            'depends_on': ['current_state_assessment'],
-            'risk_area': 'execution_readiness',
-        },
-        {
-            'id': 'resource_plan',
-            'title': 'Resource and budget allocation plan',
-            'description': 'Identify required resources, assign owners, and validate budget against execution roadmap.',
-            'priority': 'high',
-            'estimated_days': 6,
-            'suggested_role': 'Finance Analyst',
-            'function': 'Finance',
-            'activity_type': 'financial_modeling',
-            'depends_on': ['dependency_map'],
-            'risk_area': 'financial_health',
-        },
-        {
-            'id': 'risk_register',
-            'title': 'Build risk register and mitigation playbook',
-            'description': 'Catalog top risks from the scorecard, assign owners, and define mitigation actions.',
-            'priority': 'high',
-            'estimated_days': 4,
-            'suggested_role': 'Risk Manager',
-            'function': 'PMO',
-            'activity_type': 'risk_management',
-            'depends_on': ['current_state_assessment'],
-            'risk_area': 'execution_readiness',
-        },
-    ]
-    if is_program_mode:
-        planning_tasks.append({
-            'id': 'governance_rhythm',
-            'title': 'Establish program governance and steering committee rhythm',
-            'description': 'Set up steering committee cadence, workstream leads, escalation paths, and decision rights.',
-            'priority': 'high',
-            'estimated_days': 6,
-            'suggested_role': 'Program Director',
-            'function': 'PMO',
-            'activity_type': 'governance',
-            'depends_on': ['kickoff_alignment'],
-            'risk_area': 'execution_readiness',
-        })
-
-    # Phase 3: Execution (score-driven tasks)
-    # Priority scales with how far below target a dimension is: the weaker the
-    # score, the higher the priority. Deterministic for a given scorecard.
-    def _priority_for(score):
-        s = float(score or 0)
-        if s < 50:
-            return 'high'
-        if s < 65:
-            return 'high'
-        return 'medium'
-
-    execution_tasks = []
-    if float(comps.get('market_position') or 0) < 75:
-        execution_tasks.append({
-            'id': 'market_validation',
-            'title': f'Customer and market assumption validation for {initiative}',
-            'description': f'Run structured customer interviews and market tests to sharpen the value proposition (market position scored {int(float(comps.get("market_position") or 0))}/100).',
-            'priority': _priority_for(comps.get('market_position')),
-            'estimated_days': 10,
-            'suggested_role': 'Product Marketing',
-            'function': 'Marketing',
-            'activity_type': 'market_validation',
-            'depends_on': ['dependency_map'],
-            'risk_area': 'market_position',
-        })
-    if float(comps.get('operational_efficiency') or 0) < 75:
-        execution_tasks.append({
-            'id': 'process_optimization',
-            'title': 'Process bottleneck mapping and handoff automation',
-            'description': f'Identify and remediate top process bottlenecks; automate manual handoffs (operational efficiency scored {int(float(comps.get("operational_efficiency") or 0))}/100).',
-            'priority': _priority_for(comps.get('operational_efficiency')),
-            'estimated_days': 12,
-            'suggested_role': 'Operations Lead',
-            'function': 'Operations',
-            'activity_type': 'process_optimization',
-            'depends_on': ['dependency_map'],
-            'risk_area': 'operational_efficiency',
-        })
-    if float(comps.get('financial_health') or 0) < 75:
-        execution_tasks.append({
-            'id': 'financial_model_hardening',
-            'title': f'Financial model hardening and payback validation for {initiative}',
-            'description': f'Pressure-test unit economics, ramp/payback assumptions, and sensitivity ranges (financial health scored {int(float(comps.get("financial_health") or 0))}/100).',
-            'priority': _priority_for(comps.get('financial_health')),
-            'estimated_days': 8,
-            'suggested_role': 'Finance Analyst',
-            'function': 'Finance',
-            'activity_type': 'financial_modeling',
-            'depends_on': ['resource_plan'],
-            'risk_area': 'financial_health',
-        })
-    if float(comps.get('execution_readiness') or 0) < 75:
-        execution_tasks.append({
-            'id': 'staffing_plan',
-            'title': 'Staff critical roles and contingency coverage',
-            'description': f'Confirm owners and contingency coverage for all critical path tasks (execution readiness scored {int(float(comps.get("execution_readiness") or 0))}/100).',
-            'priority': _priority_for(comps.get('execution_readiness')),
-            'estimated_days': 6,
-            'suggested_role': 'HR Business Partner',
-            'function': 'HR',
-            'activity_type': 'staffing',
-            'depends_on': ['resource_plan'],
-            'risk_area': 'execution_readiness',
-        })
-    # Risk-driven mitigation tasks — one per named top risk on the scorecard.
-    for _i, _risk in enumerate(top_risks):
-        execution_tasks.append({
-            'id': f'risk_mitigation_{_i + 1}',
-            'title': f'Mitigate: {_risk}',
-            'description': f'Define and execute a mitigation for the scorecard risk "{_risk}", with a named owner and a measurable exit criterion.',
-            'priority': 'high' if _i == 0 else 'medium',
-            'estimated_days': 6,
-            'suggested_role': 'Risk Manager',
-            'function': 'PMO',
-            'activity_type': 'risk_management',
-            'depends_on': ['risk_register'],
-            'risk_area': 'execution_readiness',
-        })
-    # Always include a core delivery task
-    execution_tasks.append({
-        'id': 'core_delivery',
-        'title': f'Core delivery and implementation sprint for {initiative}',
-        'description': 'Execute primary deliverables per the roadmap; track against milestones weekly.',
-        'priority': 'high',
-        'estimated_days': 21,
-        'suggested_role': 'Project Lead',
-        'function': 'Operations',
-        'activity_type': 'delivery',
-        'depends_on': ['dependency_map', 'resource_plan'],
-        'risk_area': 'execution_readiness',
-    })
-    # Recommendation-driven tasks — operationalize what the scorecard advised.
-    for _i, _rec in enumerate(recommendations):
-        execution_tasks.append({
-            'id': f'recommendation_{_i + 1}',
-            'title': f'Action recommendation: {_rec}',
-            'description': f'Operationalize the scorecard recommendation "{_rec}" into concrete deliverables with an owner and due date.',
-            'priority': 'medium',
-            'estimated_days': 7,
-            'suggested_role': 'Project Lead',
-            'function': 'Operations',
-            'activity_type': 'delivery',
-            'depends_on': ['core_delivery'],
-            'risk_area': 'execution_readiness',
-        })
-
-    # Phase 4: Change Management & Enablement
-    change_tasks = [
-        {
-            'id': 'change_management',
-            'title': 'Stakeholder change management and communication plan',
-            'description': 'Develop and execute change management plan covering training, comms, and adoption milestones.',
-            'priority': 'medium',
-            'estimated_days': 14,
-            'suggested_role': 'Change Manager',
-            'function': 'HR',
-            'activity_type': 'change_management',
-            'depends_on': ['core_delivery'],
-            'risk_area': 'execution_readiness',
-        },
-        {
-            'id': 'training_rollout',
-            'title': 'Training and enablement rollout',
-            'description': 'Deliver training sessions, job aids, and knowledge base for impacted teams.',
-            'priority': 'medium',
-            'estimated_days': 10,
-            'suggested_role': 'Training Lead',
-            'function': 'HR',
-            'activity_type': 'training',
-            'depends_on': ['change_management'],
-            'risk_area': 'execution_readiness',
-        },
-    ]
-
-    # Phase 5: Validation & Launch
-    validation_tasks = [
-        {
-            'id': 'uat_validation',
-            'title': 'User acceptance testing and quality validation',
-            'description': 'Run UAT with key stakeholders, document findings, and close critical gaps before launch.',
-            'priority': 'high',
-            'estimated_days': 8,
-            'suggested_role': 'QA Lead',
-            'function': 'Operations',
-            'activity_type': 'quality',
-            'depends_on': ['core_delivery'],
-            'risk_area': 'execution_readiness',
-        },
-        {
-            'id': 'launch_readiness',
-            'title': 'Launch readiness review and go/no-go checkpoint',
-            'description': 'Conduct formal readiness review with sponsors; confirm all launch criteria are met.',
-            'priority': 'high',
-            'estimated_days': 3,
-            'suggested_role': 'Project Manager',
-            'function': 'PMO',
-            'activity_type': 'governance',
-            'depends_on': ['uat_validation', 'training_rollout'],
-            'risk_area': 'execution_readiness',
-        },
-    ]
-
-    # Phase 6: Measurement & Value Capture
-    measurement_tasks = [
-        {
-            'id': 'kpi_baseline',
-            'title': 'Establish KPI baseline and value-capture tracking',
-            'description': 'Define measurement framework, baseline current KPIs, and set up tracking dashboards.',
-            'priority': 'medium',
-            'estimated_days': 7,
-            'suggested_role': 'Analytics Lead',
-            'function': 'Finance',
-            'activity_type': 'reporting',
-            'depends_on': ['launch_readiness'],
-            'risk_area': 'financial_health',
-        },
-        {
-            'id': 'post_launch_review',
-            'title': '30-day post-launch review and lessons learned',
-            'description': 'Assess adoption, value realization, and document lessons learned for continuous improvement.',
-            'priority': 'medium',
-            'estimated_days': 5,
-            'suggested_role': 'Program Manager',
-            'function': 'PMO',
-            'activity_type': 'reporting',
-            'depends_on': ['kpi_baseline'],
-            'risk_area': 'execution_readiness',
-        },
-    ]
-
-    scenario_note = ''
-    if isinstance(scenario_payload, dict) and scenario_payload.get('label'):
-        scenario_note = f" using scenario '{scenario_payload.get('label')}'"
-
-    phases = [
-        {'name': 'Discovery & Alignment', 'tasks': discovery_tasks},
-        {'name': 'Planning & Design', 'tasks': planning_tasks},
-        {'name': 'Execution', 'tasks': execution_tasks},
-        {'name': 'Change Management', 'tasks': change_tasks},
-        {'name': 'Validation & Launch', 'tasks': validation_tasks},
-        {'name': 'Measurement', 'tasks': measurement_tasks},
-    ]
-
-    return {
-        'name': 'AI Generated Program Plan' if is_program_mode else 'AI Generated Project Plan',
-        'description': str(instruction or '').strip() or 'Generated from scorecard drivers and risk profile.',
-        'summary': f"Generated{scenario_note} using {planning_mode} planning mode, component score priorities, and risk hotspots.",
-        'phases': phases,
-        'planning_mode': planning_mode,
-    }
-
-
 def _generate_ai_wbs_suggestion(
     client,
     llm_model,
@@ -5615,6 +5293,8 @@ def _generate_ai_wbs_suggestion(
     strategy_objective='balanced',
     chat_history=None,
     return_usage=False,
+    lineage_sources=None,
+    team=None,
 ):
     scorecard_payload = scorecard if isinstance(scorecard, dict) else {}
     scenario_context = scenario_payload if isinstance(scenario_payload, dict) else {}
@@ -5669,6 +5349,12 @@ Recommendations:
 Scenario context (if provided):
 {json.dumps({k: scenario_context[k] for k in ('name', 'lever_changes', 'rationale', 'result') if k in scenario_context} if scenario_context else {}, indent=2)}
 
+Recorded decision lineage sources (authoritative; every task must cite one or more exact type/ref pairs):
+{json.dumps(lineage_sources or [], indent=2)}
+
+Recorded team (use names only from this list; otherwise leave owner Unassigned):
+{json.dumps(team or [], indent=2)}
+
 Return JSON only:
 {{
   "name": "WBS title",
@@ -5688,7 +5374,9 @@ Return JSON only:
           "function": "PMO|Finance|Operations|HR|IT|Marketing|Sales|Product|Legal|Security|Other",
           "activity_type": "governance|planning|delivery|risk_management|financial_modeling|change_management|training|integration|quality|reporting|other",
           "dependencies": ["other-task-id"],
-          "risk_area": "which component score this addresses"
+          "risk_area": "which component score this addresses",
+          "owner": "recorded team member name or Unassigned",
+          "lineage": [{{"type": "exact source type", "ref": "exact source ref"}}]
         }}
       ]
     }}
@@ -5696,8 +5384,8 @@ Return JSON only:
 }}
 
 Rules:
-- Return 10-18 tasks total spread across 4-6 meaningful phases.
-- Phases must follow a logical sequence: Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate.
+- Return only the tasks required to cover the recorded lineage sources. Do not add tasks to reach a count.
+- Name phases for the derived work. Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate is guidance only when it fits.
 - CRITICAL: Every task title must be specific to THIS initiative — no generic titles like "Research" or "Planning". Use the conversation, scorecard, and the initiative name above to name exactly what is being done, by whom, for what outcome. Never use "Baseline Analysis" in a task title; use the actual initiative or project name.
 - DETERMINISM: Given the same scorecard, scenario, and instruction, produce the SAME plan every time. Derive tasks mechanically from the inputs below — do not invent variety for its own sake.
 - DRIVE TASKS FROM THE SCORECARD, do not emit a generic template:
@@ -5708,28 +5396,31 @@ Rules:
 - The number and shape of Execution-phase tasks MUST vary with the scorecard: a weak, high-risk initiative gets more remediation tasks than a strong one. Two different scorecards should not yield interchangeable plans.
 - Assign a realistic suggested_role to every task.
 - Include function and activity_type for every task.
-- Include at least 1 risk-mitigation task, 1 change-management task, and 1 value-capture/measurement task.
+- Every task must cite at least one exact lineage source. Every recorded lineage source must be covered by at least one task.
+- Never invent lineage, owners, requirements, gates, conditions, or commitments.
 - Estimated_days should be realistic for the task complexity (range: 1-15).
 - Dependencies must reference real task IDs in the list; avoid circular references.
 - Use context from the conversation turns, key_insights, and recommendations to name tasks after REAL work items from this session.
 - If a scenario was provided, weight tasks toward the scenario's adopted assumptions and lever changes.
-- MINIMUM 10 tasks. If you return fewer than 10 the response will be rejected.
+- Task and phase counts follow the derived work; a lineage-complete plan of any size is valid.
 """.strip()
 
     generation_usage = None
     try:
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
+        app = current_app._get_current_object()
         def _call_llm():
-            return _strategy_generate_reply(
-                [{"role": "user", "content": prompt}],
-                system_prompt="You are a senior project planning assistant. Generate initiative-specific execution plans with 10-18 tasks across 4-6 phases. Every task title must be specific and actionable. Return strict JSON only.",
-                model_selection=model_selection,
-                llm_model=llm_model,
-                strategy_objective=strategy_objective,
-                operation_type='execution_plan',
-                temperature=0,  # Deterministic — same scorecard/scenario/instruction → same plan
-                max_tokens=4096,
-            )
+            with app.app_context():
+                return _strategy_generate_reply(
+                    [{"role": "user", "content": prompt}],
+                    system_prompt="You are a senior project planning assistant. Generate only the work derived from the supplied decision lineage. Every task title must be specific and actionable. Return strict JSON only.",
+                    model_selection=model_selection,
+                    llm_model=llm_model,
+                    strategy_objective=strategy_objective,
+                    operation_type='execution_plan',
+                    temperature=0,  # Deterministic — same scorecard/scenario/instruction → same plan
+                    max_tokens=4096,
+                )
         with ThreadPoolExecutor(max_workers=1) as _pool:
             _future = _pool.submit(_call_llm)
             try:
@@ -5741,26 +5432,22 @@ Rules:
             raise ValueError('invalid_wbs_response')
         if not isinstance(parsed.get('phases'), list) and not isinstance(parsed.get('tasks'), list):
             raise ValueError('invalid_wbs_response')
-        # Reject thin plans — AI must return at least 6 tasks or we use the heuristic
-        all_tasks = []
-        if isinstance(parsed.get('phases'), list):
-            for phase in parsed['phases']:
-                all_tasks.extend(phase.get('tasks') or [])
-        elif isinstance(parsed.get('tasks'), list):
-            all_tasks = parsed['tasks']
-        if len(all_tasks) < 6:
-            raise ValueError('wbs_too_thin')
-        return (parsed, generation_usage, True, None) if return_usage else parsed
+        from ..decision_lineage import assign_team_owners, validate_plan_lineage
+        validated, lineage_result = validate_plan_lineage(parsed, lineage_sources or [])
+        if validated is None:
+            error = ValueError('invalid_plan_lineage')
+            error.lineage_result = lineage_result
+            raise error
+        validated = assign_team_owners(validated, team or [])
+        validated['lineage_sources'] = list(lineage_sources or [])
+        validated['lineage_validation'] = lineage_result
+        return (validated, generation_usage, True, None) if return_usage else validated
     except Exception as generation_error:
-        heuristic = _heuristic_wbs_suggestion(
-            scorecard,
-            instruction,
-            scenario_payload=scenario_context,
-            chat_history=chat_history,
-        )
+        current_app.logger.warning('Execution plan generation failed: %s', type(generation_error).__name__)
+        generation_usage = generation_usage or getattr(generation_error, 'jaspen_usage', None)
         if return_usage:
-            return heuristic, generation_usage, False, type(generation_error).__name__
-        return heuristic
+            return None, generation_usage, False, type(generation_error).__name__
+        raise
 
 
 def _stable_wbs_task_id(phase_name, title, used_ids):
@@ -5811,7 +5498,7 @@ def _materialize_ai_wbs(wbs_payload, start_date=None):
     tasks_in = []
     phases_in = []
     if isinstance(wbs_payload, dict):
-        if isinstance(wbs_payload.get('phases'), list):
+        if isinstance(wbs_payload.get('phases'), list) and wbs_payload.get('phases'):
             phases_in = wbs_payload.get('phases')
         elif isinstance(wbs_payload.get('tasks'), list):
             phases_in = [{'name': 'Generated Plan', 'tasks': wbs_payload.get('tasks')}]
@@ -5889,6 +5576,9 @@ def _materialize_ai_wbs(wbs_payload, start_date=None):
             activity_type = str(raw.get('activity_type') or '').strip().lower()
             if activity_type:
                 task['activity_type'] = activity_type
+            lineage = [dict(link) for link in (raw.get('lineage') or []) if isinstance(link, dict) and link.get('type') and link.get('ref')]
+            if lineage:
+                task['lineage'] = lineage
 
             created.append(task)
             phase_task_ids.append(task_id)
@@ -6019,6 +5709,11 @@ def _normalize_wbs_task(raw_task):
     function_name = str(raw_task.get('function') or raw_task.get('owner_function') or '').strip() or None
     activity_type = str(raw_task.get('activity_type') or '').strip().lower() or None
     phase = str(raw_task.get('phase') or '').strip() or None
+    lineage = [
+        {key: link.get(key) for key in ('type', 'ref', 'label') if link.get(key) is not None}
+        for link in (raw_task.get('lineage') or [])
+        if isinstance(link, dict) and link.get('type') and link.get('ref')
+    ]
 
     depends_on = raw_task.get('depends_on')
     if not isinstance(depends_on, list):
@@ -6076,6 +5771,8 @@ def _normalize_wbs_task(raw_task):
         task['activity_type'] = activity_type
     if phase:
         task['phase'] = phase
+    if lineage:
+        task['lineage'] = lineage
     return task
 
 
@@ -6112,6 +5809,10 @@ def _normalize_project_wbs(payload, existing=None):
     start_date = str(payload.get('start_date') or base.get('start_date') or '').strip() or None
 
     return {
+        **{key: payload.get(key, base.get(key)) for key in (
+            'ai_generated', 'ai_generated_at', 'ai_summary', 'generation_status',
+            'generation_error', 'scorecard_id', 'scorecard_name', 'idea_name',
+        ) if key in payload or key in base},
         'version': int(base.get('version') or payload.get('version') or 1),
         'name': str(payload.get('name') or base.get('name') or 'Execution WBS').strip(),
         'description': str(payload.get('description') or base.get('description') or '').strip(),
@@ -7105,6 +6806,10 @@ def score_batch_queued(thread_id):
             analysis_id = evaluation_context['scorecard_id']
             evaluation_id = evaluation_context['evaluation_id']
             generated_at = datetime.utcnow().isoformat()
+            decision_kit = session.get('decision_kit')
+            decision_kit_version = session.get('decision_kit_version')
+            attributes = dict(idea.get('attributes') or {})
+            option_key = str(idea.get('option_key') or f"opt_{uuid.uuid4().hex[:12]}")
             scorecard = {
                 **payload,
                 'id': analysis_id,
@@ -7114,6 +6819,13 @@ def score_batch_queued(thread_id):
                 'project_name': name,
                 'name': name,
                 'project_description': description,
+                'option_key': option_key,
+                'attributes': attributes,
+                'decision_kit': decision_kit,
+                'decision_kit_version': decision_kit_version,
+                'kit_context': session.get('kit_context') if isinstance(session.get('kit_context'), dict) else {},
+                '_evidence_corpus': _thread_user_corpus(user_id, thread_id),
+                '_force_recommendation': True,
                 'timestamp': generated_at,
                 'createdAt': generated_at,
                 'label': name,
@@ -7125,6 +6837,18 @@ def score_batch_queued(thread_id):
                     'model_type': model_selection['model_type'],
                 },
             }
+
+            scorecard = _normalize_scorecard_payload(scorecard)
+            from ..decision_fingerprint import scoring_fingerprint
+            scorecard['decision_fingerprint'] = scoring_fingerprint(
+                option_key=option_key,
+                attributes=attributes,
+                rubric=rubric,
+                objective=strategy_objective,
+                decision_kit=decision_kit,
+                decision_kit_version=decision_kit_version,
+                evidence_corpus=_thread_user_corpus(user_id, thread_id),
+            )
 
             try:
                 upsert_scorecard(
@@ -7343,6 +7067,50 @@ def generate_ai_wbs(thread_id):
         if not isinstance(current_scorecard, dict):
             return jsonify({'error': 'No scorecard context found for this thread.'}), 404
 
+        from ..decision_kits import get_decision_kit
+        from ..decision_lineage import build_lineage_sources
+        decision_kit_key = session.get('decision_kit') if isinstance(session, dict) else None
+        decision_kit = get_decision_kit(decision_kit_key, session.get('decision_kit_version')) if decision_kit_key else None
+        recorded_decision = None
+        if decision_kit:
+            from ..models_decision_record import DecisionRecord
+            records = (
+                DecisionRecord.query
+                .filter_by(thread_id=str(thread_id))
+                .order_by(DecisionRecord.updated_at.desc())
+                .all()
+            )
+            target_option_key = str(current_scorecard.get('option_key') or '')
+            for candidate in records:
+                payload_json = candidate.record if isinstance(candidate.record, dict) else {}
+                verdict = payload_json.get('kit_verdict') if isinstance(payload_json.get('kit_verdict'), dict) else {}
+                if (
+                    candidate.final_decision
+                    and verdict.get('verdict_key') in {'advance', 'advance_with_conditions'}
+                    and str(verdict.get('option_key') or '') == target_option_key
+                ):
+                    recorded_decision = {'id': candidate.id, 'final_decision': candidate.final_decision, 'kit_verdict': verdict}
+                    break
+            if recorded_decision is None:
+                return jsonify({
+                    'success': False,
+                    'code': 'recorded_advancing_decision_required',
+                    'error': 'Record a Bid or Bid with conditions decision for this option before building its execution plan.',
+                    'action': 'record_decision',
+                }), 409
+        lineage_sources = build_lineage_sources(current_scorecard, decision_kit, recorded_decision)
+        attributes = current_scorecard.get('attributes') if isinstance(current_scorecard.get('attributes'), dict) else {}
+        team_entry = attributes.get('team')
+        recorded_team = team_entry.get('value') if isinstance(team_entry, dict) and isinstance(team_entry.get('value'), list) else []
+        deadline = None
+        if decision_kit:
+            deadline_binding = (decision_kit.get('plan_bindings') or {}).get('deadline')
+            if str(deadline_binding).startswith('context:'):
+                entry = (session.get('kit_context') or {}).get(str(deadline_binding).split(':', 1)[1])
+            else:
+                entry = attributes.get(deadline_binding)
+            deadline = entry.get('value') if isinstance(entry, dict) else entry
+
         # If a committed plan already exists for THIS idea, don't silently
         # overwrite it. Unless the caller explicitly forces a regenerate
         # (force=true), signal the frontend so it can offer "open the existing
@@ -7429,12 +7197,15 @@ def generate_ai_wbs(thread_id):
                     strategy_objective=_strategy_objective,
                     chat_history=chat_turns,
                     return_usage=True,
+                    lineage_sources=lineage_sources,
+                    team=recorded_team,
                 )
                 return {
                     'wbs': raw_wbs,
                     'provider_success': bool(provider_success),
                     'provider_error': provider_error,
-                }, provider_usage
+                }, {**(provider_usage or {}), 'degraded': not provider_success,
+                    'generation_failed': not provider_success, 'error_code': provider_error}
 
             generated_wbs, provider_usage, ai_settlement = execute_customer_operation(
                 user,
@@ -7489,13 +7260,28 @@ def generate_ai_wbs(thread_id):
             error_code=provider_error,
             scorecard_id=telemetry_scorecard_id,
             evaluation_id=execution_evaluation_id,
-            metadata={'heuristic_fallback': not provider_success},
+            metadata={'generation_failed': not provider_success},
             persist_ai_operation=False,
         )
         db.session.commit()
+        if not provider_success:
+            return jsonify({
+                'success': False,
+                'code': 'execution_plan_generation_failed',
+                'error': 'AI execution-plan generation failed. Your existing plan was not changed.',
+                'retryable': True,
+                'generation_status': 'failed',
+                'provider_error': provider_error,
+                'source_item_count': len(lineage_sources),
+            }), 503
         materialized = _materialize_ai_wbs(raw_wbs, start_date=requested_start_date)
+        if deadline:
+            from ..decision_lineage import schedule_backward
+            materialized = schedule_backward(materialized, deadline, buffer_days=1)
         normalized_wbs = _normalize_project_wbs({'project_wbs': materialized}, existing=None)
         normalized_wbs['ai_generated'] = True
+        normalized_wbs['generation_status'] = 'ai_generated'
+        normalized_wbs['generation_error'] = provider_error
         normalized_wbs['ai_generated_at'] = datetime.utcnow().isoformat()
         normalized_wbs['ai_summary'] = str(raw_wbs.get('summary') or '').strip()
         if scenario_id:
@@ -8246,7 +8032,7 @@ def get_thread_wbs(thread_id):
                 from .ai_agent import _collect_session_scorecards
                 sessions = load_user_sessions(user_id) or {}
                 _skey, _session = _resolve_session_entry(sessions, thread_id)
-                candidates.extend(_collect_session_scorecards(_session))
+                candidates.extend(_collect_session_scorecards(_session, user_id=user_id, thread_id=thread_id))
             except Exception:
                 candidates = []
             try:
@@ -8702,6 +8488,10 @@ def get_thread_bundle(thread_id):
             or td.get('strategy_objective')
         )
         td['strategy_objective'] = strategy_objective
+        decision_kit = session.get('decision_kit') if isinstance(session, dict) else None
+        decision_kit_version = session.get('decision_kit_version') if isinstance(session, dict) else None
+        decision_kit_family = session.get('decision_kit_family') if isinstance(session, dict) else None
+        kit_context = session.get('kit_context') if isinstance(session, dict) and isinstance(session.get('kit_context'), dict) else {}
         baseline_inputs = td.get('baseline_inputs') or (
             session.get('baseline_inputs') if isinstance(session, dict) and isinstance(session.get('baseline_inputs'), dict) else {}
         )
@@ -8832,6 +8622,10 @@ def get_thread_bundle(thread_id):
                 'session_id': thread_id,
                 'name': (session or {}).get('name') if isinstance(session, dict) else None,
                 'strategy_objective': strategy_objective,
+                'decision_kit': decision_kit,
+                'decision_kit_family': decision_kit_family,
+                'decision_kit_version': decision_kit_version,
+                'kit_context': kit_context,
                 'status': (session or {}).get('status') if isinstance(session, dict) else 'in_progress',
             },
             'messages': (session.get('chat_history') if isinstance(session, dict) and isinstance(session.get('chat_history'), list) else []),
@@ -8856,6 +8650,10 @@ def get_thread_bundle(thread_id):
             'status': (session or {}).get('status') if isinstance(session, dict) else 'in_progress',
             'result': session_result,
             'strategy_objective': strategy_objective,
+            'decision_kit': decision_kit,
+            'decision_kit_family': decision_kit_family,
+            'decision_kit_version': decision_kit_version,
+            'kit_context': kit_context,
             'objective_options': list(STRATEGY_OBJECTIVE_OPTIONS),
         }), 200
 
@@ -10314,3 +10112,142 @@ def adopt_analysis_for_thread(thread_id):
     except Exception as e:
         current_app.logger.error("[adopt_analysis_for_thread] %s", e)
         return jsonify({'error': str(e)}), 500
+
+
+# ============================================================
+# DECISION KITS — domain-neutral structured decision mechanics
+# ============================================================
+
+@strategy_bp.route('/decision-kits', methods=['GET'])
+@jwt_required()
+def decision_kit_catalog():
+    from ..decision_kits import list_decision_kits
+    return jsonify({'decision_kits': list_decision_kits()}), 200
+
+
+@strategy_bp.route('/threads/<thread_id>/scorecards/<scorecard_id>/attributes', methods=['GET', 'PATCH'])
+@jwt_required()
+def scorecard_attributes(thread_id, scorecard_id):
+    user_id = get_jwt_identity()
+    user, _plan_key, access_error = _require_tool_access(
+        user_id, 'wbs_read' if request.method == 'GET' else 'wbs_write',
+        access='read' if request.method == 'GET' else 'write',
+    )
+    if access_error:
+        return access_error
+    row = Scorecard.query.filter_by(id=str(scorecard_id), user_id=str(user_id), thread_id=str(thread_id)).first()
+    if row is None:
+        return jsonify({'error': 'Scorecard not found', 'code': 'not_found'}), 404
+    card = dict(row.data or {})
+    if request.method == 'GET':
+        return jsonify({
+            'scorecard_id': str(scorecard_id),
+            'option_key': card.get('option_key'),
+            'attributes': card.get('attributes') if isinstance(card.get('attributes'), dict) else {},
+            'metrics': card.get('metrics') if isinstance(card.get('metrics'), dict) else {},
+            'facts_changed': bool(card.get('facts_changed')),
+        }), 200
+
+    payload = request.get_json(silent=True) or {}
+    updates = payload.get('attributes') if isinstance(payload.get('attributes'), dict) else {}
+    sessions = load_user_sessions(user_id) or {}
+    from .ai_agent import _resolve_user_session
+    _session_key, session = _resolve_user_session(sessions, thread_id)
+    session = session if isinstance(session, dict) else {}
+    from ..decision_kits import get_decision_kit
+    kit = get_decision_kit(session.get('decision_kit'), session.get('decision_kit_version')) if session.get('decision_kit') else None
+    allowed = {item['key'] for item in (kit.get('fields') or [])} if kit else set(updates)
+    corpus = _thread_user_corpus(user_id, thread_id)
+    normalized = {}
+    for key, raw in updates.items():
+        if key not in allowed or not isinstance(raw, dict):
+            continue
+        source = str(raw.get('source') or '').strip().lower()
+        evidence = str(raw.get('evidence') or '').strip()
+        if source not in {'user', 'document', 'assumed'}:
+            return jsonify({'error': f'Invalid source for {key}', 'code': 'invalid_attribute_source'}), 400
+        if source == 'user' and evidence.lower() not in corpus.lower():
+            return jsonify({'error': f'Evidence for {key} was not found verbatim in the user input', 'code': 'unverified_attribute_evidence'}), 400
+        if source in {'user', 'document'} and not evidence:
+            return jsonify({'error': f'Evidence is required for {key}', 'code': 'missing_attribute_evidence'}), 400
+        normalized[key] = {'value': raw.get('value'), 'source': source, 'evidence': evidence, 'updated_at': datetime.utcnow().isoformat()}
+    if not normalized:
+        return jsonify({'error': 'No valid attributes supplied', 'code': 'invalid_attributes'}), 400
+
+    from ..decision_metrics import calculate_metrics
+    current_attributes = dict(card.get('attributes') or {})
+    current_attributes.update(normalized)
+    card['attributes'] = current_attributes
+    card['facts_changed'] = True
+    if kit:
+        card['metrics'] = calculate_metrics(current_attributes, kit.get('metrics'), context=session.get('kit_context'))
+    upsert_scorecard(
+        user_id=user_id,
+        thread_id=thread_id,
+        payload=card,
+        organization_id=row.organization_id,
+        session_id=row.session_id,
+        evaluation_id=row.evaluation_id,
+        source=row.source or 'native',
+        analysis_pass=False,
+    )
+    db.session.commit()
+    return jsonify({'scorecard_id': str(scorecard_id), 'attributes': current_attributes, 'metrics': card.get('metrics') or {}, 'facts_changed': True}), 200
+
+
+@strategy_bp.route('/threads/<thread_id>/selection', methods=['POST'])
+@jwt_required()
+def decision_selection(thread_id):
+    user_id = get_jwt_identity()
+    user, _plan_key, access_error = _require_tool_access(user_id, 'wbs_read', access='read')
+    if access_error:
+        return access_error
+    sessions = load_user_sessions(user_id) or {}
+    from .ai_agent import _resolve_user_session
+    _key, session = _resolve_user_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return jsonify({'error': 'Thread not found', 'code': 'not_found'}), 404
+    from ..decision_kits import get_decision_kit
+    from ..decision_selection import select_options
+    kit = get_decision_kit(session.get('decision_kit'), session.get('decision_kit_version')) if session.get('decision_kit') else None
+    if not kit:
+        return jsonify({'error': 'Constraint selection requires a Decision Kit', 'code': 'missing_decision_kit'}), 400
+    cards = collect_peer_scorecards(user_id, thread_id, legacy_session=session, legacy_thread_data=(_load_scenarios(user_id) or {}).get(thread_id) or {})
+    body = request.get_json(silent=True) or {}
+    constraints = body.get('constraints') if isinstance(body.get('constraints'), list) else (session.get('kit_context') or {}).get('constraints') or []
+    result = select_options(cards, constraints, objective_metric=(kit.get('selection') or {}).get('objective_metric') or 'jaspen_score')
+    return jsonify({'selection': result, 'decision_kit': kit['key'], 'decision_kit_version': kit['version']}), 200
+
+
+@strategy_bp.route('/threads/<thread_id>/scorecards/<scorecard_id>/recommendation/recompute', methods=['POST'])
+@jwt_required()
+def recompute_decision_recommendation(thread_id, scorecard_id):
+    user_id = get_jwt_identity()
+    user, _plan_key, access_error = _require_tool_access(user_id, 'wbs_write', access='write')
+    if access_error:
+        return access_error
+    row = Scorecard.query.filter_by(id=str(scorecard_id), user_id=str(user_id), thread_id=str(thread_id)).first()
+    if row is None:
+        return jsonify({'error': 'Scorecard not found', 'code': 'not_found'}), 404
+    sessions = load_user_sessions(user_id) or {}
+    from .ai_agent import _resolve_user_session
+    _key, session = _resolve_user_session(sessions, thread_id)
+    session = session if isinstance(session, dict) else {}
+    card = dict(row.data or {})
+    from ..decision_fingerprint import scoring_fingerprint
+    current_fp = scoring_fingerprint(
+        option_key=card.get('option_key'), attributes=card.get('attributes'),
+        rubric=session.get('scoring_rubric'), objective=session.get('strategy_objective'),
+        decision_kit=session.get('decision_kit'), decision_kit_version=session.get('decision_kit_version'),
+        evidence_corpus=_thread_user_corpus(user_id, thread_id), facts_text=card.get('project_description'),
+    )
+    if card.get('facts_changed') or current_fp != card.get('decision_fingerprint'):
+        return jsonify({'error': 'Facts or evidence changed; holistic re-score is required', 'code': 'holistic_rescore_required'}), 409
+    from ..decision_processing import apply_decision_kit
+    updated = apply_decision_kit(
+        card, decision_kit=session.get('decision_kit'), decision_kit_version=session.get('decision_kit_version'),
+        kit_context=session.get('kit_context'), evidence_corpus=_thread_user_corpus(user_id, thread_id), force_recommendation=True,
+    )
+    upsert_scorecard(user_id=user_id, thread_id=thread_id, payload=updated, organization_id=row.organization_id, session_id=row.session_id, evaluation_id=row.evaluation_id, source=row.source or 'native', analysis_pass=False)
+    db.session.commit()
+    return jsonify({'recommendation': updated.get('recommendation'), 'model_called': False}), 200

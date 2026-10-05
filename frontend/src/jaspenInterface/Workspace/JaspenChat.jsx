@@ -5,6 +5,9 @@
 //          to free that name for the new canvas-style Workspace editor.
 // ============================================================================
 
+import { refreshScorecardMessages, selectCurrentScorecard, scorecardId } from './currentScorecards';
+import { decisionKitForConversationStart, isRfpDecision, RFP_DECISION_INTENT } from './decisionTypeSelection';
+import { streamFailurePresentation } from './messageFormatting';
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useReducer, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
@@ -309,14 +312,13 @@ const buildMergedScorecardSnapshots = ({
     });
   };
 
-  pushSnapshot(baselineSnapshot);
   (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).forEach((snapshot) => {
     if (!snapshot || typeof snapshot !== 'object') return;
     const snapshotId = String(snapshot.id || snapshot.analysis_id || '').trim();
     if (baselineSnapshot && snapshotId === String(baselineSnapshot.id || '').trim()) {
       pushSnapshot({
-        ...snapshot,
         ...baselineSnapshot,
+        ...snapshot,
         isBaseline: true,
         label: BASELINE_INTERNAL_LABEL,
       });
@@ -325,6 +327,7 @@ const buildMergedScorecardSnapshots = ({
     pushSnapshot(snapshot);
   });
 
+  pushSnapshot(baselineSnapshot);
   return merged;
 };
 
@@ -1619,6 +1622,7 @@ export default function JaspenChat() {
   const [sharedProjects, setSharedProjects] = useState([]);
   const [sharedProjectsLoading, setSharedProjectsLoading] = useState(false);
   const [strategyObjective, setStrategyObjective] = useState('balanced');
+  const [decisionKit, setDecisionKit] = useState(null);
   const [objectiveExplicitlySet, setObjectiveExplicitlySet] = useState(false);
 
   const [busy, setBusy] = useState(false);
@@ -1816,6 +1820,7 @@ const [pendingWbsConfirmation, setPendingWbsConfirmation] = useState(null);
 
   // PROMPT ALIGNMENT: Scorecard snapshots (baseline + adopted scenarios)
   const [scorecardSnapshots, setScorecardSnapshots] = useState([]);
+  const [explicitInsightSelection, setExplicitInsightSelection] = useState(null);
   const [selectedScorecardId, setSelectedScorecardId] = useState(null);
   const [activeSnapshotId, setActiveSnapshotId] = useState(null);
   const [baselineScorecardId, setBaselineScorecardId] = useState(null);
@@ -2060,6 +2065,7 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
       bundle?.strategy_objective || bundle?.thread?.strategy_objective || 'balanced'
     );
     setStrategyObjective(bundleObjective);
+    setDecisionKit(bundle?.decision_kit || bundle?.thread?.decision_kit || ((bundle?.decision_kit_family || bundle?.thread?.decision_kit_family) === 'rfp' ? RFP_DECISION_INTENT : null));
 
     setSavedScenarios(normalized);
     const bundleLeverCatalog = Array.isArray(bundle?.lever_catalog) ? bundle.lever_catalog : [];
@@ -2566,7 +2572,7 @@ const renderInlineExecutionView = () => {
     if (_BANNED_NAMES.has(v.toLowerCase())) return null;
     return v;
   };
-  const _scorecardForHeader = activeScorecard || analysisResult;
+  const _scorecardForHeader = scorecardSnapshots.find(card => scorecardId(card) === String(threadWbs?.scorecard_id || '')) || null;
   const ideaName = (
     _pickIdeaName(_scorecardForHeader?.display_overrides?.title)
       || _pickIdeaName(_scorecardForHeader?.name)
@@ -2788,10 +2794,10 @@ const renderScorecardCard = (result, opts = {}) => {
 
   // Custom rubric: render the user's own criteria (label + is_risk straight from
   // the payload). Otherwise fall back to Jaspen's built-in 6 dimensions.
-  const rubricCriteria = Array.isArray(result?.rubric?.criteria) ? result.rubric.criteria : null;
+  const rubricCriteria = (result?.scoring_rubric || result?.rubric)?.criteria || null;
   let primaryDims;
   let secondaryDims;
-  if (rubricCriteria && rubricCriteria.length >= 2) {
+  if (Array.isArray(rubricCriteria) && rubricCriteria.length > 0) {
     const mapped = rubricCriteria
       .filter((c) => c && c.key)
       .map((c) => ({
@@ -2842,7 +2848,7 @@ const renderScorecardCard = (result, opts = {}) => {
     const dim = dims[key] || {};
     const raw = Number(dim.score || result?.component_scores?.[key] || 0);
     const pct = Math.min(raw, 100);
-    const tenths = (pct / 10).toFixed(1);
+    const tenths = Math.round(pct);
     const flagged = pct < 55;
     const barColor = (isRisk && pct < 65) ? '#f59e0b' : flagged ? '#f59e0b' : 'var(--navy)';
     const conf = String(dim.confidence || 'medium').toLowerCase();
@@ -2851,7 +2857,7 @@ const renderScorecardCard = (result, opts = {}) => {
       <div key={key} className="jas-dim-col" title={dim.rationale || ''}>
         <div className="jas-dim-col-header">
           <span className="jas-dim-label">{label}</span>
-          <span className={`jas-dim-score-tenths${flagged ? ' flagged' : ''}`}>{tenths}<span className="jas-dim-denom">/10</span></span>
+          <span className={`jas-dim-score-tenths${flagged ? ' flagged' : ''}`}>{tenths}<span className="jas-dim-denom">/100</span></span>
         </div>
         <div className="jas-dim-bar-track">
           <div className="jas-dim-bar-fill" style={{ width: `${pct}%`, background: barColor }}/>
@@ -3190,6 +3196,17 @@ const renderInlineTradeoffArtifact = (data, opts = {}) => {
 // Compact summary: phase / task counts + progress bar + first 3 task names.
 // Full canvas (List / Board / Timeline) lives in Workspace.
 const renderInlineExecutionArtifact = (wbs, opts = {}) => {
+  if (wbs?.generation_status === 'heuristic_fallback') {
+    return (
+      <div role="alert" style={{ background:'#fff', border:'1px solid #fecaca', borderRadius:14, padding:'18px 20px', maxWidth:720 }}>
+        <div style={{ fontWeight:700, color:'#991b1b' }}>Execution plan generation failed</div>
+        <p style={{ margin:'8px 0 14px', color:'#5a6585' }}>No template plan is available. Retry to generate an initiative-specific plan.</p>
+        {opts.onRegenerateExecutionPlan && (
+          <button type="button" onClick={() => opts.onRegenerateExecutionPlan(wbs?.scorecard_id || null)}>Retry</button>
+        )}
+      </div>
+    );
+  }
   const tasks = Array.isArray(wbs?.tasks) ? wbs.tasks : [];
   if (tasks.length === 0) return null;
   const phases = new Set(tasks.map((t) => String(t?.phase || 'Execution').trim() || 'Execution'));
@@ -5838,6 +5855,21 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
     return normalized;
   }, [currentSessionId, sessionId, showToast]);
 
+  const applyDecisionKit = useCallback(async (nextKit, options = {}) => {
+    const normalized = nextKit || null;
+    const persistThreadId = options.threadId || currentSessionId || sessionId || null;
+    setDecisionKit(normalized);
+    if (options.persist === false || !persistThreadId) return normalized;
+    try {
+      await Jaspen.setThreadDecisionKit(persistThreadId, normalized, 'user');
+    } catch (err) {
+      console.error('[applyDecisionKit] persist failed', err);
+      setDecisionKit(decisionKit);
+      showToast(err?.message || 'Could not save the decision type.', 'error');
+    }
+    return normalized;
+  }, [currentSessionId, decisionKit, sessionId, showToast]);
+
 
   // AI drawer messages - DO NOT fabricate assistant messages
   // Assistant messages must ONLY come from backend endpoint
@@ -6317,6 +6349,7 @@ useEffect(() => {
         setMessages([]);
         setTradeoffRequested(false);
         setStrategyObjective('balanced');
+        setDecisionKit(null);
         setObjectiveExplicitlySet(false);
 // (removed) sidebar uses main `messages` as the thread source of truth
         setCollectedData({});
@@ -6358,6 +6391,7 @@ useEffect(() => {
             strategy_objective: normalizeStrategyObjective(
               restoreBundle?.strategy_objective || restoreBundle?.thread?.strategy_objective || 'balanced'
             ),
+            decision_kit: restoreBundle?.decision_kit || restoreBundle?.thread?.decision_kit || ((restoreBundle?.decision_kit_family || restoreBundle?.thread?.decision_kit_family) === 'rfp' ? RFP_DECISION_INTENT : null),
             objective_explicitly_set: false,
           };
         } catch (e) {
@@ -6382,6 +6416,7 @@ useEffect(() => {
 
       setSessionId(canonicalSid);
       setCurrentSessionId(canonicalSid);
+      setDecisionKit(session?.decision_kit || restoreBundle?.decision_kit || restoreBundle?.thread?.decision_kit || null);
       setLastSessionId(canonicalSid);
       const restoredModelType = String(session?.model_type || '').toLowerCase();
       if (restoredModelType && allowedModelTypes.includes(restoredModelType)) {
@@ -6670,7 +6705,7 @@ useEffect(() => {
 // threads may still persist artifacts only in snapshot/WBS state; surface them
 // inline when message artifacts are missing.
 const displayMessages = useMemo(() => {
-  const baseMessages = Array.isArray(messages) ? [...messages] : [];
+  const baseMessages = refreshScorecardMessages(messages, scorecardSnapshots);
   const existingArtifactTypes = new Set(
     baseMessages
       .map((entry) => String(entry?.artifact?.type || '').trim())
@@ -6992,129 +7027,16 @@ const hasTradeoffArtifact = useMemo(
 ]);
 
 const insightsScoreSource = useMemo(() => {
-  const selectedId = String(effectiveSelectedScorecardId || '').trim();
-  const matchesSelectedId = (value) => {
-    if (!selectedId || !value || typeof value !== 'object') return false;
-    const candidateIds = [
-      value?.id,
-      value?.analysis_id,
-      value?.analysisId,
-      value?.scorecard_id,
-      value?.snapshot_id,
-    ]
-      .map((entry) => String(entry || '').trim())
-      .filter(Boolean);
-    return candidateIds.includes(selectedId);
-  };
-
-  const selectedSnapshot = selectedId
-    ? (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).find((snapshot) => {
-      return matchesSelectedId(snapshot);
-    }) || null
-    : null;
-
-  const selectedInsightScorecard = selectedId
-    ? (scoredIdeaInsights?.items || []).find((entry) => matchesSelectedId(entry) || matchesSelectedId(entry?.data))?.data || null
-    : null;
-
-  const latestScoredIdea = (() => {
-    const items = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
-    if (!items.length) return null;
-    return items[items.length - 1]?.data || null;
-  })();
-
-  const activeMatchesSelected = matchesSelectedId(activeScorecard);
-
-  const candidates = [
-    selectedSnapshot,
-    selectedInsightScorecard,
-    activeMatchesSelected ? activeScorecard : null,
-    latestScoredIdea,
-    activeScorecard,
-    analysisResult,
-    bundleCurrentScorecard,
-    bundleBaselineScorecard,
-  ].filter((entry) => entry && typeof entry === 'object' && hasMeaningfulScorecardData(entry));
-
-  return candidates[0] || null;
-}, [
-  activeScorecard,
-  analysisResult,
-  bundleBaselineScorecard,
-  bundleCurrentScorecard,
-  effectiveSelectedScorecardId,
-  scorecardSnapshots,
-  scoredIdeaInsights,
-]);
+  const cards = (scoredIdeaInsights?.items || []).map(item => item.data);
+  const selectedId = explicitInsightSelection?.threadId === (currentSessionId || sessionId)
+    ? explicitInsightSelection.id : '';
+  return selectCurrentScorecard(cards, selectedId);
+}, [scoredIdeaInsights, explicitInsightSelection, currentSessionId, sessionId]);
 
 const insightsConfidenceSource = useMemo(() => {
-  const selectedId = String(effectiveSelectedScorecardId || '').trim();
-  const matchesSelectedId = (value) => {
-    if (!selectedId || !value || typeof value !== 'object') return false;
-    const candidateIds = [
-      value?.id,
-      value?.analysis_id,
-      value?.analysisId,
-      value?.scorecard_id,
-      value?.snapshot_id,
-      value?.data?.id,
-      value?.data?.analysis_id,
-      value?.data?.analysisId,
-    ]
-      .map((entry) => String(entry || '').trim())
-      .filter(Boolean);
-    return candidateIds.includes(selectedId);
-  };
-
-  const selectedSnapshot = selectedId
-    ? (Array.isArray(scorecardSnapshots) ? scorecardSnapshots : []).find((snapshot) => {
-      return matchesSelectedId(snapshot);
-    }) || null
-    : null;
-
-  const selectedInsightEntry = selectedId
-    ? (scoredIdeaInsights?.items || []).find((entry) => matchesSelectedId(entry) || matchesSelectedId(entry?.data)) || null
-    : null;
-  const selectedInsightScorecard = selectedInsightEntry?.data || null;
-
-  const latestInsightEntry = (() => {
-    const items = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
-    if (!items.length) return null;
-    return items[items.length - 1] || null;
-  })();
-  const latestScoredIdea = latestInsightEntry?.data || null;
-
-  const candidates = [
-    selectedInsightEntry,
-    selectedInsightScorecard,
-    selectedSnapshot,
-    insightsScoreSource,
-    latestInsightEntry,
-    latestScoredIdea,
-    activeScorecard,
-    analysisResult,
-    bundleCurrentScorecard,
-    bundleBaselineScorecard,
-  ].filter((entry) => entry && typeof entry === 'object');
-
-  for (const candidate of candidates) {
-    const rawConfidence = Number(candidate?.confidence ?? candidate?.confidence_pct ?? candidate?.confidence_percent ?? NaN);
-    if (Number.isFinite(rawConfidence)) {
-      return Math.max(0, Math.min(100, rawConfidence));
-    }
-  }
-
-  return null;
-}, [
-  activeScorecard,
-  analysisResult,
-  bundleBaselineScorecard,
-  bundleCurrentScorecard,
-  effectiveSelectedScorecardId,
-  insightsScoreSource,
-  scorecardSnapshots,
-  scoredIdeaInsights,
-]);
+  const entry = (scoredIdeaInsights?.items || []).find(item => item.id === scorecardId(insightsScoreSource));
+  return Number.isFinite(entry?.confidence) ? entry.confidence : null;
+}, [insightsScoreSource, scoredIdeaInsights]);
 
 const tradeoffEligibleScoredItems = useMemo(() => {
   const items = Array.isArray(scoredIdeaInsights?.items) ? scoredIdeaInsights.items : [];
@@ -7158,6 +7080,13 @@ const renderObjectiveTags = (className = '') => {
           {option.label}
         </button>
       ))}
+      <button
+        type="button"
+        className={`jas-objective-tag ${isRfpDecision(decisionKit) ? 'active' : ''}`}
+        onClick={() => applyDecisionKit(RFP_DECISION_INTENT, { persist: true })}
+      >
+        RFP
+      </button>
     </div>
   );
 };
@@ -7490,10 +7419,11 @@ useEffect(() => {
         return finalPayload;
       }
       const creditMsg = creditErrorMessage(streamErr);
+      const failure = streamFailurePresentation(streamErr, creditMsg);
       setStreamingAssistantError(
         placeholderId,
-        creditMsg || 'Sorry — I hit an error. Please try again.',
-        { keepPartial: true, retryable: !creditMsg },
+        failure.message,
+        { keepPartial: true, retryable: failure.retryable },
       );
       throw streamErr;
     } finally {
@@ -7513,6 +7443,7 @@ useEffect(() => {
     description,
     modelType,
     objective,
+    decisionKit,
     intakeContext,
     viewContext,
     leverDefaults,
@@ -7527,6 +7458,7 @@ useEffect(() => {
         description,
         model_type: modelType,
         strategy_objective: objective,
+        decision_kit: decisionKit,
         intake_context: intakeContext,
         view_context: viewContext && typeof viewContext === 'object' ? viewContext : undefined,
         lever_defaults: leverDefaults,
@@ -7558,10 +7490,15 @@ useEffect(() => {
     } catch (streamErr) {
       setStreamToolStatus('');
       const creditMsg = creditErrorMessage(streamErr);
+      const failure = streamFailurePresentation(streamErr, creditMsg);
+      if (failure.threadId) {
+        setSessionId(failure.threadId);
+        setCurrentSessionId(failure.threadId);
+      }
       setStreamingAssistantError(
         placeholderId,
-        creditMsg || 'Sorry — I hit an error. Please try again.',
-        { keepPartial: true, retryable: !creditMsg },
+        failure.message,
+        { keepPartial: true, retryable: failure.retryable },
       );
       throw streamErr;
     } finally {
@@ -7620,6 +7557,7 @@ useEffect(() => {
         description,
         modelType: selectedModelType,
         objective: strategyObjective,
+        decisionKit: decisionKitForConversationStart(decisionKit),
         intakeContext,
         viewContext: chatViewContext,
         leverDefaults,
@@ -7645,6 +7583,7 @@ useEffect(() => {
         setSelectedModelType(String(data.model_type).toLowerCase());
       }
       setStrategyObjective(normalizeStrategyObjective(data?.strategy_objective || strategyObjective));
+      setDecisionKit(data?.decision_kit || (data?.decision_kit_family === 'rfp' ? RFP_DECISION_INTENT : decisionKit));
       setObjectiveExplicitlySet(Boolean(data?.objective_explicitly_set) || objectiveExplicitlySet);
       await applyMutationRefreshes(data, sid);
       setSelectedStarterId('');
@@ -10473,7 +10412,7 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
       ...prev,
       {
         role: 'ai',
-        text: `Built an execution plan with ${taskCount} task${taskCount === 1 ? '' : 's'}. It's ready in the Execution tab — or open it directly in Workspace.`,
+        text: `Built an AI execution plan. The plan has ${taskCount} task${taskCount === 1 ? '' : 's'}. It's ready in the Execution tab — or open it directly in Workspace.`,
         artifact: {
           type: 'execution_plan',
           data: wbsPayload || { tasks: [] },
@@ -10486,7 +10425,10 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
   } catch (err) {
     console.error('[handleGenerateAiWbsFromScorecard] failed', err);
     if (err?.status === 403) setBillingModalOpen(true);
-    showToast(err?.message || 'Failed to build execution plan', 'error');
+    showToast(err?.message || 'Failed to build execution plan. Your existing plan was not changed.', 'error', {
+      actionLabel: 'Retry',
+      onAction: () => void handleGenerateAiWbsFromScorecard({ threadBundleId, scorecardId, force }),
+    });
   } finally {
     setAiWbsBusy(false);
     setBuildingExecutionPlanFor(null);
@@ -10877,17 +10819,6 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     setView('intake');
   }, [analysisResult, activeTab]);
 
-useEffect(() => {
-  const hint = String(analysisResult?.proactive_next_step || '').trim();
-  if (!hint) return;
-  setMessages((prev) => {
-    if (prev.some((message) => message?._isProactiveHint)) return prev;
-    return [
-      ...prev,
-      { role: 'ai', text: hint, _isProactiveHint: true },
-    ];
-  });
-}, [analysisResult?.proactive_next_step]);
 
   useEffect(() => {
     if (!commandPaletteOpen) return;
@@ -11554,9 +11485,10 @@ const handleSnapshotSelect = useCallback(async (snapshotId) => {
   const nextId = String(snapshotId || '').trim();
   if (!nextId) return;
   setSelectedScorecardId(nextId);
+  setExplicitInsightSelection({ threadId: currentSessionId || sessionId, id: nextId });
   setActiveTab('summary');
   setView('intake');
-}, []);
+}, [currentSessionId, sessionId]);
 
 const handleSnapshotSetActive = useCallback(async (snapshotId, snapshotLabel) => {
   const nextId = String(snapshotId || '').trim();
@@ -13149,7 +13081,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                       });
                       return out;
                     };
-                    let allCards = _mergeCards(messageScorecards, scorecardSnapshots);
+                    let allCards = _mergeCards(scorecardSnapshots, messageScorecards);
                     if (allCards.length === 0 && analysisResult) {
                       allCards = [analysisResult];
                     }
@@ -14299,10 +14231,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   : '';
                 // Custom rubric: coach against the user's own criteria (using each
                 // criterion's description as the improvement tip). Else built-in 6.
-                const scoreRubricCriteria = Array.isArray(scoreSource?.rubric?.criteria)
-                  ? scoreSource.rubric.criteria
-                  : null;
-                const dimensionDefs = (scoreRubricCriteria && scoreRubricCriteria.length >= 2)
+                const scoreRubricCriteria = (scoreSource?.scoring_rubric || scoreSource?.rubric)?.criteria || null;
+                const dimensionDefs = (Array.isArray(scoreRubricCriteria) && scoreRubricCriteria.length > 0)
                   ? scoreRubricCriteria
                       .filter((c) => c && c.key)
                       .map((c) => ({
@@ -14322,13 +14252,13 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 const toInsightSummary = (label, score, rationale, tip) => {
                   if (rationale && String(rationale).trim()) return String(rationale).trim();
                   const normalized = Number.isFinite(score) ? score : 0;
-                  const tenth = (normalized / 10).toFixed(1);
+                  const tenth = Math.round(normalized);
                   let band = 'is uncertain';
                   if (normalized >= 80) band = 'is strong';
                   else if (normalized >= 65) band = 'is solid with room to tighten';
                   else if (normalized >= 50) band = 'is moderate and needs more evidence';
                   else band = 'is weak and needs better grounding';
-                  return `${label} is ${tenth}/10 and ${band}. ${tip}`;
+                  return `${label} is ${tenth}/100 and ${band}. ${tip}`;
                 };
 
                 const rows = dimensionDefs
@@ -14352,7 +14282,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                         <div className="jas-insights-score-summary-list">
                           {scoredItems.map((item, idx) => {
                             const rowId = String(item?.id || '').trim();
-                            const selectedId = String(effectiveSelectedScorecardId || '').trim();
+                            const selectedId = scorecardId(insightsScoreSource);
                             const rowData = item?.data || {};
                             const rowIds = [
                               rowId,
@@ -14369,6 +14299,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                               onClick={() => {
                                 if (!rowId) return;
                                 setSelectedScorecardId(rowId);
+                                setExplicitInsightSelection({ threadId: currentSessionId || sessionId, id: rowId });
                               }}
                             >
                               <span className="jas-insights-score-summary-name">{item?.label || `Scorecard ${idx + 1}`}</span>
@@ -14404,7 +14335,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                         <div key={key} className="jas-insights-dim-row">
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                             <span className="jas-insights-dim-name">{label}</span>
-                            <span className="jas-insights-dim-score-badge" style={{ color }}>{(score / 10).toFixed(1)}/10</span>
+                            <span className="jas-insights-dim-score-badge" style={{ color }}>{Math.round(score)}/100</span>
                           </div>
                           <p className="jas-insights-dim-rationale">{summary}</p>
                           {isWeak && (
@@ -14458,7 +14389,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                         <div key={snap?.id || i}>
                           <div
                             className={`jas-insights-scenario-row${isSel ? ' is-selected' : ''}`}
-                            onClick={() => { if (rid) setSelectedScorecardId(rid); }}
+                            onClick={() => { if (rid) { setSelectedScorecardId(rid); setExplicitInsightSelection({ threadId: currentSessionId || sessionId, id: rid }); } }}
                             style={{ cursor: rid ? 'pointer' : 'default' }}
                           >
                             <span className="jas-insights-scenario-label">{displayLabel}</span>
@@ -14534,8 +14465,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 // confidence exists; otherwise reuse the scorecard's score.
                 const planConfidence = total > 0 ? Math.round((done / total) * 100) : Math.round(uiReadiness);
 
-                const risks = Array.isArray(analysisResult?.top_risks) ? analysisResult.top_risks : [];
-                const recommendations = Array.isArray(analysisResult?.recommendations) ? analysisResult.recommendations : [];
+                const planCard = scorecardSnapshots.find(card => scorecardId(card) === String(threadWbs?.scorecard_id || ''));
+                const risks = Array.isArray(planCard?.top_risks) ? planCard.top_risks : [];
+                const recommendations = Array.isArray(planCard?.recommendations) ? planCard.recommendations : [];
 
                 // Blocked task list (full, with owner) — only when any exist.
                 const blockedTasks = planTasks

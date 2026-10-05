@@ -74,7 +74,7 @@ async function api(path, options = {}) {
   return data;
 }
 
-export default function RecordDecisionPanel({ threadId, alternatives = [], selectedAlternative = null }) {
+export default function RecordDecisionPanel({ threadId, alternatives = [], selectedAlternative = null, decisionKit = null, scorecard = null }) {
   const [record, setRecord] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
@@ -87,6 +87,8 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
   const [supersedesId, setSupersedesId] = React.useState('');
   const [candidates, setCandidates] = React.useState([]);
   const [justSaved, setJustSaved] = React.useState(null);
+  const [kitVerdict, setKitVerdict] = React.useState(scorecard?.recommendation?.verdict_key || '');
+  const [overrideReason, setOverrideReason] = React.useState('');
 
   // The learning loop. Separate forms, separate submissions: an outcome may be
   // recorded now and a lesson months later, when more is actually known.
@@ -131,6 +133,8 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
     setStatement('');
     setSupersedesId('');
     setConfirming(false);
+    setKitVerdict(scorecard?.recommendation?.verdict_key || '');
+    setOverrideReason('');
     setOpen(true);
     void loadCandidates();
   }
@@ -150,9 +154,23 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
         return;
       }
 
+      const recommended = scorecard?.recommendation?.verdict_key || '';
+      if (decisionKit && kitVerdict && recommended && kitVerdict !== recommended && !overrideReason.trim()) {
+        setError('Explain why the recorded decision differs from Jaspen’s recommendation.');
+        setSaving(false);
+        return;
+      }
       const updated = await api(`/${encodeURIComponent(record.id)}`, {
         method: 'PATCH',
-        body: JSON.stringify({ final_decision: decision }),
+        body: JSON.stringify({
+          final_decision: decision,
+          ...(decisionKit && kitVerdict && scorecard ? { kit_verdict: {
+            verdict_key: kitVerdict,
+            scorecard_id: scorecard.id || scorecard.analysis_id,
+            option_key: scorecard.option_key,
+            override_reason: overrideReason.trim(),
+          } } : {}),
+        }),
       });
 
       let supersededTitle = null;
@@ -329,6 +347,26 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
                 ))}
               </select>
             </label>
+          )}
+
+          {decisionKit && scorecard && (
+            <>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: NAVY }}>Recorded RFP decision</span>
+                <select value={kitVerdict} onChange={(e) => setKitVerdict(e.target.value)} style={{ padding: '7px 9px', border: `1px solid ${LINE}`, borderRadius: 6, fontSize: 13 }}>
+                  <option value="">— choose —</option>
+                  <option value="advance">{decisionKit === 'rfp_vendor_selection' ? 'Select' : 'Bid'}</option>
+                  <option value="advance_with_conditions">{decisionKit === 'rfp_vendor_selection' ? 'Shortlist' : 'Bid with conditions'}</option>
+                  <option value="decline">{decisionKit === 'rfp_vendor_selection' ? 'Eliminate' : 'No-Bid'}</option>
+                </select>
+              </label>
+              {kitVerdict && scorecard?.recommendation?.verdict_key && kitVerdict !== scorecard.recommendation.verdict_key && (
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: NAVY }}>Reason for overriding Jaspen’s recommendation</span>
+                  <textarea value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} rows={2} style={{ padding: '8px 10px', border: `1px solid ${LINE}`, borderRadius: 6, fontSize: 13, fontFamily: 'inherit' }} />
+                </label>
+              )}
+            </>
           )}
 
           <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>

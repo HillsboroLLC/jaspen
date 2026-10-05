@@ -443,8 +443,8 @@ export default function JaspenWorkspace() {
   };
 
   // Generate (and commit) an execution plan from a scorecard or trade-off
-  // idea, then open the execution canvas. AI with heuristic fallback happens
-  // server-side inside generate_ai_wbs. `source` is a stable key used only to
+  // idea, then open the execution canvas. Provider failure leaves any existing
+  // plan unchanged. `source` is a stable key used only to
   // scope the per-button spinner. `force` skips the "plan already exists" gate
   // and regenerates a brand-new plan for the idea.
   const buildExecutionPlan = async ({ source, scorecard_id, scenario_id, force } = {}) => {
@@ -2047,7 +2047,7 @@ export default function JaspenWorkspace() {
                   spin={Boolean(buildingPlan)}
                   style={{ marginRight:6 }}
                 />
-                {buildingPlan ? 'Building…' : 'Build Execution Plan'}
+                {buildingPlan ? 'Building…' : (buildPlanError ? 'Retry' : 'Build Execution Plan')}
               </button>
             )}
             {(isScorecard || isTradeoff || isExecution) && (
@@ -2887,7 +2887,7 @@ function DimensionBars({ dims, cols = 2, dimOrder, onReorder }) {
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:13, color:'#0f172a', marginBottom:6 }}>
               <span>{label}</span>
               <span style={{ fontFamily:'JetBrains Mono, monospace', fontSize:12, color:'#475569' }}>
-                {(score / 10).toFixed(1)}<span style={{ color:'#94a3b8' }}>/10</span>
+                {Math.round(score)}<span style={{ color:'#94a3b8' }}>/100</span>
               </span>
             </div>
             <div style={{ height:6, background:'#eef2f6', borderRadius:3, overflow:'hidden' }}>

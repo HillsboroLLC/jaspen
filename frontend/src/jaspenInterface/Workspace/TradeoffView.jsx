@@ -625,6 +625,8 @@ const TradeoffView = ({
     const exc = all.filter((d) => !d.included);
     return [...inc, ...exc];
   }, [effectiveSnapshots, dimDefs]);
+  const decisionKit = effectiveSnapshots.find((item) => item?.decision_kit)?.decision_kit || null;
+  const activeRfpIdea = selected || ideas[0] || null;
 
   // "What separates them" — same shared helper as the inline card + sidebar
   // (card ↔ workspace parity: if it's on the visual, it's here too).
@@ -693,7 +695,40 @@ const TradeoffView = ({
           <RecordDecisionPanel
             threadId={threadId}
             alternatives={ideas.map((idea) => idea && idea.name).filter(Boolean)}
+            decisionKit={decisionKit}
+            scorecard={activeRfpIdea?._snap || null}
           />
+        )}
+
+        {decisionKit && activeRfpIdea?._snap && (
+          <div data-workspace-pdf-break style={{ background:'#fff', border:`1px solid ${LINE}`, borderRadius:12, padding:'16px 20px' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', gap:12, alignItems:'baseline', marginBottom:10 }}>
+              <strong style={{ color:NAVY }}>{activeRfpIdea.name}</strong>
+              <span style={{ color:ROSE, fontWeight:700 }}>{activeRfpIdea._snap?.recommendation?.label || 'Recommendation pending'}</span>
+            </div>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
+              {Object.entries(activeRfpIdea._snap?.attributes || {}).filter(([, entry]) => entry?.value !== null && entry?.value !== undefined && entry?.value !== '').slice(0, 8).map(([key, entry]) => (
+                <span key={key} style={{ fontSize:12, color:SLATE, border:`1px solid ${LINE}`, borderRadius:6, padding:'5px 8px' }}>
+                  {key.replaceAll('_', ' ')}: <strong>{Array.isArray(entry.value) ? entry.value.join(', ') : String(entry.value)}</strong>
+                </span>
+              ))}
+              {Object.values(activeRfpIdea._snap?.metrics || {}).map((metric) => (
+                <span key={metric?.label} style={{ fontSize:12, color:SLATE, border:`1px solid ${LINE}`, borderRadius:6, padding:'5px 8px' }}>
+                  {metric?.label}: <strong>{metric?.value == null ? metric?.message || 'Not calculated' : Number(metric.value).toLocaleString()}</strong>
+                </span>
+              ))}
+              {(activeRfpIdea._snap?.gates || []).map((gate) => (
+                <span key={gate?.key} style={{ fontSize:12, color:gate?.status === 'fail' ? ROSE : SLATE, border:`1px solid ${LINE}`, borderRadius:6, padding:'5px 8px' }}>
+                  {gate?.label}: <strong>{gate?.status || 'unknown'}</strong>
+                </span>
+              ))}
+            </div>
+            {Array.isArray(activeRfpIdea._snap?.recommendation?.trace) && (
+              <div style={{ marginTop:10, fontSize:11.5, color:MUTED }}>
+                Why: {activeRfpIdea._snap.recommendation.trace.map((step) => `${step.step} ${step.value ?? step.status ?? ''} (${step.effect})`).join(' · ')} · kit v{activeRfpIdea._snap?.recommendation?.kit_version || activeRfpIdea._snap?.decision_kit_version}
+              </div>
+            )}
+          </div>
         )}
 
         {/* Hero + quadrant */}

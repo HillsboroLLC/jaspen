@@ -1,0 +1,36 @@
+"""RFP vendor-selection Decision Kit v1. Data only."""
+
+KIT = {
+    "key": "rfp_vendor_selection",
+    "version": 1,
+    "label": "RFP vendor selection",
+    "description": "Buyer-side vendor proposal evaluation.",
+    "changelog": ["v1: initial vendor-selection methodology thresholds."],
+    "fields": [
+        {"key": "vendor", "label": "Vendor", "type": "text", "role": "identity"},
+        {"key": "proposal_price", "label": "Proposal price", "type": "money", "unit": "USD"},
+        {"key": "tco", "label": "Total cost of ownership", "type": "money", "unit": "USD"},
+        {"key": "tco_years", "label": "TCO period", "type": "number", "unit": "years"},
+        {"key": "implementation_months", "label": "Implementation duration", "type": "number", "unit": "months"},
+        {"key": "references", "label": "References", "type": "list"},
+        {"key": "mandatory_requirements_status", "label": "Mandatory requirements", "type": "object", "role": "requirements"},
+        {"key": "team", "label": "Selection team", "type": "team", "role": "owners"},
+    ],
+    "starter_rubric": [
+        {"key": "functional_technical_fit", "label": "Functional / technical fit", "weight": 0.25},
+        {"key": "total_cost_ownership", "label": "Total cost of ownership", "weight": 0.20},
+        {"key": "implementation_risk_timeline", "label": "Implementation risk & timeline", "weight": 0.20, "is_risk": True},
+        {"key": "vendor_viability_references", "label": "Vendor viability & references", "weight": 0.15},
+        {"key": "integration_compliance", "label": "Integration & compliance", "weight": 0.10},
+        {"key": "commercial_terms", "label": "Commercial terms", "weight": 0.10},
+    ],
+    "gate_suggestions": [{"key": "proposal_complete", "label": "Proposal completeness", "rule": "proposal is complete"}],
+    "metrics": [{"key": "tco_vs_lowest", "label": "TCO vs lowest", "formula": "difference", "inputs": ["tco", "context:lowest_tco"]}],
+    "verdict_vocabulary": {"advance": "Select", "advance_with_conditions": "Shortlist", "decline": "Eliminate"},
+    "verdict_thresholds": {"version": 1, "advance_min_score": 60, "decline_below_score": 45, "min_confidence_pct": 55, "close_call_margin": 5},
+    "tradeoff_columns": ["proposal_price", "tco", "metric:tco_vs_lowest", "implementation_months", "gates"],
+    "quadrant_axes": {"x": "tco", "y": "jaspen_score"},
+    "plan_bindings": {"deadline": "context:decision_deadline", "requirements": ["mandatory_requirements_status"], "commitment_template": "Award to {vendor}"},
+    "selection": {"objective_metric": "jaspen_score"},
+    "interviewer_hints": ["mandatory requirements", "total cost of ownership", "implementation duration", "references"],
+}

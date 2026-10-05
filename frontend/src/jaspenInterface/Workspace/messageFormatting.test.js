@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import fs from 'fs';
 import path from 'path';
-import { userMessageWhitespaceStyle } from './messageFormatting';
+import { streamFailurePresentation, userMessageWhitespaceStyle } from './messageFormatting';
 
 const renderUserBubble = (text) => {
   render(
@@ -48,5 +48,23 @@ describe('user message whitespace formatting', () => {
     expect(css).toMatch(/\.jas-message\.user \.jas-message-bubble\s*\{[^}]*overflow-wrap:\s*anywhere;/s);
     expect(css).toMatch(/\.jas-message\.user \.jas-message-bubble\s*\{[^}]*word-break:\s*break-word;/s);
     expect(css).toMatch(/\.jas-chat-tab \.agent-chat-message\.user \.message-content\s*\{[^}]*white-space:\s*pre-wrap;/s);
+  });
+});
+
+describe('stream failure presentation', () => {
+  test('surfaces the saved-message failure and keeps Retry available', () => {
+    const result = streamFailurePresentation({
+      data: {
+        error: 'Jaspen’s analysis is unavailable right now. Your message is saved. Try again.',
+        retryable: true,
+        thread_id: 'thread-saved',
+      },
+    });
+
+    expect(result).toEqual({
+      message: 'Jaspen’s analysis is unavailable right now. Your message is saved. Try again.',
+      retryable: true,
+      threadId: 'thread-saved',
+    });
   });
 });

@@ -221,6 +221,12 @@ def _scorecard_record_for_export(session, thread_id, scorecard_id=None, user_id=
         "financial_impact": financial_impact,
         "risks": risks,
         "recommendations": recommendations,
+        "decision_kit": result.get("decision_kit"),
+        "decision_kit_version": result.get("decision_kit_version"),
+        "attributes": result.get("attributes") if isinstance(result.get("attributes"), dict) else {},
+        "metrics": result.get("metrics") if isinstance(result.get("metrics"), dict) else {},
+        "gates": result.get("gates") if isinstance(result.get("gates"), list) else [],
+        "recommendation": result.get("recommendation") if isinstance(result.get("recommendation"), dict) else None,
         "updated_at": selected.get("created_at") or result.get("timestamp") or session.get("timestamp"),
         "scenario_variants": _scorecard_variants_for_export(
             session,
@@ -528,6 +534,25 @@ def _scorecard_markdown(scorecard, *, org=None):
     lines.extend(f"- {item}" for item in risks)
     lines.extend(["", "## Recommendations + Next Steps"])
     lines.extend(f"- {item}" for item in recommendations)
+    kit_recommendation = scorecard.get("recommendation") if isinstance(scorecard.get("recommendation"), dict) else None
+    if kit_recommendation:
+        lines.extend(["", "## Decision Kit Recommendation", f"- **Recommendation**: {kit_recommendation.get('label')}", f"- **Kit version**: {kit_recommendation.get('kit_version')}"])
+        for step in kit_recommendation.get("trace") or []:
+            if isinstance(step, dict):
+                lines.append(f"- {_format_label(step.get('step'))}: {_display_value(step.get('value', step.get('status')))} — {_display_value(step.get('effect'))}")
+        for condition in kit_recommendation.get("conditions") or []:
+            if isinstance(condition, dict):
+                lines.append(f"- Condition: {condition.get('text')} (source: {condition.get('origin')})")
+    if scorecard.get("metrics"):
+        lines.extend(["", "## Decision Metrics"])
+        for metric in scorecard["metrics"].values():
+            if isinstance(metric, dict):
+                lines.append(f"- **{metric.get('label')}**: {_display_value(metric.get('value'))} · formula `{metric.get('formula')}` · inputs {metric.get('inputs')}")
+    if scorecard.get("gates"):
+        lines.extend(["", "## Mandatory Gates"])
+        for gate in scorecard["gates"]:
+            if isinstance(gate, dict):
+                lines.append(f"- **{gate.get('label')}**: {gate.get('status')} · rule: {gate.get('rule')} · evidence: {gate.get('evidence') or []}")
     return "\n".join(lines)
 
 
@@ -776,6 +801,31 @@ def _scorecard_pdf_bytes(scorecard, *, org=None):
             # cards on one page. Wrapping a lone full-width card (a long
             # Dimensions grid) risks a block taller than the page.
             story.extend([KeepTogether(grid) if len(row) > 1 else grid, Spacer(1, 12)])
+
+        kit_recommendation = scorecard.get("recommendation") if isinstance(scorecard.get("recommendation"), dict) else None
+        if kit_recommendation:
+            audit_lines = [
+                f"Recommendation: {kit_recommendation.get('label')}",
+                f"Decision Kit version: {kit_recommendation.get('kit_version')}",
+            ]
+            audit_lines.extend(
+                f"{step.get('step')}: {step.get('value', step.get('status'))} — {step.get('effect')}"
+                for step in (kit_recommendation.get("trace") or []) if isinstance(step, dict)
+            )
+            audit_lines.extend(
+                f"Condition: {condition.get('text')} · source {condition.get('origin')}"
+                for condition in (kit_recommendation.get("conditions") or []) if isinstance(condition, dict)
+            )
+            metric_lines = [
+                f"{metric.get('label')}: {_display_value(metric.get('value'))} · {metric.get('formula')} · inputs {metric.get('inputs')}"
+                for metric in (scorecard.get("metrics") or {}).values() if isinstance(metric, dict)
+            ]
+            gate_lines = [
+                f"{gate.get('label')}: {gate.get('status')} · {gate.get('rule')} · evidence {gate.get('evidence') or []}"
+                for gate in (scorecard.get("gates") or []) if isinstance(gate, dict)
+            ]
+            content = [Paragraph(escape(_safe_text(line, 1600)), bullet_style) for line in [*audit_lines, *metric_lines, *gate_lines]]
+            story.extend([section_card("Decision Kit audit", content, left_accent=True), Spacer(1, 12)])
 
         def paint_page(canvas, _doc):
             canvas.saveState()
@@ -1453,6 +1503,7 @@ def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
         "Task ID",
         "Dependency IDs",
         "Task Order",
+        "Decision Lineage",
     ]
     task_sheet.append(headers)
     phase_order = {name: index for index, name in enumerate(phases, start=1)}
@@ -1517,11 +1568,15 @@ def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
             _xlsx_text(task.get("id")),
             _xlsx_text("; ".join(dependency_ids)),
             task_order,
+            _xlsx_text("; ".join(
+                f"{link.get('type')}:{link.get('ref')} ({link.get('label') or ''})"
+                for link in (task.get('lineage') or []) if isinstance(link, dict)
+            )),
         ])
 
     last_row = task_sheet.max_row
     last_col = task_sheet.max_column
-    table = Table(displayName="ExecutionTasks", ref=f"A1:T{last_row}")
+    table = Table(displayName="ExecutionTasks", ref=f"A1:U{last_row}")
     table.tableStyleInfo = TableStyleInfo(
         name="TableStyleMedium2",
         showFirstColumn=False,

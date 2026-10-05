@@ -599,7 +599,7 @@ export const Jaspen = {
   },
 
   // ---------- Conversational intake (Claude via /api/v1/chat) ----------
-async convoStart({ description, project_id, model_type, strategy_objective, intake_context, view_context, lever_defaults, starter_id, attachments }) {
+async convoStart({ description, project_id, model_type, strategy_objective, decision_kit, intake_context, view_context, lever_defaults, starter_id, attachments }) {
     // Default project_id for testing - replace with real project selection later
     const pid = project_id || 'default-jas-project';
 
@@ -613,6 +613,7 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
           name: description.substring(0, 60) || 'New Idea',
           model_type: model_type || undefined,
           strategy_objective: strategy_objective || undefined,
+          decision_kit: decision_kit || undefined,
           intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
           view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
           lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
@@ -628,6 +629,7 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
           name: description.substring(0, 60) || 'New Idea',
           model_type: model_type || undefined,
           strategy_objective: strategy_objective || undefined,
+          decision_kit: decision_kit || undefined,
           intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
           view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
           lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
@@ -644,6 +646,8 @@ async convoStart({ description, project_id, model_type, strategy_objective, inta
       readiness: data.readiness || { percent: 0, categories: [] },
       model_type: data.model_type || null,
       strategy_objective: data.strategy_objective || null,
+      decision_kit: data.decision_kit || null,
+      decision_kit_family: data.decision_kit_family || null,
       intake_context: data.intake_context || null,
       status: data.status || 'gathering_info',
     };
@@ -690,6 +694,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     project_id,
     model_type,
     strategy_objective,
+    decision_kit,
     intake_context,
     view_context,
     lever_defaults,
@@ -712,6 +717,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         name: description.substring(0, 60) || 'New Idea',
         model_type: model_type || undefined,
         strategy_objective: strategy_objective || undefined,
+        decision_kit: decision_kit || undefined,
         intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
         view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
         lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
@@ -723,6 +729,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         name: description.substring(0, 60) || 'New Idea',
         model_type: model_type || undefined,
         strategy_objective: strategy_objective || undefined,
+        decision_kit: decision_kit || undefined,
         intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
         view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
         lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
@@ -1268,6 +1275,8 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
 
   setThreadObjective: async (threadId, strategy_objective, objective_explicitly_set = true) =>
     patchThread(threadId, { strategy_objective, objective_explicitly_set }),
+  setThreadDecisionKit: async (threadId, decision_kit, decision_kit_source = 'user') =>
+    patchThread(threadId, { decision_kit, decision_kit_source }),
   setThreadIntakeContext: async (threadId, intake_context = {}, strategy_objective = null, objective_explicitly_set = true) =>
     patchThread(threadId, {
       intake_context: intake_context && typeof intake_context === 'object' ? intake_context : {},
