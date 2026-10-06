@@ -235,3 +235,57 @@ def test_only_human_recorded_bid_unlocks_rfp_execution_plan(client, db, test_use
     assert allowed.status_code == 200, allowed.get_json()
     assert allowed.get_json()["project_wbs"]["tasks"], allowed.get_json()
     assert allowed.get_json()["project_wbs"]["tasks"][0]["lineage"][0]["ref"] == record.id
+
+
+def test_live_rfp_record_keeps_option_and_accepts_human_verdict(client, db, test_user, auth_headers):
+    from app.decision_records import create_or_refresh_record
+    from app.routes.sessions import save_user_sessions
+
+    thread_id = "rfp-live-human-decision"
+    card = {
+        "id": "rfp-live-card",
+        "analysis_id": "rfp-live-card",
+        "option_key": "opt-live",
+        "project_name": "Aurora RFP",
+        "jaspen_score": 62,
+        "dimensions": {"fit": {"score": 62, "confidence": "medium"}},
+        "decision_kit": "rfp_bid",
+        "decision_kit_version": 1,
+        "recommendation": {"verdict_key": "advance_with_conditions", "label": "Bid with conditions", "trace": []},
+    }
+    session = {
+        "session_id": thread_id,
+        "user_id": test_user.id,
+        "name": "Aurora RFP",
+        "status": "completed",
+        "decision_kit": "rfp_bid",
+        "decision_kit_version": 1,
+        "result": {**card, "_baseline_scorecard": card, "scorecard_snapshots": []},
+        "chat_history": [],
+    }
+    assert save_user_sessions(test_user.id, {thread_id: session})
+    upsert_scorecard(user_id=test_user.id, thread_id=thread_id, payload=card)
+    db.session.commit()
+
+    record, created = create_or_refresh_record(test_user, thread_id)
+    assert created is True
+    snapshot = record.record["scorecards"][0]
+    assert snapshot["option_key"] == "opt-live"
+    assert snapshot["recommendation"]["verdict_key"] == "advance_with_conditions"
+
+    response = client.patch(
+        f"/api/v1/decision-records/{record.id}",
+        headers=auth_headers,
+        json={
+            "final_decision": "Bid with conditions for Aurora.",
+            "kit_verdict": {
+                "verdict_key": "advance_with_conditions",
+                "scorecard_id": "rfp-live-card",
+                "option_key": "opt-live",
+            },
+        },
+    )
+    assert response.status_code == 200, response.get_json()
+    db.session.refresh(record)
+    assert record.final_decision == "Bid with conditions for Aurora."
+    assert record.record["kit_verdict"]["option_key"] == "opt-live"

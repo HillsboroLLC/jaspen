@@ -105,7 +105,7 @@ def test_exhausted_action_raises_instead_of_successful_heuristic(app, monkeypatc
     _, agent = modules()
     monkeypatch.setattr(agent, '_resolve_governed_routes', lambda *a, **k: ([{'provider': 'anthropic', 'model': 'first'}], {}))
     monkeypatch.setattr(agent, '_generate_assistant_reply_anthropic', lambda *a, **k: (_ for _ in ()).throw(ValueError('invalid_response')))
-    with pytest.raises(ValueError) as error:
+    with pytest.raises(agent.ConversationProviderUnavailable) as error:
         agent._generate_assistant_reply('Score all 7 now', [], {}, {'llm_model': 'first'}, session={})
     assert error.value.jaspen_usage['failover']['attempted_providers']
 
@@ -148,6 +148,39 @@ def mock_accounting(monkeypatch):
     monkeypatch.setattr(strategy, 'get_llm_client', lambda: object())
     monkeypatch.setattr(agent, '_reserve_preflight_credits', lambda *a, **k: {'ok': True, 'reserved': 0})
     monkeypatch.setattr(agent, '_settle_reserved_credits', lambda *a, **k: {'ok': True, 'charged': 0})
+
+
+def test_live_general_scoring_creates_decision_record(client, db, test_user, monkeypatch):
+    from app.models_decision_record import DecisionRecord
+
+    strategy, agent = modules()
+    tid = 'live-record-general'
+    seed_thread(test_user, tid)
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(
+        strategy,
+        '_generate_jaspen_scorecard',
+        lambda *a, **k: ({
+            'jaspen_score': 64,
+            'score_category': 'Good',
+            'dimensions': {'fit': {'score': 64, 'confidence': 'medium'}},
+        }, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1}),
+    )
+
+    result = agent._execute_mutation_tool(
+        'generate_scorecard',
+        {'name': 'General option', 'idea_description': 'Evaluate this general option'},
+        user=test_user,
+        user_id=test_user.id,
+        thread_id=tid,
+    )
+
+    assert result['ok'] is True
+    record = DecisionRecord.query.filter_by(thread_id=tid).one()
+    assert record.status == 'recorded'
+    assert record.record['decision_kit'] is None
+    assert record.record['scorecards'][0]['id'] == result['scorecard']['id']
+    assert record.record['scorecards'][0]['option_key'] == result['scorecard']['option_key']
 
 
 def test_execution_route_persists_ai_generated_plan(client, db, test_user, auth_headers, monkeypatch):
@@ -234,7 +267,7 @@ def test_queue_to_route_completes_seven_and_agent_can_compare(client, db, test_u
     queued = agent._execute_mutation_tool('queue_scorecards', {'ideas': [{'name': f'Option {i}'} for i in range(7)]}, user=test_user, user_id=test_user.id, thread_id=tid)
     assert queued['queued_count'] == 7
     def provider(messages, **kwargs):
-        return json.dumps({'options': [{'dimensions': {'strategic_alignment': {'score': 70, 'confidence': 'medium', 'rationale': 'fit'}}}]}), {'provider': 'anthropic', 'model': 'test', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}
+        return json.dumps({'dimensions': {'strategic_alignment': {'score': 70, 'confidence': 'medium', 'rationale': 'fit'}}}), {'provider': 'anthropic', 'model': 'test', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}
     monkeypatch.setattr(strategy, '_strategy_generate_reply', provider)
     response = client.post(f'/api/v1/strategy/threads/{tid}/score-batch', headers=auth_headers, json={})
     assert response.status_code == 200, response.get_json()

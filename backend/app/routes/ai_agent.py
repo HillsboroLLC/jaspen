@@ -87,6 +87,7 @@ from app.evaluation_telemetry import (
     evaluation_id_for_new_scorecard,
     evaluation_id_for_scorecard,
 )
+from app.decision_facts import normalize_fact_entry, normalize_option_facts
 from app.connector_store import get_connector_settings, get_thread_sync_profile, update_thread_sync_profile
 from app.jira_sync import sync_wbs_to_jira
 from app.smartsheet_sync import sync_wbs_to_smartsheet
@@ -5731,6 +5732,20 @@ def _thread_user_corpus(user_id, thread_id, *, max_chars=20000):
         return ""
 
 
+def _refresh_decision_record_after_score(user, thread_id):
+    """Best-effort lifecycle hook for every live score persistence path."""
+    try:
+        from app.decision_records import create_or_refresh_record
+        return create_or_refresh_record(user, thread_id)
+    except LookupError:
+        return None
+    except Exception:
+        current_app.logger.exception(
+            "Decision Record refresh failed after scoring thread %s", thread_id
+        )
+        return None
+
+
 def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None):
     if not user:
         return _tool_error("User context missing.")
@@ -5900,27 +5915,32 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         fields = tool_input.get("fields")
         if not option or not isinstance(fields, list):
             return _tool_error("Provide an option and its structured fields.", code="invalid_option_attributes")
+        sessions = load_user_sessions(user_id) or {}
+        session_key, session = _resolve_user_session(sessions, thread_id)
+        if not isinstance(session, dict):
+            return _tool_error("Thread not found.", code="thread_not_found")
+        from ..decision_kits import get_decision_kit
+        kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version")) if session.get("decision_kit") else None
         corpus = _thread_user_corpus(user_id, thread_id)
         normalized = {}
         for field in fields:
             if not isinstance(field, dict):
                 continue
-            key = _slugify(field.get("key"))
             source = str(field.get("source") or "").strip().lower()
             evidence = str(field.get("evidence") or "").strip()
-            if not key or source not in {"user", "document", "assumed"}:
+            if source not in {"user", "document", "connector", "assumed"}:
                 continue
             if source == "user" and evidence.lower() not in corpus.lower():
-                return _tool_error(f"Evidence for {key} was not found verbatim in the user's words.", code="unverified_attribute_evidence")
-            if source in {"user", "document"} and not evidence:
-                return _tool_error(f"Evidence is required for {key}.", code="missing_attribute_evidence")
-            normalized[key] = {"value": field.get("value"), "source": source, "evidence": evidence, "updated_at": _iso_now()}
+                return _tool_error(f"Evidence for {field.get('key')} was not found verbatim in the user's words.", code="unverified_attribute_evidence")
+            if source in {"user", "document", "connector"} and not evidence:
+                return _tool_error(f"Evidence is required for {field.get('key')}.", code="missing_attribute_evidence")
+            try:
+                key, entry = normalize_fact_entry(field.get("key"), field, kit=kit)
+            except ValueError as exc:
+                return _tool_error(str(exc), code="invalid_option_attribute")
+            normalized[key] = {**entry, "updated_at": _iso_now()}
         if not normalized:
             return _tool_error("No valid structured fields were provided.", code="invalid_option_attributes")
-        sessions = load_user_sessions(user_id) or {}
-        session_key, session = _resolve_user_session(sessions, thread_id)
-        if not isinstance(session, dict):
-            return _tool_error("Thread not found.", code="thread_not_found")
         option_store = session.get("option_attributes") if isinstance(session.get("option_attributes"), dict) else {}
         option_store[_normalized_option_identity(option)] = {**(option_store.get(_normalized_option_identity(option)) or {}), **normalized}
         session["option_attributes"] = option_store
@@ -6112,7 +6132,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     code="comparison_session_limit_reached",
                 )
         from ..decision_fingerprint import scoring_fingerprint
-        from ..decision_kits import get_decision_kit
         from ..decision_metrics import calculate_metrics
         decision_kit = session.get("decision_kit")
         decision_kit_version = session.get("decision_kit_version")
@@ -6125,6 +6144,18 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             or stored_by_name
             or {}
         )
+        try:
+            attributes = normalize_option_facts(
+                attributes,
+                kit=kit,
+                source_text=evidence_corpus,
+                option_name=requested_name,
+            )
+        except ValueError as exc:
+            return _tool_error(str(exc), code="invalid_option_attribute")
+        option_store = session.get("option_attributes") if isinstance(session.get("option_attributes"), dict) else {}
+        option_store[_normalized_option_identity(requested_name)] = attributes
+        session["option_attributes"] = option_store
         option_key = str(
             (rescore_target or {}).get("option_key")
             or tool_input.get("option_key")
@@ -6182,6 +6213,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     # The user's own turns, not the summary this tool wrote.
                     evidence_corpus=evidence_corpus,
                     structured_context=structured_context,
+                    attributes=attributes,
+                    decision_kit=decision_kit,
+                    decision_kit_version=decision_kit_version,
+                    kit_context=session.get("kit_context") if isinstance(session.get("kit_context"), dict) else {},
+                    option_key=option_key,
                 ),
                 operation_type="score_next",
                 request_payload={
@@ -6337,6 +6373,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 sessions[session_key or thread_id] = session
                 save_user_sessions(user_id, sessions)
                 db.session.commit()
+                _refresh_decision_record_after_score(user, thread_id)
                 keep_name = str(updated.get("name") or updated.get("project_name") or requested_name)
                 new_score = int(round(float(updated.get("jaspen_score") or 0)))
                 return _tool_success({
@@ -6425,6 +6462,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         sessions[session_key or thread_id] = session
         if not save_user_sessions(user_id, sessions):
             return _tool_error("Failed to persist generated scorecard.", code="persist_failed")
+        _refresh_decision_record_after_score(user, thread_id)
 
         return _tool_success({
             "tool": tool_name,
@@ -8483,6 +8521,76 @@ def _conversation_provider_unavailable_error(*, failover_log, governance_decisio
     return error
 
 
+_NUMERIC_CLAIM_RE = re.compile(r"(?<![\w])(?:\$\s*)?\d[\d,]*(?:\.\d+)?\s*%?")
+
+
+def _numeric_token(value):
+    return re.sub(r"[^0-9.]", "", str(value or ""))
+
+
+def _claim_words(value):
+    stop = {"the", "and", "for", "with", "from", "this", "that", "should", "would", "could", "verified", "value"}
+    return {
+        word for word in re.findall(r"[a-z]{3,}", str(value or "").lower().replace("_", " "))
+        if word not in stop
+    }
+
+
+def _numeric_claim_supported(sentence, claim, sources):
+    sentence_words = _claim_words(sentence)
+    if not sentence_words:
+        return False
+    for source in sources:
+        source_text = str(source or "")
+        for match in _NUMERIC_CLAIM_RE.finditer(source_text):
+            if _numeric_token(match.group(0)) != claim:
+                continue
+            context = source_text[max(0, match.start() - 100):match.end() + 100]
+            if sentence_words & _claim_words(context):
+                return True
+    return False
+
+
+def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, user_id=None, thread_id=None):
+    """Remove prose sentences containing numbers absent from canonical inputs.
+
+    Criterion judgments and scorecard arithmetic are rendered from artifacts.
+    Conversational prose may repeat a user fact or a stored deterministic value,
+    but it may not introduce an independent calculation.
+    """
+    text = str(reply or "").strip()
+    if not text:
+        return text
+    sources = [str(user_message or ""), _thread_user_corpus(user_id, thread_id)]
+    try:
+        cards = _collect_session_scorecards(
+            session or {}, user_id=user_id, thread_id=thread_id
+        )
+        sources.append(json.dumps(cards, default=str))
+    except Exception:
+        cards = []
+    kept = []
+    removed = False
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        claims = []
+        for match in _NUMERIC_CLAIM_RE.finditer(sentence):
+            token = match.group(0)
+            # List ordinals are presentation, not claims.
+            if match.start() == 0 and re.fullmatch(r"\d{1,2}[.)]", token + sentence[match.end():match.end()+1]):
+                continue
+            claims.append(_numeric_token(token))
+        if claims and any(not _numeric_claim_supported(sentence, claim, sources) for claim in claims):
+            removed = True
+            continue
+        kept.append(sentence)
+    if not removed:
+        return text
+    return " ".join(kept).strip() or "Open the scorecard for Jaspen’s verified calculations."
+
+
 def _generate_assistant_reply(
     user_message,
     chat_history,
@@ -8553,6 +8661,10 @@ def _generate_assistant_reply(
             decision=decision,
             legacy_routes=legacy_routes,
             operation_type="conversation",
+        )
+        reply = _sanitize_assistant_numeric_claims(
+            reply, user_message=user_message, session=session,
+            user_id=user_id, thread_id=thread_id,
         )
         return reply, usage, actions, mutations, undo_snapshot
     objective = normalize_strategy_objective(
@@ -8630,6 +8742,10 @@ def _generate_assistant_reply(
                     route["model"],
                     len(failover_log),
                 )
+            reply = _sanitize_assistant_numeric_claims(
+                reply, user_message=user_message, session=session,
+                user_id=user_id, thread_id=thread_id,
+            )
             return reply, usage, actions, mutations, undo_snapshot
         except Exception as exc:
             last_error = exc
@@ -8731,7 +8847,7 @@ def _stream_assistant_reply_events(
             legacy_routes[0],
         )
         routed_selection = {**(model_selection or {}), "llm_model": selected_route["model"]}
-        for payload in _stream_assistant_reply_events_anthropic(
+        buffered = list(_stream_assistant_reply_events_anthropic(
             user_message,
             chat_history,
             readiness,
@@ -8746,8 +8862,18 @@ def _stream_assistant_reply_events(
             state=state,
             attachments=attachments,
             disable_mutations=disable_mutations,
-        ):
-            yield payload
+        ))
+        if isinstance(state, dict):
+            original_reply = str(state.get("reply") or "")
+            state["reply"] = _sanitize_assistant_numeric_claims(
+                original_reply, user_message=user_message, session=session,
+                user_id=user_id, thread_id=thread_id,
+            )
+            if state["reply"] == original_reply:
+                for payload in buffered:
+                    yield payload
+            elif state["reply"]:
+                yield {"type": "delta", "text": state["reply"]}
         if isinstance(state, dict) and isinstance(state.get("usage"), dict):
             state["usage"] = attach_governance(
                 state.get("usage"),
@@ -8810,9 +8936,21 @@ def _stream_assistant_reply_events(
                     disable_mutations=disable_mutations,
                     allow_failover=True,
                 )
-            for payload in generator:
+            buffered = list(generator)
+            if isinstance(state, dict):
+                original_reply = str(state.get("reply") or "")
+                state["reply"] = _sanitize_assistant_numeric_claims(
+                    original_reply, user_message=user_message, session=session,
+                    user_id=user_id, thread_id=thread_id,
+                )
+            for payload in buffered:
                 yielded_any = yielded_any or (payload.get("type") == "delta" and bool(payload.get("text")))
-                yield payload
+            if not isinstance(state, dict) or str(state.get("reply") or "") == original_reply:
+                for payload in buffered:
+                    yield payload
+            elif state.get("reply"):
+                yielded_any = True
+                yield {"type": "delta", "text": state["reply"]}
             if isinstance(state, dict) and (state.get("usage") or {}).get("provider") == "heuristic":
                 raise ValueError("invalid_response")
             if isinstance(state, dict) and isinstance(state.get("usage"), dict):

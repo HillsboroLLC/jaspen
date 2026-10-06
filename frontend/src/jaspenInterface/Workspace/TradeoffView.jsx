@@ -85,7 +85,8 @@ function shortId(name) {
 }
 
 // Assign status from score
-function deriveStatus(score) {
+export function deriveStatus(score, snap) {
+  if (snap?.decision_kit && snap?.recommendation?.label) return snap.recommendation.label;
   if (score >= 74) return 'PRIORITIZE';
   if (score >= 58) return 'HOLD';
   return 'PARK';
@@ -181,7 +182,7 @@ function deriveIdeas(snapshots, dimDefs = DIM_KEYS) {
       dimLabels,
       pick,
       included,
-      status: included ? deriveStatus(score) : 'PARKED',
+      status: included ? deriveStatus(score, snap) : 'PARKED',
       _snap:  snap,
     };
   });

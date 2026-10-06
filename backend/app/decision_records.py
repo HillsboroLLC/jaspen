@@ -163,6 +163,7 @@ def _collect_peer_scorecards(session, thread_data, *, user_id=None, thread_id=No
             )
         cards.append({
             'id': cid or None,
+            'option_key': str(card.get('option_key') or '').strip() or None,
             'name': str(card.get('project_name') or card.get('name') or card.get('label') or 'Option').strip(),
             'jaspen_score': card.get('jaspen_score'),
             'score_category': card.get('score_category'),
@@ -182,6 +183,12 @@ def _collect_peer_scorecards(session, thread_data, *, user_id=None, thread_id=No
             'top_risks': card.get('top_risks') if isinstance(card.get('top_risks'), list) else [],
             'evidence_profile': card.get('evidence_profile') if isinstance(card.get('evidence_profile'), dict) else {},
             'assumptions': card.get('assumptions') if isinstance(card.get('assumptions'), list) else [],
+            'attributes': card.get('attributes') if isinstance(card.get('attributes'), dict) else {},
+            'metrics': card.get('metrics') if isinstance(card.get('metrics'), dict) else {},
+            'gates': card.get('gates') if isinstance(card.get('gates'), list) else [],
+            'recommendation': card.get('recommendation') if isinstance(card.get('recommendation'), dict) else None,
+            'decision_kit': card.get('decision_kit'),
+            'decision_kit_version': card.get('decision_kit_version'),
             'generated_at': card.get('timestamp') or card.get('createdAt'),
         })
 

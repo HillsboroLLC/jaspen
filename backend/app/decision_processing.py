@@ -14,13 +14,33 @@ def _quote_in_corpus(quote, corpus):
     return bool(quote and quote in corpus)
 
 
-def normalize_gates(raw_gates, rubric, evidence_corpus=""):
+def normalize_gates(raw_gates, rubric, evidence_corpus="", option_key=None):
     criteria = (rubric or {}).get("criteria") if isinstance((rubric or {}).get("criteria"), list) else []
     approved = bool((rubric or {}).get("approved_by_user_at"))
-    definitions = {str(item.get("key")): item for item in criteria if isinstance(item, dict) and item.get("gate") and item.get("key")}
+    option_key = str(option_key or "").strip()
+    definitions = {
+        str(item.get("key")): item
+        for item in criteria
+        if isinstance(item, dict)
+        and item.get("gate")
+        and item.get("key")
+        and (
+            not str(item.get("option_key") or "").strip()
+            or str(item.get("option_key") or "").strip() == option_key
+        )
+    }
     if not approved:
         return []
-    supplied = {str(item.get("key")): item for item in (raw_gates or []) if isinstance(item, dict) and item.get("key")}
+    supplied = {
+        str(item.get("key")): item
+        for item in (raw_gates or [])
+        if isinstance(item, dict)
+        and item.get("key")
+        and (
+            not str(item.get("option_key") or "").strip()
+            or str(item.get("option_key") or "").strip() == option_key
+        )
+    }
     normalized = []
     for key, definition in definitions.items():
         item = supplied.get(key) or {}
@@ -68,7 +88,12 @@ def apply_decision_kit(scorecard, *, decision_kit=None, decision_kit_version=Non
     output["decision_kit_version"] = int(decision_kit_version or kit["version"])
     output["attributes"] = dict(output.get("attributes") or {})
     output["metrics"] = calculate_metrics(output["attributes"], kit.get("metrics"), context=kit_context)
-    output["gates"] = normalize_gates(output.get("gates"), output.get("scoring_rubric") or output.get("rubric"), evidence_corpus)
+    output["gates"] = normalize_gates(
+        output.get("gates"),
+        output.get("scoring_rubric") or output.get("rubric"),
+        evidence_corpus,
+        option_key=output.get("option_key"),
+    )
     inputs_hash = recommendation_inputs_fingerprint(output, kit)
     existing = output.get("recommendation") if isinstance(output.get("recommendation"), dict) else None
     existing_version = ((existing or {}).get("thresholds_used") or {}).get("version")

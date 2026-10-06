@@ -57,6 +57,7 @@ import {
 import EmailResultsButton from './EmailResultsButton';
 import ShareButton from '../Sharing/ShareButton';
 import IntakeReceipt from './IntakeReceipt';
+import RfpRecommendationTrace from './RfpRecommendationTrace';
 
 // Tab components
 import ScoreDashboard   from './ScoreDashboard';
@@ -2827,6 +2828,9 @@ const renderScorecardCard = (result, opts = {}) => {
   const recommendedScenario = (recs[0] && typeof recs[0] === 'string') ? recs[0]
     : (recs[0]?.text || recs[0]?.action || null)
     || (nextSteps[0] && typeof nextSteps[0] === 'string' ? nextSteps[0] : null);
+  const kitRecommendation = result?.recommendation && typeof result.recommendation === 'object'
+    ? result.recommendation
+    : null;
   // Title: prefer Workspace override → meaningful scorecard fields → derived
   // from conversation. Generic placeholders like "Baseline Analysis" are
   // filtered out so legacy cards still get a sensible display name.
@@ -2924,6 +2928,13 @@ const renderScorecardCard = (result, opts = {}) => {
             </div>
           )}
         </div>
+      )}
+
+      {kitRecommendation && (
+        <RfpRecommendationTrace
+          recommendation={kitRecommendation}
+          decisionKitVersion={result?.decision_kit_version}
+        />
       )}
 
       {/* Footer: action buttons */}

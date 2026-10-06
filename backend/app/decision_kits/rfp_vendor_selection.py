@@ -8,13 +8,13 @@ KIT = {
     "changelog": ["v1: initial vendor-selection methodology thresholds."],
     "fields": [
         {"key": "vendor", "label": "Vendor", "type": "text", "role": "identity"},
-        {"key": "proposal_price", "label": "Proposal price", "type": "money", "unit": "USD"},
-        {"key": "tco", "label": "Total cost of ownership", "type": "money", "unit": "USD"},
+        {"key": "proposal_price", "label": "Proposal price", "type": "money", "unit": "USD", "affects": ["total_cost_ownership", "commercial_terms"]},
+        {"key": "tco", "label": "Total cost of ownership", "type": "money", "unit": "USD", "affects": ["total_cost_ownership"]},
         {"key": "tco_years", "label": "TCO period", "type": "number", "unit": "years"},
-        {"key": "implementation_months", "label": "Implementation duration", "type": "number", "unit": "months"},
+        {"key": "implementation_months", "label": "Implementation duration", "type": "number", "unit": "months", "affects": ["implementation_risk_timeline"]},
         {"key": "references", "label": "References", "type": "list"},
-        {"key": "mandatory_requirements_status", "label": "Mandatory requirements", "type": "object", "role": "requirements"},
-        {"key": "team", "label": "Selection team", "type": "team", "role": "owners"},
+        {"key": "mandatory_requirements_status", "label": "Mandatory requirements", "type": "object", "role": "requirements", "affects": ["functional_technical_fit", "integration_compliance", "proposal_complete"]},
+        {"key": "team", "label": "Selection team", "type": "team", "role": "owners", "affects": ["implementation_risk_timeline"]},
     ],
     "starter_rubric": [
         {"key": "functional_technical_fit", "label": "Functional / technical fit", "weight": 0.25},

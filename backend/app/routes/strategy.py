@@ -15,6 +15,7 @@ from app.decision_confidence import (
     decision_summary,
     evidence_profile,
 )
+from app.decision_facts import apply_assumption_confidence_caps, normalize_option_facts
 from app.evidence_references import attach_evidence_references, reference_supports_decision
 from app.models import Scorecard, UsageEvent, User
 from app.ai_audit import persist_operation
@@ -600,7 +601,7 @@ def _scores_category_from_values(score, explicit_category=None):
         if cleaned in _SCORES_CATEGORY_OPTIONS:
             return cleaned
     if score is None:
-        return 'At Risk'
+        return None
     if score >= 80:
         return 'Excellent'
     if score >= 60:
@@ -965,7 +966,7 @@ def _normalize_scorecard_payload(payload):
         if source.get('jaspen_score') is not None
         else source.get('overall_score')
     )
-    normalized['jaspen_score'] = jaspen_score if jaspen_score is not None else 0
+    normalized['jaspen_score'] = jaspen_score
     normalized['score_category'] = _scores_category_from_values(
         normalized['jaspen_score'],
         explicit_category=source.get('score_category'),
@@ -978,8 +979,6 @@ def _normalize_scorecard_payload(payload):
         component_scores[key] = _normalize_score_value(component_source.get(key))
         if component_scores[key] is None:
             component_scores[key] = _normalize_score_value(component_fallback.get(key))
-        if component_scores[key] is None:
-            component_scores[key] = 0
     normalized['component_scores'] = component_scores
 
     component_rationale_source = source.get('component_rationale') if isinstance(source.get('component_rationale'), dict) else {}
@@ -1184,7 +1183,10 @@ def _normalize_scorecard_payload(payload):
 
     normalized['ai_insights'] = source.get('ai_insights') if isinstance(source.get('ai_insights'), list) else []
     normalized['section_provenance'] = {
-        'component_scores': _section_provenance(any(value > 0 for value in normalized['component_scores'].values())),
+        'component_scores': _section_provenance(any(
+            isinstance(value, (int, float)) and value > 0
+            for value in normalized['component_scores'].values()
+        )),
         'component_rationale': _section_provenance(any(normalized['component_rationale'].values())),
         'financial_impact': _section_provenance(_group_has_values(normalized['financial_impact']), estimated=has_financial_assumptions),
         'before_after_financials': _section_provenance(
@@ -2850,6 +2852,11 @@ def _generate_jaspen_scorecard(
     evidence_corpus=None,
     routing_signals=None,
     structured_context=None,
+    attributes=None,
+    decision_kit=None,
+    decision_kit_version=None,
+    kit_context=None,
+    option_key=None,
 ):
     """Run the existing LLM scoring flow and return parsed scorecard JSON.
 
@@ -2937,9 +2944,9 @@ def _generate_jaspen_scorecard(
         )
         focus_block = (
             "Score each criterion strictly on its own definition above. Do NOT inject financial "
-            "framings (EBITDA, ROI, NPV, valuation) unless a criterion explicitly calls for it — "
-            "leave those JSON fields null otherwise. The overall score is the deterministic "
-            "weighted sum of the criterion scores; do not back-solve to hit a target."
+            "framings (EBITDA, ROI, NPV, valuation) unless a criterion explicitly calls for the "
+            "judgment. Never calculate those values. The overall score is computed by code; do "
+            "not back-solve criterion judgments to hit a target."
         )
         # Only relevant if the rubric actually has an evidence_quality-style criterion.
         evidence_quality_note = (
@@ -2970,9 +2977,9 @@ def _generate_jaspen_scorecard(
             "3. Time-to-market acceleration\n"
             "4. Operational efficiency improvements\n"
             "5. Market positioning and competitive advantage\n\n"
-            "Provide specific, actionable insights with quantified financial impacts where the "
-            "conversation supports them. When it does not, keep the affected field null and "
-            "explain the gap in assumptions."
+            "Provide specific, actionable insights grounded in the canonical facts. Refer to "
+            "a supplied numeric fact only when useful; do not calculate a financial impact. "
+            "Deterministic code owns every derived number."
         )
 
     # WHAT THE MODEL MAY QUOTE, AND WHAT A QUOTE IS CHECKED AGAINST.
@@ -3024,115 +3031,72 @@ Rules:
     - confidence "low"    → cap that dimension at 60.
     - confidence "assumed"→ cap that dimension at 45.
   Apply the cap to the dimension score itself (so it flows into the weighted jaspen_score).{evidence_quality_note} A vague or under-specified idea must end up with a meaningfully lower jaspen_score than a fully-evidenced one — that gap is the whole point of the trade-off.
-- Score EACH dimension honestly with its confidence; the system computes jaspen_score and score_category deterministically from your dimension scores + confidence caps + the configured weights. Do NOT try to back-solve dimensions to hit a target overall score — judge each dimension on its own merits. (For reference only: jaspen_score is the weighted average of the {score_ref_count} capped dimension scores; categories are Excellent 80-100, Good 60-79, Fair 40-59, At Risk 0-39. Provide your best estimate of jaspen_score and score_category, but the system value is authoritative.)
+- Score EACH dimension honestly with its confidence. The system computes jaspen_score, category, confidence, metrics, and recommendations deterministically. Do not estimate or return any of those calculated values, and do not back-solve dimension judgments to target an overall score.
 
 JSON format:
 
 {{
-    "name": "<a short, specific name for THIS idea — derived from the conversation, 7 words or fewer. Never use generic phrases like 'Baseline Analysis', 'Jaspen Project', 'Strategy Analysis', 'Initiative', or 'Untitled'. Use the actual product, market, or initiative the user is describing (e.g. 'AI HR analytics for mid-market', 'Usage-based AP invoice PLG', 'Restaurant inventory copilot').>",
-    "jaspen_score": <weighted average of {score_ref_count} dimension scores, 0-100>,
-    "score_category": "<Excellent|Good|Fair|At Risk>",
+    "name": "<short specific option name>",
     "dimensions": {{
 {dimensions_block}
     }},
-    "component_scores": {{
-        "financial_health": <same as financial_viability score>,
-        "operational_efficiency": <same as execution_readiness score>,
-        "market_position": <same as market_opportunity score>,
-        "execution_readiness": <same as execution_readiness score>
-    }},
-    "component_rationale": {{
-        "financial_health": "<same as financial_viability rationale or null>",
-        "operational_efficiency": "<same as execution_readiness rationale or null>",
-        "market_position": "<same as market_opportunity rationale or null>",
-        "execution_readiness": "<same as execution_readiness rationale or null>"
-    }},
-    "executive_summary": "<2-4 sentence board-ready summary of the score, current opportunity, and biggest constraint or null>",
-    "financial_impact": {{
-        "ebitda_at_risk": "<percentage or null>",
-        "potential_loss": "<dollar amount or null>",
-        "roi_opportunity": "<percentage or null>",
-        "projected_ebitda": "<dollar amount or null>",
-        "time_to_market_impact": "<numeric duration impact or null>"
-    }},
-    "before_after_financials": {{
-        "before": {{
-            "revenue": "<dollar amount or null>",
-            "ebitda": "<dollar amount or null>",
-            "margin": "<percentage or null>",
-            "growth_rate": "<percentage or null>"
-        }},
-        "after": {{
-            "revenue": "<dollar amount or null>",
-            "ebitda": "<dollar amount or null>",
-            "margin": "<percentage or null>",
-            "growth_rate": "<percentage or null>"
+    "gates": [
+        {{
+            "key": "<approved gate key only>",
+            "status": "<pass|fail|unknown>",
+            "confidence": "<high|medium|low|assumed>",
+            "source": "<conversation|connector|inferred|assumed>",
+            "evidence": ["<verbatim source quote>"],
+            "basis": "<brief judgment without new numeric claims>"
         }}
-    }},
-    "investment_analysis": {{
-        "total_investment_required": "<dollar amount or null>",
-        "expected_annual_return": "<dollar amount or null>",
-        "payback_period": "<numeric duration or null>",
-        "cost_of_inaction": "<dollar amount per year or null>"
-    }},
-    "npv_irr_analysis": {{
-        "npv_3_year": "<dollar amount or null>",
-        "irr": "<percentage or null>",
-        "discount_rate_used": "<percentage or null>",
-        "break_even_month": <integer or null>
-    }},
-    "valuation": {{
-        "enterprise_value": "<dollar amount or null>",
-        "multiple": <number or null>,
-        "basis": "<revenue|ebitda|arr|null>",
-        "comparable_range": "<numeric dollar range or null>"
-    }},
-    "decision_framework": {{
-        "go_no_go": "<GO|CONDITIONAL|NO-GO|null>",
-        "confidence_level": "<percentage or null>",
-        "key_condition": "<single biggest prerequisite or null>",
-        "downside_scenario": "<worst-case outcome or null>",
-        "upside_scenario": "<best-case outcome or null>"
-    }},
-    "key_insights": [
-        "<insight 1>",
-        "<insight 2>",
-        "<insight 3>"
     ],
+    "key_insights": ["<evidence-grounded insight>"],
     "top_risks": [
         {{
             "risk": "<risk description>",
             "probability": "<High|Medium|Low|null>",
-            "impact_dollars": "<numeric dollar amount or null>",
-            "impact_category": "<financial_health|operational_efficiency|market_position|execution_readiness|null>",
-            "mitigation": "<mitigation strategy or null>",
-            "mitigation_cost": "<numeric dollar amount or null>",
-            "residual_risk": "<High|Medium|Low|null>"
+            "mitigation": "<mitigation or null>"
         }}
     ],
     "recommendations": [
         {{
-            "action": "<action description>",
-            "expected_impact": "<expected quantified outcome>",
-            "effort": "<Low/Medium/High>",
-            "timeline": "<timeframe>",
+            "action": "<qualitative next action grounded in the judged evidence>",
+            "effort": "<Low|Medium|High|null>",
             "priority": <positive integer>
         }}
     ],
-    "assumptions": [
-        "<short note describing any missing data, null field, or estimation dependency>"
-    ]
+    "assumptions": ["<explicit missing-information or assumption note>"]
 }}
+
+Do not return jaspen_score, score_category, component scores, financial calculations,
+confidence percentages, tiers, portfolio totals, recommendation verdicts, or thresholds.
+Those values are calculated by deterministic code after your criterion judgments are verified.
 
 {focus_block}
 
 The executive_summary must read like a concise leadership briefing. It should never repeat raw prompt text or user questions.
 """
 
+    attributes = dict(attributes or {})
+    approved_gates = [item for item in ((rubric or {}).get("criteria") or []) if isinstance(item, dict) and item.get("gate")]
+    if structured_context is None and (attributes or decision_kit or approved_gates):
+        structured_context = {
+            "attributes": attributes,
+            "approved_gates": approved_gates,
+        }
+        if decision_kit:
+            from ..decision_kits import get_decision_kit
+            from ..decision_metrics import calculate_metrics
+            kit = get_decision_kit(decision_kit, decision_kit_version)
+            structured_context.update({
+                "decision_kit": {"key": kit["key"], "version": kit["version"], "label": kit["label"]},
+                "metrics": calculate_metrics(attributes, kit.get("metrics"), context=kit_context),
+            })
+
     analysis_text = None
     if isinstance(structured_context, dict) and structured_context:
         analysis_prompt += (
-            "\n\nDECISION KIT STRUCTURED FACTS (authoritative; do not recompute metrics):\n"
+            "\n\nCANONICAL STRUCTURED FACTS (authoritative; do not recompute metrics):\n"
             + json.dumps(structured_context, indent=2, default=str)
             + "\nJudge the weighted criteria from these facts and the evidence. "
               "Return top-level gates as [{key,status,confidence,source,evidence,basis}] for approved gate criteria only. "
@@ -3196,6 +3160,14 @@ The executive_summary must read like a concise leadership briefing. It should ne
     # model judgment.
     parsed = _clamp_unverified_high_confidence_dimensions(parsed)
     parsed = _calibrate_confidence_to_verified_evidence(parsed)
+    if attributes:
+        from ..decision_kits import get_decision_kit
+        kit = get_decision_kit(decision_kit, decision_kit_version) if decision_kit else None
+        parsed = apply_assumption_confidence_caps(parsed, attributes, kit)
+    from ..decision_processing import normalize_gates
+    parsed["gates"] = normalize_gates(
+        parsed.get("gates"), rubric, verification_text, option_key=option_key
+    )
 
     # The current schema cannot trace model-generated financial/risk numbers
     # to a specific source field or deterministic calculation. Do not publish
@@ -3206,6 +3178,19 @@ The executive_summary must read like a concise leadership briefing. It should ne
     # in Python instead of trusting the model's arithmetic. `weights` is the
     # rubric weight map (custom mode) or the objective preset (default mode).
     scored = _recompute_jaspen_score(parsed, weights)
+    scored["attributes"] = attributes
+    if option_key:
+        scored["option_key"] = str(option_key)
+    if decision_kit:
+        from ..decision_processing import apply_decision_kit
+        scored = apply_decision_kit(
+            scored,
+            decision_kit=decision_kit,
+            decision_kit_version=decision_kit_version,
+            kit_context=kit_context,
+            evidence_corpus=verification_text,
+            force_recommendation=True,
+        )
     scored["executive_summary"] = _deterministic_executive_summary(scored)
     if not isinstance(scored.get("section_provenance"), dict):
         scored["section_provenance"] = {}
@@ -3286,412 +3271,106 @@ def _portfolio_summary_from_cards(ideas, cards, *, rubric=None):
     return {'structure': structure, 'recommended_sequence': ' '.join(sentences)}
 
 
-def _generate_batch_scorecards(client, ideas, *, rubric=None, strategy_objective='balanced', evidence_corpus=None,
-                               model_selection=None, llm_model=None, return_usage=False):
-    """Score MANY ideas in a SINGLE model pass — the 'build the Excel' approach.
+def _generate_batch_scorecards(
+    client,
+    ideas,
+    *,
+    rubric=None,
+    strategy_objective="balanced",
+    evidence_corpus=None,
+    model_selection=None,
+    llm_model=None,
+    return_usage=False,
+    decision_kit=None,
+    decision_kit_version=None,
+    kit_context=None,
+):
+    """Score each option through the canonical single-option orchestration.
 
-    One call returns a grid of every idea scored on every criterion (score +
-    a one-line put/take). Python then computes each idea's DETERMINISTIC weighted
-    total. This is far cheaper/faster than one full generation per idea and never
-    runs many sequential LLM calls inside a request, so it can't time out the way
-    the old per-idea loop did. Fully generic across any idea type; if a rubric is
-    given, ideas are scored against it, otherwise the standard dimensions are used.
-    Returns a list of fully-scored scorecard payloads (same shape the single-card
-    path produces), in the same order as `ideas`.
+    Batch is scheduling plus deterministic portfolio aggregation. It does not
+    own a prompt, parser, confidence policy, gate evaluator, or arithmetic path.
     """
-    ideas = [i for i in (ideas or []) if isinstance(i, dict) and str(i.get('name') or '').strip()]
+    from concurrent.futures import ThreadPoolExecutor
+    from ..decision_facts import option_fact_text
+    from ..decision_kits import get_decision_kit
+
+    ideas = [
+        item for item in (ideas or [])
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
     if not ideas:
         return ([], None, None) if return_usage else ([], None)
 
-    # PARALLEL CHUNKING: one model pass that writes every option's full dossier is
-    # too slow — five options already exceed the 60s provider timeout, and gunicorn
-    # (75s) kills the request mid-call, so no cards are produced at all. Score each
-    # option in its OWN call against the SAME rubric and run those calls
-    # concurrently: the batch then takes about as long as one option. A failed
-    # option is padded with None so the ones that DID score still render.
-    BATCH_CHUNK_SIZE = 1
-    BATCH_MAX_PARALLEL = 5
-    if len(ideas) > BATCH_CHUNK_SIZE:
-        app = current_app._get_current_object()
-        chunks = [ideas[start:start + BATCH_CHUNK_SIZE] for start in range(0, len(ideas), BATCH_CHUNK_SIZE)]
+    kit = get_decision_kit(decision_kit, decision_kit_version) if decision_kit else None
+    app = current_app._get_current_object()
 
-        def _score_chunk(chunk):
-            with app.app_context():
-                return _generate_batch_scorecards(
-                    client, chunk, rubric=rubric, strategy_objective=strategy_objective,
-                    model_selection=model_selection, llm_model=llm_model, return_usage=True,
-                    # Carried into every chunk: otherwise every option past the
-                    # first would lose the user's words as evidence.
-                    evidence_corpus=evidence_corpus,
+    def score_one(item):
+        name = str(item.get("name") or "").strip()
+        description = str(item.get("description") or "").strip() or name
+        scoped_corpus = option_fact_text(evidence_corpus, name) or str(evidence_corpus or "")
+        attributes = normalize_option_facts(
+            item.get("attributes") or {},
+            kit=kit,
+            source_text=scoped_corpus,
+            option_name=name,
+        )
+        with app.app_context():
+            card, usage = _generate_jaspen_scorecard(
+                client,
+                description,
+                llm_model,
+                model_selection=model_selection,
+                strategy_objective=strategy_objective,
+                rubric=rubric,
+                return_usage=True,
+                evidence_corpus=scoped_corpus,
+                attributes=attributes,
+                decision_kit=decision_kit,
+                decision_kit_version=decision_kit_version,
+                kit_context=kit_context,
+                option_key=item.get("option_key"),
+            )
+        return card, usage
+
+    results = [None] * len(ideas)
+    usages = []
+    with ThreadPoolExecutor(max_workers=min(5, len(ideas))) as pool:
+        futures = [pool.submit(score_one, item) for item in ideas]
+        for index, future in enumerate(futures):
+            try:
+                card, usage = future.result()
+                results[index] = card
+                if isinstance(usage, dict):
+                    usages.append(usage)
+            except Exception:
+                current_app.logger.exception(
+                    "[_generate_batch_scorecards] option %s failed", index
                 )
 
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=min(BATCH_MAX_PARALLEL, len(chunks))) as pool:
-            futures = [pool.submit(_score_chunk, chunk) for chunk in chunks]
-
-        all_results = []
-        chunk_usages = []
-        for index, (chunk, future) in enumerate(zip(chunks, futures)):
-            try:
-                c_results, _c_summary, c_usage = future.result()
-            except Exception:
-                current_app.logger.exception('[_generate_batch_scorecards] option %s failed', index)
-                c_results, c_usage = [], None
-            # Keep positional alignment with `ideas`: the caller zips ideas↔cards and
-            # adds each idea's name by position, so a failed/short chunk MUST be padded
-            # with None (the caller skips non-dict payloads) or names would shift.
-            c_results = list(c_results or [])
-            if len(c_results) < len(chunk):
-                c_results = c_results + [None] * (len(chunk) - len(c_results))
-            all_results.extend(c_results[:len(chunk)])
-            if isinstance(c_usage, dict):
-                chunk_usages.append(c_usage)
-        # Re-derive tiers from the GLOBAL absolute score bands so per-chunk relativity
-        # doesn't skew them (locked Strategic-Necessity anchors are preserved).
-        for scored in all_results:
-            if not isinstance(scored, dict):
-                continue
-            if str(scored.get('tier') or '') == 'Strategic Necessity':
-                continue
-            js = float(scored.get('jaspen_score') or 0.0)
-            scored['tier'] = (
-                'Leading Candidate' if js >= 78
-                else 'Secondary Candidate' if js >= 68
-                else 'Monitor / Niche'
-            )
-        # Each call only saw one option, so the cross-option summary is built
-        # here from the finished cards instead of from any single call.
-        merged_summary = _portfolio_summary_from_cards(ideas, all_results, rubric=rubric)
-        merged_usage = None
-        if chunk_usages:
-            merged_usage = {
-                'provider': chunk_usages[-1].get('provider'),
-                'model': chunk_usages[-1].get('model'),
-                'model_type': chunk_usages[-1].get('model_type'),
-                'input_tokens': sum(int(item.get('input_tokens') or 0) for item in chunk_usages),
-                'output_tokens': sum(int(item.get('output_tokens') or 0) for item in chunk_usages),
-                'total_tokens': sum(int(item.get('total_tokens') or 0) for item in chunk_usages),
-                'operation_id': str(uuid.uuid4()),
-                'operation_type': 'score_batch',
-                'governance': dict(chunk_usages[-1].get('governance') or {}),
-                'component_usages': [dict(item) for item in chunk_usages],
-                'failover': {
-                    'attempted_providers': [
-                        attempt
-                        for item in chunk_usages
-                        for attempt in ((item.get('failover') or {}).get('attempted_providers') or [])
-                        if isinstance(attempt, dict)
-                    ],
-                },
-            }
-        return (all_results, merged_summary, merged_usage) if return_usage else (all_results, merged_summary)
-
-    rubric_criteria = None
-    if isinstance(rubric, dict) and isinstance(rubric.get('criteria'), list):
-        rubric_criteria = [c for c in rubric['criteria'] if isinstance(c, dict) and str(c.get('key') or '').strip()]
-    custom_mode = bool(rubric_criteria and len(rubric_criteria) >= 2)
-
-    if custom_mode:
-        weights = {}
-        for c in rubric_criteria:
-            try:
-                weights[c['key']] = float(c.get('weight') or 0.0)
-            except (TypeError, ValueError):
-                weights[c['key']] = 0.0
-        _wsum = sum(weights.values()) or 1.0
-        if abs(_wsum - 1.0) > 0.02:
-            weights = {k: v / _wsum for k, v in weights.items()}
-        dim_keys = [c['key'] for c in rubric_criteria]
-        label_by_key = {c['key']: (c.get('label') or c['key']) for c in rubric_criteria}
-        risk_by_key = {c['key']: bool(c.get('is_risk')) for c in rubric_criteria}
-        group_by_key = {c['key']: (str(c.get('group')).strip() if c.get('group') else None) for c in rubric_criteria}
-        groups = []
-        for c in rubric_criteria:
-            g = str(c.get('group')).strip() if c.get('group') else None
-            if g and g not in groups:
-                groups.append(g)
-        _crit_lines = []
-        for c in rubric_criteria:
-            pct = int(round(weights.get(c['key'], 0.0) * 100))
-            risk = " [risk criterion: a HIGHER score means LOWER risk]" if c.get('is_risk') else ""
-            grp = (str(c.get('group')).strip() if c.get('group') else "")
-            gtag = f" [group: {grp}]" if grp else ""
-            desc = str(c.get('description') or '').strip()
-            _crit_lines.append(f'  - "{c["key"]}" = {c.get("label") or c["key"]} ({pct}% weight){gtag}{risk}' + (f": {desc}" if desc else ""))
-        criteria_block = "\n".join(_crit_lines)
-        criteria_note = "Score ONLY against these user-defined criteria."
-    else:
-        weights = {"market_opportunity": 0.18, "financial_viability": 0.20, "execution_readiness": 0.18,
-                   "strategic_alignment": 0.16, "risk_profile": 0.16, "evidence_quality": 0.12}
-        dim_keys = list(weights.keys())
-        label_by_key = {"market_opportunity": "Market Opportunity", "financial_viability": "Cost Efficiency",
-                        "execution_readiness": "Time-to-value", "strategic_alignment": "Strategic Fit",
-                        "risk_profile": "Execution Risk", "evidence_quality": "Evidence Quality"}
-        risk_by_key = {"risk_profile": True}
-        group_by_key = {}
-        groups = []
-        criteria_block = "\n".join(f'  - "{k}" = {label_by_key[k]} ({int(round(weights[k] * 100))}% weight)' for k in dim_keys)
-        criteria_note = "Score against these standard dimensions."
-
-    has_groups = len(groups) >= 2
-
-    _ideas_lines = []
-    for idx, i in enumerate(ideas):
-        nm = str(i.get('name')).strip()
-        d = str(i.get('description') or '').strip()
-        lock = " [LOCKED — required strategic anchor: include regardless of rank; tier = Strategic Necessity]" if i.get('locked') else ""
-        _ideas_lines.append(f'  {idx + 1}. "{nm}"{lock}' + (f' — {d}' if d and d != nm else ''))
-    ideas_block = "\n".join(_ideas_lines)
-    keys_csv = ", ".join(f'"{k}"' for k in dim_keys)
-
-    groups_note = ""
-    if has_groups:
-        groups_note = (
-            f"\nThe criteria are organized into these groups: {', '.join(groups)}. "
-            "Reason about each option's strength on each group, not just overall.\n"
-        )
-
-    tier_vocab = '"Leading Candidate", "Secondary Candidate", "Strategic Necessity", "Monitor / Niche"'
-
-    # OBJECTIVE LENS: the user's primary objective (balanced/cost/speed/growth) must
-    # actually influence batch scoring — previously it was ignored here, so the tag in
-    # the UI had no effect on multi-idea results. With a CUSTOM rubric the user's weights
-    # stay authoritative (objective only shapes rationale + tie-breaks); with the generic
-    # dimensions the objective tilts the weighting as designed.
-    _obj_norm = _normalize_strategy_objective(strategy_objective)
-    _obj_guidance = _scorecard_objective_guidance(strategy_objective)
-    if custom_mode:
-        objective_note = (
-            f"\nOBJECTIVE LENS — the user's strategic objective is '{_obj_norm}'. {_obj_guidance} "
-            "Apply this as a tie-breaker and to shape your rationales and the portfolio recommendation, "
-            "but DO NOT override the user's criterion weights above — those are authoritative.\n"
-        )
-    else:
-        objective_note = (
-            f"\nOBJECTIVE LENS — the user's strategic objective is '{_obj_norm}'. {_obj_guidance} "
-            "Let this tilt how you judge the standard dimensions and which options rise to the top.\n"
-        )
-
-    system_prompt = (
-        "You are a rigorous strategy analyst building a decision dossier. You score multiple options against a fixed "
-        "set of weighted criteria and return STRICT JSON only — no prose outside the JSON. Judge each option honestly "
-        "and independently on each criterion using a 0-100 scale where 100 is best on that criterion (for cost-type "
-        "criteria, 100 = most favorable). Give each criterion a short, specific rationale stating the key 'put' "
-        "(strength) or 'take' (weakness). Do not inflate scores — a weak option must score meaningfully lower. You also "
-        "assign each option a role and tier and write a short portfolio recommendation across all of them. "
-        "For each criterion's confidence, assign a level based on the QUALITY OF THE EVIDENCE, not how clearly it was "
-        "stated: \"high\" = evidence Jaspen can itself see or check in this conversation (uploaded documents, connected "
-        "data sources, or figures cross-checkable against material provided); \"medium\" = specific, concrete facts the "
-        "user self-reported (exact salary, current rent, a signed offer's terms); \"low\" = the user's own estimates, "
-        "predictions, or qualitative impressions ('promotion is possible', 'clients seem happy', 'we think it will "
-        "appreciate'); \"assumed\" = anything you filled in yourself with no user input. A decision built entirely on "
-        "uncorroborated self-report should rarely show \"high\" on any criterion — confident-sounding conversation is "
-        "not corroboration. Self-reported specifics are respectable evidence (medium); they are not verified evidence "
-        "(high)."
-    )
-    # The user's own words, so there is real language available to quote and a
-    # corpus for verification to search. Without it the batch scorer only ever
-    # saw the option names and one-line descriptions assembled upstream.
-    _corpus_text = str(evidence_corpus or "").strip()
-    _source_block = (
-        "SOURCE MATERIAL (the user's own words, quote ONLY from here):\n"
-        f'"""\n{_corpus_text}\n"""\n\n'
-        if _corpus_text else ""
-    )
-
-    user_prompt = (
-        f"Build a decision dossier scoring these {len(ideas)} options against the criteria below. {criteria_note}"
-        f"{groups_note}"
-        f"{objective_note}\n"
-        f"CRITERIA (json key = meaning (weight)[group]):\n{criteria_block}\n\n"
-        f"OPTIONS:\n{ideas_block}\n\n"
-        f"{_source_block}"
-        "Return ONLY this JSON shape (no markdown, no commentary):\n"
-        "{\n"
-        '  "portfolio_summary": {\n'
-        '    "structure": "<one line: how many fall in each tier>",\n'
-        '    "recommended_sequence": "<2-4 sentences: which to commit to, which to develop next, which to monitor, and in what order. MUST be justified against the weighted CRITERIA above (name the actual criterion labels, not generic terms), MUST explicitly address the highest-weighted criterion, and MUST NOT reference any strategic objective other than the one stated in OBJECTIVE LENS above — never invent or imply a different objective label (e.g. do not call it a \'speed\' or \'growth\' play unless that is the stated objective)>"\n'
-        "  },\n"
-        '  "options": [\n'
-        "    {\n"
-        '      "name": "<exact option name, copied verbatim>",\n'
-        f'      "tier": <one of {tier_vocab}; LOCKED options are "Strategic Necessity">,\n'
-        '      "primary_role": "<short role this option would play, e.g. \'Customer-density & operations hub\'>",\n'
-        '      "strategic_rationale": "<2-3 sentence leadership read on this option>",\n'
-        '      "dimensions": {\n'
-        f'        // EXACTLY one entry for EACH key: {keys_csv}\n'
-        '        "<criterion_key>": { "score": <0-100>, "confidence": "<high|medium|low|assumed>", "rationale": "<one specific line: the put or take>", "source": "<conversation|inferred|assumed>", "evidence": ["<verbatim quote from the source material that supports this score>"], "what_would_improve": "<specific action, or null if confidence is high>" }\n'
-        "      },\n"
-        '      "key_strengths": ["<top put>", "..."],\n'
-        '      "key_considerations": ["<top take / risk / caveat>", "..."]\n'
-        "    }\n"
-        "    // ...one object per option, in the same order...\n"
-        "  ]\n"
-        "}\n"
-        "Every option MUST include every criterion key.\n"
-        "- EVIDENCE QUOTES: populate \"evidence\" with the exact passages from the source material that support the "
-        "score. Quote verbatim, do not paraphrase, and do not quote your own words back. If nothing in the source "
-        "supports the score, return an empty list rather than inventing a quote. Every quote is checked against the "
-        "source and silently discarded if it is not found there, so a fabricated one buys nothing and an accurate one "
-        "becomes part of the record.\n"
-        "- SOURCE: \"conversation\" when the user stated it, \"inferred\" when you reasoned it from what they said, "
-        "\"assumed\" when nothing in the input speaks to it.\n"
-        "- For any dimension with confidence \"low\" or \"assumed\", populate what_would_improve with a specific, "
-        "actionable suggestion naming the information that would resolve it.\n"
-        "Output JSON only."
-    )
-
-    text, _usage = _strategy_generate_reply(
-        [{"role": "user", "content": user_prompt}],
-        system_prompt=system_prompt,
-        model_selection=model_selection,
-        llm_model=llm_model,
-        strategy_objective=strategy_objective,
-        operation_type='score_batch',
-        max_tokens=8000,
-        temperature=0,
-    )
-    parsed = _extract_json_object(text)
-    options = []
-    portfolio_summary = None
-    if isinstance(parsed, dict):
-        options = parsed.get("options") or parsed.get("ideas") or parsed.get("results") or []
-        ps = parsed.get("portfolio_summary")
-        if isinstance(ps, dict):
-            portfolio_summary = {
-                "structure": str(ps.get("structure") or "").strip(),
-                "recommended_sequence": str(ps.get("recommended_sequence") or ps.get("sequence") or "").strip(),
-            }
-    if not isinstance(options, list):
-        options = []
-    by_name = {}
-    for o in options:
-        if isinstance(o, dict) and str(o.get("name") or "").strip():
-            by_name[str(o.get("name")).strip().lower()] = o
-
-    _valid_tiers = {"leading candidate", "secondary candidate", "strategic necessity", "monitor / niche", "monitor/niche"}
-
-    # Batch path has no per-dimension evidence source from the model (unlike the
-    # single-card path), so grounding is detected once at the request level: does
-    # ANY idea's text carry a connector/upload context marker? If not, no
-    # dimension in this batch may be published as "high" confidence — Art. 7,
-    # enforced in code. Only ever demotes high -> medium; never raises anything.
-    _batch_has_grounded_evidence = any(
-        _text_has_grounded_evidence_marker(idea.get('description')) or _text_has_grounded_evidence_marker(idea.get('name'))
-        for idea in ideas
-    )
-
-    results = []
-    for idea in ideas:
-        nm = str(idea.get('name')).strip()
-        locked = bool(idea.get('locked'))
-        o = by_name.get(nm.lower()) or {}
-        ai_dims = o.get("dimensions") if isinstance(o.get("dimensions"), dict) else {}
-        dims = {}
-        for key in dim_keys:
-            d = ai_dims.get(key) if isinstance(ai_dims.get(key), dict) else {}
-            try:
-                score = float(d.get("score"))
-            except (TypeError, ValueError):
-                score = 0.0
-            score = max(0.0, min(100.0, score))
-            conf = str(d.get("confidence") or "medium").strip().lower()
-            if conf not in ("high", "medium", "low", "assumed"):
-                conf = "medium"
-            if conf == "high" and not _batch_has_grounded_evidence:
-                conf = "medium"
-            # `source` and `what_would_improve` used to be hardcoded to
-            # "inferred" and None here, and `evidence` was dropped entirely.
-            # This is the scorer the product actually uses for a multi-option
-            # decision, so every card it produced reported that nothing the
-            # user said had been used, however much they had provided. Both now
-            # come from the scoring pass, on the same contract as the
-            # single-option scorer.
-            _source = str(d.get("source") or "").strip().lower()
-            if _source not in ("conversation", "connector", "inferred", "assumed"):
-                _source = "inferred"
-            _wwi = str(d.get("what_would_improve") or "").strip() or None
-            _evidence = d.get("evidence") if isinstance(d.get("evidence"), list) else []
-            dims[key] = {
-                "score": score,
-                "confidence": conf,
-                "source": _source,
-                "rationale": str(d.get("rationale") or "").strip(),
-                "what_would_improve": _wwi,
-                # Claimed, not yet verified. attach_evidence_references checks
-                # each one against the source text below and discards the rest.
-                "evidence": _evidence,
-                "label": label_by_key.get(key, key),
-                "is_risk": bool(risk_by_key.get(key)),
-                "group": group_by_key.get(key),
-            }
-        strengths = [str(s).strip() for s in (o.get("key_strengths") or []) if str(s).strip()]
-        considerations = [str(s).strip() for s in (o.get("key_considerations") or o.get("key_risks") or []) if str(s).strip()]
-
-        # Tier: honor LOCKED → Strategic Necessity; else validate the AI's tier.
-        tier = str(o.get("tier") or "").strip()
-        if locked:
-            tier = "Strategic Necessity"
-        elif tier.lower() not in _valid_tiers:
-            tier = ""  # filled in after we know the score, below
-
-        payload = {
-            "executive_summary": str(o.get("strategic_rationale") or o.get("executive_summary") or "").strip(),
-            "strategic_rationale": str(o.get("strategic_rationale") or "").strip(),
-            "primary_role": str(o.get("primary_role") or "").strip(),
-            "dimensions": dims,
-            "key_insights": strengths,
-            "top_risks": [{"risk": r, "text": r} for r in considerations],
-            "key_considerations": considerations,
-            "recommendations": [],
-            "assumptions": [],
-            "locked": locked,
+    summary = _portfolio_summary_from_cards(ideas, results, rubric=rubric)
+    merged_usage = None
+    if usages:
+        merged_usage = {
+            "provider": usages[-1].get("provider"),
+            "model": usages[-1].get("model"),
+            "model_type": usages[-1].get("model_type"),
+            "input_tokens": sum(int(item.get("input_tokens") or 0) for item in usages),
+            "output_tokens": sum(int(item.get("output_tokens") or 0) for item in usages),
+            "total_tokens": sum(int(item.get("total_tokens") or 0) for item in usages),
+            "operation_id": str(uuid.uuid4()),
+            "operation_type": "score_batch",
+            "governance": dict(usages[-1].get("governance") or {}),
+            "component_usages": [dict(item) for item in usages],
+            "failover": {
+                "attempted_providers": [
+                    attempt
+                    for item in usages
+                    for attempt in ((item.get("failover") or {}).get("attempted_providers") or [])
+                    if isinstance(attempt, dict)
+                ],
+            },
         }
-        if custom_mode:
-            payload["rubric"] = rubric
-
-        # Establish provenance before confidence and score arithmetic. The
-        # former order recomputed first and attached references afterward,
-        # allowing the model's confidence labels to determine coverage before
-        # any claimed quote had been checked.
-        _verification_text = _corpus_text or str(idea.get('description') or '').strip()
-        if _verification_text:
-            try:
-                _verified = attach_evidence_references(payload.get("dimensions"), _verification_text)
-                if _verified:
-                    payload["evidence_reference_count"] = _verified
-            except Exception:
-                current_app.logger.exception("batch evidence reference capture failed")
-        payload = _clamp_unverified_high_confidence_dimensions(payload)
-        payload = _calibrate_confidence_to_verified_evidence(payload)
-        payload = _remove_unverified_model_numbers(payload)
-        scored = _recompute_jaspen_score(payload, weights)
-        scored["executive_summary"] = _deterministic_executive_summary(scored)
-        if not isinstance(scored.get("section_provenance"), dict):
-            scored["section_provenance"] = {}
-        scored["section_provenance"]["executive_summary"] = "deterministic"
-
-        # Deterministic per-group sub-scores from the (capped) dimension scores.
-        if has_groups:
-            scored_dims = scored.get("dimensions") if isinstance(scored.get("dimensions"), dict) else dims
-            group_scores = {}
-            for g in groups:
-                gkeys = [k for k in dim_keys if group_by_key.get(k) == g]
-                gw = sum(weights.get(k, 0.0) for k in gkeys) or 1.0
-                gtot = sum(float(scored_dims.get(k, {}).get("score") or 0.0) * weights.get(k, 0.0) for k in gkeys)
-                group_scores[g] = round(gtot / gw, 1)
-            scored["group_scores"] = group_scores
-            scored["groups"] = list(groups)
-
-        # If the AI didn't give a valid tier, derive one from the overall score band.
-        if not tier:
-            js = float(scored.get("jaspen_score") or 0.0)
-            tier = "Leading Candidate" if js >= 78 else "Secondary Candidate" if js >= 68 else "Monitor / Niche"
-        scored["tier"] = tier
-
-        results.append(scored)
-
-    return (results, portfolio_summary, _usage) if return_usage else (results, portfolio_summary)
+    return (results, summary, merged_usage) if return_usage else (results, summary)
 
 
 @strategy_bp.route('/analyze', methods=['POST'])
@@ -3811,6 +3490,17 @@ def analyze_project():
             'context_tokens': max(1, len(effective_description) // 4),
             'alternatives_count': len(existing_peers) if resolved_capacity_thread_id else 0,
         }
+        legacy_evidence_corpus = (
+            _thread_user_corpus(current_user_id, str(thread_id)) if thread_id
+            else project_description
+        )
+        legacy_decision_kit = (current_session or {}).get('decision_kit')
+        legacy_decision_kit_version = (current_session or {}).get('decision_kit_version')
+        legacy_attributes = {}
+        if isinstance((current_session or {}).get('option_attributes'), dict) and project_name:
+            legacy_attributes = (current_session or {}).get('option_attributes', {}).get(
+                re.sub(r'[^a-z0-9]+', '-', project_name.lower()).strip('-'), {}
+            )
         try:
             analysis_result, provider_usage, ai_settlement = execute_customer_operation(
                 user,
@@ -3822,6 +3512,11 @@ def analyze_project():
                     strategy_objective=strategy_objective,
                     return_usage=True,
                     routing_signals=routing_signals,
+                    evidence_corpus=legacy_evidence_corpus,
+                    attributes=legacy_attributes,
+                    decision_kit=legacy_decision_kit,
+                    decision_kit_version=legacy_decision_kit_version,
+                    kit_context=(current_session or {}).get('kit_context') if isinstance((current_session or {}).get('kit_context'), dict) else {},
                 ),
                 operation_type='scorecard_generation',
                 request_payload={
@@ -6629,13 +6324,12 @@ def score_next_queued(thread_id):
 @limiter.shared_limit(_claude_hourly_limit, scope=AI_CONVERSATION_SCOPE)
 @limiter.shared_limit(_claude_daily_limit, scope=AI_CONVERSATION_SCOPE)
 def score_batch_queued(thread_id):
-    """Score ALL queued ideas in ONE model pass, then persist each as a scorecard.
+    """Score all queued ideas through the shared per-option scoring pipeline.
 
-    The 'build the Excel' path: a single generation scores every idea on every
-    criterion, Python computes the deterministic weighted totals, and each idea is
-    stored as its own card (first = thread baseline, the rest = scenario snapshots)
-    so the workspace + trade-off render them together. One request, one LLM call —
-    no synchronous per-idea loop that could time out. Generic across any idea type.
+    Each option receives the same evidence verification, confidence calibration,
+    gate evaluation, and deterministic arithmetic used by single scoring. Calls are
+    made concurrently, then each canonical scorecard is persisted so the workspace
+    and trade-off views render the complete comparison together.
     """
     try:
         user_id = get_jwt_identity()
@@ -6687,6 +6381,8 @@ def score_batch_queued(thread_id):
         plan_key = effective_plan_key(user, current_app.config)
         strategy_objective = _normalize_strategy_objective(session.get('strategy_objective'))
         rubric = session.get('scoring_rubric') if isinstance(session.get('scoring_rubric'), dict) else None
+        decision_kit = session.get('decision_kit')
+        decision_kit_version = session.get('decision_kit_version')
         all_scenarios = _load_scenarios(user_id)
         thread_data = all_scenarios.get(thread_id) or {}
         existing_peers = collect_peer_scorecards(
@@ -6732,6 +6428,9 @@ def score_batch_queued(thread_id):
                     # What the user actually said, so quotes have somewhere real to
                     # come from and verification has somewhere real to look.
                     evidence_corpus=_thread_user_corpus(user_id, thread_id),
+                    decision_kit=decision_kit,
+                    decision_kit_version=decision_kit_version,
+                    kit_context=session.get('kit_context') if isinstance(session.get('kit_context'), dict) else {},
                 )
                 return {
                     'cards': cards,
@@ -6748,6 +6447,8 @@ def score_batch_queued(thread_id):
                     'ideas': ideas_to_generate,
                     'rubric': rubric,
                     'strategy_objective': strategy_objective,
+                    'decision_kit': decision_kit,
+                    'decision_kit_version': decision_kit_version,
                 },
                 model_type=model_selection['model_type'],
                 max_tokens=max(2000, len(ideas_to_generate) * 1800),
@@ -6806,9 +6507,7 @@ def score_batch_queued(thread_id):
             analysis_id = evaluation_context['scorecard_id']
             evaluation_id = evaluation_context['evaluation_id']
             generated_at = datetime.utcnow().isoformat()
-            decision_kit = session.get('decision_kit')
-            decision_kit_version = session.get('decision_kit_version')
-            attributes = dict(idea.get('attributes') or {})
+            attributes = dict(payload.get('attributes') or idea.get('attributes') or {})
             option_key = str(idea.get('option_key') or f"opt_{uuid.uuid4().hex[:12]}")
             scorecard = {
                 **payload,
@@ -6914,6 +6613,9 @@ def score_batch_queued(thread_id):
                 chat_history.append(entry)
                 session['chat_history'] = chat_history
             session['name'] = session.get('name') or name
+            option_store = session.get('option_attributes') if isinstance(session.get('option_attributes'), dict) else {}
+            option_store[re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')] = attributes
+            session['option_attributes'] = option_store
             session['active_evaluation_id'] = evaluation_id
             session['active_evaluation_scorecard_id'] = analysis_id
             session['timestamp'] = generated_at
@@ -6930,6 +6632,18 @@ def score_batch_queued(thread_id):
                 session['portfolio_summary'] = portfolio_summary
             sessions[session_key or thread_id] = session
             save_user_sessions(user_id, sessions)
+
+        if scored_out:
+            try:
+                from app.decision_records import create_or_refresh_record
+                create_or_refresh_record(user, thread_id)
+            except LookupError:
+                pass
+            except Exception:
+                current_app.logger.exception(
+                    "Decision Record refresh failed after batch scoring thread %s",
+                    thread_id,
+                )
 
         capacity_names = [str(item.get('name') or '').strip() for item in capacity_skipped]
         not_persisted_names = capacity_names + model_failures + persistence_failures
@@ -10156,21 +9870,25 @@ def scorecard_attributes(thread_id, scorecard_id):
     session = session if isinstance(session, dict) else {}
     from ..decision_kits import get_decision_kit
     kit = get_decision_kit(session.get('decision_kit'), session.get('decision_kit_version')) if session.get('decision_kit') else None
-    allowed = {item['key'] for item in (kit.get('fields') or [])} if kit else set(updates)
     corpus = _thread_user_corpus(user_id, thread_id)
     normalized = {}
     for key, raw in updates.items():
-        if key not in allowed or not isinstance(raw, dict):
+        if not isinstance(raw, dict):
             continue
         source = str(raw.get('source') or '').strip().lower()
         evidence = str(raw.get('evidence') or '').strip()
-        if source not in {'user', 'document', 'assumed'}:
+        if source not in {'user', 'document', 'connector', 'assumed'}:
             return jsonify({'error': f'Invalid source for {key}', 'code': 'invalid_attribute_source'}), 400
         if source == 'user' and evidence.lower() not in corpus.lower():
             return jsonify({'error': f'Evidence for {key} was not found verbatim in the user input', 'code': 'unverified_attribute_evidence'}), 400
-        if source in {'user', 'document'} and not evidence:
+        if source in {'user', 'document', 'connector'} and not evidence:
             return jsonify({'error': f'Evidence is required for {key}', 'code': 'missing_attribute_evidence'}), 400
-        normalized[key] = {'value': raw.get('value'), 'source': source, 'evidence': evidence, 'updated_at': datetime.utcnow().isoformat()}
+        try:
+            from ..decision_facts import normalize_fact_entry
+            canonical_key, entry = normalize_fact_entry(key, raw, kit=kit)
+        except ValueError as exc:
+            return jsonify({'error': str(exc), 'code': 'invalid_attribute'}), 400
+        normalized[canonical_key] = {**entry, 'updated_at': datetime.utcnow().isoformat()}
     if not normalized:
         return jsonify({'error': 'No valid attributes supplied', 'code': 'invalid_attributes'}), 400
 

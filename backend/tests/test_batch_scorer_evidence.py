@@ -22,19 +22,17 @@ WHAT_THE_USER_WROTE = (
 
 
 def test_the_batch_prompt_asks_for_the_same_contract(strategy):
-    """A prompt that never asks cannot receive."""
+    """Batch delegates to the canonical scorer instead of owning a prompt."""
     import inspect
     src = inspect.getsource(strategy._generate_batch_scorecards)
-    assert '"evidence"' in src
-    assert "what_would_improve" in src
-    assert "EVIDENCE QUOTES" in src
-    assert "SOURCE MATERIAL" in src
+    assert "_generate_jaspen_scorecard" in src
+    assert "_strategy_generate_reply" not in src
 
 
 def test_the_batch_scorer_verifies_rather_than_trusting(strategy):
     import inspect
     src = inspect.getsource(strategy._generate_batch_scorecards)
-    assert "attach_evidence_references" in src
+    assert "_generate_jaspen_scorecard" in src
 
 
 def test_source_is_no_longer_hardcoded(strategy):
@@ -64,7 +62,7 @@ def test_the_corpus_reaches_every_chunk(strategy):
     option past the first chunk silently loses its evidence."""
     import inspect
     src = inspect.getsource(strategy._generate_batch_scorecards)
-    assert src.count("evidence_corpus=evidence_corpus") >= 1
+    assert "evidence_corpus=scoped_corpus" in src
 
 
 def test_only_user_turns_enter_the_corpus(strategy, app):
@@ -82,6 +80,6 @@ def test_ai_authored_option_text_is_not_a_valid_source(strategy):
     the verification corpus let the model cite AI-authored text as evidence for
     an AI-authored score. Only the user's words count when we have them.
     """
-    import inspect
-    src = inspect.getsource(strategy._generate_batch_scorecards)
-    assert "_verification_text = _corpus_text or" in src
+    from app.decision_facts import option_fact_text
+    corpus = "Aurora has a 25% win probability. Commerce City has a 40% win probability."
+    assert option_fact_text(corpus, "Aurora") == "Aurora has a 25% win probability."
