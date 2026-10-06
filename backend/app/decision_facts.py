@@ -205,16 +205,31 @@ def extract_candidate_facts(text, kit):
     return candidates
 
 
-def option_fact_text(source_text, option_name=None):
-    """Return the user-authored clauses that name one option.
-
-    This prevents a batch fact stated for Aurora from being attached to Commerce
-    City.  A single unnamed option may use the complete user corpus.
-    """
+def option_fact_text(source_text, option_name=None, option_names=None):
+    """Return one option's complete user-authored section."""
     source = str(source_text or "").strip()
     name = str(option_name or "").strip()
     if not source or not name:
         return source
+    names = [str(value or "").strip() for value in (option_names or [])]
+    if name not in names:
+        names.append(name)
+    names = sorted({value for value in names if value}, key=len, reverse=True)
+    heading = "|".join(re.escape(value) for value in names)
+    if heading:
+        marker = re.compile(
+            rf"(?im)(?:^|(?<=[.!?])\s+|\n+)"
+            rf"(?P<header>(?:option\s+[A-Za-z0-9_-]+(?:\s*[-–—]\s*[^:\n.]+)?|{heading})\s*:)",
+        )
+        matches = list(marker.finditer(source))
+        for index, match in enumerate(matches):
+            start = match.start("header")
+            end = matches[index + 1].start("header") if index + 1 < len(matches) else len(source)
+            section = source[start:end].strip()
+            heading_context = re.split(r"(?<=[.!?])\s+|\n+", section, maxsplit=1)[0]
+            if name.lower() not in heading_context.lower():
+                continue
+            return section
     clauses = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", source) if part.strip()]
     matches = [part for part in clauses if name.lower() in part.lower()]
     return "\n".join(matches)

@@ -25,6 +25,46 @@ def test_execution_planner_worker_has_context(app, monkeypatch):
     assert plan['tasks'][0]['lineage'][0]['ref'] == 'r1'
 
 
+def test_execution_plan_canonicalizes_duplicate_lineage_and_junk_dependencies(app, monkeypatch):
+    strategy, _ = modules()
+    response = {"tasks": [
+        {"id": "task", "title": "First", "lineage": [
+            {"type": "recommendation", "ref": "r1"},
+            {"type": "recommendation", "ref": "r1"},
+        ], "dependencies": ["missing", "task"]},
+        {"id": "task", "title": "Second", "lineage": [
+            {"type": "recommendation", "ref": "r1"},
+        ], "dependencies": ["task", "missing"]},
+    ]}
+    monkeypatch.setattr(strategy, '_strategy_generate_reply', lambda *a, **k: (json.dumps(response), {}))
+    sources = [{"type": "recommendation", "ref": "r1", "label": "Prepare", "required": True}]
+    plan, _, success, error = strategy._generate_ai_wbs_suggestion(
+        None, 'model', scorecard={'project_name': 'Proposal'}, instruction='',
+        model_selection={'llm_model': 'model'}, return_usage=True, lineage_sources=sources,
+    )
+    assert success and error is None
+    assert [task['id'] for task in plan['tasks']] == ['task', 'task-2']
+    assert len(plan['tasks'][0]['lineage']) == 1
+    assert plan['tasks'][0]['dependencies'] == []
+    assert plan['tasks'][1]['dependencies'] == ['task']
+
+
+def test_execution_plan_logs_lineage_validation_details(app, monkeypatch, caplog):
+    strategy, _ = modules()
+    response = {"tasks": [{"id": "task", "title": "Unlinked", "lineage": [
+        {"type": "recommendation", "ref": "junk"},
+    ]}]}
+    monkeypatch.setattr(strategy, '_strategy_generate_reply', lambda *a, **k: (json.dumps(response), {}))
+    sources = [{"type": "recommendation", "ref": "required", "label": "Required", "required": True}]
+    plan, _, success, error = strategy._generate_ai_wbs_suggestion(
+        None, 'model', scorecard={'project_name': 'Proposal'}, instruction='',
+        model_selection={'llm_model': 'model'}, return_usage=True, lineage_sources=sources,
+    )
+    assert plan is None and not success and error == 'ValueError'
+    assert 'invalid_plan_lineage' in caplog.text
+    assert 'missing_sources' in caplog.text
+
+
 def test_failed_execution_generation_is_degraded_and_does_not_charge(app, db, test_user, monkeypatch):
     strategy, _ = modules()
     monkeypatch.setattr(strategy, '_strategy_generate_reply', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('provider failed')))

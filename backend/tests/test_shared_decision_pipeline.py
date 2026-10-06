@@ -127,6 +127,17 @@ def test_gate_scoped_to_another_option_is_not_applied(app):
     assert normalize_gates(raw, rubric, "bond unavailable", option_key="commerce") == []
 
 
+def test_natural_language_option_only_gate_applies_to_one_option(app):
+    from app.decision_processing import normalize_gates
+    rubric = {"approved_by_user_at": "now", "criteria": [
+        {"key": "bond", "label": "Bond", "gate": True, "scope": "Option C only"},
+    ]}
+    raw = [{"key": "bond", "status": "fail", "source": "user", "confidence": "high", "evidence": ["bond unavailable"]}]
+    assert normalize_gates(raw, rubric, "bond unavailable", option_name="Option A") == []
+    assert normalize_gates(raw, rubric, "bond unavailable", option_name="Option B") == []
+    assert normalize_gates(raw, rubric, "bond unavailable", option_name="Option C")[0]["status"] == "fail"
+
+
 def test_model_overall_math_is_ignored_and_missing_values_stay_null(app, monkeypatch):
     from app.routes import strategy
 
@@ -159,3 +170,31 @@ def test_unsupported_numeric_chat_claim_is_removed(app):
     )
     assert "win probability is 25%" in wrong_context
     assert "ROI is 25%" not in wrong_context
+
+    derived = _sanitize_assistant_numeric_claims(
+        "$42M leaves $48M of your $90M headroom.",
+        user_message="Contract value is $42M and maximum headroom is $90M.",
+        session={},
+    )
+    assert "$48M" not in derived and "leaves" not in derived
+
+    quoted = _sanitize_assistant_numeric_claims(
+        "The user stated the contract value is $42M.",
+        user_message="The user stated the contract value is $42M.",
+        session={},
+    )
+    assert "$42M" in quoted
+
+
+def test_score_it_now_bypasses_first_turn_confirmation_when_rubric_is_ready(app):
+    from app.routes import ai_agent as agent
+    ready = {"scoring_rubric": {"criteria": [{"key": "fit", "weight": 1}]}}
+    assert agent._guard_mutation_tool(
+        "generate_scorecard", user_turn_count=1, mutations_this_turn=0,
+        user_message="Score it now", session=ready,
+    ) is None
+    blocked = agent._guard_mutation_tool(
+        "generate_scorecard", user_turn_count=1, mutations_this_turn=0,
+        user_message="Tell me about it", session=ready,
+    )
+    assert blocked["code"] == "confirmation_required"

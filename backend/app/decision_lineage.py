@@ -72,13 +72,16 @@ def validate_plan_lineage(plan, sources):
         raw_tasks = [item for item in plan.get("tasks") or [] if isinstance(item, dict)]
     for task in raw_tasks:
         normalized = []
+        task_links = set()
         for link in task.get("lineage") or []:
             if not isinstance(link, dict):
                 continue
             identity = (str(link.get("type") or ""), str(link.get("ref") or ""))
             if identity in valid:
                 source = valid[identity]
-                normalized.append({"type": identity[0], "ref": identity[1], "label": source.get("label")})
+                if identity not in task_links:
+                    normalized.append({"type": identity[0], "ref": identity[1], "label": source.get("label")})
+                    task_links.add(identity)
                 covered.add(identity)
         if normalized:
             tasks.append({**task, "lineage": normalized})
@@ -87,6 +90,31 @@ def validate_plan_lineage(plan, sources):
     missing = [item for identity, item in valid.items() if item.get("required") and identity not in covered]
     if not tasks or missing:
         return None, {"code": "invalid_plan_lineage", "dropped_tasks": dropped, "missing_sources": missing}
+    # Provider task ids and dependencies are presentation mechanics, not
+    # decision lineage. Canonicalize duplicates and discard unknown, self, or
+    # forward dependencies so scheduling cannot fail on junk graph edges.
+    used, id_map = set(), {}
+    for index, task in enumerate(tasks):
+        raw_id = str(task.get("id") or f"task-{index + 1}").strip()
+        canonical = raw_id
+        suffix = 2
+        while canonical in used:
+            canonical = f"{raw_id}-{suffix}"
+            suffix += 1
+        used.add(canonical)
+        id_map.setdefault(raw_id, canonical)
+        task["id"] = canonical
+    prior = set()
+    for task in tasks:
+        dependencies = task.get("depends_on") or task.get("dependencies") or []
+        normalized_dependencies = []
+        for dependency in dependencies if isinstance(dependencies, list) else []:
+            target = id_map.get(str(dependency))
+            if target and target in prior and target not in normalized_dependencies:
+                normalized_dependencies.append(target)
+        task["dependencies"] = normalized_dependencies
+        task.pop("depends_on", None)
+        prior.add(task["id"])
     return {**plan, "tasks": tasks, "phases": []}, {"dropped_tasks": dropped, "missing_sources": []}
 
 

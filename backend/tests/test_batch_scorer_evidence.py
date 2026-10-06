@@ -83,3 +83,29 @@ def test_ai_authored_option_text_is_not_a_valid_source(strategy):
     from app.decision_facts import option_fact_text
     corpus = "Aurora has a 25% win probability. Commerce City has a 40% win probability."
     assert option_fact_text(corpus, "Aurora") == "Aurora has a 25% win probability."
+
+
+def test_multi_sentence_option_sections_do_not_mix_facts_or_gate_evidence(app):
+    from app.decision_facts import normalize_option_facts, option_fact_text
+    from app.decision_kits import get_decision_kit
+
+    corpus = (
+        "Option A: Children's Hospital. Contract value $14M. Margin 8%. "
+        "Surety confirmed. Option B: Airport. Contract value $31M. Margin 5%. "
+        "Bonding is unavailable."
+    )
+    names = ["Children's Hospital", "Airport"]
+    option_a = option_fact_text(corpus, names[0], names)
+    option_b = option_fact_text(corpus, names[1], names)
+    assert "Contract value $14M" in option_a and "Surety confirmed" in option_a
+    assert "$31M" not in option_a and "unavailable" not in option_a
+    assert "Contract value $31M" in option_b and "Bonding is unavailable" in option_b
+    assert "$14M" not in option_b and "Surety confirmed" not in option_b
+    kit = get_decision_kit("rfp_bid")
+    single_facts = normalize_option_facts({}, kit=kit, source_text=option_a, option_name=names[0])
+    batch_facts = normalize_option_facts(
+        {}, kit=kit, source_text=option_fact_text(corpus, names[0], names), option_name=names[0]
+    )
+    assert single_facts == batch_facts
+    assert single_facts["contract_value"]["value"] == 14_000_000
+    assert single_facts["margin_pct"]["value"] == 8

@@ -89,14 +89,10 @@ def test_unverified_numeric_prose_is_removed_but_supported_figures_remain():
         source_text="The signed proposal lists monthly rent of $42,000.",
     )
     assert payload["dimensions"]["financial_viability"]["rationale"] == "The proposal states rent is $42,000."
-    assert payload["dimensions"]["financial_viability"]["what_would_improve"] == (
-        "Numeric detail omitted because it was not supported by the supplied evidence."
-    )
+    assert payload["dimensions"]["financial_viability"]["what_would_improve"] == ""
     assert payload["top_risks"][0]["risk"] == "Rent is $42,000 per month."
     assert payload["top_risks"][0]["mitigation"] == "Review the signed proposal before committing."
-    assert payload["recommendations"][0]["action"] == (
-        "Numeric detail omitted because it was not supported by the supplied evidence."
-    )
+    assert payload["recommendations"][0]["action"] == ""
 
 
 def test_executive_summary_is_derived_from_computed_score_and_coverage():

@@ -87,7 +87,7 @@ from app.evaluation_telemetry import (
     evaluation_id_for_new_scorecard,
     evaluation_id_for_scorecard,
 )
-from app.decision_facts import normalize_fact_entry, normalize_option_facts
+from app.decision_facts import normalize_fact_entry, normalize_option_facts, option_fact_text
 from app.decision_kits import get_decision_kit, normalize_decision_kit
 from app.connector_store import get_connector_settings, get_thread_sync_profile, update_thread_sync_profile
 from app.jira_sync import sync_wbs_to_jira
@@ -3162,14 +3162,21 @@ def _has_successful_mutations(mutations):
     )
 
 
-def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn):
+def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn, user_message="", session=None):
     if not _is_mutation_tool(tool_name):
         return None
     # Reversible config (e.g. set_scoring_rubric) is allowed on the first turn and
     # does not count toward the per-turn mutation cap.
     if str(tool_name or "").strip() in _EXEMPT_MUTATION_TOOLS:
         return None
-    if user_turn_count <= 1:
+    explicit_score = bool(re.search(
+        r"\b(?:score|rescore|re-score)\s+(?:it|this|them|these|all|now)(?:\s+now)?\b",
+        str(user_message or ""), re.I,
+    ))
+    rubric = (session or {}).get("scoring_rubric") if isinstance(session, dict) else None
+    rubric_ready = bool(isinstance(rubric, dict) and rubric.get("criteria"))
+    score_tool = str(tool_name or "").strip() in {"generate_scorecard", "queue_scorecards"}
+    if user_turn_count <= 1 and not (score_tool and explicit_score and rubric_ready):
         return _tool_error(
             "Mutation tools require at least one prior conversational turn. Ask the user to confirm before executing.",
             code="confirmation_required",
@@ -4315,7 +4322,7 @@ def _failed_attempt_cost_fields(exc, *, model, estimated_input_tokens, estimated
     }
 
 
-def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn, view_context=None):
+def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn, view_context=None, user_message="", session=None):
     if tool_name in {"get_readiness_snapshot", "get_data_contract"}:
         return _anthropic_tool_output(tool_name, readiness), mutations_this_turn
     if tool_name == "query_connector_data":
@@ -4325,6 +4332,8 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
         tool_name,
         user_turn_count=user_turn_count,
         mutations_this_turn=mutations_this_turn,
+        user_message=user_message,
+        session=session,
     )
     if mutation_guard:
         return mutation_guard, mutations_this_turn
@@ -6205,6 +6214,19 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         decision_kit_version = session.get("decision_kit_version")
         kit = get_decision_kit(decision_kit, decision_kit_version) if decision_kit else None
         evidence_corpus = _thread_user_corpus(user_id, thread_id)
+        known_option_names = [
+            str(item.get("name") or "").strip()
+            for item in (session.get("scorecard_queue") or [])
+            if isinstance(item, dict) and item.get("name")
+        ]
+        known_option_names.extend(
+            str(card.get("project_name") or card.get("name") or "").strip()
+            for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+            if isinstance(card, dict) and (card.get("project_name") or card.get("name"))
+        )
+        scoped_evidence_corpus = option_fact_text(
+            evidence_corpus, requested_name, known_option_names
+        ) or evidence_corpus
         stored_by_name = (session.get("option_attributes") or {}).get(_normalized_option_identity(requested_name)) if isinstance(session.get("option_attributes"), dict) else {}
         attributes = dict(
             (rescore_target or {}).get("attributes")
@@ -6216,7 +6238,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         attributes = normalize_option_facts(
             attributes,
             kit=kit,
-            source_text=evidence_corpus,
+            source_text=scoped_evidence_corpus,
             option_name=requested_name,
             rejected_fields=rejected_fields,
         )
@@ -6242,7 +6264,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             objective=strategy_objective,
             decision_kit=decision_kit,
             decision_kit_version=decision_kit_version,
-            evidence_corpus=evidence_corpus,
+            evidence_corpus=scoped_evidence_corpus,
             facts_text=idea_description,
         )
         if rescore_id and isinstance(rescore_target, dict) and rescore_target.get("decision_fingerprint") == decision_fp:
@@ -6284,13 +6306,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     rubric=rubric,
                     return_usage=True,
                     # The user's own turns, not the summary this tool wrote.
-                    evidence_corpus=evidence_corpus,
+                    evidence_corpus=scoped_evidence_corpus,
                     structured_context=structured_context,
                     attributes=attributes,
                     decision_kit=decision_kit,
                     decision_kit_version=decision_kit_version,
                     kit_context=session.get("kit_context") if isinstance(session.get("kit_context"), dict) else {},
                     option_key=option_key,
+                    option_name=requested_name,
                 ),
                 operation_type="score_next",
                 request_payload={
@@ -7697,6 +7720,8 @@ def _generate_assistant_reply_anthropic(
                     user_turn_count=user_turn_count,
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
+                    user_message=user_message,
+                    session=session,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -7986,6 +8011,8 @@ def _stream_assistant_reply_events_anthropic(
                     user_turn_count=user_turn_count,
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
+                    user_message=user_message,
+                    session=session,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -8239,6 +8266,8 @@ def _generate_assistant_reply_gemini(
                     user_turn_count=user_turn_count,
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
+                    user_message=user_message,
+                    session=session,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -8491,6 +8520,8 @@ def _stream_assistant_reply_events_gemini(
                     user_turn_count=user_turn_count,
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
+                    user_message=user_message,
+                    session=session,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -8610,6 +8641,10 @@ def _conversation_provider_unavailable_error(*, failover_log, governance_decisio
 
 
 _NUMERIC_CLAIM_RE = re.compile(r"(?<![\w])(?:\$\s*)?\d[\d,]*(?:\.\d+)?\s*%?")
+_DERIVED_ARITHMETIC_RE = re.compile(
+    r"\b(?:leaves?|remaining|remainder|headroom|difference|after subtracting|minus|less than|more than|total(?:s|ed)?|combined)\b",
+    re.I,
+)
 
 
 def _numeric_token(value):
@@ -8670,7 +8705,17 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
             if match.start() == 0 and re.fullmatch(r"\d{1,2}[.)]", token + sentence[match.end():match.end()+1]):
                 continue
             claims.append(_numeric_token(token))
-        if claims and any(not _numeric_claim_supported(sentence, claim, sources) for claim in claims):
+        normalized_sentence = " ".join(sentence.lower().split()).strip(" .")
+        directly_supplied = any(
+            normalized_sentence and normalized_sentence in " ".join(str(source or "").lower().split())
+            for source in sources[:2]
+        )
+        invented_math = (
+            len(claims) >= 2
+            and _DERIVED_ARITHMETIC_RE.search(sentence)
+            and not directly_supplied
+        )
+        if invented_math or (claims and any(not _numeric_claim_supported(sentence, claim, sources) for claim in claims)):
             removed = True
             continue
         kept.append(sentence)

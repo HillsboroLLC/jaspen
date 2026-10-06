@@ -2541,6 +2541,18 @@ def _numeric_fingerprint(value):
     return re.sub(r"[^0-9.]", "", str(value or ""))
 
 
+_DERIVED_ARITHMETIC_RE = re.compile(
+    r"\b(?:leaves?|remaining|remainder|headroom|difference|after subtracting|minus|less than|more than|total(?:s|ed)?|combined)\b",
+    re.I,
+)
+
+
+def _sentence_is_source_statement(sentence, source_text):
+    normalize = lambda value: " ".join(str(value or "").lower().split()).strip(" .")
+    needle = normalize(sentence)
+    return bool(needle and needle in normalize(source_text))
+
+
 def _remove_unverified_numeric_sentences(text, source_text):
     """Remove model prose sentences containing figures absent from the source.
 
@@ -2560,7 +2572,13 @@ def _remove_unverified_numeric_sentences(text, source_text):
     removed = False
     for sentence in sentences:
         claims = [_numeric_fingerprint(match.group()) for match in _NARRATIVE_NUMBER_RE.finditer(sentence)]
-        if claims and any(claim not in source_fingerprints for claim in claims):
+        unsupported = claims and any(claim not in source_fingerprints for claim in claims)
+        invented_math = (
+            len(claims) >= 2
+            and _DERIVED_ARITHMETIC_RE.search(sentence)
+            and not _sentence_is_source_statement(sentence, source_text)
+        )
+        if unsupported or invented_math:
             removed = True
             continue
         if sentence.strip():
@@ -2568,7 +2586,7 @@ def _remove_unverified_numeric_sentences(text, source_text):
     if kept:
         return " ".join(kept)
     if removed:
-        return "Numeric detail omitted because it was not supported by the supplied evidence."
+        return ""
     return cleaned
 
 
@@ -2871,6 +2889,7 @@ def _generate_jaspen_scorecard(
     decision_kit_version=None,
     kit_context=None,
     option_key=None,
+    option_name=None,
 ):
     """Run the existing LLM scoring flow and return parsed scorecard JSON.
 
@@ -3180,7 +3199,8 @@ The executive_summary must read like a concise leadership briefing. It should ne
         parsed = apply_assumption_confidence_caps(parsed, attributes, kit)
     from ..decision_processing import normalize_gates
     parsed["gates"] = normalize_gates(
-        parsed.get("gates"), rubric, verification_text, option_key=option_key
+        parsed.get("gates"), rubric, verification_text,
+        option_key=option_key, option_name=option_name or project_description,
     )
 
     # The current schema cannot trace model-generated financial/risk numbers
@@ -3321,7 +3341,9 @@ def _generate_batch_scorecards(
     def score_one(item):
         name = str(item.get("name") or "").strip()
         description = str(item.get("description") or "").strip() or name
-        scoped_corpus = option_fact_text(evidence_corpus, name) or str(evidence_corpus or "")
+        scoped_corpus = option_fact_text(
+            evidence_corpus, name, [idea.get("name") for idea in ideas]
+        ) or str(evidence_corpus or "")
         rejected_fields = []
         attributes = normalize_option_facts(
             item.get("attributes") or {},
@@ -3345,6 +3367,7 @@ def _generate_batch_scorecards(
                 decision_kit_version=decision_kit_version,
                 kit_context=kit_context,
                 option_key=item.get("option_key"),
+                option_name=name,
             )
             if not isinstance(card, dict) or card.get("jaspen_score") is None:
                 return None, usage
@@ -5165,7 +5188,12 @@ Rules:
         validated['lineage_validation'] = lineage_result
         return (validated, generation_usage, True, None) if return_usage else validated
     except Exception as generation_error:
-        current_app.logger.warning('Execution plan generation failed: %s', type(generation_error).__name__)
+        lineage_failure = getattr(generation_error, 'lineage_result', None)
+        current_app.logger.warning(
+            'Execution plan generation failed: %s: %s | lineage=%s',
+            type(generation_error).__name__, str(generation_error),
+            json.dumps(lineage_failure, default=str) if lineage_failure is not None else None,
+        )
         generation_usage = generation_usage or getattr(generation_error, 'jaspen_usage', None)
         if return_usage:
             return None, generation_usage, False, type(generation_error).__name__

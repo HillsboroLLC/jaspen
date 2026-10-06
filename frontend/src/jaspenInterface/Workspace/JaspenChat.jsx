@@ -58,6 +58,7 @@ import EmailResultsButton from './EmailResultsButton';
 import ShareButton from '../Sharing/ShareButton';
 import IntakeReceipt from './IntakeReceipt';
 import RfpRecommendationTrace from './RfpRecommendationTrace';
+import RecordDecisionPanel from './RecordDecisionPanel';
 
 // Tab components
 import ScoreDashboard   from './ScoreDashboard';
@@ -1799,6 +1800,7 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
 // Tracks which scorecard's "Build Execution Plan" CTA is in flight (so the
 // matching button on that specific card can show "Building plan…").
 const [buildingExecutionPlanFor, setBuildingExecutionPlanFor] = useState(null);
+const [executionDecisionRequired, setExecutionDecisionRequired] = useState(null);
 const [pendingWbsConfirmation, setPendingWbsConfirmation] = useState(null);
   const [scenarioLevers, setScenarioLevers] = useState([]);
   const [leverCatalog, setLeverCatalog] = useState([]);
@@ -2935,6 +2937,25 @@ const renderScorecardCard = (result, opts = {}) => {
           recommendation={kitRecommendation}
           decisionKitVersion={result?.decision_kit_version}
         />
+      )}
+
+      {opts.threadId && result?.decision_kit && (
+        <div style={{ margin: '14px 16px 0' }}>
+          {opts.executionDecisionRequired
+            && (!opts.executionDecisionRequired.scorecardId
+              || String(opts.executionDecisionRequired.scorecardId) === String(result?.id || result?.analysis_id)) && (
+              <div role="alert" style={{ marginBottom: 10, color: '#a0036c', fontSize: 12.5 }}>
+                {opts.executionDecisionRequired.message}
+              </div>
+            )}
+          <RecordDecisionPanel
+            threadId={opts.threadId}
+            alternatives={[title]}
+            selectedAlternative={title}
+            decisionKit={result.decision_kit}
+            scorecard={result}
+          />
+        </div>
       )}
 
       {/* Footer: action buttons */}
@@ -10388,6 +10409,7 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
   setAiWbsBusy(true);
   // Track per-card busy so the matching scorecard's button shows "Building…"
   setBuildingExecutionPlanFor(scorecardId || tid);
+  setExecutionDecisionRequired(null);
   try {
     const resp = await Jaspen.generateAiWbs(tid, {
       scenario_id: scenarioId,
@@ -10436,6 +10458,12 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
   } catch (err) {
     console.error('[handleGenerateAiWbsFromScorecard] failed', err);
     if (err?.status === 403) setBillingModalOpen(true);
+    if (err?.data?.code === 'recorded_advancing_decision_required' || err?.data?.action === 'record_decision') {
+      setExecutionDecisionRequired({
+        scorecardId: scorecardId || null,
+        message: err?.data?.error || err?.message || 'Record a Bid or Bid with conditions decision for this option before building its execution plan.',
+      });
+    }
     showToast(err?.message || 'Failed to build execution plan. Your existing plan was not changed.', 'error', {
       actionLabel: 'Retry',
       onAction: () => void handleGenerateAiWbsFromScorecard({ threadBundleId, scorecardId, force }),
@@ -12017,6 +12045,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid });
                 },
                 buildingExecutionPlanFor,
+                executionDecisionRequired,
                 exportBusyType,
                 onExportScorecardPdf: handleExportScorecardPdf,
                 onExportScorecardPptx: handleExportScorecardPptx,
@@ -12153,6 +12182,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }),
       onRegenerateExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid, force: true }),
       buildingExecutionPlanFor,
+      executionDecisionRequired,
       onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
       onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
       exportBusyType,
@@ -13827,6 +13857,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }),
                     onRegenerateExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid, force: true }),
 	                    buildingExecutionPlanFor,
+	                    executionDecisionRequired,
 	                    onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
 	                    onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
 	                    exportBusyType,
