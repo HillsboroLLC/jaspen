@@ -3176,6 +3176,16 @@ def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn, use
     rubric = (session or {}).get("scoring_rubric") if isinstance(session, dict) else None
     rubric_ready = bool(isinstance(rubric, dict) and rubric.get("criteria"))
     score_tool = str(tool_name or "").strip() in {"generate_scorecard", "queue_scorecards"}
+    if score_tool and rubric_ready and not rubric.get("approved_by_user_at"):
+        if explicit_score:
+            rubric["approved_by_user_at"] = _iso_now()
+            rubric["approval_status"] = "approved"
+            rubric["source"] = "user"
+        else:
+            return _tool_error(
+                "The scoring rubric is proposed and needs the user's approval before scoring.",
+                code="rubric_approval_required",
+            )
     if user_turn_count <= 1 and not (score_tool and explicit_score and rubric_ready):
         return _tool_error(
             "Mutation tools require at least one prior conversational turn. Ask the user to confirm before executing.",
@@ -4338,6 +4348,22 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
     if mutation_guard:
         return mutation_guard, mutations_this_turn
 
+    if (
+        str(tool_name or "").strip() in {"generate_scorecard", "queue_scorecards"}
+        and isinstance(session, dict)
+        and isinstance(session.get("scoring_rubric"), dict)
+        and session["scoring_rubric"].get("approved_by_user_at")
+    ):
+        try:
+            sessions = load_user_sessions(user_id) or {}
+            session_key, durable_session = _resolve_user_session(sessions, thread_id)
+            if isinstance(durable_session, dict):
+                durable_session["scoring_rubric"] = session["scoring_rubric"]
+                sessions[session_key or thread_id] = durable_session
+                save_user_sessions(user_id, sessions)
+        except Exception:
+            current_app.logger.exception("same-turn rubric approval persist failed")
+
     try:
         result = _execute_mutation_tool(
             tool_name,
@@ -4346,6 +4372,7 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
             user_id=user_id,
             thread_id=thread_id,
             view_context=view_context,
+            user_message=user_message,
         )
     except Exception as exc:
         if tool_name != "generate_scorecard":
@@ -4356,6 +4383,13 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
             code="scorecard_generation_failed",
             error_type=type(exc).__name__,
         )
+
+    if (
+        tool_name == "set_scoring_rubric" and isinstance(result, dict)
+        and result.get("ok") and isinstance(session, dict)
+        and isinstance(result.get("rubric"), dict)
+    ):
+        session["scoring_rubric"] = result["rubric"]
 
     # Only a mutation that actually SUCCEEDED counts toward the per-turn cap.
     # A malformed or rejected call (e.g. a generate_scorecard missing a field)
@@ -5294,12 +5328,13 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
             {
                 "name": "set_scoring_rubric",
                 "description": (
-                    "Store the user's custom scoring rubric (criteria + weights) for this thread. Call this "
+                    "Store a scoring rubric (criteria + weights) for this thread. A rubric proposed by Jaspen "
+                    "remains proposed until the user's current message approves it; the server owns that status. Call this "
                     "BEFORE scoring whenever the user provides their own criteria and weights (e.g. a list of "
                     "factors with percentages). Every option you score afterward is judged ONLY against these "
                     "criteria, and the overall score is the deterministic weighted sum of them. Each criterion's "
                     "sub-score is 0-100 where 100 = best on that criterion (for cost-type criteria, 100 = most "
-                    "cost-favorable). Never invent or alter the user's weights — pass them exactly as given."
+                    "cost-favorable). Never claim user approval or invent or alter the user's weights."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -5814,7 +5849,15 @@ def _refresh_decision_record_after_score(user, thread_id):
         return None
 
 
-def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None):
+def _rubric_approval_from_message(message, criteria=None):
+    text = str(message or "").strip().lower()
+    if re.search(r"\b(?:approve|approved|looks good|use (?:this|that|the) rubric|accept (?:this|that|the) rubric|score it now|score them now|proceed)\b", text):
+        return True
+    labels = [str(item.get("label") or "").strip().lower() for item in (criteria or []) if isinstance(item, dict)]
+    return bool(len([label for label in labels if label and label in text]) >= 2 and re.search(r"\d+(?:\.\d+)?\s*%", text))
+
+
+def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None, user_message=""):
     if not user:
         return _tool_error("User context missing.")
     if not thread_id:
@@ -5947,12 +5990,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         for c in criteria:
             c["weight"] = 0.0 if c.get("gate") else round(c["weight"] / total, 4)
 
+        user_approved = _rubric_approval_from_message(user_message, criteria)
         rubric_obj = {
             "criteria": criteria,
-            "source": "user",
+            "source": "user" if user_approved else "jaspen_proposed",
             "created_at": _iso_now(),
-            "approved_by_user_at": _iso_now(),
+            "approval_status": "approved" if user_approved else "proposed",
         }
+        if user_approved:
+            rubric_obj["approved_by_user_at"] = _iso_now()
         # Best-effort immediate persist so a generate_scorecard later in THIS same
         # turn (which reloads sessions from the DB) can already see the rubric.
         # On the very first turn of a brand-new thread the session row does not
@@ -5975,7 +6021,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "ok": True,
             "tool": tool_name,
             "rubric": rubric_obj,
-            "confirmation": f"Scoring rubric saved: {summary}.",
+            "confirmation": (
+                f"User-approved scoring rubric saved: {summary}."
+                if user_approved
+                else f"Proposed scoring rubric saved for your review: {summary}. Approve it or edit it before scoring."
+            ),
         }
 
     if tool_name == "set_option_attributes":
@@ -6284,15 +6334,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "reused_stored_result": True,
                 "credits_charged": 0,
             })
-        structured_context = None
-        if kit:
-            structured_context = {
-                "decision_kit": {"key": kit["key"], "version": kit["version"], "label": kit["label"]},
-                "attributes": attributes,
-                "metrics": metrics,
-                "approved_gates": [item for item in ((rubric or {}).get("criteria") or []) if isinstance(item, dict) and item.get("gate")],
-            }
-
         client = get_llm_client()
         try:
             scorecard_payload, provider_usage, ai_settlement = execute_customer_operation(
@@ -6307,7 +6348,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     return_usage=True,
                     # The user's own turns, not the summary this tool wrote.
                     evidence_corpus=scoped_evidence_corpus,
-                    structured_context=structured_context,
                     attributes=attributes,
                     decision_kit=decision_kit,
                     decision_kit_version=decision_kit_version,
@@ -8674,7 +8714,55 @@ def _numeric_claim_supported(sentence, claim, sources):
     return False
 
 
-def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, user_id=None, thread_id=None):
+def _canonical_gate_results(session=None, actions=None, user_id=None, thread_id=None):
+    cards = []
+    try:
+        cards.extend(_collect_session_scorecards(session or {}, user_id=user_id, thread_id=thread_id))
+    except Exception:
+        pass
+    for action in actions or []:
+        result = action.get("result") if isinstance(action, dict) and isinstance(action.get("result"), dict) else {}
+        card = result.get("scorecard") if isinstance(result.get("scorecard"), dict) else None
+        if card:
+            cards.append(card)
+    gates = []
+    for card in cards:
+        for gate in card.get("gates") or [] if isinstance(card, dict) else []:
+            if isinstance(gate, dict) and gate.get("status") in {"pass", "fail", "unknown"}:
+                gates.append(gate)
+    return gates
+
+
+def _sanitize_gate_narration(text, *, session=None, actions=None, user_id=None, thread_id=None):
+    gates = _canonical_gate_results(session, actions, user_id, thread_id)
+    claim_re = re.compile(
+        r"\b(?:gate|mandatory requirement)\b.*\b(?:passes?|passed|fails?|failed|met|not met|unknown)\b"
+        r"|\b(?:passes?|passed|fails?|failed)\b.*\b(?:gate|mandatory requirement)\b",
+        re.I,
+    )
+    kept = []
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", str(text or "")):
+        sentence = sentence.strip()
+        if not sentence or not claim_re.search(sentence):
+            if sentence:
+                kept.append(sentence)
+            continue
+        matching = [
+            gate for gate in gates
+            if str(gate.get("key") or "").replace("_", " ").lower() in sentence.lower()
+            or str(gate.get("label") or "").lower() in sentence.lower()
+        ]
+        if not matching and len(gates) == 1:
+            matching = gates
+        if not matching:
+            continue
+        gate = matching[0]
+        canonical = str(gate.get("status") or "unknown").upper()
+        kept.append(f"{gate.get('label') or gate.get('key')}: {canonical}.")
+    return " ".join(kept).strip()
+
+
+def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, user_id=None, thread_id=None, actions=None):
     """Remove prose sentences containing numbers absent from canonical inputs.
 
     Criterion judgments and scorecard arithmetic are rendered from artifacts.
@@ -8719,9 +8807,10 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
             removed = True
             continue
         kept.append(sentence)
-    if not removed:
-        return text
-    return " ".join(kept).strip() or "Open the scorecard for Jaspen’s verified calculations."
+    cleaned = text if not removed else (" ".join(kept).strip() or "Open the scorecard for Jaspen’s verified calculations.")
+    return _sanitize_gate_narration(
+        cleaned, session=session, actions=actions, user_id=user_id, thread_id=thread_id,
+    )
 
 
 def _generate_assistant_reply(
@@ -8797,7 +8886,7 @@ def _generate_assistant_reply(
         )
         reply = _sanitize_assistant_numeric_claims(
             reply, user_message=user_message, session=session,
-            user_id=user_id, thread_id=thread_id,
+            user_id=user_id, thread_id=thread_id, actions=actions,
         )
         return reply, usage, actions, mutations, undo_snapshot
     objective = normalize_strategy_objective(
@@ -8877,7 +8966,7 @@ def _generate_assistant_reply(
                 )
             reply = _sanitize_assistant_numeric_claims(
                 reply, user_message=user_message, session=session,
-                user_id=user_id, thread_id=thread_id,
+                user_id=user_id, thread_id=thread_id, actions=actions,
             )
             return reply, usage, actions, mutations, undo_snapshot
         except Exception as exc:
@@ -9000,7 +9089,7 @@ def _stream_assistant_reply_events(
             original_reply = str(state.get("reply") or "")
             state["reply"] = _sanitize_assistant_numeric_claims(
                 original_reply, user_message=user_message, session=session,
-                user_id=user_id, thread_id=thread_id,
+                user_id=user_id, thread_id=thread_id, actions=state.get("actions"),
             )
             if state["reply"] == original_reply:
                 for payload in buffered:
@@ -9074,7 +9163,7 @@ def _stream_assistant_reply_events(
                 original_reply = str(state.get("reply") or "")
                 state["reply"] = _sanitize_assistant_numeric_claims(
                     original_reply, user_message=user_message, session=session,
-                    user_id=user_id, thread_id=thread_id,
+                    user_id=user_id, thread_id=thread_id, actions=state.get("actions"),
                 )
             for payload in buffered:
                 yielded_any = yielded_any or (payload.get("type") == "delta" and bool(payload.get("text")))

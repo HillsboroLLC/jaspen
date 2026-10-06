@@ -138,6 +138,27 @@ def test_natural_language_option_only_gate_applies_to_one_option(app):
     assert normalize_gates(raw, rubric, "bond unavailable", option_name="Option C")[0]["status"] == "fail"
 
 
+def test_explicit_gate_evidence_resolves_pass_fail_and_unknown_without_model_status(app):
+    from app.decision_processing import normalize_gates
+    rubric = {"approved_by_user_at": "now", "criteria": [
+        {"key": "sbe", "label": "SBE participation", "gate": True, "gate_rule": "Reach 25% SBE participation"},
+        {"key": "epic", "label": "Epic integration", "gate": True, "gate_rule": "Vendor has integrated with Epic"},
+        {"key": "insurance", "label": "Insurance", "gate": True, "gate_rule": "Insurance is confirmed"},
+    ]}
+    corpus = (
+        "We cannot reach 25% SBE participation. RegionalERP has never integrated with Epic. "
+        "Insurance documentation is still under review."
+    )
+    result = {gate["key"]: gate for gate in normalize_gates([], rubric, corpus)}
+    assert result["sbe"]["status"] == "fail"
+    assert result["sbe"]["evidence"] == ["We cannot reach 25% SBE participation."]
+    assert result["epic"]["status"] == "fail"
+    assert result["insurance"]["status"] == "unknown"
+
+    passed = normalize_gates([], rubric, "Workday has successfully integrated with Epic.")
+    assert {gate["key"]: gate["status"] for gate in passed}["epic"] == "pass"
+
+
 def test_model_overall_math_is_ignored_and_missing_values_stay_null(app, monkeypatch):
     from app.routes import strategy
 
@@ -198,3 +219,98 @@ def test_score_it_now_bypasses_first_turn_confirmation_when_rubric_is_ready(app)
         user_message="Tell me about it", session=ready,
     )
     assert blocked["code"] == "confirmation_required"
+
+
+def test_proposed_rubric_is_not_self_approved_and_same_turn_score_approves(app, test_user, monkeypatch):
+    from app.routes import ai_agent as agent
+    criteria = [{"label": "Fit", "weight": 60}, {"label": "Risk", "weight": 40}]
+    proposed = agent._execute_mutation_tool(
+        "set_scoring_rubric", {"criteria": criteria}, user=test_user,
+        user_id=test_user.id, thread_id="rubric-proposed", user_message="Here is a possible approach.",
+    )
+    assert proposed["rubric"]["approval_status"] == "proposed"
+    assert "approved_by_user_at" not in proposed["rubric"]
+    assert proposed["rubric"]["source"] == "jaspen_proposed"
+
+    approved = agent._execute_mutation_tool(
+        "set_scoring_rubric", {"criteria": criteria}, user=test_user,
+        user_id=test_user.id, thread_id="rubric-approved", user_message="Score it now",
+    )
+    assert approved["rubric"]["approval_status"] == "approved"
+    assert approved["rubric"]["approved_by_user_at"]
+
+    session = {}
+    monkeypatch.setattr(agent, "_execute_mutation_tool", lambda *a, **k: {
+        "ok": True, "tool": "set_scoring_rubric",
+        "rubric": approved["rubric"],
+    })
+    result, _ = agent._execute_local_tool(
+        "set_scoring_rubric", {"criteria": criteria}, readiness={}, user=test_user,
+        user_id=test_user.id, thread_id="rubric-proposed", user_turn_count=1,
+        mutations_this_turn=0, user_message="Score it now", session=session,
+    )
+    assert result["ok"] and session["scoring_rubric"]["approved_by_user_at"]
+    assert agent._guard_mutation_tool(
+        "generate_scorecard", user_turn_count=1, mutations_this_turn=0,
+        user_message="Score it now", session=session,
+    ) is None
+
+
+def test_gate_narration_uses_only_canonical_result(app):
+    from app.routes.ai_agent import _sanitize_assistant_numeric_claims
+    actions = [{"result": {"scorecard": {"gates": [
+        {"key": "epic", "label": "Epic integration", "status": "fail"},
+    ]}}}]
+    corrected = _sanitize_assistant_numeric_claims(
+        "The Epic integration gate passes. Continue evaluation.", actions=actions,
+    )
+    assert "Epic integration: FAIL." in corrected
+    assert "gate passes" not in corrected
+    premature = _sanitize_assistant_numeric_claims(
+        "The SBE gate fails. Continue evaluation.", actions=[],
+    )
+    assert "SBE gate fails" not in premature
+    assert "Continue evaluation" in premature
+
+
+def test_single_and_batch_use_identical_judge_contract_and_outputs(app, monkeypatch):
+    from app.routes import strategy
+    from app.decision_facts import normalize_option_facts
+    from app.decision_kits import get_decision_kit
+    kit = get_decision_kit("rfp_bid")
+    rubric = {"approved_by_user_at": "now", "criteria": list(kit["starter_rubric"])}
+    corpus = "Workday: Contract value $14M. Margin 8%. Surety confirmed."
+    attributes = normalize_option_facts({
+        "contract_value": {"value": 14_000_000, "source": "user", "evidence": "Contract value $14M"},
+        "margin_pct": {"value": 8, "source": "user", "evidence": "Margin 8%"},
+    }, kit=kit, extract=False)
+    response = {"dimensions": {
+        item["key"]: {"score": 63, "confidence": "medium", "source": "conversation", "evidence": ["Contract value $14M"], "rationale": "Grounded."}
+        for item in kit["starter_rubric"]
+    }, "gates": []}
+    prompts = []
+    def judge(messages, **kwargs):
+        prompts.append(messages[0]["content"])
+        return json.dumps(response), {"provider": "test"}
+    monkeypatch.setattr(strategy, "_strategy_generate_reply", judge)
+    common = dict(
+        rubric=rubric, strategy_objective="balanced", evidence_corpus=corpus,
+        decision_kit="rfp_bid", decision_kit_version=1, kit_context={},
+    )
+    single = strategy._generate_jaspen_scorecard(
+        None, "Agent-authored single summary", "test", attributes=attributes,
+        option_key="workday", option_name="Workday", **common,
+    )
+    batch, _ = strategy._generate_batch_scorecards(
+        None, [{"name": "Workday", "description": "Different queued summary", "option_key": "workday", "attributes": attributes}],
+        llm_model="test", **common,
+    )
+    assert prompts[0] == prompts[1]
+    def stable(value):
+        if isinstance(value, dict):
+            return {key: stable(item) for key, item in value.items() if key not in {"id", "captured_at", "computed_at"}}
+        if isinstance(value, list):
+            return [stable(item) for item in value]
+        return value
+    for key in ("dimensions", "gates", "jaspen_score", "data_confidence", "recommendation"):
+        assert stable(single[key]) == stable(batch[0][key])

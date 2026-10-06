@@ -206,7 +206,12 @@ def extract_candidate_facts(text, kit):
 
 
 def option_fact_text(source_text, option_name=None, option_names=None):
-    """Return one option's complete user-authored section."""
+    """Return one option's complete user-authored section.
+
+    Headings may be semantic (``Option A``), ordinal (``Vendor 1``), or simply
+    the option's name. The known option names determine both identity and
+    boundaries; generic labels are accepted without making the parser RFP-only.
+    """
     source = str(source_text or "").strip()
     name = str(option_name or "").strip()
     if not source or not name:
@@ -219,7 +224,10 @@ def option_fact_text(source_text, option_name=None, option_names=None):
     if heading:
         marker = re.compile(
             rf"(?im)(?:^|(?<=[.!?])\s+|\n+)"
-            rf"(?P<header>(?:option\s+[A-Za-z0-9_-]+(?:\s*[-–—]\s*[^:\n.]+)?|{heading})\s*:)",
+            rf"(?P<header>(?:"
+            rf"(?:option|vendor|bid|proposal|alternative)\s+[A-Za-z0-9_-]+(?:\s+[^:\n.]{{1,100}})?\s*:"
+            rf"|(?:\d+|[A-Z])[.)]\s*[^:\n.]{{1,100}}\s*:"
+            rf"|(?:{heading})(?=\s*(?::|[-–—]|\.|\b(?:has|offers|requires|costs|is|can|cannot|will)\b))[^\n]{{0,100}}?(?::|\.)))",
         )
         matches = list(marker.finditer(source))
         for index, match in enumerate(matches):
@@ -228,6 +236,13 @@ def option_fact_text(source_text, option_name=None, option_names=None):
             section = source[start:end].strip()
             heading_context = re.split(r"(?<=[.!?])\s+|\n+", section, maxsplit=1)[0]
             if name.lower() not in heading_context.lower():
+                continue
+            # A lone prose sentence such as "Aurora has ..." is not enough to
+            # establish a section boundary. Preserve the legacy clause-level
+            # behavior unless another named section or an explicit heading is
+            # present.
+            explicit_heading = ":" in match.group("header")
+            if len(matches) == 1 and not explicit_heading:
                 continue
             return section
     clauses = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", source) if part.strip()]

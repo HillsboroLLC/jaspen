@@ -3031,6 +3031,10 @@ def _generate_jaspen_scorecard(
     # appears in what the user provided.
     corpus_text = str(evidence_corpus or "").strip()
     verification_text = _evidence_verification_text(project_description, corpus_text)
+    # The judge sees one stable identity string in both single and batch mode.
+    # Agent-authored summaries and queue descriptions are presentation fields;
+    # admitting them here made otherwise identical evaluations diverge.
+    judge_description = str(option_name or project_description or "").strip()
     source_material_section = (
         "\nSource material (the user's own words, quote ONLY from here):\n"
         f'"""\n{corpus_text}\n"""\n'
@@ -3044,7 +3048,7 @@ def _generate_jaspen_scorecard(
     analysis_prompt = f"""
 You are a Jaspen strategy analyst. Analyze the following initiative and return a comprehensive confidence-weighted scorecard.
 
-Project Description: {project_description}
+Option: {judge_description}
 {source_material_section}
 {objective_section}
 
@@ -3112,7 +3116,9 @@ The executive_summary must read like a concise leadership briefing. It should ne
 
     attributes = dict(attributes or {})
     approved_gates = [item for item in ((rubric or {}).get("criteria") or []) if isinstance(item, dict) and item.get("gate")]
-    if structured_context is None and (attributes or decision_kit or approved_gates):
+    if attributes or decision_kit or approved_gates:
+        # Build this once here for every caller. Call-site object ordering and
+        # extra prose must not alter the judge contract.
         structured_context = {
             "attributes": attributes,
             "approved_gates": approved_gates,
@@ -3125,6 +3131,8 @@ The executive_summary must read like a concise leadership briefing. It should ne
                 "decision_kit": {"key": kit["key"], "version": kit["version"], "label": kit["label"]},
                 "metrics": calculate_metrics(attributes, kit.get("metrics"), context=kit_context),
             })
+    else:
+        structured_context = None
 
     analysis_text = None
     if isinstance(structured_context, dict) and structured_context:

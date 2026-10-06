@@ -24,7 +24,7 @@ def _fake_reply_factory(calls, delay=0.0, fail=()):
     lock = threading.Lock()
 
     def fake(messages, **_kwargs):
-        name = re.search(r'1\. "([^"]+)"', messages[0]['content']).group(1)
+        name = re.search(r'^Option: (.+)$', messages[0]['content'], re.MULTILINE).group(1)
         with lock:
             calls.append(name)
         if delay:
@@ -34,7 +34,7 @@ def _fake_reply_factory(calls, delay=0.0, fail=()):
         score = SCORES[name]
         dims = {key: {'score': score, 'confidence': 'medium', 'rationale': 'r'} for key in ('fit', 'speed')}
         usage = {'input_tokens': 10, 'output_tokens': 5, 'total_tokens': 15, 'provider': 'anthropic', 'model': 'm'}
-        return json.dumps({'options': [{'name': name, 'primary_role': f'role-{name}', 'dimensions': dims}]}), usage
+        return json.dumps({'name': name, 'primary_role': f'role-{name}', 'dimensions': dims}), usage
 
     return fake
 

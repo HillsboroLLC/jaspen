@@ -109,3 +109,30 @@ def test_multi_sentence_option_sections_do_not_mix_facts_or_gate_evidence(app):
     assert single_facts == batch_facts
     assert single_facts["contract_value"]["value"] == 14_000_000
     assert single_facts["margin_pct"]["value"] == 8
+
+
+@pytest.mark.parametrize(("corpus", "names", "expected"), [
+    (
+        "Option A: Alpha. Contract value $11M. Margin 5%. Option B: Beta. Contract value $22M. Margin 6%. Option C: Gamma. Contract value $33M. Margin 7%.",
+        ["Alpha", "Beta", "Gamma"], ["$11M", "$22M", "$33M"],
+    ),
+    (
+        "Vendor 1 Workday: Proposal price $10M. Epic integration confirmed. Vendor 2 Oracle: Proposal price $20M. References pending. Vendor 3 RegionalERP: Proposal price $30M. Never integrated with Epic.",
+        ["Workday", "Oracle", "RegionalERP"], ["$10M", "$20M", "$30M"],
+    ),
+    (
+        "Workday: Proposal price $10M. Delivery takes 8 months. Oracle: Proposal price $20M. Delivery takes 10 months. RegionalERP: Proposal price $30M. Delivery takes 12 months.",
+        ["Workday", "Oracle", "RegionalERP"], ["$10M", "$20M", "$30M"],
+    ),
+    (
+        "1. Workday: Proposal price $10M. Delivery takes 8 months. 2. Oracle: Proposal price $20M. Delivery takes 10 months. 3. RegionalERP: Proposal price $30M. Delivery takes 12 months.",
+        ["Workday", "Oracle", "RegionalERP"], ["$10M", "$20M", "$30M"],
+    ),
+])
+def test_option_sections_support_lettered_numbered_vendor_and_named_formats(app, corpus, names, expected):
+    from app.decision_facts import option_fact_text
+    sections = [option_fact_text(corpus, name, names) for name in names]
+    for index, section in enumerate(sections):
+        assert expected[index] in section
+        assert all(value not in section for value in expected if value != expected[index])
+        assert len(section.split('.')) >= 2

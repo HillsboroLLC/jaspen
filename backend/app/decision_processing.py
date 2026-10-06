@@ -15,6 +15,55 @@ def _quote_in_corpus(quote, corpus):
     return bool(quote and quote in corpus)
 
 
+_GATE_FAIL_RE = re.compile(
+    r"\b(?:cannot|can't|unable\s+to|never|does\s+not|doesn't|do\s+not|don't|"
+    r"not\s+(?:meet|met|satisfy|satisfied|comply|compliant|available|confirmed)|"
+    r"fails?|failed|lacks?|missing|unavailable|infeasible)\b",
+    re.I,
+)
+_GATE_PASS_RE = re.compile(
+    r"\b(?:can|able\s+to|meets?|met|satisf(?:y|ies|ied)|complies?|compliant|"
+    r"confirmed|feasible|has\s+(?:successfully\s+)?integrated|is\s+available|will\s+meet)\b",
+    re.I,
+)
+_GATE_STOPWORDS = {"the", "and", "for", "with", "must", "gate", "requirement", "required", "only", "option"}
+
+
+def _gate_terms(definition):
+    text = " ".join(str((definition or {}).get(key) or "") for key in ("key", "label", "gate_rule", "description"))
+    return {
+        word for word in re.findall(r"[a-z0-9%]+", text.lower())
+        if len(word) > 2 and word not in _GATE_STOPWORDS
+    }
+
+
+def _grounded_gate_evidence(item, definition, corpus):
+    supplied = [
+        str(value).strip() for value in ((item or {}).get("evidence") or [])
+        if _quote_in_corpus(value, corpus)
+    ]
+    if supplied:
+        return supplied
+    terms = _gate_terms(definition)
+    if not terms:
+        return []
+    candidates = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", str(corpus or "")) if part.strip()]
+    for sentence in candidates:
+        sentence_terms = set(re.findall(r"[a-z0-9%]+", sentence.lower()))
+        if terms & sentence_terms and (_GATE_FAIL_RE.search(sentence) or _GATE_PASS_RE.search(sentence)):
+            return [sentence]
+    return []
+
+
+def _deterministic_gate_status(evidence):
+    text = " ".join(str(value or "") for value in evidence)
+    if _GATE_FAIL_RE.search(text):
+        return "fail"
+    if _GATE_PASS_RE.search(text):
+        return "pass"
+    return "unknown"
+
+
 def _gate_applies(item, option_key=None, option_name=None):
     explicit = str((item or {}).get("option_key") or "").strip()
     if explicit:
@@ -69,15 +118,11 @@ def normalize_gates(raw_gates, rubric, evidence_corpus="", option_key=None, opti
     normalized = []
     for key, definition in definitions.items():
         item = supplied.get(key) or {}
-        evidence = [str(value) for value in (item.get("evidence") or []) if _quote_in_corpus(value, evidence_corpus)]
-        source = str(item.get("source") or "assumed").lower()
-        confidence = str(item.get("confidence") or "assumed").lower()
-        requested = str(item.get("status") or "unknown").lower()
-        if requested == "pass" and evidence and source != "assumed" and confidence in {"medium", "high"}:
-            status = "pass"
-        elif requested == "fail" and evidence:
-            status = "fail"
-        else:
+        evidence = _grounded_gate_evidence(item, definition, evidence_corpus)
+        source = str(item.get("source") or ("user" if evidence else "assumed")).lower()
+        confidence = str(item.get("confidence") or ("medium" if evidence else "assumed")).lower()
+        status = _deterministic_gate_status(evidence)
+        if status != "unknown" and source == "assumed":
             status = "unknown"
         normalized.append({
             "key": key,
