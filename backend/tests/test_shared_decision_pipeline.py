@@ -21,16 +21,37 @@ def test_canonical_rfp_facts_normalize_types_units_and_provenance(app):
     assert facts["mandatory_requirements"]["value"] == ["a bid bond", "signed form"]
 
 
-def test_unknown_kit_field_and_invalid_percentage_are_rejected(app):
-    import pytest
+def test_unknown_and_invalid_fields_are_rejected_without_losing_valid_facts(app):
     from app.decision_facts import normalize_option_facts
     from app.decision_kits import get_decision_kit
 
     kit = get_decision_kit("rfp_bid")
-    with pytest.raises(ValueError, match="Unknown decision field"):
-        normalize_option_facts({"fictional_total": {"value": 10}}, kit=kit)
-    with pytest.raises(ValueError, match="Invalid value"):
-        normalize_option_facts({"margin_pct": {"value": 140}}, kit=kit)
+    rejected = []
+    facts = normalize_option_facts({
+        "proposal_due_date": {"value": "11/14/2026", "source": "user"},
+        "fictional_total": {"value": 10},
+        "margin_pct": {"value": 140},
+        "contract_value": {"value": "$60M"},
+    }, kit=kit, rejected_fields=rejected)
+
+    assert facts["submission_due"]["value"] == "2026-11-14"
+    assert facts["contract_value"]["value"] == 60_000_000
+    assert "fictional_total" not in facts
+    assert "margin_pct" not in facts
+    assert {item["field"] for item in rejected} == {"fictional_total", "margin_pct"}
+
+
+def test_five_year_tco_alias_maps_to_vendor_selection_tco(app):
+    from app.decision_facts import normalize_option_facts
+    from app.decision_kits import get_decision_kit
+
+    facts = normalize_option_facts(
+        {"5yr_tco": {"value": "$12.5M", "source": "document", "evidence": "5yr TCO $12.5M"}},
+        kit=get_decision_kit("rfp_vendor_selection"),
+    )
+
+    assert facts["tco"]["value"] == 12_500_000
+    assert facts["tco"]["unit"] == "USD"
 
 
 def test_assumed_fact_deterministically_caps_affected_confidence(app):

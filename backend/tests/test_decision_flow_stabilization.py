@@ -3,7 +3,7 @@ import json
 import sys
 import pytest
 from flask import current_app
-from app.models import AIOperation, AIProviderAttempt
+from app.models import AIOperation, AIProviderAttempt, UsageEvent
 from app.scorecards import upsert_scorecard
 from app.ai_runtime import execute_customer_operation
 
@@ -148,6 +148,232 @@ def mock_accounting(monkeypatch):
     monkeypatch.setattr(strategy, 'get_llm_client', lambda: object())
     monkeypatch.setattr(agent, '_reserve_preflight_credits', lambda *a, **k: {'ok': True, 'reserved': 0})
     monkeypatch.setattr(agent, '_settle_reserved_credits', lambda *a, **k: {'ok': True, 'charged': 0})
+
+
+def seed_rfp_thread(user, thread_id, *, decision_kit='rfp_bid', queue=None):
+    from app.decision_kits import get_decision_kit
+    from app.routes.sessions import save_user_sessions
+
+    kit = get_decision_kit(decision_kit)
+    assert save_user_sessions(user.id, {thread_id: {
+        'session_id': thread_id,
+        'user_id': user.id,
+        'name': 'RFP validation',
+        'status': 'in_progress',
+        'decision_kit': decision_kit,
+        'decision_kit_version': 1,
+        'decision_kit_family': 'rfp',
+        'scoring_rubric': {
+            'criteria': list(kit.get('starter_rubric') or []),
+            'source': 'decision_kit',
+            'approved_by_user_at': '2026-10-06T00:00:00Z',
+        },
+        'chat_history': [{'role': 'user', 'content': 'Use the stated proposal facts to score this RFP.'}],
+        'scorecard_queue': list(queue or []),
+    }})
+
+
+def test_real_single_rfp_generate_scorecard_tool_path_normalizes_aliases(app, db, test_user, monkeypatch):
+    strategy, agent = modules()
+    tid = 'live-single-rfp-alias'
+    seed_rfp_thread(test_user, tid)
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', lambda *a, **k: ({
+        'jaspen_score': 62,
+        'score_category': 'Good',
+        'dimensions': {'financial_attractiveness': {'score': 62, 'confidence': 'medium'}},
+        'gates': [],
+    }, {'provider': 'test', 'model': 'test', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}))
+
+    result = agent._execute_mutation_tool(
+        'generate_scorecard',
+        {
+            'name': 'Aurora RFP',
+            'idea_description': 'Score Aurora for a bid response.',
+            'attributes': {
+                'proposal_due_date': {'value': '11/14/2026', 'source': 'user'},
+                'contract_value': {'value': '$60M', 'source': 'user'},
+                'made_up_rank': {'value': 4, 'source': 'user'},
+            },
+        },
+        user=test_user,
+        user_id=test_user.id,
+        thread_id=tid,
+    )
+
+    assert result['ok'] is True, result
+    card = result['scorecard']
+    assert card['attributes']['submission_due']['value'] == '2026-11-14'
+    assert card['attributes']['contract_value']['value'] == 60_000_000
+    assert 'made_up_rank' not in card['attributes']
+    assert card['rejected_attributes'][0]['field'] == 'made_up_rank'
+
+
+def test_real_batch_rfp_scoring_keeps_valid_fields_when_one_is_invalid(client, db, test_user, auth_headers, monkeypatch):
+    strategy, agent = modules()
+    tid = 'live-batch-rfp-alias'
+    queue = [
+        {
+            'name': 'Vendor A',
+            'description': 'Vendor A proposal',
+            'option_key': 'vendor-a',
+            'attributes': {
+                '5yr_tco': {'value': '$12.5M', 'source': 'document', 'evidence': '5yr TCO $12.5M'},
+                'unknown_magic': {'value': 7, 'source': 'document', 'evidence': 'unknown magic 7'},
+            },
+        },
+        {
+            'name': 'Vendor B',
+            'description': 'Vendor B proposal',
+            'option_key': 'vendor-b',
+            'attributes': {'proposal_price': {'value': '$10M', 'source': 'document', 'evidence': 'proposal price $10M'}},
+        },
+    ]
+    seed_rfp_thread(test_user, tid, decision_kit='rfp_vendor_selection', queue=queue)
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(strategy, '_strategy_generate_reply', lambda *a, **k: (json.dumps({
+        'dimensions': {
+            'functional_technical_fit': {'score': 70, 'confidence': 'medium', 'rationale': 'Supported.'},
+            'total_cost_ownership': {'score': 65, 'confidence': 'medium', 'rationale': 'Supported.'},
+        },
+        'gates': [],
+    }), {'provider': 'test', 'model': 'test', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}))
+
+    response = client.post(f'/api/v1/strategy/threads/{tid}/score-batch', headers=auth_headers, json={})
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['count'] == 2
+    cards = agent._collect_session_scorecards(agent.load_user_sessions(test_user.id)[tid], user_id=test_user.id, thread_id=tid)
+    vendor_a = next(card for card in cards if card['project_name'] == 'Vendor A')
+    assert vendor_a['attributes']['tco']['value'] == 12_500_000
+    assert 'unknown_magic' not in vendor_a['attributes']
+    assert vendor_a['rejected_attributes'][0]['field'] == 'unknown_magic'
+
+
+def test_empty_batch_is_failed_retryable_preserves_queue_and_charges_zero(client, db, test_user, auth_headers, monkeypatch):
+    strategy, agent = modules()
+    tid = 'live-empty-batch'
+    queue = [{'name': 'Aurora RFP', 'description': 'Aurora RFP', 'option_key': 'aurora'}]
+    seed_rfp_thread(test_user, tid, queue=queue)
+    mock_accounting(monkeypatch)
+    initial_credits = test_user.credits_remaining
+    monkeypatch.setattr(strategy, '_generate_batch_scorecards', lambda *a, **k: (
+        [None], {}, {'provider': 'test', 'model': 'test', 'input_tokens': 2, 'output_tokens': 2, 'total_tokens': 4}
+    ))
+
+    response = client.post(f'/api/v1/strategy/threads/{tid}/score-batch', headers=auth_headers, json={})
+
+    payload = response.get_json()
+    assert response.status_code == 503, payload
+    assert payload['failure_state'] is True and payload['retryable'] is True
+    assert payload['action'] == {'type': 'retry', 'label': 'Retry'}
+    assert payload['persisted_project_count'] == 0
+    assert payload['credits']['charged'] == 0
+    assert agent.load_user_sessions(test_user.id)[tid]['scorecard_queue'][0]['name'] == 'Aurora RFP'
+    row = AIOperation.query.filter_by(thread_id=tid, operation_type='score_batch').one()
+    assert row.status == 'failed' and row.charged_credits == 0
+    assert test_user.credits_remaining == initial_credits
+
+
+def test_failed_single_scoring_turn_is_explicit_saved_retryable_and_zero_credit(client, db, test_user, auth_headers, monkeypatch):
+    _, agent = modules()
+    tid = 'live-failed-single-score'
+    seed_rfp_thread(test_user, tid)
+    initial_credits = test_user.credits_remaining
+    monkeypatch.setattr(agent, '_reserve_preflight_credits', lambda *a, **k: {'ok': True, 'reserved': 0})
+    monkeypatch.setattr(agent, '_settle_reserved_credits', lambda *a, **k: {
+        'ok': True, 'charged': 0, 'remaining': initial_credits,
+    })
+    monkeypatch.setattr(agent, '_execute_mutation_tool', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('scorer crashed')))
+
+    def failed_turn(*args, **kwargs):
+        result, _ = agent._execute_local_tool(
+            'generate_scorecard',
+            {'name': 'Aurora RFP', 'idea_description': 'Score Aurora'},
+            readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
+            user_turn_count=2, mutations_this_turn=0,
+        )
+        action = {'tool': 'generate_scorecard', 'input': {}, 'result': result}
+        return 'Your scorecard is coming.', {'provider': 'test', 'model': 'test', 'input_tokens': 3, 'output_tokens': 3, 'total_tokens': 6}, [action], [{'tool': 'generate_scorecard', 'success': False, 'code': result['code']}], None
+
+    monkeypatch.setattr(agent, '_generate_assistant_reply', failed_turn)
+    response = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': 'Score Aurora now.',
+    })
+
+    payload = response.get_json()
+    assert response.status_code == 200, payload
+    assert payload['failure_state'] is True and payload['success'] is False
+    assert payload['action'] == {'type': 'retry', 'label': 'Retry'}
+    assert payload['credits']['charged'] == 0
+    assert payload['reply'] == "Jaspen couldn't complete scoring. Your request is saved. Try again."
+    stored = agent.load_user_sessions(test_user.id)[tid]
+    assert any(item.get('role') == 'user' and item.get('content') == 'Score Aurora now.' for item in stored['chat_history'])
+    assert not any('scorecard is coming' in str(item.get('content') or '').lower() for item in stored['chat_history'])
+    usage_row = UsageEvent.query.filter_by(thread_id=tid, operation_type='score_next').one()
+    assert usage_row.success is False and usage_row.credits_charged == 0
+
+
+def test_streaming_single_score_failure_suppresses_normal_looking_narration(app, test_user, monkeypatch):
+    from types import SimpleNamespace
+
+    _, agent = modules()
+    failure = agent._scoring_tool_failure(
+        "Jaspen couldn't complete scoring. Your request is saved. Try again.",
+        code='scorecard_generation_failed',
+    )
+
+    class Stream:
+        def __init__(self, message, events=()):
+            self.message = message
+            self.events = list(events)
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def __iter__(self):
+            return iter(self.events)
+        def get_final_message(self):
+            return self.message
+
+    tool_message = SimpleNamespace(
+        content=[SimpleNamespace(type='tool_use', name='generate_scorecard', id='score-1', input={'name': 'Aurora RFP', 'idea_description': 'Score Aurora'})],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+    misleading_message = SimpleNamespace(
+        content=[SimpleNamespace(type='text', text='Your scorecard is coming.')],
+        usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+    )
+    misleading_event = SimpleNamespace(
+        type='content_block_delta',
+        delta=SimpleNamespace(type='text_delta', text='Your scorecard is coming.'),
+    )
+    streams = [Stream(tool_message), Stream(misleading_message, [misleading_event])]
+
+    monkeypatch.setattr(agent, '_anthropic_api_key', lambda: 'test-key')
+    monkeypatch.setattr(agent, '_prepare_context_window', lambda *a, **k: ([{'role': 'user', 'content': 'Score Aurora'}], '', {}))
+    monkeypatch.setattr(agent, '_build_agent_system_prompt', lambda **k: 'Test')
+    monkeypatch.setattr(agent, '_wbs_content_prompt_suffix', lambda *a: '')
+    monkeypatch.setattr(agent, '_anthropic_message_create', lambda *a, **k: (streams.pop(0), 'test-model'))
+    monkeypatch.setattr(agent, '_execute_local_tool', lambda *a, **k: (failure, 0))
+
+    state = {}
+    events = list(agent._stream_assistant_reply_events_anthropic(
+        'Score Aurora',
+        [{'role': 'user', 'content': 'Score Aurora'}],
+        {},
+        {'llm_model': 'test-model'},
+        user=test_user,
+        user_id=test_user.id,
+        thread_id='stream-failed-score',
+        session={},
+        state=state,
+    ))
+
+    assert not any(event.get('type') == 'delta' and 'coming' in event.get('text', '').lower() for event in events)
+    assert state['reply'] == "Jaspen couldn't complete scoring. Your request is saved. Try again."
+    assert state['actions'][0]['result']['failure_state'] is True
 
 
 def test_live_general_scoring_creates_decision_record(client, db, test_user, monkeypatch):

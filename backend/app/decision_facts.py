@@ -19,12 +19,18 @@ _ALIASES = {
     "deadline": "submission_due",
     "due_date": "submission_due",
     "submission_deadline": "submission_due",
+    "proposal_due": "submission_due",
+    "proposal_due_date": "submission_due",
     "requirements": "mandatory_requirements",
     "bonding": "capacity_draw",
     "bonding_requirement": "capacity_draw",
     "capacity": "capacity_draw",
     "contract_amount": "contract_value",
     "price": "proposal_price",
+    "5yr_tco": "tco",
+    "5_year_tco": "tco",
+    "five_year_tco": "tco",
+    "five_yr_tco": "tco",
 }
 
 _MONTHS = {
@@ -214,10 +220,37 @@ def option_fact_text(source_text, option_name=None):
     return "\n".join(matches)
 
 
-def normalize_option_facts(attributes, *, kit=None, source_text="", extract=True, option_name=None):
+def normalize_option_facts(
+    attributes,
+    *,
+    kit=None,
+    source_text="",
+    extract=True,
+    option_name=None,
+    rejected_fields=None,
+):
+    """Normalize recognizable facts without letting one bad field abort.
+
+    ``normalize_fact_entry`` remains the strict validator for one field. This
+    collection boundary keeps rejected fields out of canonical facts and can
+    report them separately to the caller for audit storage, while valid sibling
+    fields continue through scoring.
+    """
     normalized = {}
     for key, raw in (attributes or {}).items():
-        canonical, entry = normalize_fact_entry(key, raw, kit=kit)
+        try:
+            canonical, entry = normalize_fact_entry(key, raw, kit=kit)
+        except ValueError as exc:
+            if isinstance(rejected_fields, list):
+                raw_entry = dict(raw) if isinstance(raw, dict) else {"value": raw}
+                rejected_fields.append({
+                    "field": str(key or ""),
+                    "value": raw_entry.get("value"),
+                    "source": raw_entry.get("source"),
+                    "evidence": raw_entry.get("evidence"),
+                    "reason": str(exc),
+                })
+            continue
         normalized[canonical] = entry
     if extract:
         for key, value, evidence in extract_candidate_facts(source_text, kit):

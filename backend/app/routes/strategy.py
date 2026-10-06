@@ -191,6 +191,20 @@ class ScorecardConflictError(Exception):
         self.payload = payload if isinstance(payload, dict) else {}
 
 
+class ScoreBatchGenerationFailed(RuntimeError):
+    """Raised when a governed batch operation produces no usable scorecard."""
+
+    def __init__(self, message, usage=None):
+        super().__init__(message)
+        self.jaspen_usage = {
+            **(usage if isinstance(usage, dict) else {}),
+            'degraded': True,
+            'generation_failed': True,
+            'operation_failed': True,
+            'error_code': 'score_batch_generation_failed',
+        }
+
+
 def _audit_strategy_event(action, *, user=None, user_id=None, details=None):
     append_user_audit_event(
         actor_user=user,
@@ -3308,11 +3322,13 @@ def _generate_batch_scorecards(
         name = str(item.get("name") or "").strip()
         description = str(item.get("description") or "").strip() or name
         scoped_corpus = option_fact_text(evidence_corpus, name) or str(evidence_corpus or "")
+        rejected_fields = []
         attributes = normalize_option_facts(
             item.get("attributes") or {},
             kit=kit,
             source_text=scoped_corpus,
             option_name=name,
+            rejected_fields=rejected_fields,
         )
         with app.app_context():
             card, usage = _generate_jaspen_scorecard(
@@ -3330,6 +3346,17 @@ def _generate_batch_scorecards(
                 kit_context=kit_context,
                 option_key=item.get("option_key"),
             )
+            if not isinstance(card, dict) or card.get("jaspen_score") is None:
+                return None, usage
+            card = dict(card)
+            card["attributes"] = attributes
+            card["rejected_attributes"] = rejected_fields
+            if rejected_fields:
+                current_app.logger.warning(
+                    "Rejected %d non-canonical fact(s) while batch scoring option %s",
+                    len(rejected_fields),
+                    name,
+                )
         return card, usage
 
     results = [None] * len(ideas)
@@ -6432,6 +6459,14 @@ def score_batch_queued(thread_id):
                     decision_kit_version=decision_kit_version,
                     kit_context=session.get('kit_context') if isinstance(session.get('kit_context'), dict) else {},
                 )
+                if not any(
+                    isinstance(card, dict) and card.get('jaspen_score') is not None
+                    for card in cards
+                ):
+                    raise ScoreBatchGenerationFailed(
+                        'The scoring providers did not produce any scorecards.',
+                        provider_usage,
+                    )
                 return {
                     'cards': cards,
                     'portfolio_summary': portfolio_summary,
@@ -6463,6 +6498,21 @@ def score_batch_queued(thread_id):
                 'not_persisted_project_names': [str(item.get('name') or '').strip() for item in ideas],
             })
             return jsonify(payload), 402
+        except ScoreBatchGenerationFailed:
+            return jsonify({
+                'ok': False,
+                'code': 'score_batch_generation_failed',
+                'error': "Jaspen couldn't complete scoring. Your request is saved. Try again.",
+                'failure_state': True,
+                'retryable': True,
+                'action': {'type': 'retry', 'label': 'Retry'},
+                'message_saved': True,
+                'credits': {'charged': 0},
+                'requested_project_count': requested_count,
+                'generated_project_count': 0,
+                'persisted_project_count': 0,
+                'not_persisted_project_names': [str(item.get('name') or '').strip() for item in ideas],
+            }), 503
 
         generated = generated if isinstance(generated, dict) else {}
         cards = generated.get('cards') if isinstance(generated.get('cards'), list) else []
@@ -6614,8 +6664,14 @@ def score_batch_queued(thread_id):
                 session['chat_history'] = chat_history
             session['name'] = session.get('name') or name
             option_store = session.get('option_attributes') if isinstance(session.get('option_attributes'), dict) else {}
-            option_store[re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')] = attributes
+            option_identity = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
+            option_store[option_identity] = attributes
             session['option_attributes'] = option_store
+            rejected_attributes = payload.get('rejected_attributes') if isinstance(payload.get('rejected_attributes'), list) else []
+            if rejected_attributes:
+                rejected_store = session.get('rejected_option_attributes') if isinstance(session.get('rejected_option_attributes'), dict) else {}
+                rejected_store[option_identity] = rejected_attributes
+                session['rejected_option_attributes'] = rejected_store
             session['active_evaluation_id'] = evaluation_id
             session['active_evaluation_scorecard_id'] = analysis_id
             session['timestamp'] = generated_at

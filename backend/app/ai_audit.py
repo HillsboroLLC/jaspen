@@ -178,7 +178,11 @@ def persist_operation(
     operation.operation_type = str(operation_type or usage.get('operation_type') or 'ai_operation')
     operation.idempotency_key = str(idempotency_key or operation.idempotency_key or '').strip() or None
     operation.request_fingerprint = str(request_fingerprint or operation.request_fingerprint or '').strip() or None
-    operation.status = 'degraded' if usage.get('degraded') else ('succeeded' if success else 'failed')
+    operation.status = (
+        'failed'
+        if usage.get('operation_failed')
+        else ('degraded' if usage.get('degraded') else ('succeeded' if success else 'failed'))
+    )
     operation.customer_visible = bool(customer_visible)
     operation.subsidized = subsidized
     operation.subsidy_classification = classification
@@ -205,6 +209,7 @@ def persist_operation(
     operation.metadata_json = {
         'degraded': bool(usage.get('degraded')),
         'generation_failed': bool(usage.get('generation_failed')),
+        'operation_failed': bool(usage.get('operation_failed')),
         'failed_attempt_costs_absorbed': True,
         'failed_attempt_cost_known': bool(failed_attempts) and not any(estimated for _cost, estimated in failed_costs),
         'failed_attempt_cost_estimated': any(estimated for _cost, estimated in failed_costs),
