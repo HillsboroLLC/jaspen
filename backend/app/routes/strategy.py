@@ -3029,8 +3029,21 @@ def _generate_jaspen_scorecard(
     # so there is real language available to quote, and verification runs
     # against the same text, so a quote counts only when it demonstrably
     # appears in what the user provided.
-    corpus_text = str(evidence_corpus or "").strip()
-    verification_text = _evidence_verification_text(project_description, corpus_text)
+    attributes = dict(attributes or {})
+    canonical_quotes = [
+        str(entry.get("evidence") or "").strip()
+        for entry in attributes.values()
+        if isinstance(entry, dict) and str(entry.get("evidence") or "").strip()
+    ]
+    # Once facts are canonical, the judge sees those facts and only their
+    # verified provenance excerpts. Unnormalized conversation prose cannot
+    # become a hidden scoring input or invalidate fingerprint reuse.
+    corpus_text = "\n".join(canonical_quotes) if attributes else str(evidence_corpus or "").strip()
+    verification_text = (
+        _evidence_verification_text("", corpus_text)
+        if attributes
+        else _evidence_verification_text(project_description, corpus_text)
+    )
     # The judge sees one stable identity string in both single and batch mode.
     # Agent-authored summaries and queue descriptions are presentation fields;
     # admitting them here made otherwise identical evaluations diverge.
@@ -3114,7 +3127,6 @@ Those values are calculated by deterministic code after your criterion judgments
 The executive_summary must read like a concise leadership briefing. It should never repeat raw prompt text or user questions.
 """
 
-    attributes = dict(attributes or {})
     approved_gates = [item for item in ((rubric or {}).get("criteria") or []) if isinstance(item, dict) and item.get("gate")]
     if attributes or decision_kit or approved_gates:
         # Build this once here for every caller. Call-site object ordering and
@@ -3139,7 +3151,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
         analysis_prompt += (
             "\n\nCANONICAL STRUCTURED FACTS (authoritative; do not recompute metrics):\n"
             + json.dumps(structured_context, indent=2, default=str)
-            + "\nJudge the weighted criteria from these facts and the evidence. "
+            + "\nJudge the weighted criteria only from these canonical facts. The source excerpts are provenance for those facts, not an independent input. "
               "Return top-level gates as [{key,status,confidence,source,evidence,basis}] for approved gate criteria only. "
               "Do not emit attributes, metrics, a recommendation, or any arithmetic; code supplies those."
         )
@@ -3209,6 +3221,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
     parsed["gates"] = normalize_gates(
         parsed.get("gates"), rubric, verification_text,
         option_key=option_key, option_name=option_name or project_description,
+        attributes=attributes,
     )
 
     # The current schema cannot trace model-generated financial/risk numbers
@@ -3326,6 +3339,7 @@ def _generate_batch_scorecards(
     decision_kit=None,
     decision_kit_version=None,
     kit_context=None,
+    reuse_lookup=None,
 ):
     """Score each option through the canonical single-option orchestration.
 
@@ -3360,28 +3374,52 @@ def _generate_batch_scorecards(
             option_name=name,
             rejected_fields=rejected_fields,
         )
+        from ..decision_fingerprint import scoring_fingerprint
+        from ..decision_state import canonical_decision_state, stable_option_identity, state_is_reusable
+        option_key = stable_option_identity(item.get("option_key"), name)
+        state = canonical_decision_state(
+            option_key=option_key, option_name=name, attributes=attributes,
+            rubric=rubric, objective=strategy_objective,
+            gates=(rubric or {}).get("criteria") or [],
+            decision_kit=decision_kit, decision_kit_version=decision_kit_version,
+        )
+        fingerprint = scoring_fingerprint(
+            option_key=option_key, option_name=name, attributes=attributes,
+            rubric=rubric, objective=strategy_objective,
+            decision_kit=decision_kit, decision_kit_version=decision_kit_version,
+            evidence_corpus=scoped_corpus,
+        )
         with app.app_context():
-            card, usage = _generate_jaspen_scorecard(
-                client,
-                description,
-                llm_model,
-                model_selection=model_selection,
-                strategy_objective=strategy_objective,
-                rubric=rubric,
-                return_usage=True,
-                evidence_corpus=scoped_corpus,
-                attributes=attributes,
-                decision_kit=decision_kit,
-                decision_kit_version=decision_kit_version,
-                kit_context=kit_context,
-                option_key=item.get("option_key"),
-                option_name=name,
-            )
+            reused = reuse_lookup(fingerprint, state) if callable(reuse_lookup) and state_is_reusable(state) else None
+            if isinstance(reused, dict):
+                card = dict(reused)
+                usage = {"provider": "canonical_cache", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+                card["reused_stored_result"] = True
+            else:
+                card, usage = _generate_jaspen_scorecard(
+                    client,
+                    description,
+                    llm_model,
+                    model_selection=model_selection,
+                    strategy_objective=strategy_objective,
+                    rubric=rubric,
+                    return_usage=True,
+                    evidence_corpus=scoped_corpus,
+                    attributes=attributes,
+                    decision_kit=decision_kit,
+                    decision_kit_version=decision_kit_version,
+                    kit_context=kit_context,
+                    option_key=option_key,
+                    option_name=name,
+                )
             if not isinstance(card, dict) or card.get("jaspen_score") is None:
                 return None, usage
             card = dict(card)
             card["attributes"] = attributes
             card["rejected_attributes"] = rejected_fields
+            card["decision_fingerprint"] = fingerprint
+            card["decision_state"] = state
+            card["decision_state_reusable"] = state_is_reusable(state)
             if rejected_fields:
                 current_app.logger.warning(
                     "Rejected %d non-canonical fact(s) while batch scoring option %s",
@@ -3510,6 +3548,7 @@ def analyze_project():
             return jsonify(model_error), 403
 
         client = get_llm_client()
+
         session_key, current_session = _resolve_session_entry(
             load_user_sessions(current_user_id) or {},
             thread_id,
@@ -3554,13 +3593,48 @@ def analyze_project():
         )
         legacy_decision_kit = (current_session or {}).get('decision_kit')
         legacy_decision_kit_version = (current_session or {}).get('decision_kit_version')
+        legacy_rubric = (current_session or {}).get('scoring_rubric') if isinstance((current_session or {}).get('scoring_rubric'), dict) else None
+        from ..decision_state import rubric_is_approved
+        if isinstance(legacy_rubric, dict) and legacy_rubric.get('criteria') and not rubric_is_approved(legacy_rubric):
+            return jsonify({
+                'error': 'The proposed scoring rubric needs human approval before scoring.',
+                'code': 'rubric_approval_required',
+            }), 409
         legacy_attributes = {}
         if isinstance((current_session or {}).get('option_attributes'), dict) and project_name:
             legacy_attributes = (current_session or {}).get('option_attributes', {}).get(
                 re.sub(r'[^a-z0-9]+', '-', project_name.lower()).strip('-'), {}
             )
-        try:
-            analysis_result, provider_usage, ai_settlement = execute_customer_operation(
+        from ..decision_fingerprint import scoring_fingerprint
+        from ..decision_state import canonical_decision_state, stable_option_identity, state_is_reusable
+        provisional_option_key = stable_option_identity(data.get('option_key'), requested_name) if requested_name else None
+        provisional_state = canonical_decision_state(
+            option_key=provisional_option_key, option_name=requested_name,
+            attributes=legacy_attributes, rubric=legacy_rubric,
+            objective=strategy_objective, gates=(legacy_rubric or {}).get('criteria') or [],
+            decision_kit=legacy_decision_kit, decision_kit_version=legacy_decision_kit_version,
+        )
+        provisional_fp = scoring_fingerprint(
+            option_key=provisional_option_key, option_name=requested_name,
+            attributes=legacy_attributes, rubric=legacy_rubric,
+            objective=strategy_objective, decision_kit=legacy_decision_kit,
+            decision_kit_version=legacy_decision_kit_version,
+            evidence_corpus=legacy_evidence_corpus,
+        ) if requested_name else None
+        from ..scorecards import find_scorecard_by_fingerprint
+        reusable_row = (
+            find_scorecard_by_fingerprint(current_user_id, provisional_fp, organization_id=active_org_id)
+            if provisional_fp and state_is_reusable(provisional_state) else None
+        )
+        if reusable_row is not None:
+            analysis_result = dict(reusable_row.data or {})
+            for identity_field in ('id', 'analysis_id', 'evaluation_id', 'thread_id', 'timestamp', 'createdAt', 'meta'):
+                analysis_result.pop(identity_field, None)
+            provider_usage = {'provider': 'canonical_cache', 'model': None, 'model_type': 'reuse', 'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
+            ai_settlement = {'charged_credits': 0, 'reserved_credits': 0}
+        else:
+            try:
+                analysis_result, provider_usage, ai_settlement = execute_customer_operation(
                 user,
                 generate=lambda: _generate_jaspen_scorecard(
                     client,
@@ -3568,6 +3642,7 @@ def analyze_project():
                     llm_model=model_selection['llm_model'],
                     model_selection=model_selection,
                     strategy_objective=strategy_objective,
+                    rubric=legacy_rubric,
                     return_usage=True,
                     routing_signals=routing_signals,
                     evidence_corpus=legacy_evidence_corpus,
@@ -3575,6 +3650,8 @@ def analyze_project():
                     decision_kit=legacy_decision_kit,
                     decision_kit_version=legacy_decision_kit_version,
                     kit_context=(current_session or {}).get('kit_context') if isinstance((current_session or {}).get('kit_context'), dict) else {},
+                    option_key=provisional_option_key,
+                    option_name=requested_name,
                 ),
                 operation_type='scorecard_generation',
                 request_payload={
@@ -3586,9 +3663,9 @@ def analyze_project():
                 model_type=model_selection['model_type'],
                 max_tokens=8000,
                 thread_id=thread_id,
-            )
-        except AIOperationPaymentRequired as payment_error:
-            return jsonify(payment_error.payload or {'error': 'Thinking Power exhausted'}), 402
+                )
+            except AIOperationPaymentRequired as payment_error:
+                return jsonify(payment_error.payload or {'error': 'Thinking Power exhausted'}), 402
 
         analysis_id = str(uuid.uuid4())
         generated_at = datetime.utcnow().isoformat()
@@ -3650,6 +3727,8 @@ def analyze_project():
             'framework_id': framework_id,
             'project_name': project_name,
             'project_description': effective_description,
+            'option_key': stable_option_identity(provisional_option_key, project_name),
+            'attributes': legacy_attributes,
             'timestamp': generated_at,
             'user_id': current_user_id,
             'ai_insights': ai_insights,
@@ -3661,8 +3740,25 @@ def analyze_project():
                 'conversation_turns': len(conversation_history),
                 'generated_at': generated_at,
                 'model_type': model_selection['model_type'],
+                'reused_source_scorecard_id': str(reusable_row.id) if reusable_row is not None else None,
             }
         }
+        analysis_state = canonical_decision_state(
+            option_key=analysis['option_key'], option_name=project_name,
+            attributes=legacy_attributes, rubric=legacy_rubric,
+            objective=strategy_objective, gates=(legacy_rubric or {}).get('criteria') or [],
+            decision_kit=legacy_decision_kit, decision_kit_version=legacy_decision_kit_version,
+        )
+        analysis['decision_state'] = analysis_state
+        analysis['decision_fingerprint'] = scoring_fingerprint(
+            option_key=analysis['option_key'], option_name=project_name,
+            attributes=legacy_attributes, rubric=legacy_rubric,
+            objective=strategy_objective, decision_kit=legacy_decision_kit,
+            decision_kit_version=legacy_decision_kit_version,
+            evidence_corpus=legacy_evidence_corpus,
+        )
+        analysis['canonical_judgment_id'] = analysis['decision_fingerprint']
+        analysis['decision_state_reusable'] = state_is_reusable(analysis_state)
 
         provider_usage = dict(provider_usage or {})
         provider_usage.setdefault('provider', 'anthropic')
@@ -3672,7 +3768,7 @@ def analyze_project():
             user,
             thread_id=resolved_thread_id,
             endpoint='/analyze',
-            operation_type='scorecard_generation',
+            operation_type='score_reuse' if reusable_row is not None else 'scorecard_generation',
             usage=provider_usage,
             reserved_credits=int(ai_settlement.get('charged_credits') or 0),
             settled_credits=int(ai_settlement.get('charged_credits') or 0),
@@ -3687,14 +3783,14 @@ def analyze_project():
         analysis['meta']['credits_remaining'] = user.credits_remaining
         try:
             upsert_scorecard(
-                analysis_pass=True,   # a real scoring pass: may write ledger events
+                analysis_pass=reusable_row is None,
                 user_id=current_user_id,
                 thread_id=resolved_thread_id,
                 payload=analysis,
                 organization_id=active_org_id,
                 session_id=resolved_thread_id,
                 evaluation_id=evaluation_id,
-                source='analyze',
+                source='analyze_reuse' if reusable_row is not None else 'analyze',
             )
             db.session.commit()
         except Exception:
@@ -6444,6 +6540,13 @@ def score_batch_queued(thread_id):
         plan_key = effective_plan_key(user, current_app.config)
         strategy_objective = _normalize_strategy_objective(session.get('strategy_objective'))
         rubric = session.get('scoring_rubric') if isinstance(session.get('scoring_rubric'), dict) else None
+        from ..decision_state import rubric_is_approved
+        if isinstance(rubric, dict) and rubric.get('criteria') and not rubric_is_approved(rubric):
+            return jsonify({
+                'ok': False,
+                'code': 'rubric_approval_required',
+                'error': 'The proposed scoring rubric needs human approval before scoring.',
+            }), 409
         decision_kit = session.get('decision_kit')
         decision_kit_version = session.get('decision_kit_version')
         all_scenarios = _load_scenarios(user_id)
@@ -6482,6 +6585,25 @@ def score_batch_queued(thread_id):
         ]
         client = get_llm_client()
 
+        from ..scorecards import find_scorecard_by_fingerprint
+        reuse_organization_id = session.get('organization_id') or getattr(user, 'active_organization_id', None)
+        def reuse_lookup(fingerprint, state):
+            row = find_scorecard_by_fingerprint(
+                user_id,
+                fingerprint,
+                organization_id=reuse_organization_id,
+            )
+            if row is None:
+                return None
+            payload = dict(row.data or {})
+            for identity_field in (
+                'id', 'analysis_id', 'evaluation_id', 'thread_id', 'project_name',
+                'name', 'label', 'timestamp', 'createdAt', 'meta',
+            ):
+                payload.pop(identity_field, None)
+            payload['reused_source_scorecard_id'] = str(row.id)
+            return payload
+
         try:
             def generate_score_batch():
                 cards, portfolio_summary, provider_usage = _generate_batch_scorecards(
@@ -6494,6 +6616,7 @@ def score_batch_queued(thread_id):
                     decision_kit=decision_kit,
                     decision_kit_version=decision_kit_version,
                     kit_context=session.get('kit_context') if isinstance(session.get('kit_context'), dict) else {},
+                    reuse_lookup=reuse_lookup,
                 )
                 if not any(
                     isinstance(card, dict) and card.get('jaspen_score') is not None
@@ -6594,7 +6717,8 @@ def score_batch_queued(thread_id):
             evaluation_id = evaluation_context['evaluation_id']
             generated_at = datetime.utcnow().isoformat()
             attributes = dict(payload.get('attributes') or idea.get('attributes') or {})
-            option_key = str(idea.get('option_key') or f"opt_{uuid.uuid4().hex[:12]}")
+            from ..decision_state import stable_option_identity
+            option_key = stable_option_identity(idea.get('option_key'), name)
             scorecard = {
                 **payload,
                 'id': analysis_id,
@@ -6633,18 +6757,28 @@ def score_batch_queued(thread_id):
                 decision_kit=decision_kit,
                 decision_kit_version=decision_kit_version,
                 evidence_corpus=_thread_user_corpus(user_id, thread_id),
+                option_name=name,
             )
+            scorecard['canonical_judgment_id'] = scorecard['decision_fingerprint']
+            from ..decision_state import canonical_decision_state, state_is_reusable
+            scorecard['decision_state'] = canonical_decision_state(
+                option_key=option_key, option_name=name, attributes=attributes,
+                rubric=rubric, objective=strategy_objective,
+                gates=(rubric or {}).get('criteria') or [],
+                decision_kit=decision_kit, decision_kit_version=decision_kit_version,
+            )
+            scorecard['decision_state_reusable'] = state_is_reusable(scorecard['decision_state'])
 
             try:
                 upsert_scorecard(
-                    analysis_pass=True,   # a real scoring pass: may write ledger events
+                    analysis_pass=not bool(payload.get('reused_stored_result')),
                     user_id=user_id,
                     thread_id=thread_id,
                     payload=scorecard,
-                    organization_id=session.get('organization_id'),
+                    organization_id=session.get('organization_id') or getattr(user, 'active_organization_id', None),
                     session_id=session.get('session_id') or thread_id,
                     evaluation_id=evaluation_id,
-                    source='score_batch',
+                    source='score_batch_reuse' if payload.get('reused_stored_result') else 'score_batch',
                 )
                 db.session.commit()
             except Exception:

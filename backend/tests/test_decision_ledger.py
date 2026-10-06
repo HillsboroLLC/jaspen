@@ -267,13 +267,16 @@ def test_at62_only_a_real_scoring_pass_may_write_events(db, test_user):
 
 
 def test_at62b_the_scoring_flag_is_set_only_at_genuine_analysis_call_sites():
-    """AT-62b Ten call sites reach upsert_scorecard; three are analysis."""
+    """AT-62b New judgments are analysis; canonical reuse is not."""
     strategy = (BACKEND / 'app' / 'routes' / 'strategy.py').read_text()
     agent = (BACKEND / 'app' / 'routes' / 'ai_agent.py').read_text()
     scorecards = (BACKEND / 'app' / 'scorecards.py').read_text()
 
-    assert strategy.count('analysis_pass=True') == 2      # /analyze, /score-batch
-    assert agent.count('analysis_pass=True') == 2         # generate_scorecard, rescore
+    assert strategy.count('analysis_pass=reusable_row is None') == 1
+    assert strategy.count("analysis_pass=not bool(payload.get('reused_stored_result'))") == 1
+    assert agent.count('analysis_pass=not bool(reused_source_id)') == 2
+    assert 'analysis_pass=True' not in strategy
+    assert 'analysis_pass=True' not in agent
     # Backfill and tombstone paths must never opt in.
     assert 'analysis_pass=True' not in scorecards
 

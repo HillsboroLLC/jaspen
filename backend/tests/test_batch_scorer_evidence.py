@@ -102,9 +102,13 @@ def test_multi_sentence_option_sections_do_not_mix_facts_or_gate_evidence(app):
     assert "Contract value $31M" in option_b and "Bonding is unavailable" in option_b
     assert "$14M" not in option_b and "Surety confirmed" not in option_b
     kit = get_decision_kit("rfp_bid")
-    single_facts = normalize_option_facts({}, kit=kit, source_text=option_a, option_name=names[0])
+    extracted = {
+        "contract_value": {"value": "$14M", "source": "user", "evidence": "Contract value $14M"},
+        "margin_pct": {"value": "8%", "source": "user", "evidence": "Margin 8%"},
+    }
+    single_facts = normalize_option_facts(extracted, kit=kit, source_text=option_a, option_name=names[0])
     batch_facts = normalize_option_facts(
-        {}, kit=kit, source_text=option_fact_text(corpus, names[0], names), option_name=names[0]
+        extracted, kit=kit, source_text=option_fact_text(corpus, names[0], names), option_name=names[0]
     )
     assert single_facts == batch_facts
     assert single_facts["contract_value"]["value"] == 14_000_000

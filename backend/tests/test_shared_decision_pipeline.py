@@ -1,16 +1,18 @@
 import json
 
 
-def test_canonical_rfp_facts_normalize_types_units_and_provenance(app):
+def test_governed_extraction_candidates_normalize_types_units_and_provenance(app):
     from app.decision_facts import normalize_option_facts
     from app.decision_kits import get_decision_kit
 
-    text = (
-        "Aurora RFP has expected margin 4.5%, win probability 25%, contract value $60M, "
-        "submission deadline November 14, 2026. Pursuit team includes Lee and Morgan. "
-        "Mandatory requirements include a bid bond; signed form"
-    )
-    facts = normalize_option_facts({}, kit=get_decision_kit("rfp_bid"), source_text=text, option_name="Aurora RFP")
+    facts = normalize_option_facts({
+        "margin": {"value": "4.5%", "source": "user", "evidence": "expected margin 4.5%"},
+        "win_chance": {"value": "25%", "source": "user", "evidence": "win probability 25%"},
+        "contract_amount": {"value": "$60M", "source": "user", "evidence": "contract value $60M"},
+        "proposal_due_date": {"value": "November 14, 2026", "source": "user", "evidence": "submission deadline November 14, 2026"},
+        "team": {"value": ["Lee", "Morgan"], "source": "user", "evidence": "Pursuit team includes Lee and Morgan"},
+        "requirements": {"value": ["a bid bond", "signed form"], "source": "user", "evidence": "Mandatory requirements include a bid bond; signed form"},
+    }, kit=get_decision_kit("rfp_bid"))
 
     assert facts["margin_pct"] == {"value": 4.5, "source": "user", "evidence": "expected margin 4.5%"}
     assert facts["win_probability"]["value"] == 25
@@ -138,7 +140,7 @@ def test_natural_language_option_only_gate_applies_to_one_option(app):
     assert normalize_gates(raw, rubric, "bond unavailable", option_name="Option C")[0]["status"] == "fail"
 
 
-def test_explicit_gate_evidence_resolves_pass_fail_and_unknown_without_model_status(app):
+def test_gate_judgments_are_grounded_but_never_inferred_from_words(app):
     from app.decision_processing import normalize_gates
     rubric = {"approved_by_user_at": "now", "criteria": [
         {"key": "sbe", "label": "SBE participation", "gate": True, "gate_rule": "Reach 25% SBE participation"},
@@ -149,14 +151,65 @@ def test_explicit_gate_evidence_resolves_pass_fail_and_unknown_without_model_sta
         "We cannot reach 25% SBE participation. RegionalERP has never integrated with Epic. "
         "Insurance documentation is still under review."
     )
-    result = {gate["key"]: gate for gate in normalize_gates([], rubric, corpus)}
+    raw = [
+        {"key": "sbe", "status": "fail", "source": "conversation", "confidence": "medium", "evidence": ["We cannot reach 25% SBE participation."]},
+        {"key": "epic", "status": "fail", "source": "conversation", "confidence": "medium", "evidence": ["RegionalERP has never integrated with Epic."]},
+        {"key": "insurance", "status": "pass", "source": "conversation", "confidence": "medium", "evidence": ["invented quote"]},
+    ]
+    result = {gate["key"]: gate for gate in normalize_gates(raw, rubric, corpus)}
     assert result["sbe"]["status"] == "fail"
     assert result["sbe"]["evidence"] == ["We cannot reach 25% SBE participation."]
     assert result["epic"]["status"] == "fail"
     assert result["insurance"]["status"] == "unknown"
 
-    passed = normalize_gates([], rubric, "Workday has successfully integrated with Epic.")
+    passed = normalize_gates([{
+        "key": "epic", "status": "pass", "source": "conversation", "confidence": "medium",
+        "evidence": ["Workday has successfully integrated with Epic."],
+    }], rubric, "Workday has successfully integrated with Epic.")
     assert {gate["key"]: gate["status"] for gate in passed}["epic"] == "pass"
+    # Code does not reinterpret even strongly worded prose without a judgment.
+    assert {gate["key"]: gate["status"] for gate in normalize_gates([], rubric, corpus)} == {
+        "sbe": "unknown", "epic": "unknown", "insurance": "unknown",
+    }
+
+
+def test_typed_gate_fact_resolves_in_code_and_free_text_gate_is_not_cacheable(app):
+    from app.decision_processing import normalize_gates
+    from app.decision_state import canonical_decision_state, state_is_reusable
+
+    rubric = {"approval_status": "approved", "criteria": [
+        {
+            "key": "epic", "label": "Epic integration", "gate": True,
+            "gate_rule": "Integration verified", "fact_key": "epic_verified",
+            "pass_value": True,
+        },
+        {"key": "fit", "label": "Fit", "weight": 1.0},
+    ]}
+    attributes = {"epic_verified": {
+        "value": False, "source": "document", "evidence": "Integration record: not verified",
+    }}
+    result = normalize_gates(
+        [{"key": "epic", "status": "pass", "evidence": ["Integration record: not verified"]}],
+        rubric,
+        "Integration record: not verified",
+        attributes=attributes,
+    )
+    assert result[0]["status"] == "fail"
+    assert result[0]["basis"] == "Resolved from canonical fact epic_verified."
+    typed_state = canonical_decision_state(
+        option_key="vendor", attributes=attributes, rubric=rubric,
+        gates=rubric["criteria"],
+    )
+    assert state_is_reusable(typed_state) is True
+
+    prose_gate = {**rubric, "criteria": [
+        {"key": "epic", "label": "Epic integration", "gate": True, "gate_rule": "Integration verified"},
+        rubric["criteria"][1],
+    ]}
+    assert state_is_reusable(canonical_decision_state(
+        option_key="vendor", attributes=attributes, rubric=prose_gate,
+        gates=prose_gate["criteria"],
+    )) is False
 
 
 def test_model_overall_math_is_ignored_and_missing_values_stay_null(app, monkeypatch):
@@ -209,7 +262,10 @@ def test_unsupported_numeric_chat_claim_is_removed(app):
 
 def test_score_it_now_bypasses_first_turn_confirmation_when_rubric_is_ready(app):
     from app.routes import ai_agent as agent
-    ready = {"scoring_rubric": {"criteria": [{"key": "fit", "weight": 1}]}}
+    ready = {"scoring_rubric": {
+        "criteria": [{"key": "fit", "weight": 1}],
+        "approval_status": "proposed", "presented_at": "2026-10-06T00:00:00Z",
+    }}
     assert agent._guard_mutation_tool(
         "generate_scorecard", user_turn_count=1, mutations_this_turn=0,
         user_message="Score it now", session=ready,
@@ -232,17 +288,27 @@ def test_proposed_rubric_is_not_self_approved_and_same_turn_score_approves(app, 
     assert "approved_by_user_at" not in proposed["rubric"]
     assert proposed["rubric"]["source"] == "jaspen_proposed"
 
-    approved = agent._execute_mutation_tool(
+    unseen = agent._execute_mutation_tool(
         "set_scoring_rubric", {"criteria": criteria}, user=test_user,
         user_id=test_user.id, thread_id="rubric-approved", user_message="Score it now",
     )
-    assert approved["rubric"]["approval_status"] == "approved"
-    assert approved["rubric"]["approved_by_user_at"]
+    assert unseen["rubric"]["approval_status"] == "proposed"
+    assert "approved_by_user_at" not in unseen["rubric"]
+
+    shown_session = {}
+    agent._apply_rubric_action_to_session(shown_session, [{"result": unseen}])
+    assert shown_session["scoring_rubric"]["presented_at"]
+    assert agent._guard_mutation_tool(
+        "generate_scorecard", user_turn_count=2, mutations_this_turn=0,
+        user_message="Score it now", session=shown_session,
+    ) is None
+    approved = shown_session["scoring_rubric"]
+    assert approved["approval_status"] == "approved"
 
     session = {}
     monkeypatch.setattr(agent, "_execute_mutation_tool", lambda *a, **k: {
         "ok": True, "tool": "set_scoring_rubric",
-        "rubric": approved["rubric"],
+        "rubric": approved,
     })
     result, _ = agent._execute_local_tool(
         "set_scoring_rubric", {"criteria": criteria}, readiness={}, user=test_user,
@@ -314,3 +380,168 @@ def test_single_and_batch_use_identical_judge_contract_and_outputs(app, monkeypa
         return value
     for key in ("dimensions", "gates", "jaspen_score", "data_confidence", "recommendation"):
         assert stable(single[key]) == stable(batch[0][key])
+
+
+def test_paraphrases_and_approval_timestamps_have_one_decision_identity(app):
+    from app.decision_fingerprint import scoring_fingerprint
+    from app.decision_facts import normalize_option_facts
+    from app.decision_kits import get_decision_kit
+    from app.decision_state import canonical_decision_state
+
+    kit = get_decision_kit("rfp_bid")
+    a = normalize_option_facts({
+        "bonding_requirement": {
+            "value": None, "source": "user",
+            "evidence": "Surety has not yet confirmed whether it will bond this project.",
+        },
+    }, kit=kit)
+    b = normalize_option_facts({
+        "capacity_draw": {
+            "value": None, "source": "user",
+            "evidence": "We are waiting for the surety to tell us whether this job is bondable.",
+        },
+    }, kit=kit)
+    rubric_a = {"approval_status": "approved", "approved_by_user_at": "first", "criteria": [
+        {"key": "fit", "label": "Fit", "weight": 1.0},
+    ]}
+    rubric_b = {**rubric_a, "approved_by_user_at": "later"}
+    state_a = canonical_decision_state(
+        option_key="hospital", attributes=a, rubric=rubric_a, objective="balanced",
+        decision_kit="rfp_bid", decision_kit_version=1,
+    )
+    state_b = canonical_decision_state(
+        option_key="hospital", attributes=b, rubric=rubric_b, objective="balanced",
+        decision_kit="rfp_bid", decision_kit_version=1,
+    )
+    assert state_a == state_b
+    base = dict(
+        option_key="hospital", attributes=a, rubric=rubric_a, objective="balanced",
+        decision_kit="rfp_bid", decision_kit_version=1,
+    )
+    assert scoring_fingerprint(**base, evidence_corpus="Bond approval is pending.") == scoring_fingerprint(
+        **{**base, "attributes": b, "rubric": rubric_b},
+        evidence_corpus="Waiting for surety confirmation.",
+    )
+    changed = normalize_option_facts({
+        "capacity_draw": {"value": "$5M", "source": "user", "evidence": "Bond is $5M"},
+    }, kit=kit)
+    assert scoring_fingerprint(**base, evidence_corpus="a") != scoring_fingerprint(
+        **{**base, "attributes": changed}, evidence_corpus="b",
+    )
+
+
+def test_same_fingerprint_batch_reuses_judgment_without_model_call(app, monkeypatch):
+    from app.routes import strategy
+
+    calls = []
+    monkeypatch.setattr(strategy, "_strategy_generate_reply", lambda *a, **k: calls.append(1))
+    rubric = {"approval_status": "approved", "criteria": [
+        {"key": "fit", "label": "Fit", "weight": 1.0},
+    ]}
+    cached = {
+        "jaspen_score": 64,
+        "score_category": "Promising",
+        "dimensions": {"fit": {"score": 64, "confidence": "medium"}},
+        "gates": [],
+    }
+    cards, _summary, usage = strategy._generate_batch_scorecards(
+        None,
+        [{"name": "Workday", "option_key": "workday", "attributes": {
+            "cost": {"value": 10, "source": "user", "evidence": "Cost is 10"},
+        }}],
+        rubric=rubric,
+        llm_model="test",
+        return_usage=True,
+        reuse_lookup=lambda fingerprint, state: cached,
+    )
+    assert calls == []
+    assert cards[0]["jaspen_score"] == 64
+    assert cards[0]["reused_stored_result"] is True
+    assert usage["total_tokens"] == 0
+
+
+def test_explicit_assumption_affects_only_declared_criteria(app):
+    from app.decision_facts import apply_assumption_confidence_caps, normalize_option_facts
+
+    facts = normalize_option_facts({
+        "market_size": {
+            "value": 10, "source": "assumed", "evidence": "",
+            "basis": "working estimate", "bounds": [5, 15], "affects": ["growth"],
+        },
+    })
+    result = apply_assumption_confidence_caps({"dimensions": {
+        "growth": {"score": 80, "confidence": "high"},
+        "risk": {"score": 70, "confidence": "high"},
+    }}, facts)
+    assert result["dimensions"]["growth"]["confidence"] == "assumed"
+    assert result["dimensions"]["risk"]["confidence"] == "high"
+    assert result["assumption_register"][0]["basis"] == "working estimate"
+
+
+def test_score_intent_is_structured_and_unseen_rubric_is_not_approved(app):
+    from app.routes import ai_agent as agent
+
+    session = {"scoring_rubric": {
+        "approval_status": "proposed",
+        "criteria": [{"key": "fit", "weight": 1.0}],
+    }}
+    error = agent._guard_mutation_tool(
+        "generate_scorecard", user_turn_count=2, mutations_this_turn=0,
+        user_message="Score it now", session=session,
+    )
+    assert error["code"] == "rubric_approval_required"
+    assert session["scoring_intent"] == {"status": "requested", "source": "user"}
+    assert session["scoring_rubric"]["approval_status"] == "proposed"
+
+
+def test_general_and_rfp_use_the_same_state_schema_with_kit_as_overlay(app):
+    from app.decision_state import canonical_decision_state
+
+    common = dict(
+        option_key="workday",
+        attributes={"cost": {"value": 10, "source": "user", "evidence": "Cost is 10"}},
+        rubric={"approval_status": "approved", "criteria": [{"key": "fit", "weight": 1}]},
+        objective="cost",
+    )
+    general = canonical_decision_state(**common)
+    rfp = canonical_decision_state(**common, decision_kit="rfp_vendor_selection", decision_kit_version=1)
+    assert general.keys() == rfp.keys()
+    assert {key: value for key, value in general.items() if key != "decision_kit"} == {
+        key: value for key, value in rfp.items() if key != "decision_kit"
+    }
+    assert general["decision_kit"]["key"] is None
+    assert rfp["decision_kit"] == {"key": "rfp_vendor_selection", "version": 1}
+
+
+def test_canonical_judgment_is_reusable_across_sessions_and_org_members(db, test_user):
+    from werkzeug.security import generate_password_hash
+    from app.models import Organization, User
+    from app.scorecards import find_scorecard_by_fingerprint, upsert_scorecard
+
+    org = Organization(name="Decision Org", owner_user_id=test_user.id)
+    colleague = User(
+        email="colleague@example.com", name="Colleague",
+        password_hash=generate_password_hash("ValidPass1", method="pbkdf2:sha256"),
+        subscription_plan="free", credits_remaining=300, seat_limit=1, max_seats=1,
+    )
+    db.session.add_all([org, colleague])
+    db.session.flush()
+    upsert_scorecard(
+        user_id=test_user.id,
+        thread_id="source-session",
+        organization_id=org.id,
+        payload={
+            "id": "canonical-source",
+            "project_name": "Workday",
+            "jaspen_score": 64,
+            "decision_fingerprint": "same-state",
+            "decision_state_reusable": True,
+        },
+    )
+    db.session.commit()
+
+    found = find_scorecard_by_fingerprint(
+        colleague.id, "same-state", organization_id=org.id,
+    )
+    assert found is not None and found.thread_id == "source-session"
+    assert find_scorecard_by_fingerprint(colleague.id, "same-state") is None

@@ -15,53 +15,34 @@ def _quote_in_corpus(quote, corpus):
     return bool(quote and quote in corpus)
 
 
-_GATE_FAIL_RE = re.compile(
-    r"\b(?:cannot|can't|unable\s+to|never|does\s+not|doesn't|do\s+not|don't|"
-    r"not\s+(?:meet|met|satisfy|satisfied|comply|compliant|available|confirmed)|"
-    r"fails?|failed|lacks?|missing|unavailable|infeasible)\b",
-    re.I,
-)
-_GATE_PASS_RE = re.compile(
-    r"\b(?:can|able\s+to|meets?|met|satisf(?:y|ies|ied)|complies?|compliant|"
-    r"confirmed|feasible|has\s+(?:successfully\s+)?integrated|is\s+available|will\s+meet)\b",
-    re.I,
-)
-_GATE_STOPWORDS = {"the", "and", "for", "with", "must", "gate", "requirement", "required", "only", "option"}
-
-
-def _gate_terms(definition):
-    text = " ".join(str((definition or {}).get(key) or "") for key in ("key", "label", "gate_rule", "description"))
-    return {
-        word for word in re.findall(r"[a-z0-9%]+", text.lower())
-        if len(word) > 2 and word not in _GATE_STOPWORDS
-    }
-
-
-def _grounded_gate_evidence(item, definition, corpus):
-    supplied = [
+def _grounded_gate_evidence(item, corpus):
+    """Verify a judge's citations without interpreting their language."""
+    return [
         str(value).strip() for value in ((item or {}).get("evidence") or [])
         if _quote_in_corpus(value, corpus)
     ]
-    if supplied:
-        return supplied
-    terms = _gate_terms(definition)
-    if not terms:
-        return []
-    candidates = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", str(corpus or "")) if part.strip()]
-    for sentence in candidates:
-        sentence_terms = set(re.findall(r"[a-z0-9%]+", sentence.lower()))
-        if terms & sentence_terms and (_GATE_FAIL_RE.search(sentence) or _GATE_PASS_RE.search(sentence)):
-            return [sentence]
-    return []
 
 
-def _deterministic_gate_status(evidence):
-    text = " ".join(str(value or "") for value in evidence)
-    if _GATE_FAIL_RE.search(text):
-        return "fail"
-    if _GATE_PASS_RE.search(text):
-        return "pass"
-    return "unknown"
+def _structured_gate_result(definition, attributes):
+    """Resolve an explicitly configured typed fact without reading prose."""
+    fact_key = str((definition or {}).get("fact_key") or "").strip()
+    if not fact_key:
+        return None
+    entry = (attributes or {}).get(fact_key)
+    if not isinstance(entry, dict) or entry.get("value") is None:
+        return None
+    source = str(entry.get("source") or "").lower()
+    if source == "assumed":
+        return None
+    expected = definition.get("pass_value", True)
+    status = "pass" if entry.get("value") == expected else "fail"
+    return {
+        "status": status,
+        "evidence": [str(entry.get("evidence"))] if entry.get("evidence") else [],
+        "confidence": "medium" if source == "user" else "high",
+        "source": source or "user",
+        "basis": f"Resolved from canonical fact {fact_key}.",
+    }
 
 
 def _gate_applies(item, option_key=None, option_name=None):
@@ -94,9 +75,10 @@ def _gate_applies(item, option_key=None, option_name=None):
     )
 
 
-def normalize_gates(raw_gates, rubric, evidence_corpus="", option_key=None, option_name=None):
+def normalize_gates(raw_gates, rubric, evidence_corpus="", option_key=None, option_name=None, attributes=None):
     criteria = (rubric or {}).get("criteria") if isinstance((rubric or {}).get("criteria"), list) else []
-    approved = bool((rubric or {}).get("approved_by_user_at"))
+    from .decision_state import rubric_is_approved
+    approved = rubric_is_approved(rubric)
     option_key = str(option_key or "").strip()
     definitions = {
         str(item.get("key")): item
@@ -118,11 +100,23 @@ def normalize_gates(raw_gates, rubric, evidence_corpus="", option_key=None, opti
     normalized = []
     for key, definition in definitions.items():
         item = supplied.get(key) or {}
-        evidence = _grounded_gate_evidence(item, definition, evidence_corpus)
+        structured = _structured_gate_result(definition, attributes)
+        evidence = _grounded_gate_evidence(item, evidence_corpus)
         source = str(item.get("source") or ("user" if evidence else "assumed")).lower()
         confidence = str(item.get("confidence") or ("medium" if evidence else "assumed")).lower()
-        status = _deterministic_gate_status(evidence)
-        if status != "unknown" and source == "assumed":
+        judged_status = str(item.get("status") or "unknown").lower()
+        # The model owns semantic judgment; code owns grounding. A PASS/FAIL
+        # without a verified citation is demoted to UNKNOWN. No word list or
+        # substring rule is allowed to manufacture semantic meaning.
+        status = judged_status if judged_status in {"pass", "fail"} and evidence else "unknown"
+        basis = item.get("basis") or item.get("rationale") or None
+        if structured:
+            status = structured["status"]
+            evidence = structured["evidence"]
+            confidence = structured["confidence"]
+            source = structured["source"]
+            basis = structured["basis"]
+        elif source == "assumed":
             status = "unknown"
         normalized.append({
             "key": key,
@@ -130,7 +124,7 @@ def normalize_gates(raw_gates, rubric, evidence_corpus="", option_key=None, opti
             "rule": definition.get("gate_rule") or definition.get("description") or "",
             "status": status,
             "evidence": evidence,
-            "basis": item.get("basis") or item.get("rationale") or None,
+            "basis": basis,
             "confidence": confidence,
             "source": source,
         })
@@ -164,6 +158,7 @@ def apply_decision_kit(scorecard, *, decision_kit=None, decision_kit_version=Non
         evidence_corpus,
         option_key=output.get("option_key"),
         option_name=output.get("project_name") or output.get("initiative_name") or output.get("name"),
+        attributes=output.get("attributes"),
     )
     inputs_hash = recommendation_inputs_fingerprint(output, kit)
     existing = output.get("recommendation") if isinstance(output.get("recommendation"), dict) else None

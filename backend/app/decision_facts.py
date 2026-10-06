@@ -156,10 +156,14 @@ def normalize_fact_entry(key, raw, *, kit=None, default_source="user", default_e
         raise ValueError(f"Invalid value for {canonical}")
     evidence = str(entry.get("evidence") or default_evidence or "").strip()
     result = {"value": value, "source": source, "evidence": evidence}
+    for provenance_key in ("source_id", "locator"):
+        if entry.get(provenance_key) not in (None, ""):
+            result[provenance_key] = entry.get(provenance_key)
     if source == "assumed":
         result["assumption"] = {
             "basis": str(entry.get("basis") or entry.get("assumption_basis") or "").strip() or None,
             "bounds": entry.get("bounds"),
+            "affects": [str(item) for item in (entry.get("affects") or []) if str(item).strip()],
         }
     if definitions.get(canonical, {}).get("unit"):
         result["unit"] = definitions[canonical]["unit"]
@@ -255,7 +259,7 @@ def normalize_option_facts(
     *,
     kit=None,
     source_text="",
-    extract=True,
+    extract=False,
     option_name=None,
     rejected_fields=None,
 ):
@@ -282,6 +286,9 @@ def normalize_option_facts(
                 })
             continue
         normalized[canonical] = entry
+    # Legacy deterministic extraction is opt-in only. Production scoring gets
+    # candidates from the governed AI/tool extraction boundary, then validates
+    # them here. Phrase matching must never define canonical meaning.
     if extract:
         for key, value, evidence in extract_candidate_facts(source_text, kit):
             canonical, entry = normalize_fact_entry(
@@ -302,7 +309,7 @@ def apply_assumption_confidence_caps(scorecard, attributes, kit=None):
         if not isinstance(entry, dict) or entry.get("source") != "assumed":
             continue
         definition = definitions.get(key, {})
-        impacts = definition.get("affects") or []
+        impacts = (entry.get("assumption") or {}).get("affects") or definition.get("affects") or []
         affected.update(str(item) for item in impacts)
         assumptions.append({
             "field": key,

@@ -707,6 +707,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
     "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the shared scoring system, which evaluates every option against the same criteria and builds the trade-off comparison. After calling it, state only that all N were queued (name them if there are only a few). Do not promise that cards were created; the scoring operation reports success or a retryable failure separately. If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead. "
     "HARD RULE — multi-option requests ALWAYS batch: if the user gave two or more options to compare, you MUST use queue_scorecards for the whole set. NEVER score them one at a time with generate_scorecard, and NEVER abandon the batch midway to 'use the standard approach' — that produces a single card on the generic default rubric and breaks the comparison. If the user also gave their own criteria/weights, call set_scoring_rubric FIRST so the batch is scored on THEIR rubric, not the generic default. Only fall back to the generic default dimensions when the user has given no criteria and explicitly wants a quick score.\n"
+    "CANONICAL FACTS BEFORE SCORING: Semantically normalize user evidence into canonical fields before a score call. For one option, call set_option_attributes before generate_scorecard. For a batch, include each option's canonical attributes in its queue_scorecards item. Equivalent paraphrases must yield the same field/value/source. Preserve unknown values as null, label assumptions with basis/bounds/affected criteria, and never invent a value. Do not depend on literal keywords or copy prose into a numeric field.\n"
     "BATCH SIZE — Queue ALL requested options in one queue_scorecards call. Provider concurrency is handled automatically; never ask the user to continue a batch.\n"
     "NEW IDEAS MID-CONVERSATION: When the user introduces a NEW option AFTER others have already been scored in this thread (e.g. 'what about a hybrid plan?', 'add Denver', 'also compare Vendor X'), treat it exactly like the original ideas: score it against the SAME existing rubric (queue_scorecards for one or more new ones, or generate_scorecard for a single one) so it is added to the running set and stacked into the trade-off comparison alongside the others. Never start over or drop the earlier ideas — the comparison grows. Confirm a score exists only after scoring succeeds.\n"
     "NEVER narrate tool-call mechanics to the user. Do not mention internal tool names, field names (e.g. 'idea_description'), or error codes. If scoring fails, give the concise saved-message failure state and Retry action supplied by the system. The user should never see the plumbing.\n"
@@ -3176,8 +3177,13 @@ def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn, use
     rubric = (session or {}).get("scoring_rubric") if isinstance(session, dict) else None
     rubric_ready = bool(isinstance(rubric, dict) and rubric.get("criteria"))
     score_tool = str(tool_name or "").strip() in {"generate_scorecard", "queue_scorecards"}
-    if score_tool and rubric_ready and not rubric.get("approved_by_user_at"):
-        if explicit_score:
+    from ..decision_state import rubric_is_approved
+    if score_tool and explicit_score and isinstance(session, dict):
+        session["scoring_intent"] = {"status": "requested", "source": "user"}
+    if score_tool and rubric_ready and not rubric_is_approved(rubric):
+        # "Score it now" accepts the exact rubric the user has already seen.
+        # It cannot approve criteria silently created during this same turn.
+        if explicit_score and rubric.get("presented_at"):
             rubric["approved_by_user_at"] = _iso_now()
             rubric["approval_status"] = "approved"
             rubric["source"] = "user"
@@ -4348,11 +4354,12 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
     if mutation_guard:
         return mutation_guard, mutations_this_turn
 
+    from ..decision_state import rubric_is_approved
     if (
         str(tool_name or "").strip() in {"generate_scorecard", "queue_scorecards"}
         and isinstance(session, dict)
         and isinstance(session.get("scoring_rubric"), dict)
-        and session["scoring_rubric"].get("approved_by_user_at")
+        and rubric_is_approved(session["scoring_rubric"])
     ):
         try:
             sessions = load_user_sessions(user_id) or {}
@@ -5385,7 +5392,7 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
             },
             {
                 "name": "set_option_attributes",
-                "description": "Store structured facts for one option with provenance. Use only values explicitly stated by the user or present in an uploaded document. This does not change scores; an existing scored option is marked for holistic re-score.",
+                "description": "Semantically extract and store canonical structured facts for one option with provenance. Equivalent paraphrases must produce the same field/value/source; do not copy wording into identity. Use only values explicitly stated by the user, supported by a document, or clearly labeled as assumptions. This does not change scores; an existing scored option is marked for holistic re-score.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -5399,7 +5406,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                                     "key": {"type": "string"},
                                     "value": {},
                                     "source": {"type": "string", "enum": ["user", "document", "assumed"]},
-                                    "evidence": {"type": "string"}
+                                    "evidence": {"type": "string"},
+                                    "basis": {"type": "string"},
+                                    "bounds": {},
+                                    "affects": {"type": "array", "items": {"type": "string"}}
                                 },
                                 "required": ["key", "value", "source", "evidence"],
                                 "additionalProperties": False
@@ -5849,12 +5859,17 @@ def _refresh_decision_record_after_score(user, thread_id):
         return None
 
 
-def _rubric_approval_from_message(message, criteria=None):
+def _rubric_approval_from_message(message, criteria=None, existing_rubric=None):
     text = str(message or "").strip().lower()
-    if re.search(r"\b(?:approve|approved|looks good|use (?:this|that|the) rubric|accept (?:this|that|the) rubric|score it now|score them now|proceed)\b", text):
-        return True
     labels = [str(item.get("label") or "").strip().lower() for item in (criteria or []) if isinstance(item, dict)]
-    return bool(len([label for label in labels if label and label in text]) >= 2 and re.search(r"\d+(?:\.\d+)?\s*%", text))
+    if len([label for label in labels if label and label in text]) >= 2 and re.search(r"\d+(?:\.\d+)?\s*%", text):
+        return True
+    if not re.search(r"\b(?:approve|approved|looks good|use (?:this|that|the) rubric|accept (?:this|that|the) rubric)\b", text):
+        return False
+    if not isinstance(existing_rubric, dict) or not existing_rubric.get("presented_at"):
+        return False
+    from ..decision_state import rubric_identity
+    return rubric_identity(existing_rubric)["criteria"] == rubric_identity({"criteria": criteria})["criteria"]
 
 
 def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None, user_message=""):
@@ -5990,7 +6005,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         for c in criteria:
             c["weight"] = 0.0 if c.get("gate") else round(c["weight"] / total, 4)
 
-        user_approved = _rubric_approval_from_message(user_message, criteria)
+        sessions = load_user_sessions(user_id) or {}
+        _key, _sess = _resolve_user_session(sessions, thread_id)
+        existing_rubric = _sess.get("scoring_rubric") if isinstance(_sess, dict) and isinstance(_sess.get("scoring_rubric"), dict) else None
+        user_approved = _rubric_approval_from_message(user_message, criteria, existing_rubric)
         rubric_obj = {
             "criteria": criteria,
             "source": "user" if user_approved else "jaspen_proposed",
@@ -6006,10 +6024,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # rubric onto the durable session object it saves at end of turn (see
         # _apply_rubric_action_to_session), so the rubric survives either way.
         try:
-            sessions = load_user_sessions(user_id) or {}
-            _key, _sess = _resolve_user_session(sessions, thread_id)
             if isinstance(_sess, dict):
                 _sess["scoring_rubric"] = rubric_obj
+                sessions[_key or thread_id] = _sess
                 save_user_sessions(user_id, sessions)
         except Exception:
             current_app.logger.exception("set_scoring_rubric best-effort persist failed")
@@ -6165,7 +6182,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             locked = bool(it.get("locked") or it.get("is_locked") or it.get("required") or it.get("anchor"))
             stored_attributes = (_queue_session.get("option_attributes") or {}).get(_normalized_option_identity(name))
             attributes = dict(it.get("attributes") or stored_attributes or {})
-            queue.append({"name": name, "description": desc, "locked": locked, "option_key": str(it.get("option_key") or f"opt_{uuid.uuid4().hex[:12]}"), "attributes": attributes})
+            from ..decision_state import stable_option_identity
+            queue.append({"name": name, "description": desc, "locked": locked, "option_key": stable_option_identity(it.get("option_key"), name), "attributes": attributes})
         if not queue:
             current_app.logger.warning("queue_scorecards: no valid names parsed from: %r", tool_input)
             return _tool_error("Each idea needs a name.", code="invalid_queue")
@@ -6301,10 +6319,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             rejected_store[option_identity] = rejected_fields
             session["rejected_option_attributes"] = rejected_store
             current_app.logger.warning("Rejected %d non-canonical fact(s) while scoring option %s", len(rejected_fields), option_identity)
-        option_key = str(
+        from ..decision_state import (
+            canonical_decision_state,
+            stable_option_identity,
+            state_is_reusable,
+        )
+        option_key = stable_option_identity(
             (rescore_target or {}).get("option_key")
-            or tool_input.get("option_key")
-            or f"opt_{uuid.uuid4().hex[:12]}"
+            or tool_input.get("option_key"),
+            requested_name,
         )
         metrics = calculate_metrics(attributes, kit.get("metrics"), context=session.get("kit_context")) if kit else {}
         decision_fp = scoring_fingerprint(
@@ -6316,6 +6339,17 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             decision_kit_version=decision_kit_version,
             evidence_corpus=scoped_evidence_corpus,
             facts_text=idea_description,
+            option_name=requested_name,
+        )
+        decision_state = canonical_decision_state(
+            option_key=option_key,
+            option_name=requested_name,
+            attributes=attributes,
+            rubric=rubric,
+            objective=strategy_objective,
+            gates=(rubric or {}).get("criteria") or [],
+            decision_kit=decision_kit,
+            decision_kit_version=decision_kit_version,
         )
         if rescore_id and isinstance(rescore_target, dict) and rescore_target.get("decision_fingerprint") == decision_fp:
             _audit_ai_agent_event(
@@ -6334,9 +6368,40 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "reused_stored_result": True,
                 "credits_charged": 0,
             })
-        client = get_llm_client()
-        try:
-            scorecard_payload, provider_usage, ai_settlement = execute_customer_operation(
+        from ..scorecards import find_scorecard_by_fingerprint
+        reuse_row = None
+        if state_is_reusable(decision_state):
+            reuse_row = find_scorecard_by_fingerprint(
+                user_id,
+                decision_fp,
+                organization_id=(session.get("organization_id") or getattr(user, "active_organization_id", None)),
+            )
+        reused_source_id = str(reuse_row.id) if reuse_row is not None else None
+        if reuse_row is not None:
+            scorecard_payload = dict(reuse_row.data or {})
+            for identity_field in (
+                "id", "analysis_id", "evaluation_id", "thread_id", "project_name",
+                "name", "label", "timestamp", "createdAt", "meta",
+            ):
+                scorecard_payload.pop(identity_field, None)
+            provider_usage = {
+                "provider": "canonical_cache", "model": None, "model_type": "reuse",
+                "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+            }
+            ai_settlement = {"charged_credits": 0, "reserved_credits": 0}
+            _audit_ai_agent_event(
+                "scorecard.reused_stored_result",
+                target_user_id=user_id,
+                details={
+                    "thread_id": thread_id,
+                    "source_scorecard_id": reused_source_id,
+                    "decision_fingerprint": decision_fp,
+                },
+            )
+        else:
+            client = get_llm_client()
+            try:
+                scorecard_payload, provider_usage, ai_settlement = execute_customer_operation(
                 user,
                 generate=lambda: _generate_jaspen_scorecard(
                     client,
@@ -6370,12 +6435,12 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 model_type=model_selection["model_type"],
                 max_tokens=4000,
                 thread_id=thread_id,
-            )
-        except AIOperationPaymentRequired as payment_error:
-            return _tool_error(
-                str((payment_error.payload or {}).get("error") or "Thinking Power exhausted."),
-                code="thinking_power_exhausted",
-            )
+                )
+            except AIOperationPaymentRequired as payment_error:
+                return _tool_error(
+                    str((payment_error.payload or {}).get("error") or "Thinking Power exhausted."),
+                    code="thinking_power_exhausted",
+                )
 
         provider_usage = dict(provider_usage or {})
         provider_usage.setdefault("provider", "anthropic")
@@ -6386,7 +6451,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             user,
             thread_id=thread_id,
             endpoint="generate_scorecard",
-            operation_type="score_next",
+            operation_type="score_reuse" if reused_source_id else "score_next",
             usage=provider_usage,
             reserved_credits=0,
             settled_credits=int(ai_settlement.get("charged_credits") or 0),
@@ -6418,6 +6483,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "_evidence_corpus": evidence_corpus,
             "_force_recommendation": True,
             "decision_fingerprint": decision_fp,
+            "canonical_judgment_id": decision_fp,
+            "decision_state": decision_state,
+            "decision_state_reusable": state_is_reusable(decision_state),
             "timestamp": generated_at,
             "createdAt": generated_at,
             "label": requested_name,
@@ -6427,12 +6495,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "source": "ai_tool",
                 "tool": "generate_scorecard",
                 "model_type": model_selection["model_type"],
+                "reused_source_scorecard_id": reused_source_id,
             },
         }
 
         if decision_kit:
             scorecard = _normalize_scorecard_payload(scorecard)
             scorecard["decision_fingerprint"] = decision_fp
+            scorecard["canonical_judgment_id"] = decision_fp
             scorecard["facts_changed"] = False
 
         # RE-SCORE IN PLACE: when the user edits the OPEN idea in a way that
@@ -6496,11 +6566,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             if isinstance(updated, dict):
                 keep_id = str(updated.get("id") or updated.get("analysis_id") or rescore_id)
                 upsert_scorecard(
-                    analysis_pass=True,   # a real scoring pass: may write ledger events
+                    analysis_pass=not bool(reused_source_id),
                     user_id=user_id,
                     thread_id=thread_id,
                     payload=updated,
-                    organization_id=session.get("organization_id"),
+                    organization_id=session.get("organization_id") or getattr(user, "active_organization_id", None),
                     session_id=session.get("session_id") or thread_id,
                     evaluation_id=evaluation_id,
                     source="score_next_rescore",
@@ -6529,14 +6599,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
 
         try:
             upsert_scorecard(
-                analysis_pass=True,   # a real scoring pass: may write ledger events
+                analysis_pass=not bool(reused_source_id),
                 user_id=user_id,
                 thread_id=thread_id,
                 payload=scorecard,
-                organization_id=session.get("organization_id"),
+                organization_id=session.get("organization_id") or getattr(user, "active_organization_id", None),
                 session_id=session.get("session_id") or thread_id,
                 evaluation_id=evaluation_id,
-                source="score_next",
+                source="score_reuse" if reused_source_id else "score_next",
             )
             db.session.commit()
         except Exception:
@@ -9733,7 +9803,10 @@ def _apply_rubric_action_to_session(session, actions):
         if tool == "set_scoring_rubric":
             rubric = result.get("rubric")
             if isinstance(rubric, dict) and isinstance(rubric.get("criteria"), list):
-                session["scoring_rubric"] = rubric
+                durable_rubric = dict(rubric)
+                if durable_rubric.get("approval_status") == "proposed":
+                    durable_rubric["presented_at"] = _iso_now()
+                session["scoring_rubric"] = durable_rubric
         elif tool == "set_option_attributes":
             option = _normalized_option_identity(result.get("option"))
             fields = result.get("option_attributes")

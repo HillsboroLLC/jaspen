@@ -1,24 +1,24 @@
-"""Stable decision-input fingerprints for stored-result reuse."""
+"""Compatibility wrapper around the shared canonical decision state."""
 
-import hashlib
-import json
+from .decision_state import canonical_decision_state, decision_state_fingerprint
 
 
-def scoring_fingerprint(*, option_key, attributes, rubric, objective, decision_kit, decision_kit_version, evidence_corpus, facts_text=None):
-    criteria = []
-    for item in ((rubric or {}).get("criteria") or []):
-        if not isinstance(item, dict):
-            continue
-        criteria.append({key: item.get(key) for key in ("key", "label", "weight", "is_risk", "group", "description", "gate", "gate_rule")})
-    canonical = {
-        "option_key": str(option_key or ""),
-        "attributes": attributes if isinstance(attributes, dict) else {},
-        "facts_text": None if decision_kit else str(facts_text or ""),
-        "rubric": {"criteria": criteria, "approved_by_user_at": (rubric or {}).get("approved_by_user_at")},
-        "objective": str(objective or "balanced"),
-        "decision_kit": decision_kit,
-        "decision_kit_version": decision_kit_version,
-        "evidence_corpus": str(evidence_corpus or ""),
-    }
-    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str)
-    return hashlib.sha256(encoded.encode()).hexdigest()
+def scoring_fingerprint(
+    *, option_key, attributes, rubric, objective, decision_kit,
+    decision_kit_version, evidence_corpus=None, facts_text=None,
+    option_name=None, canonical_evidence=None, gates=None,
+):
+    # Raw prose is intentionally excluded. The extraction layer must turn any
+    # material semantic change into validated facts/evidence before scoring.
+    state = canonical_decision_state(
+        option_key=option_key,
+        option_name=option_name,
+        attributes=attributes,
+        rubric=rubric,
+        objective=objective,
+        gates=gates or ((rubric or {}).get("criteria") or []),
+        decision_kit=decision_kit,
+        decision_kit_version=decision_kit_version,
+        canonical_evidence=canonical_evidence,
+    )
+    return decision_state_fingerprint(state)

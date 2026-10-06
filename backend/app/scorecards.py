@@ -147,6 +147,29 @@ def list_scorecard_rows(user_id, *, thread_id=None, include_archived=False):
     return query.order_by(Scorecard.created_at.asc(), Scorecard.id.asc()).all()
 
 
+def find_scorecard_by_fingerprint(user_id, fingerprint, *, organization_id=None):
+    """Find a reusable canonical judgment within its declared custody ring."""
+    fingerprint = str(fingerprint or "").strip()
+    if not fingerprint:
+        return None
+    if organization_id:
+        query = Scorecard.query.filter_by(
+            organization_id=str(organization_id), archived_at=None,
+        )
+    else:
+        query = Scorecard.query.filter_by(
+            user_id=str(user_id), archived_at=None,
+        )
+    for row in query.order_by(Scorecard.updated_at.desc()).all():
+        payload = row.data if isinstance(row.data, dict) else {}
+        if (
+            payload.get("decision_fingerprint") == fingerprint
+            and payload.get("decision_state_reusable") is True
+        ):
+            return row
+    return None
+
+
 def _legacy_scorecards(session, thread_data, thread_id):
     candidates = []
     session = session if isinstance(session, dict) else {}
