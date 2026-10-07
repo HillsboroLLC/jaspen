@@ -32,7 +32,11 @@ def _fake_reply_factory(calls, delay=0.0, fail=()):
         if name in fail:
             raise RuntimeError('provider failed')
         score = SCORES[name]
-        dims = {key: {'score': score, 'confidence': 'medium', 'rationale': 'r'} for key in ('fit', 'speed')}
+        evidence = f'{name} has documented fit and speed.'
+        dims = {
+            key: {'score': score, 'confidence': 'medium', 'rationale': 'Grounded.', 'evidence': [evidence]}
+            for key in ('fit', 'speed')
+        }
         usage = {'input_tokens': 10, 'output_tokens': 5, 'total_tokens': 15, 'provider': 'anthropic', 'model': 'm'}
         return json.dumps({'name': name, 'primary_role': f'role-{name}', 'dimensions': dims}), usage
 
@@ -54,6 +58,7 @@ def test_each_option_is_scored_in_its_own_concurrent_call(app, monkeypatch):
         cards, summary, usage = strategy._generate_batch_scorecards(
             None, [{'name': n} for n in names], rubric=RUBRIC,
             model_selection={'model_type': 'orbit'}, return_usage=True,
+            evidence_corpus=' '.join(f'{n} has documented fit and speed.' for n in names),
         )
         elapsed = time.monotonic() - started
 
@@ -74,6 +79,7 @@ def test_a_failed_option_keeps_the_others_aligned(app, monkeypatch):
         cards, _summary, _usage = strategy._generate_batch_scorecards(
             None, [{'name': n} for n in names], rubric=RUBRIC,
             model_selection={'model_type': 'orbit'}, return_usage=True,
+            evidence_corpus=' '.join(f'{n} has documented fit and speed.' for n in names),
         )
 
     assert [card['primary_role'] if card else None for card in cards] == [
@@ -92,6 +98,7 @@ def test_seven_options_automatically_drain_bounded_concurrency(app, monkeypatch)
         cards, summary, usage = strategy._generate_batch_scorecards(
             None, [{'name': n} for n in names], rubric=RUBRIC,
             model_selection={'model_type': 'orbit'}, return_usage=True,
+            evidence_corpus=' '.join(f'{n} has documented fit and speed.' for n in names),
         )
     assert sorted(calls) == sorted(names)
     assert [card['primary_role'] for card in cards] == [f'role-{n}' for n in names]

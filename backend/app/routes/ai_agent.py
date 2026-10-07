@@ -6009,6 +6009,34 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         _key, _sess = _resolve_user_session(sessions, thread_id)
         existing_rubric = _sess.get("scoring_rubric") if isinstance(_sess, dict) and isinstance(_sess.get("scoring_rubric"), dict) else None
         user_approved = _rubric_approval_from_message(user_message, criteria, existing_rubric)
+        from ..decision_state import rubric_identity, rubric_is_approved
+        same_as_existing = bool(
+            isinstance(existing_rubric, dict)
+            and rubric_identity(existing_rubric)["criteria"] == rubric_identity({"criteria": criteria})["criteria"]
+        )
+        if rubric_is_approved(existing_rubric) and not user_approved:
+            proposal = {
+                "criteria": criteria,
+                "source": "jaspen_proposed",
+                "created_at": _iso_now(),
+                "approval_status": "proposed",
+            }
+            if isinstance(_sess, dict) and not same_as_existing:
+                _sess["rubric_proposal"] = proposal
+                sessions[_key or thread_id] = _sess
+                save_user_sessions(user_id, sessions)
+            return {
+                "ok": True,
+                "tool": tool_name,
+                "rubric": existing_rubric,
+                "proposed_rubric": None if same_as_existing else proposal,
+                "approved_rubric_preserved": True,
+                "confirmation": (
+                    "The approved scoring rubric remains unchanged."
+                    if same_as_existing
+                    else "I saved the suggested rubric separately. The approved scoring rubric remains unchanged until you explicitly replace it."
+                ),
+            }
         rubric_obj = {
             "criteria": criteria,
             "source": "user" if user_approved else "jaspen_proposed",
@@ -6055,6 +6083,17 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not isinstance(session, dict):
             return _tool_error("Thread not found.", code="thread_not_found")
         kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version")) if session.get("decision_kit") else None
+        target_id = str(tool_input.get("scorecard_id") or view_active_scorecard_id or "").strip()
+        target_card = next((
+            card for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+            if str(card.get("id") or card.get("analysis_id") or "").strip() == target_id
+        ), None) if target_id else None
+        from ..decision_state import resolve_option_key, store_option_attributes
+        option_key = resolve_option_key(
+            session,
+            option,
+            authoritative_key=(target_card or {}).get("option_key"),
+        )
         corpus = _thread_user_corpus(user_id, thread_id)
         normalized = {}
         rejected_fields = []
@@ -6083,9 +6122,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             error["rejected_fields"] = rejected_fields
             return error
         option_identity = _normalized_option_identity(option)
-        option_store = session.get("option_attributes") if isinstance(session.get("option_attributes"), dict) else {}
-        option_store[option_identity] = {**(option_store.get(option_identity) or {}), **normalized}
-        session["option_attributes"] = option_store
+        store_option_attributes(session, option_key, normalized, option)
         if rejected_fields:
             rejected_store = session.get("rejected_option_attributes") if isinstance(session.get("rejected_option_attributes"), dict) else {}
             rejected_store[option_identity] = rejected_fields
@@ -6095,7 +6132,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         sessions[session_key or thread_id] = session
         save_user_sessions(user_id, sessions)
 
-        target_id = str(tool_input.get("scorecard_id") or view_active_scorecard_id or "").strip()
         updated = None
         if target_id:
             from .strategy import apply_scorecard_edit_in_place
@@ -6103,7 +6139,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             def _apply(card):
                 current = dict(card.get("attributes") or {})
                 current.update(normalized)
-                merged = {**card, "attributes": current, "facts_changed": True}
+                merged = {**card, "option_key": option_key, "attributes": current, "facts_changed": True}
                 if session.get("decision_kit"):
                     kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
                     merged["metrics"] = calculate_metrics(current, kit.get("metrics"), context=session.get("kit_context"))
@@ -6112,6 +6148,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         return _tool_success({
             "tool": tool_name,
             "option": option,
+            "option_key": option_key,
             "option_attributes": normalized,
             "rejected_fields": rejected_fields,
             "updated_scorecard": updated,
@@ -6180,10 +6217,16 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 or it.get("notes") or it.get("rationale") or it.get("desc") or ""
             ).strip() or name
             locked = bool(it.get("locked") or it.get("is_locked") or it.get("required") or it.get("anchor"))
-            stored_attributes = (_queue_session.get("option_attributes") or {}).get(_normalized_option_identity(name))
+            from ..decision_state import option_attributes, resolve_option_key, store_option_attributes
+            registry = _queue_session.get("option_registry") if isinstance(_queue_session.get("option_registry"), dict) else {}
+            claimed_key = str(it.get("option_key") or "").strip()
+            authoritative_key = claimed_key if claimed_key in registry else None
+            option_key = resolve_option_key(_queue_session, name, authoritative_key=authoritative_key)
+            stored_attributes = option_attributes(_queue_session, option_key, name)
             attributes = dict(it.get("attributes") or stored_attributes or {})
-            from ..decision_state import stable_option_identity
-            queue.append({"name": name, "description": desc, "locked": locked, "option_key": stable_option_identity(it.get("option_key"), name), "attributes": attributes})
+            if attributes:
+                store_option_attributes(_queue_session, option_key, attributes, name)
+            queue.append({"name": name, "description": desc, "locked": locked, "option_key": option_key, "attributes": attributes})
         if not queue:
             current_app.logger.warning("queue_scorecards: no valid names parsed from: %r", tool_input)
             return _tool_error("Each idea needs a name.", code="invalid_queue")
@@ -6197,6 +6240,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             _key, _sess = _resolve_user_session(sessions, thread_id)
             if isinstance(_sess, dict):
                 _sess["scorecard_queue"] = queue
+                for key in ("option_registry", "option_aliases", "option_attributes_by_key", "option_attributes"):
+                    if isinstance(_queue_session.get(key), dict):
+                        _sess[key] = _queue_session[key]
                 # Clear overflow left by earlier versions; this queue is complete.
                 _sess["scorecard_queue_overflow"] = overflow
                 save_user_sessions(user_id, sessions)
@@ -6208,6 +6254,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "ok": True,
             "tool": tool_name,
             "queue": queue,
+            "option_registry": _queue_session.get("option_registry", {}),
+            "option_aliases": _queue_session.get("option_aliases", {}),
+            "option_attributes_by_key": _queue_session.get("option_attributes_by_key", {}),
+            "option_attributes": _queue_session.get("option_attributes", {}),
             "queued_count": len(queue),
             "overflow_count": len(overflow),
             "confirmation": confirmation,
@@ -6295,7 +6345,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         scoped_evidence_corpus = option_fact_text(
             evidence_corpus, requested_name, known_option_names
         ) or evidence_corpus
-        stored_by_name = (session.get("option_attributes") or {}).get(_normalized_option_identity(requested_name)) if isinstance(session.get("option_attributes"), dict) else {}
+        from ..decision_state import option_attributes, resolve_option_key, store_option_attributes
+        option_key = resolve_option_key(
+            session,
+            requested_name,
+            authoritative_key=(rescore_target or {}).get("option_key"),
+            allow_single_pending=not bool(rescore_target),
+        )
+        stored_by_name = option_attributes(session, option_key, requested_name)
         attributes = dict(
             (rescore_target or {}).get("attributes")
             or tool_input.get("attributes")
@@ -6311,9 +6368,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             rejected_fields=rejected_fields,
         )
         option_identity = _normalized_option_identity(requested_name)
-        option_store = session.get("option_attributes") if isinstance(session.get("option_attributes"), dict) else {}
-        option_store[option_identity] = attributes
-        session["option_attributes"] = option_store
+        store_option_attributes(session, option_key, attributes, requested_name)
         if rejected_fields:
             rejected_store = session.get("rejected_option_attributes") if isinstance(session.get("rejected_option_attributes"), dict) else {}
             rejected_store[option_identity] = rejected_fields
@@ -6321,13 +6376,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             current_app.logger.warning("Rejected %d non-canonical fact(s) while scoring option %s", len(rejected_fields), option_identity)
         from ..decision_state import (
             canonical_decision_state,
-            stable_option_identity,
             state_is_reusable,
-        )
-        option_key = stable_option_identity(
-            (rescore_target or {}).get("option_key")
-            or tool_input.get("option_key"),
-            requested_name,
         )
         metrics = calculate_metrics(attributes, kit.get("metrics"), context=session.get("kit_context")) if kit else {}
         decision_fp = scoring_fingerprint(
@@ -6577,6 +6626,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 )
                 session["active_evaluation_id"] = evaluation_id
                 session["active_evaluation_scorecard_id"] = keep_id
+                from ..decision_state import mark_option_scored
+                mark_option_scored(session, option_key, requested_name)
                 sessions[session_key or thread_id] = session
                 save_user_sessions(user_id, sessions)
                 db.session.commit()
@@ -6659,6 +6710,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 return _tool_error(str(limit_error), code="scenario_limit_reached")
 
         session["name"] = requested_name or session.get("name") or "Jaspen Intake"
+        from ..decision_state import mark_option_scored
+        mark_option_scored(session, option_key, requested_name)
         session["active_evaluation_id"] = evaluation_id
         session["active_evaluation_scorecard_id"] = analysis_id
         session["model_type"] = model_selection["model_type"]
@@ -9803,22 +9856,33 @@ def _apply_rubric_action_to_session(session, actions):
         if tool == "set_scoring_rubric":
             rubric = result.get("rubric")
             if isinstance(rubric, dict) and isinstance(rubric.get("criteria"), list):
+                from ..decision_state import rubric_is_approved
+                existing = session.get("scoring_rubric") if isinstance(session.get("scoring_rubric"), dict) else None
+                if rubric_is_approved(existing) and not rubric_is_approved(rubric):
+                    proposal = result.get("proposed_rubric")
+                    if isinstance(proposal, dict):
+                        session["rubric_proposal"] = proposal
+                    continue
                 durable_rubric = dict(rubric)
                 if durable_rubric.get("approval_status") == "proposed":
                     durable_rubric["presented_at"] = _iso_now()
                 session["scoring_rubric"] = durable_rubric
         elif tool == "set_option_attributes":
-            option = _normalized_option_identity(result.get("option"))
             fields = result.get("option_attributes")
-            if option and isinstance(fields, dict):
-                store = session.get("option_attributes") if isinstance(session.get("option_attributes"), dict) else {}
-                store[option] = {**(store.get(option) or {}), **fields}
-                session["option_attributes"] = store
+            option_key = str(result.get("option_key") or "").strip()
+            if option_key and isinstance(fields, dict):
+                from ..decision_state import register_option, store_option_attributes
+                register_option(session, result.get("option"), authoritative_key=option_key)
+                store_option_attributes(session, option_key, fields, result.get("option"))
                 session["facts_changed"] = True
         elif tool == "queue_scorecards":
             queue = result.get("queue")
             if isinstance(queue, list):
                 session["scorecard_queue"] = queue
+                for key in ("option_registry", "option_aliases", "option_attributes_by_key", "option_attributes"):
+                    value = result.get(key)
+                    if isinstance(value, dict):
+                        session[key] = value
         elif tool == "generate_scorecard":
             evaluation_id = str(result.get('evaluation_id') or '').strip()
             scorecard_id = str(

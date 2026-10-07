@@ -787,6 +787,12 @@ def _extract_json_object(text):
         )
 
 
+class UngroundedScorecardJudgment(ValueError):
+    """The provider returned a score-shaped payload without a valid basis."""
+
+    code = "ungrounded_scorecard_judgment"
+
+
 def _clean_scorecard_text(value):
     if value is None:
         return None
@@ -2517,6 +2523,88 @@ def _calibrate_confidence_to_verified_evidence(payload):
     return payload
 
 
+def _validate_grounded_scorecard_judgment(payload, criteria, attributes, approved_gates):
+    """Reject plausible-looking provider defaults that have no canonical basis."""
+    dimensions = payload.get("dimensions") if isinstance(payload, dict) else None
+    if not isinstance(dimensions, dict) or not dimensions:
+        raise UngroundedScorecardJudgment("The judge returned no criterion judgments.")
+    expected = [
+        str(item.get("key")) for item in (criteria or [])
+        if isinstance(item, dict) and item.get("key") and not item.get("gate")
+    ]
+    if not expected:
+        expected = list(dimensions)
+    missing = [key for key in expected if not isinstance(dimensions.get(key), dict)]
+    if missing:
+        raise UngroundedScorecardJudgment(
+            f"The judge omitted required criteria: {', '.join(missing)}"
+        )
+
+    canonical_quotes = [
+        str(entry.get("evidence") or "").strip()
+        for entry in (attributes or {}).values()
+        if isinstance(entry, dict) and str(entry.get("evidence") or "").strip()
+    ]
+    verified_count = 0
+    signatures = []
+    explicit_assumptions = payload.get("assumptions") if isinstance(payload.get("assumptions"), list) else []
+    assumed_impacts = {
+        str(criterion)
+        for entry in (attributes or {}).values()
+        if isinstance(entry, dict) and entry.get("source") == "assumed"
+        for criterion in ((entry.get("assumption") or {}).get("affects") or [])
+    }
+    for key in expected:
+        dim = dimensions[key]
+        try:
+            score = float(dim.get("score"))
+        except (TypeError, ValueError):
+            raise UngroundedScorecardJudgment(f"The judge returned no numeric judgment for {key}.")
+        confidence = str(dim.get("confidence") or "").lower()
+        if confidence not in {"high", "medium", "low", "assumed"}:
+            raise UngroundedScorecardJudgment(f"The judge returned invalid confidence for {key}.")
+        references = dim.get("evidence_references") if isinstance(dim.get("evidence_references"), list) else []
+        verified_count += len(references)
+        signatures.append((round(score, 6), confidence, len(references)))
+        if references:
+            continue
+        explicit_gap = bool(
+            confidence in {"low", "assumed"}
+            and str(dim.get("rationale") or "").strip()
+            and str(dim.get("what_would_improve") or "").strip()
+            and (explicit_assumptions or key in assumed_impacts)
+        )
+        if not explicit_gap:
+            raise UngroundedScorecardJudgment(
+                f"The judgment for {key} has neither verified evidence nor an explicit assumption."
+            )
+
+    if canonical_quotes and verified_count == 0:
+        raise UngroundedScorecardJudgment(
+            "The judge ignored all canonical evidence supplied for this option."
+        )
+    if len(signatures) > 1 and len(set(signatures)) == 1 and signatures[0][:2] == (45.0, "assumed"):
+        raise UngroundedScorecardJudgment(
+            "The judge returned an ungrounded default judgment for every criterion."
+        )
+
+    gates_by_key = {
+        str(item.get("key")): item for item in (payload.get("gates") or [])
+        if isinstance(item, dict) and item.get("key")
+    }
+    for definition in approved_gates or []:
+        key = str(definition.get("key") or "")
+        gate = gates_by_key.get(key)
+        if not isinstance(gate, dict):
+            raise UngroundedScorecardJudgment(f"The judge omitted gate {key}.")
+        structured = str(gate.get("basis") or "").startswith("Resolved from canonical fact ")
+        if not structured and not gate.get("evidence"):
+            raise UngroundedScorecardJudgment(f"Gate {key} has no verified canonical evidence.")
+        if not str(gate.get("basis") or "").strip():
+            raise UngroundedScorecardJudgment(f"Gate {key} has no rationale.")
+    return payload
+
+
 _MODEL_NUMERIC_GROUPS = {
     "financial_impact": (
         "ebitda_at_risk", "potential_loss", "roi_opportunity",
@@ -3134,6 +3222,16 @@ The executive_summary must read like a concise leadership briefing. It should ne
         structured_context = {
             "attributes": attributes,
             "approved_gates": approved_gates,
+            "canonical_gate_evidence": [
+                {
+                    "field": key,
+                    "value": entry.get("value"),
+                    "source": entry.get("source"),
+                    "evidence": entry.get("evidence"),
+                }
+                for key, entry in attributes.items()
+                if isinstance(entry, dict) and entry.get("evidence")
+            ],
         }
         if decision_kit:
             from ..decision_kits import get_decision_kit
@@ -3152,6 +3250,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
             "\n\nCANONICAL STRUCTURED FACTS (authoritative; do not recompute metrics):\n"
             + json.dumps(structured_context, indent=2, default=str)
             + "\nJudge the weighted criteria only from these canonical facts. The source excerpts are provenance for those facts, not an independent input. "
+              "For every approved gate, judge PASS, FAIL, or UNKNOWN and cite the exact relevant excerpt from canonical_gate_evidence in evidence, with a rationale in basis. "
               "Return top-level gates as [{key,status,confidence,source,evidence,basis}] for approved gate criteria only. "
               "Do not emit attributes, metrics, a recommendation, or any arithmetic; code supplies those."
         )
@@ -3222,6 +3321,12 @@ The executive_summary must read like a concise leadership briefing. It should ne
         parsed.get("gates"), rubric, verification_text,
         option_key=option_key, option_name=option_name or project_description,
         attributes=attributes,
+    )
+    _validate_grounded_scorecard_judgment(
+        parsed,
+        rubric_criteria or [{"key": key} for key in weights],
+        attributes,
+        approved_gates,
     )
 
     # The current schema cannot trace model-generated financial/risk numbers
@@ -3600,14 +3705,21 @@ def analyze_project():
                 'error': 'The proposed scoring rubric needs human approval before scoring.',
                 'code': 'rubric_approval_required',
             }), 409
-        legacy_attributes = {}
-        if isinstance((current_session or {}).get('option_attributes'), dict) and project_name:
-            legacy_attributes = (current_session or {}).get('option_attributes', {}).get(
-                re.sub(r'[^a-z0-9]+', '-', project_name.lower()).strip('-'), {}
-            )
+        identity_session = current_session if isinstance(current_session, dict) else {}
+        from ..decision_state import option_attributes, resolve_option_key
+        supplied_key = str(data.get('option_key') or '').strip()
+        registry = identity_session.get('option_registry') if isinstance(identity_session.get('option_registry'), dict) else {}
+        authoritative_key = supplied_key if supplied_key in registry else None
+        identity_label = requested_name or (current_session or {}).get('name') or 'Primary option'
+        provisional_option_key = resolve_option_key(
+            identity_session,
+            identity_label,
+            authoritative_key=authoritative_key,
+            allow_single_pending=True,
+        )
+        legacy_attributes = option_attributes(identity_session, provisional_option_key, requested_name)
         from ..decision_fingerprint import scoring_fingerprint
-        from ..decision_state import canonical_decision_state, stable_option_identity, state_is_reusable
-        provisional_option_key = stable_option_identity(data.get('option_key'), requested_name) if requested_name else None
+        from ..decision_state import canonical_decision_state, state_is_reusable
         provisional_state = canonical_decision_state(
             option_key=provisional_option_key, option_name=requested_name,
             attributes=legacy_attributes, rubric=legacy_rubric,
@@ -3727,7 +3839,7 @@ def analyze_project():
             'framework_id': framework_id,
             'project_name': project_name,
             'project_description': effective_description,
-            'option_key': stable_option_identity(provisional_option_key, project_name),
+            'option_key': provisional_option_key,
             'attributes': legacy_attributes,
             'timestamp': generated_at,
             'user_id': current_user_id,
@@ -3830,6 +3942,10 @@ def analyze_project():
             session_key = resolved_thread_id
         session['active_evaluation_id'] = evaluation_id
         session['active_evaluation_scorecard_id'] = analysis_id
+        from ..decision_state import mark_option_scored, store_option_attributes
+        if analysis.get('option_key'):
+            store_option_attributes(session, analysis['option_key'], legacy_attributes, project_name)
+            mark_option_scored(session, analysis['option_key'], project_name)
 
         history = session.get('analysis_history')
         if not isinstance(history, list):
@@ -6833,10 +6949,10 @@ def score_batch_queued(thread_id):
                 chat_history.append(entry)
                 session['chat_history'] = chat_history
             session['name'] = session.get('name') or name
-            option_store = session.get('option_attributes') if isinstance(session.get('option_attributes'), dict) else {}
+            from ..decision_state import mark_option_scored, store_option_attributes
+            store_option_attributes(session, option_key, attributes, name)
+            mark_option_scored(session, option_key, name)
             option_identity = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
-            option_store[option_identity] = attributes
-            session['option_attributes'] = option_store
             rejected_attributes = payload.get('rejected_attributes') if isinstance(payload.get('rejected_attributes'), list) else []
             if rejected_attributes:
                 rejected_store = session.get('rejected_option_attributes') if isinstance(session.get('rejected_option_attributes'), dict) else {}

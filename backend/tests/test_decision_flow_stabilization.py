@@ -249,8 +249,75 @@ def test_real_single_rfp_generate_scorecard_tool_path_normalizes_aliases(app, db
     assert card['rejected_attributes'][0]['field'] == 'made_up_rank'
 
 
+def test_model_title_expansion_keeps_code_owned_option_identity_and_facts(app, db, test_user, monkeypatch):
+    strategy, agent = modules()
+    tid = 'stable-option-identity'
+    seed_rfp_thread(test_user, tid)
+    mock_accounting(monkeypatch)
+
+    captured = agent._execute_mutation_tool(
+        'set_option_attributes',
+        {
+            'option': 'Boulder Pearl Street',
+            'fields': [{
+                'key': 'contract_value', 'value': '$14M',
+                'source': 'document', 'evidence': 'Contract value $14M',
+            }],
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert captured['ok'], captured
+    original_key = captured['option_key']
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', lambda *a, **k: ({
+        'jaspen_score': 64,
+        'score_category': 'Good',
+        'dimensions': {'financial_attractiveness': {'score': 64, 'confidence': 'medium'}},
+        'gates': [],
+    }, {'provider': 'test', 'model': 'test', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}))
+
+    scored = agent._execute_mutation_tool(
+        'generate_scorecard',
+        {
+            'name': 'Boulder Pearl Street Second Location',
+            'idea_description': 'Score the Boulder Pearl Street option.',
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert scored['ok'], scored
+    assert scored['scorecard']['option_key'] == original_key
+    assert scored['scorecard']['attributes']['contract_value']['value'] == 14_000_000
+    session = agent.load_user_sessions(test_user.id)[tid]
+    assert session['option_aliases']['boulder pearl street'] == original_key
+    assert session['option_aliases']['boulder pearl street second location'] == original_key
+
+
+def test_approved_rubric_cannot_be_downgraded_or_replaced_by_agent(app, db, test_user):
+    _, agent = modules()
+    tid = 'immutable-approved-rubric'
+    seed_rfp_thread(test_user, tid)
+    before = agent.load_user_sessions(test_user.id)[tid]['scoring_rubric']
+
+    result = agent._execute_mutation_tool(
+        'set_scoring_rubric',
+        {'criteria': [
+            {'label': 'Agent replacement one', 'weight': 60},
+            {'label': 'Agent replacement two', 'weight': 40},
+        ]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+        user_message='Help me continue this analysis.',
+    )
+
+    assert result['ok'] and result['approved_rubric_preserved'] is True
+    session = agent.load_user_sessions(test_user.id)[tid]
+    assert session['scoring_rubric'] == before
+    assert session['rubric_proposal']['approval_status'] == 'proposed'
+    assert session['rubric_proposal']['criteria'] != before['criteria']
+
+
 def test_real_batch_rfp_scoring_keeps_valid_fields_when_one_is_invalid(client, db, test_user, auth_headers, monkeypatch):
     strategy, agent = modules()
+    from app.decision_kits import get_decision_kit
     tid = 'live-batch-rfp-alias'
     queue = [
         {
@@ -271,13 +338,18 @@ def test_real_batch_rfp_scoring_keeps_valid_fields_when_one_is_invalid(client, d
     ]
     seed_rfp_thread(test_user, tid, decision_kit='rfp_vendor_selection', queue=queue)
     mock_accounting(monkeypatch)
-    monkeypatch.setattr(strategy, '_strategy_generate_reply', lambda *a, **k: (json.dumps({
-        'dimensions': {
-            'functional_technical_fit': {'score': 70, 'confidence': 'medium', 'rationale': 'Supported.'},
-            'total_cost_ownership': {'score': 65, 'confidence': 'medium', 'rationale': 'Supported.'},
-        },
-        'gates': [],
-    }), {'provider': 'test', 'model': 'test', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}))
+    criterion_keys = [item['key'] for item in get_decision_kit('rfp_vendor_selection')['starter_rubric']]
+    def grounded_reply(messages, **_kwargs):
+        prompt = messages[0]['content']
+        quote = '5yr TCO $12.5M' if '5yr TCO $12.5M' in prompt else 'proposal price $10M'
+        return json.dumps({
+            'dimensions': {
+                key: {'score': 65, 'confidence': 'medium', 'rationale': 'Supported.', 'evidence': [quote]}
+                for key in criterion_keys
+            },
+            'gates': [],
+        }), {'provider': 'test', 'model': 'test', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}
+    monkeypatch.setattr(strategy, '_strategy_generate_reply', grounded_reply)
 
     response = client.post(f'/api/v1/strategy/threads/{tid}/score-batch', headers=auth_headers, json={})
 
@@ -532,9 +604,12 @@ def test_queue_to_route_completes_seven_and_agent_can_compare(client, db, test_u
     mock_accounting(monkeypatch)
     queued = agent._execute_mutation_tool('queue_scorecards', {'ideas': [{'name': f'Option {i}'} for i in range(7)]}, user=test_user, user_id=test_user.id, thread_id=tid)
     assert queued['queued_count'] == 7
-    def provider(messages, **kwargs):
-        return json.dumps({'dimensions': {'strategic_alignment': {'score': 70, 'confidence': 'medium', 'rationale': 'fit'}}}), {'provider': 'anthropic', 'model': 'test', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}
-    monkeypatch.setattr(strategy, '_strategy_generate_reply', provider)
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', lambda *a, **k: ({
+        'dimensions': {'strategic_alignment': {'score': 70, 'confidence': 'medium'}},
+        'jaspen_score': 70,
+        'score_category': 'Good',
+        'gates': [],
+    }, {'provider': 'anthropic', 'model': 'test', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}))
     response = client.post(f'/api/v1/strategy/threads/{tid}/score-batch', headers=auth_headers, json={})
     assert response.status_code == 200, response.get_json()
     assert response.get_json()['count'] == 7

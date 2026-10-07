@@ -7,6 +7,7 @@ from app.decision_kits import get_decision_kit, list_decision_kits
 from app.decision_kits.registry import validate_decision_kit
 from app.decision_lineage import build_lineage_sources, schedule_backward, validate_plan_lineage
 from app.decision_metrics import calculate_metrics
+from app.decision_facts import normalize_option_facts
 from app.decision_processing import apply_decision_kit, normalize_gates
 from app.decision_recommendation import recommend
 from app.decision_selection import select_options
@@ -44,6 +45,20 @@ def test_expected_margin_and_roi_are_deterministic():
     assert metrics["expected_value"]["value"] == 425_250
     assert metrics["pursuit_roi"]["value"] == 5
     assert metrics["expected_value"]["formula"] == "expected_value"
+
+
+def test_fractional_provider_percentages_normalize_to_percent_points_before_metrics():
+    kit = get_decision_kit("rfp_bid")
+    attributes = normalize_option_facts({
+        "contract_value": {"value": 14_000_000, "source": "user", "evidence": "Contract value $14M"},
+        "win_probability": {"value": 0.60, "source": "user", "evidence": "Win probability 60%"},
+        "margin_pct": {"value": 0.08, "source": "user", "evidence": "Margin 8%"},
+    }, kit=kit)
+    assert attributes["win_probability"]["value"] == 60
+    assert attributes["margin_pct"]["value"] == 8
+    assert attributes["win_probability"]["unit"] == "percent_points"
+    metrics = calculate_metrics(attributes, kit["metrics"])
+    assert metrics["expected_value"]["value"] == 672_000
 
 
 def test_missing_metric_input_never_invents_a_value():

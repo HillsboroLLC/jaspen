@@ -128,8 +128,18 @@ def normalize_value(value, field):
         parsed = _number(value)
         if parsed is None:
             return None
-        if kind == "percentage" and not 0 <= float(parsed) <= 100:
-            return None
+        if kind == "percentage":
+            numeric = float(parsed)
+            explicit_percent_points = isinstance(value, str) and "%" in value
+            explicit_fraction = str((field or {}).get("input_unit") or "").lower() in {"fraction", "ratio"}
+            # Canonical percentage representation is percent points (60, 8).
+            # Provider JSON commonly emits fractions (0.60, 0.08); numeric
+            # values in [0, 1] are therefore normalized once at this boundary.
+            # A string containing '%' is already expressed in percent points.
+            if not explicit_percent_points and (explicit_fraction or 0 < numeric <= 1):
+                parsed = _number(Decimal(str(parsed)) * Decimal(100))
+            if not 0 <= float(parsed) <= 100:
+                return None
         return parsed
     if kind == "date":
         return _date(value)
@@ -167,6 +177,8 @@ def normalize_fact_entry(key, raw, *, kit=None, default_source="user", default_e
         }
     if definitions.get(canonical, {}).get("unit"):
         result["unit"] = definitions[canonical]["unit"]
+    elif str(definitions.get(canonical, {}).get("type") or "").lower() == "percentage":
+        result["unit"] = "percent_points"
     return canonical, result
 
 

@@ -9,6 +9,7 @@ Kit configuration can change the identity used for scoring reuse.
 import hashlib
 import json
 import re
+import uuid
 
 
 def _plain(value):
@@ -34,6 +35,110 @@ def stable_option_identity(option_key=None, option_name=None):
         return explicit
     normalized = re.sub(r"[^a-z0-9]+", "-", str(option_name or "").lower()).strip("-")
     return normalized or "option"
+
+
+def _option_alias(value):
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold().replace("&", " and ")).strip()
+
+
+def _option_registry(session):
+    if not isinstance(session, dict):
+        return {}, {}
+    registry = session.get("option_registry") if isinstance(session.get("option_registry"), dict) else {}
+    aliases = session.get("option_aliases") if isinstance(session.get("option_aliases"), dict) else {}
+    session["option_registry"] = registry
+    session["option_aliases"] = aliases
+    return registry, aliases
+
+
+def register_option(session, display_name, *, authoritative_key=None, status="pending"):
+    """Create or update a code-owned option identity in one decision session."""
+    registry, aliases = _option_registry(session)
+    alias = _option_alias(display_name)
+    key = str(authoritative_key or "").strip()
+    if not key and alias:
+        key = str(aliases.get(alias) or "").strip()
+    if not key:
+        key = f"opt_{uuid.uuid4().hex}"
+    current = registry.get(key) if isinstance(registry.get(key), dict) else {}
+    known_aliases = list(current.get("aliases") or [])
+    if alias and alias not in known_aliases:
+        known_aliases.append(alias)
+    registry[key] = {
+        **current,
+        "option_key": key,
+        "display_name": str(display_name or current.get("display_name") or "").strip(),
+        "aliases": known_aliases,
+        "status": "scored" if current.get("status") == "scored" else status,
+    }
+    for known in known_aliases:
+        aliases[known] = key
+    return key
+
+
+def resolve_option_key(session, display_name, *, authoritative_key=None, allow_single_pending=False):
+    """Resolve identity without trusting a model-generated name or key.
+
+    ``authoritative_key`` may come only from a persisted scorecard/queue. For a
+    first single-option score, one pending fact record may acquire an additional
+    display alias; this covers harmless model title expansion without merging
+    already-scored or multi-option decisions.
+    """
+    registry, aliases = _option_registry(session)
+    if authoritative_key:
+        return register_option(session, display_name, authoritative_key=authoritative_key)
+    alias = _option_alias(display_name)
+    if alias and aliases.get(alias) in registry:
+        return register_option(session, display_name, authoritative_key=aliases[alias])
+    if allow_single_pending:
+        pending = [
+            key for key, item in registry.items()
+            if isinstance(item, dict) and item.get("status") != "scored"
+        ]
+        if len(pending) == 1:
+            return register_option(session, display_name, authoritative_key=pending[0])
+    return register_option(session, display_name)
+
+
+def mark_option_scored(session, option_key, display_name=None):
+    registry, _aliases = _option_registry(session)
+    key = str(option_key or "").strip()
+    if key:
+        register_option(session, display_name or (registry.get(key) or {}).get("display_name"), authoritative_key=key)
+        registry[key]["status"] = "scored"
+
+
+def option_attributes(session, option_key, display_name=None):
+    if not isinstance(session, dict):
+        return {}
+    by_key = session.get("option_attributes_by_key") if isinstance(session.get("option_attributes_by_key"), dict) else {}
+    found = by_key.get(str(option_key or ""))
+    if isinstance(found, dict):
+        return found
+    legacy = session.get("option_attributes") if isinstance(session.get("option_attributes"), dict) else {}
+    if not display_name:
+        return {}
+    return (
+        legacy.get(stable_option_identity(None, display_name))
+        or legacy.get(_option_alias(display_name))
+        or {}
+    )
+
+
+def store_option_attributes(session, option_key, attributes, display_name=None):
+    if not isinstance(session, dict) or not option_key:
+        return
+    by_key = session.get("option_attributes_by_key") if isinstance(session.get("option_attributes_by_key"), dict) else {}
+    current = by_key.get(str(option_key)) if isinstance(by_key.get(str(option_key)), dict) else {}
+    by_key[str(option_key)] = {**current, **(attributes or {})}
+    session["option_attributes_by_key"] = by_key
+    # Keep the old name index readable during migration, but canonical reads use
+    # option_key. This can be removed after stored sessions have been backfilled.
+    if display_name:
+        legacy = session.get("option_attributes") if isinstance(session.get("option_attributes"), dict) else {}
+        legacy[stable_option_identity(None, display_name)] = dict(by_key[str(option_key)])
+        legacy[_option_alias(display_name)] = dict(by_key[str(option_key)])
+        session["option_attributes"] = legacy
 
 
 def rubric_identity(rubric):

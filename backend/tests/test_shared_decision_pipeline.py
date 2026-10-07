@@ -1,4 +1,5 @@
 import json
+import pytest
 
 
 def test_governed_extraction_candidates_normalize_types_units_and_provenance(app):
@@ -14,7 +15,7 @@ def test_governed_extraction_candidates_normalize_types_units_and_provenance(app
         "requirements": {"value": ["a bid bond", "signed form"], "source": "user", "evidence": "Mandatory requirements include a bid bond; signed form"},
     }, kit=get_decision_kit("rfp_bid"))
 
-    assert facts["margin_pct"] == {"value": 4.5, "source": "user", "evidence": "expected margin 4.5%"}
+    assert facts["margin_pct"] == {"value": 4.5, "source": "user", "evidence": "expected margin 4.5%", "unit": "percent_points"}
     assert facts["win_probability"]["value"] == 25
     assert facts["contract_value"]["value"] == 60_000_000
     assert facts["contract_value"]["unit"] == "USD"
@@ -82,10 +83,11 @@ def test_batch_uses_the_same_scorer_and_result_as_single(app, monkeypatch):
 
     response = {
         "dimensions": {
-            "fit": {"score": 72, "confidence": "medium", "source": "conversation", "evidence": ["strong fit"], "rationale": "Strong fit."},
-            "risk": {"score": 62, "confidence": "low", "source": "inferred", "evidence": [], "rationale": "Risk is unresolved."},
+            "fit": {"score": 72, "confidence": "medium", "source": "conversation", "evidence": ["The user described strong fit."], "rationale": "Strong fit."},
+            "risk": {"score": 62, "confidence": "low", "source": "inferred", "evidence": [], "rationale": "Risk is unresolved.", "what_would_improve": "Provide risk evidence."},
         },
         "gates": [],
+        "assumptions": ["Risk evidence is missing."],
     }
     monkeypatch.setattr(strategy, "_strategy_generate_reply", lambda *a, **k: (json.dumps(response), {"provider": "test", "input_tokens": 1, "output_tokens": 1}))
     rubric = {"approved_by_user_at": "2026-10-05T00:00:00Z", "criteria": [
@@ -96,8 +98,15 @@ def test_batch_uses_the_same_scorer_and_result_as_single(app, monkeypatch):
     single = strategy._generate_jaspen_scorecard(None, "Option A", "test", rubric=rubric, evidence_corpus=corpus)
     batch, _summary = strategy._generate_batch_scorecards(None, [{"name": "Option A"}], rubric=rubric, evidence_corpus=corpus, llm_model="test")
 
-    for key in ("jaspen_score", "score_category", "dimensions", "evidence_profile", "data_confidence"):
+    for key in ("jaspen_score", "score_category", "data_confidence"):
         assert batch[0][key] == single[key]
+    for criterion in ("fit", "risk"):
+        left = dict(batch[0]["dimensions"][criterion])
+        right = dict(single["dimensions"][criterion])
+        left_refs = left.pop("evidence_references", [])
+        right_refs = right.pop("evidence_references", [])
+        assert left == right
+        assert [ref["excerpt"] for ref in left_refs] == [ref["excerpt"] for ref in right_refs]
 
 
 def test_batch_and_single_apply_identical_per_option_gates(app, monkeypatch):
@@ -105,18 +114,84 @@ def test_batch_and_single_apply_identical_per_option_gates(app, monkeypatch):
 
     response = {
         "dimensions": {"fit": {"score": 70, "confidence": "medium", "source": "conversation", "evidence": ["deadline is feasible"], "rationale": "Feasible."}},
-        "gates": [{"key": "deadline", "status": "pass", "confidence": "medium", "source": "conversation", "evidence": ["deadline is feasible"]}],
+        "gates": [{"key": "deadline", "status": "pass", "confidence": "medium", "source": "conversation", "evidence": ["deadline is feasible"], "basis": "The cited confirmation satisfies the approved gate."}],
     }
     monkeypatch.setattr(strategy, "_strategy_generate_reply", lambda *a, **k: (json.dumps(response), {"provider": "test"}))
     rubric = {"approved_by_user_at": "2026-10-05T00:00:00Z", "criteria": [
         {"key": "deadline", "label": "Deadline", "gate": True, "gate_rule": "Can submit", "option_key": "opt-a"},
         {"key": "fit", "label": "Fit", "weight": 1},
     ]}
-    kwargs = dict(rubric=rubric, evidence_corpus="deadline is feasible", decision_kit="rfp_bid", decision_kit_version=1, option_key="opt-a")
+    attributes = {"mandatory_requirements": {"value": ["deadline"], "source": "user", "evidence": "deadline is feasible"}}
+    kwargs = dict(rubric=rubric, evidence_corpus="deadline is feasible", attributes=attributes, decision_kit="rfp_bid", decision_kit_version=1, option_key="opt-a")
     single = strategy._generate_jaspen_scorecard(None, "A", "test", **kwargs)
-    batch, _ = strategy._generate_batch_scorecards(None, [{"name": "A", "option_key": "opt-a"}], rubric=rubric, evidence_corpus="deadline is feasible", llm_model="test", decision_kit="rfp_bid", decision_kit_version=1)
+    batch, _ = strategy._generate_batch_scorecards(None, [{"name": "A", "option_key": "opt-a", "attributes": attributes}], rubric=rubric, evidence_corpus="deadline is feasible", llm_model="test", decision_kit="rfp_bid", decision_kit_version=1)
     assert batch[0]["gates"] == single["gates"]
     assert single["gates"][0]["status"] == "pass"
+
+
+def test_real_judge_path_rejects_uniform_ungrounded_default(app, monkeypatch):
+    from app.routes import strategy
+
+    rubric = {"approval_status": "approved", "criteria": [
+        {"key": "fit", "label": "Fit", "weight": 0.5},
+        {"key": "risk", "label": "Risk", "weight": 0.5, "is_risk": True},
+    ]}
+    response = {
+        "dimensions": {
+            key: {
+                "score": 45, "confidence": "assumed", "source": "assumed",
+                "evidence": [], "rationale": "Insufficient information.",
+                "what_would_improve": "Provide evidence.",
+            }
+            for key in ("fit", "risk")
+        },
+        "gates": [],
+        "assumptions": ["The missing inputs were assumed."],
+    }
+    monkeypatch.setattr(strategy, "_strategy_generate_reply", lambda *a, **k: (json.dumps(response), {"provider": "test"}))
+    attributes = {"contract_value": {"value": 14_000_000, "source": "user", "evidence": "Contract value $14M"}}
+
+    with pytest.raises(strategy.UngroundedScorecardJudgment, match="ignored all canonical evidence|ungrounded default"):
+        strategy._generate_jaspen_scorecard(
+            None, "Boulder", "test", rubric=rubric,
+            attributes=attributes, evidence_corpus="Contract value $14M",
+            option_key="opt-boulder", option_name="Boulder",
+        )
+
+
+def test_gate_judge_path_requires_and_preserves_exact_canonical_citation(app, monkeypatch):
+    from app.routes import strategy
+
+    rubric = {"approval_status": "approved", "criteria": [
+        {"key": "surety", "label": "Surety", "gate": True, "gate_rule": "Surety response"},
+        {"key": "fit", "label": "Fit", "weight": 1.0},
+    ]}
+    cases = [
+        ("surety confirmed in writing", "pass"),
+        ("surety declined", "fail"),
+        ("still waiting on confirmation", "unknown"),
+    ]
+    for quote, status in cases:
+        response = {
+            "dimensions": {"fit": {
+                "score": 70, "confidence": "medium", "source": "conversation",
+                "evidence": [quote], "rationale": "The cited fact supports this judgment.",
+            }},
+            "gates": [{
+                "key": "surety", "status": status, "confidence": "medium",
+                "source": "conversation", "evidence": [quote],
+                "basis": "The cited canonical evidence establishes this status.",
+            }],
+        }
+        monkeypatch.setattr(strategy, "_strategy_generate_reply", lambda *a, _response=response, **k: (json.dumps(_response), {"provider": "test"}))
+        attributes = {"mandatory_requirements": {"value": ["surety"], "source": "user", "evidence": quote}}
+        card = strategy._generate_jaspen_scorecard(
+            None, "Boulder", "test", rubric=rubric,
+            attributes=attributes, evidence_corpus=quote,
+            option_key="opt-boulder", option_name="Boulder",
+        )
+        assert card["gates"][0]["status"] == status
+        assert card["gates"][0]["evidence"] == [quote]
 
 
 def test_gate_scoped_to_another_option_is_not_applied(app):
