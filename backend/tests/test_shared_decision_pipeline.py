@@ -689,3 +689,25 @@ def test_canonical_judgment_is_reusable_across_sessions_and_org_members(db, test
     )
     assert found is not None and found.thread_id == "source-session"
     assert find_scorecard_by_fingerprint(colleague.id, "same-state") is None
+
+
+def test_schema_owned_aliases_cannot_create_duplicate_semantic_fields():
+    from app.decision_facts import normalize_option_facts
+    from app.decision_kits import get_decision_kit
+    from app.decision_state import store_option_attributes
+
+    kit = get_decision_kit("rfp_bid")
+    session = {}
+    original = normalize_option_facts({
+        "buildout_cost": {"value": 240000, "source": "user", "evidence": "Buildout cost is $240,000"},
+    }, kit=kit)
+    update = normalize_option_facts({
+        "build_out_cost": {"value": 320000, "source": "user", "evidence": "Build-out is now $320,000"},
+    }, kit=kit)
+    store_option_attributes(session, "stable-option", original, "Option A")
+    store_option_attributes(session, "stable-option", update, "Option A")
+
+    current = session["option_attributes_by_key"]["stable-option"]
+    assert set(current) == {"build_out_cost"}
+    assert current["build_out_cost"]["value"] == 320000
+    assert session["option_attribute_history_by_key"]["stable-option"][0]["previous"]["value"] == 240000

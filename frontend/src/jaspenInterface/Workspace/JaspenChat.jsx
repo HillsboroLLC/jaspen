@@ -112,6 +112,11 @@ function priceDisplay(plan) {
 
 const BASELINE_INTERNAL_LABEL = 'Baseline';
 const BASELINE_DISPLAY_LABEL = 'Original';
+const DISCOVERY_DATA_CONTEXTS = [
+  { id: 'jira_sync', label: 'Jira' },
+  { id: 'salesforce_insights', label: 'Salesforce' },
+  { id: 'snowflake_insights', label: 'Snowflake' },
+];
 
 const isBaselineLikeLabel = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -7112,35 +7117,46 @@ const renderObjectiveTags = (className = '') => {
           {option.label}
         </button>
       ))}
-      <button
-        type="button"
-        className={`jas-objective-tag ${isRfpDecision(decisionKit) ? 'active' : ''}`}
-        onClick={() => applyDecisionKit(RFP_DECISION_INTENT, { persist: true })}
-      >
-        RFP
-      </button>
     </div>
   );
 };
 
+const renderDecisionKitTags = (className = '') => (
+  <div className={`jas-objective-tags ${className}`.trim()}>
+    <span className="jas-objective-tags-label">Decision Kit</span>
+    <button
+      type="button"
+      className={`jas-objective-tag ${isRfpDecision(decisionKit) ? 'active' : ''}`}
+      onClick={() => applyDecisionKit(RFP_DECISION_INTENT, { persist: true })}
+    >
+      RFP
+    </button>
+  </div>
+);
+
 const renderConnectorContextTags = () => {
-  if (!Array.isArray(connectedDataSources) || connectedDataSources.length === 0) return null;
+  const connectedById = new Map((connectedDataSources || []).map((source) => [source.id, source]));
   return (
     <div className="jas-connector-context-tags">
       <span className="jas-connector-context-label">
         {contextSourceLoading ? 'Loading…' : 'Data context'}
       </span>
-      {connectedDataSources.map((source) => {
+      {DISCOVERY_DATA_CONTEXTS.map((available) => {
+        const connected = connectedById.get(available.id);
+        const source = connected || available;
+        const isConnected = Boolean(connected);
         const isActive = activeContextSourceIds.has(source.id);
         return (
           <button
             key={source.id}
             type="button"
-            className={`jas-connector-context-chip ${isActive ? 'active' : ''}`}
+            className={`jas-connector-context-chip ${isActive ? 'active' : ''} ${!isConnected ? 'unavailable' : ''}`}
             onClick={() => {
-              void handleToggleContextSource(source.id, source.label);
+              if (isConnected) void handleToggleContextSource(source.id, source.label);
             }}
-            title={isActive ? `Remove ${source.label} context` : `Add live ${source.label} data as AI context`}
+            disabled={!isConnected}
+            aria-disabled={!isConnected}
+            title={!isConnected ? `Connect ${source.label} in Data Sources to use it` : (isActive ? `Remove ${source.label} context` : `Add live ${source.label} data as AI context`)}
           >
             {isActive && <FontAwesomeIcon icon={faCheck} />}
             {source.label}
@@ -7149,6 +7165,11 @@ const renderConnectorContextTags = () => {
       })}
     </div>
   );
+};
+
+const renderSelectedDecisionKitPill = (className = '') => {
+  if (!isRfpDecision(decisionKit)) return null;
+  return <span className={`jas-objective-selection-pill ${className}`.trim()}><span className="jas-objective-selection-pill-text">RFP</span></span>;
 };
 
 const renderSelectedObjectivePill = (className = '') => {
@@ -13497,10 +13518,11 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         </div>
 
         <div className="jas-context-right">
-          {(objectiveExplicitlySet || sessionId) && (
-            <span className="jas-context-pill" title={`Session objective: ${OBJECTIVE_LABEL_BY_KEY[strategyObjective] || 'Balanced'}`}>
-              {OBJECTIVE_LABEL_BY_KEY[strategyObjective] || 'Balanced'}
-            </span>
+          <span className="jas-context-pill" title={`Session objective: ${OBJECTIVE_LABEL_BY_KEY[strategyObjective] || 'Balanced'}`}>
+            {OBJECTIVE_LABEL_BY_KEY[strategyObjective] || 'Balanced'}
+          </span>
+          {isRfpDecision(decisionKit) && (
+            <span className="jas-context-pill" title="Active Decision Kit: RFP">RFP</span>
           )}
           {Array.isArray(connectedDataSources) && (() => {
             // Show ALL sources that were actually used this session. We union two
@@ -13511,7 +13533,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             //      "[Data context attached: <labels>]" marker into the user
             //      message, which is persisted/reloaded with the thread. We scan
             //      those markers and map the labels back to source ids.
-            const usedIds = new Set(usedContextSourceIds);
+            const usedIds = new Set([...usedContextSourceIds, ...activeContextSourceIds]);
             const markerRe = /\[Data context attached:\s*([^\]]+)\]/gi;
             (Array.isArray(messages) ? messages : []).forEach((m) => {
               const txt = typeof m?.text === 'string' ? m.text : '';
@@ -13972,6 +13994,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   <FontAwesomeIcon icon={faPaperclip} />
                 </button>
                 {renderSelectedObjectivePill()}
+                {renderSelectedDecisionKitPill()}
                 {renderSelectedDataContextPills()}
               </div>
               <div className="jas-chat-input-right-controls">
@@ -14029,6 +14052,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
           </div>
 
           {renderObjectiveTags('jas-chat-objective-tags')}
+          {renderDecisionKitTags('jas-chat-decision-kit-tags')}
           {renderConnectorContextTags()}
 
           {/* Finish & Analyze footer removed — scoring triggered via Jaspen Insights panel CTA */}

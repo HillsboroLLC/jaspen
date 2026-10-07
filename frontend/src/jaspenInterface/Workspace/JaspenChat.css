@@ -3938,6 +3938,7 @@
 }
 
 .jas-chat-objective-tags,
+.jas-chat-decision-kit-tags,
 .agent-chat-objective-tags {
   max-width: 920px;
   margin: 10px auto 0;
@@ -4012,6 +4013,14 @@
   background: #161f3b;
   color: #fff;
   border-color: #161f3b;
+}
+
+.jas-connector-context-chip.unavailable {
+  border-color: var(--gray-300);
+  color: var(--gray-400);
+  background: var(--gray-100);
+  cursor: not-allowed;
+  opacity: 0.72;
 }
 
 .jas-connector-context-chip svg { font-size: 0.625rem; }

@@ -113,8 +113,18 @@ def field_definitions(kit):
 
 def canonical_field_key(key, kit=None):
     normalized = re.sub(r"[^a-z0-9]+", "_", str(key or "").strip().lower()).strip("_")
-    normalized = _ALIASES.get(normalized, normalized)
     definitions = field_definitions(kit)
+    # Decision Kit schemas own semantic field identity. This lets extraction
+    # vocabulary evolve with a versioned field definition instead of growing a
+    # global phrase list that can reinterpret unrelated decisions.
+    for canonical, definition in definitions.items():
+        aliases = [canonical, *(definition.get("aliases") or [])]
+        if normalized in {
+            re.sub(r"[^a-z0-9]+", "_", str(alias or "").strip().lower()).strip("_")
+            for alias in aliases
+        }:
+            return canonical
+    normalized = _ALIASES.get(normalized, normalized)
     if definitions and normalized not in definitions:
         return None
     return normalized or None

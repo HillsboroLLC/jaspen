@@ -925,6 +925,62 @@ def _infer_rfp_decision_kit(user_message):
     return None
 
 
+def _has_rfp_decision_context(user_message):
+    """Return true only when Discovery clearly concerns an RFP/proposal decision."""
+    text = str(user_message or "").strip().lower()
+    if not text:
+        return False
+    return bool(
+        re.search(r"\brfp\b|\brequest for proposals?\b", text)
+        or re.search(r"\b(?:vendor|supplier|contractor)\s+(?:proposals?|bids?)\b", text)
+        or re.search(r"\b(?:evaluate|compare|select|shortlist)\b.{0,40}\bproposals?\b", text)
+    )
+
+
+def _apply_rfp_decision_context(session, user_message, *, explicit_selection=None):
+    """Apply manual or inferred RFP context to one persisted session state."""
+    if not isinstance(session, dict):
+        return
+    explicit = str(explicit_selection or "").strip().lower()
+    inferred = _infer_rfp_decision_kit(user_message)
+    has_context = _has_rfp_decision_context(user_message) or bool(inferred)
+    if explicit == "rfp":
+        session["decision_kit_family"] = "rfp"
+        session["decision_kit_source"] = "user"
+        if inferred:
+            kit = get_decision_kit(inferred)
+            session["decision_kit"] = inferred
+            session["decision_kit_version"] = kit["version"]
+        return
+    if explicit in {"rfp_bid", "rfp_vendor_selection"}:
+        session["decision_kit_family"] = "rfp"
+        session["decision_kit_source"] = "user"
+        if inferred and inferred != explicit:
+            session["decision_kit_conflict"] = True
+            return
+        session.pop("decision_kit_conflict", None)
+        return
+    if session.get("decision_kit_source") == "user" and session.get("decision_kit"):
+        if session.get("decision_kit_conflict") and inferred:
+            kit = get_decision_kit(inferred)
+            session["decision_kit"] = inferred
+            session["decision_kit_version"] = kit["version"]
+            session.pop("decision_kit_conflict", None)
+            return
+        if inferred and inferred != session.get("decision_kit"):
+            session["decision_kit_conflict"] = True
+        return
+    if not has_context and session.get("decision_kit_family") != "rfp":
+        return
+    session["decision_kit_family"] = "rfp"
+    if inferred:
+        kit = get_decision_kit(inferred)
+        session["decision_kit"] = inferred
+        session["decision_kit_version"] = kit["version"]
+        session["decision_kit_source"] = "discovery_inference"
+        session.pop("decision_kit_conflict", None)
+
+
 RFP_SUBTYPE_QUESTION = "Are you responding to this RFP, or selecting a vendor?"
 ANALYSIS_UNAVAILABLE_MESSAGE = "Jaspen’s analysis is unavailable right now. Your message is saved. Try again."
 
@@ -937,7 +993,7 @@ def _rfp_subtype_question_needed(session):
     return bool(
         isinstance(session, dict)
         and session.get("decision_kit_family") == "rfp"
-        and not session.get("decision_kit")
+        and (not session.get("decision_kit") or session.get("decision_kit_conflict"))
     )
 
 
@@ -6301,10 +6357,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     for field in raw_fields if isinstance(field, dict) and field.get("key")
                 }
             rejected_attributes = []
+            queue_kit = get_decision_kit(
+                _queue_session.get("decision_kit"), _queue_session.get("decision_kit_version")
+            ) if _queue_session.get("decision_kit") else None
             if raw_attributes is not None:
-                queue_kit = get_decision_kit(
-                    _queue_session.get("decision_kit"), _queue_session.get("decision_kit_version")
-                ) if _queue_session.get("decision_kit") else None
                 scoped_corpus = option_fact_text(
                     _thread_user_corpus(user_id, thread_id),
                     name,
@@ -6336,6 +6392,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                         attributes.pop(field_key, None)
             else:
                 attributes = dict(stored_attributes or {})
+            if queue_kit and not attributes:
+                error = _tool_error(
+                    f"Canonical facts for {name} could not be saved, so the RFP batch was not started. Try again.",
+                    code="canonical_facts_required",
+                )
+                error["retryable"] = True
+                error["action"] = {"type": "retry", "label": "Retry"}
+                error["rejected_fields"] = rejected_attributes
+                return error
             if attributes:
                 store_option_attributes(_queue_session, option_key, attributes, name)
             queue.append({
@@ -6351,9 +6416,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             return _tool_error("Each idea needs a name.", code="invalid_queue")
         # Queue every option; the parallel scorer bounds provider concurrency.
         overflow = []
-        # Best-effort immediate persist; also folded onto the durable session by
-        # _apply_queue_action_to_session in the main turn handler (so it survives
-        # the end-of-turn full-payload save, like the scoring rubric).
+        # Canonical option facts must exist durably before any queued score runs.
+        persisted_queue = False
         try:
             sessions = load_user_sessions(user_id) or {}
             _key, _sess = _resolve_user_session(sessions, thread_id)
@@ -6364,9 +6428,17 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                         _sess[key] = _queue_session[key]
                 # Clear overflow left by earlier versions; this queue is complete.
                 _sess["scorecard_queue_overflow"] = overflow
-                save_user_sessions(user_id, sessions)
+                persisted_queue = bool(save_user_sessions(user_id, sessions))
         except Exception:
-            current_app.logger.exception("queue_scorecards best-effort persist failed")
+            current_app.logger.exception("queue_scorecards canonical fact persist failed")
+        if not persisted_queue:
+            error = _tool_error(
+                "The option facts could not be saved, so scoring was not started. Try again.",
+                code="canonical_fact_persist_failed",
+            )
+            error["retryable"] = True
+            error["action"] = {"type": "retry", "label": "Retry"}
+            return error
         names = ", ".join(q["name"] for q in queue)
         confirmation = f"Queued {len(queue)} ideas to score against your rubric: {names}."
         return {
@@ -6490,6 +6562,24 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             rejected_store[option_identity] = rejected_fields
             session["rejected_option_attributes"] = rejected_store
             current_app.logger.warning("Rejected %d non-canonical fact(s) while scoring option %s", len(rejected_fields), option_identity)
+        if kit and not attributes:
+            error = _tool_error(
+                "Canonical facts could not be established for this RFP option, so scoring was not started. Try again.",
+                code="canonical_facts_required",
+            )
+            error["retryable"] = True
+            error["action"] = {"type": "retry", "label": "Retry"}
+            error["rejected_fields"] = rejected_fields
+            return error
+        sessions[session_key or thread_id] = session
+        if not save_user_sessions(user_id, sessions):
+            error = _tool_error(
+                "The canonical facts could not be saved, so scoring was not started. Try again.",
+                code="canonical_fact_persist_failed",
+            )
+            error["retryable"] = True
+            error["action"] = {"type": "retry", "label": "Retry"}
+            return error
         from ..decision_state import (
             canonical_decision_state,
             state_is_reusable,
@@ -11045,8 +11135,10 @@ def conversation_start():
         if inferred_objective:
             requested_objective = inferred_objective
     raw_decision_kit = str(data.get("decision_kit") or "").strip().lower()
+    inferred_decision_kit = _infer_rfp_decision_kit(user_message)
     rfp_family_requested = raw_decision_kit == "rfp"
-    requested_decision_kit = _infer_rfp_decision_kit(user_message) if rfp_family_requested else (raw_decision_kit or None)
+    inferred_rfp_family = bool(inferred_decision_kit or _has_rfp_decision_context(user_message))
+    requested_decision_kit = inferred_decision_kit if rfp_family_requested else (raw_decision_kit or inferred_decision_kit or None)
     starter_lever_defaults = _sanitize_lever_defaults(data.get("lever_defaults"))
     view_context_supplied = isinstance(data.get("view_context"), dict) or any(
         key in data for key in ("current_view", "active_tab", "active_scorecard_id", "active_scenario_id", "wbs_summary")
@@ -11069,12 +11161,14 @@ def conversation_start():
         strategy_objective=requested_objective,
         objective_explicit=objective_supplied,
         decision_kit=requested_decision_kit,
-        decision_kit_family="rfp" if rfp_family_requested else None,
+        decision_kit_family="rfp" if (rfp_family_requested or inferred_rfp_family) else None,
         organization_id=active_org_id,
         intake_context=intake_context_raw,
         view_context=view_context_raw,
         starter_lever_defaults=starter_lever_defaults,
     )
+    if not raw_decision_kit and inferred_decision_kit:
+        session["decision_kit_source"] = "discovery_inference"
     session["organization_id"] = session.get("organization_id") or active_org_id
     session["created_by_user_id"] = session.get("created_by_user_id") or user_id
     session["visibility"] = str(session.get("visibility") or "private").strip().lower() or "private"
@@ -11087,13 +11181,7 @@ def conversation_start():
         session["objective_explicitly_set"] = True
     elif "objective_explicitly_set" not in session:
         session["objective_explicitly_set"] = False
-    if rfp_family_requested:
-        session["decision_kit_family"] = "rfp"
-        session["decision_kit_source"] = "user"
-        if requested_decision_kit:
-            _resolved_kit = get_decision_kit(requested_decision_kit)
-            session["decision_kit"] = requested_decision_kit
-            session["decision_kit_version"] = _resolved_kit["version"]
+    _apply_rfp_decision_context(session, user_message, explicit_selection=raw_decision_kit or None)
     if intake_context_supplied:
         session["intake_context"] = _apply_user_profile_defaults_to_intake_context(
             user,
@@ -11203,6 +11291,24 @@ def conversation_start():
         previous_readiness,
         _compute_readiness(chat_history, session.get("strategy_objective")),
     )
+    # Mutation tools reload canonical state. Make a new thread durable before
+    # the first provider/tool loop so fact, rubric, and scoring calls cannot
+    # race session creation.
+    session["chat_history"] = chat_history
+    session["name"] = name
+    session["model_type"] = model_selection["model_type"]
+    session["timestamp"] = _iso_now()
+    session["status"] = "in_progress"
+    session["readiness"] = readiness
+    sessions[thread_id] = session
+    if not save_user_sessions(user_id, sessions):
+        return jsonify({
+            "error": "The conversation could not be saved. Your scoring request was not started. Try again.",
+            "code": "conversation_persist_failed",
+            "failure_state": True,
+            "retryable": True,
+            "action": {"type": "retry", "label": "Retry"},
+        }), 500
     if _is_objective_offtopic_turn(user_message):
         assistant_reply = _objective_refocus_reply(session.get("strategy_objective"))
         chat_history.append(_assistant_chat_entry(assistant_reply))
@@ -11769,15 +11875,9 @@ def conversation_continue():
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
 
-    # A single RFP choice is enough to start. Resolve its internal subtype only
-    # once Discovery language makes the user's side clear.
-    if session.get("decision_kit_family") == "rfp" and not session.get("decision_kit"):
-        inferred_kit = _infer_rfp_decision_kit(user_message)
-        if inferred_kit:
-            kit = get_decision_kit(inferred_kit)
-            session["decision_kit"] = inferred_kit
-            session["decision_kit_version"] = kit["version"]
-            session["decision_kit_source"] = "discovery_inference"
+    # Manual selection is a shortcut. Discovery inference reaches this same
+    # persisted state when the user did not click the RFP pill.
+    _apply_rfp_decision_context(session, user_message)
 
     session_created = False
     session["organization_id"] = session.get("organization_id") or active_org_id
@@ -11897,6 +11997,20 @@ def conversation_continue():
         previous_readiness,
         _compute_readiness(chat_history, session.get("strategy_objective")),
     )
+    session["chat_history"] = chat_history
+    session["model_type"] = model_selection["model_type"]
+    session["timestamp"] = _iso_now()
+    session["status"] = "in_progress"
+    session["readiness"] = readiness
+    sessions[thread_id] = session
+    if not save_user_sessions(user_id, sessions):
+        return jsonify({
+            "error": "The conversation could not be saved. Your scoring request was not started. Try again.",
+            "code": "conversation_persist_failed",
+            "failure_state": True,
+            "retryable": True,
+            "action": {"type": "retry", "label": "Retry"},
+        }), 500
     if _is_objective_offtopic_turn(user_message):
         assistant_reply = _objective_refocus_reply(session.get("strategy_objective"))
         chat_history.append(_assistant_chat_entry(assistant_reply))

@@ -545,6 +545,52 @@ def test_single_and_batch_tool_paths_capture_equivalent_canonical_evidence(app, 
     assert batch_fact['locator'] == {'message_index': 0}
 
 
+def test_rfp_queue_stops_when_canonical_fact_persistence_fails(app, db, test_user, monkeypatch):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    tid = 'rfp-canonical-persist-failure'
+    seed_rfp_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'] = [{'role': 'user', 'content': 'Option A: Contract value $14M.'}]
+    assert save_user_sessions(test_user.id, sessions)
+    monkeypatch.setattr(agent, 'save_user_sessions', lambda *_args, **_kwargs: False)
+
+    result = agent._execute_mutation_tool(
+        'queue_scorecards',
+        {'ideas': [{
+            'name': 'Option A',
+            'description': 'Option A',
+            'fields': [{
+                'key': 'contract_value', 'value': '$14M', 'source': 'user',
+                'evidence': 'Contract value $14M.',
+            }],
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert result['ok'] is False
+    assert result['code'] == 'canonical_fact_persist_failed'
+    assert result['retryable'] is True
+    assert result['action'] == {'type': 'retry', 'label': 'Retry'}
+
+
+def test_rfp_single_score_cannot_fall_back_to_raw_prose_without_canonical_facts(app, db, test_user):
+    _, agent = modules()
+    tid = 'rfp-no-raw-prose-fallback'
+    seed_rfp_thread(test_user, tid)
+
+    result = agent._execute_mutation_tool(
+        'generate_scorecard',
+        {'name': 'Option A', 'idea_description': 'Contract value and margin are somewhere in this prose.'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert result['ok'] is False
+    assert result['code'] == 'canonical_facts_required'
+    assert result['retryable'] is True
+    assert result['action'] == {'type': 'retry', 'label': 'Retry'}
+
+
 def test_empty_batch_is_failed_retryable_preserves_queue_and_charges_zero(client, db, test_user, auth_headers, monkeypatch):
     strategy, agent = modules()
     tid = 'live-empty-batch'

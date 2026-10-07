@@ -90,6 +90,52 @@ def _signup(client, email=None):
 
 
 class TestHomepageHandoffIntegration:
+    def test_new_thread_is_persisted_before_first_turn_tools(self, client, db, monkeypatch):
+        from app.routes import ai_agent
+        from app.routes.sessions import load_user_sessions
+
+        signup = _signup(client)
+        user_id = signup["user"]["id"]
+        thread_id = f"thread_{uuid.uuid4().hex[:16]}"
+
+        def assert_thread_exists(*_args, **_kwargs):
+            stored = load_user_sessions(user_id)[thread_id]
+            assert stored["chat_history"][-1]["content"] == "Use Value 60% and Risk 40%. Score it now."
+            return ("Scoring started.", {"provider": "test", "model": "test", "input_tokens": 1, "output_tokens": 1, "total_tokens": 2}, [], [], None)
+
+        monkeypatch.setattr(ai_agent, "_generate_assistant_reply", assert_thread_exists)
+        response = client.post(START_URL, json={"message": "Use Value 60% and Risk 40%. Score it now.", "thread_id": thread_id})
+        assert response.status_code == 200, response.get_data(as_text=True)
+
+    def test_manual_and_inferred_rfp_activation_share_persisted_state(self, client, db, monkeypatch):
+        from app.routes.sessions import load_user_sessions
+
+        signup = _signup(client)
+        user_id = signup["user"]["id"]
+        _patch_generation_success(monkeypatch)
+        message = "We received an RFP and need to decide whether to respond."
+        manual_id = f"thread_{uuid.uuid4().hex[:16]}"
+        inferred_id = f"thread_{uuid.uuid4().hex[:16]}"
+        manual = client.post(START_URL, json={"message": message, "thread_id": manual_id, "strategy_objective": "growth", "decision_kit": "rfp"})
+        inferred = client.post(START_URL, json={"message": message, "thread_id": inferred_id, "strategy_objective": "growth"})
+        assert manual.status_code == inferred.status_code == 200
+        sessions = load_user_sessions(user_id)
+        for thread_id in (manual_id, inferred_id):
+            assert sessions[thread_id]["decision_kit"] == "rfp_bid"
+            assert sessions[thread_id]["decision_kit_family"] == "rfp"
+            assert sessions[thread_id]["strategy_objective"] == "growth"
+        assert sessions[manual_id]["decision_kit_source"] == "user"
+        assert sessions[inferred_id]["decision_kit_source"] == "discovery_inference"
+
+    def test_ambiguous_inferred_rfp_asks_one_subtype_question(self, client, db):
+        from app.routes import ai_agent
+
+        _signup(client)
+        response = client.post(START_URL, json={"message": "Help me with this RFP.", "thread_id": f"thread_{uuid.uuid4().hex[:16]}"})
+        assert response.status_code == 200
+        assert response.get_json()["reply"] == ai_agent.RFP_SUBTYPE_QUESTION
+        assert response.get_json()["decision_kit_family"] == "rfp"
+
     @pytest.mark.parametrize("message", [
         "Should we respond to the state’s RFP?",
         "Should we pursue this opportunity?",

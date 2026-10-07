@@ -13,6 +13,7 @@ KIT = {
         {"key": "questions_due", "label": "Questions due", "type": "date", "role": "milestone"},
         {"key": "award_expected", "label": "Expected award", "type": "date"},
         {"key": "contract_value", "label": "Contract value", "type": "money", "unit": "USD", "affects": ["financial_attractiveness"]},
+        {"key": "build_out_cost", "label": "Build-out cost", "aliases": ["buildout_cost"], "type": "money", "unit": "USD", "affects": ["financial_attractiveness", "delivery_capability_capacity"]},
         {"key": "contract_term_months", "label": "Contract term", "type": "number", "unit": "months"},
         {"key": "award_method", "label": "Award method", "type": "enum"},
         {"key": "win_probability", "label": "Win probability", "type": "percentage", "affects": ["win_probability_competitive_position", "financial_attractiveness"]},
