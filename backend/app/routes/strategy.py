@@ -3215,7 +3215,20 @@ Those values are calculated by deterministic code after your criterion judgments
 The executive_summary must read like a concise leadership briefing. It should never repeat raw prompt text or user questions.
 """
 
-    approved_gates = [item for item in ((rubric or {}).get("criteria") or []) if isinstance(item, dict) and item.get("gate")]
+    gate_rubric = rubric
+    kit = None
+    if decision_kit:
+        from ..decision_kits import get_decision_kit
+        from ..decision_processing import rubric_with_kit_gate_config
+        kit = get_decision_kit(decision_kit, decision_kit_version)
+        gate_rubric = rubric_with_kit_gate_config(rubric, kit)
+    approved_gates = [item for item in ((gate_rubric or {}).get("criteria") or []) if isinstance(item, dict) and item.get("gate")]
+    gate_evidence_fields = {
+        str(gate.get("key") or ""): set(
+            [str(gate.get("fact_key") or "")] + [str(value) for value in (gate.get("evidence_fields") or [])]
+        ) - {""}
+        for gate in approved_gates
+    }
     if attributes or decision_kit or approved_gates:
         # Build this once here for every caller. Call-site object ordering and
         # extra prose must not alter the judge contract.
@@ -3228,15 +3241,17 @@ The executive_summary must read like a concise leadership briefing. It should ne
                     "value": entry.get("value"),
                     "source": entry.get("source"),
                     "evidence": entry.get("evidence"),
+                    "gate_keys": [
+                        gate_key for gate_key, fields in gate_evidence_fields.items()
+                        if key in fields
+                    ],
                 }
                 for key, entry in attributes.items()
                 if isinstance(entry, dict) and entry.get("evidence")
             ],
         }
         if decision_kit:
-            from ..decision_kits import get_decision_kit
             from ..decision_metrics import calculate_metrics
-            kit = get_decision_kit(decision_kit, decision_kit_version)
             structured_context.update({
                 "decision_kit": {"key": kit["key"], "version": kit["version"], "label": kit["label"]},
                 "metrics": calculate_metrics(attributes, kit.get("metrics"), context=kit_context),
@@ -3318,7 +3333,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
         parsed = apply_assumption_confidence_caps(parsed, attributes, kit)
     from ..decision_processing import normalize_gates
     parsed["gates"] = normalize_gates(
-        parsed.get("gates"), rubric, verification_text,
+        parsed.get("gates"), gate_rubric, verification_text,
         option_key=option_key, option_name=option_name or project_description,
         attributes=attributes,
     )
@@ -3471,7 +3486,7 @@ def _generate_batch_scorecards(
         scoped_corpus = option_fact_text(
             evidence_corpus, name, [idea.get("name") for idea in ideas]
         ) or str(evidence_corpus or "")
-        rejected_fields = []
+        rejected_fields = list(item.get("rejected_attributes") or [])
         attributes = normalize_option_facts(
             item.get("attributes") or {},
             kit=kit,
@@ -10239,6 +10254,24 @@ def scorecard_attributes(thread_id, scorecard_id):
     current_attributes.update(normalized)
     card['attributes'] = current_attributes
     card['facts_changed'] = True
+    from ..decision_state import register_option, store_option_attributes
+    option_key = register_option(
+        session,
+        card.get('project_name') or card.get('name') or 'Option',
+        authoritative_key=card.get('option_key'),
+    )
+    card['option_key'] = option_key
+    store_option_attributes(
+        session, option_key, normalized,
+        card.get('project_name') or card.get('name'),
+    )
+    session['facts_changed'] = True
+    sessions[_session_key or thread_id] = session
+    if not save_user_sessions(user_id, sessions):
+        return jsonify({
+            'error': 'The fact update could not be saved. The existing score remains unchanged.',
+            'code': 'fact_update_persist_failed',
+        }), 500
     if kit:
         card['metrics'] = calculate_metrics(current_attributes, kit.get('metrics'), context=session.get('kit_context'))
     upsert_scorecard(

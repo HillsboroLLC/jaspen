@@ -703,7 +703,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "Rules: 2-4 options with short labels; valid JSON on a single line; set allow_multi true ONLY when several answers can sensibly combine; keep allow_text true so the user can still type their own. Use at most ONE choice block per message and still ask only ONE question at a time. For genuinely open-ended questions with no discrete options, just ask in prose (no block). NEVER mention the block, the word 'choice', or its syntax in your prose — write the question naturally, then append the block.\n"
     "\n"
     "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria and weights (e.g. a list of factors each with a percentage), FIRST call set_scoring_rubric with those exact criteria and weights before scoring anything. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. If the user organizes the criteria into groups (e.g. 'Impact' variables vs 'Fit' variables), pass each criterion's group on the 'group' field so every option gets a sub-score per group and can be placed on a 2-group quadrant. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. set_scoring_rubric is reversible configuration, so it is allowed on the first turn and does not count against the per-turn scoring limit.\n"
-    "FIRST-TURN DECISION CONTRACT: when a conversation opens with a substantive decision — a real choice with stakes and some context, whether one option ('should I take this job offer?' with details) or several — your first reply must make the path to a scorecard visible. Do all three: (1) Name the decision and the options you will score; if the user gave only one path, propose the natural alternative yourself (e.g. 'Take the offer' vs 'Stay in current role') — comparing against the status quo is almost always the real decision. (2) Propose a starter rubric in plain prose: 3-6 weighted criteria drawn from what they told you PLUS one or two criteria they did not mention but the relevant expertise says matter (name why in half a sentence). State plainly that the rubric is theirs to edit — you propose, they decide. (3) Offer the choice explicitly, as a choice block: score now at honest confidence (missing evidence lowers confidence, never blocks a score, and you will show what would raise it), or answer your single best question first. If the user picks 'score now' — or their opening message already asked you to score — do not offer the choice again: call set_scoring_rubric with the proposed rubric and then the scoring tools, stating the confidence plainly. An explicit request to score always outranks this contract's offer step (confidence is never a gate). NEVER open with questions that have no visible destination. Exception: a bare one-liner with no context ('should I quit?') gets your single best scorecard-framed question, with 'score it anyway' offered as a choice option. "
+    "FIRST-TURN DECISION CONTRACT: when a conversation opens with a substantive decision — a real choice with stakes and some context, whether one option ('should I take this job offer?' with details) or several — your first reply must make the path to a scorecard visible. Do all three: (1) Name the decision and the options you will score; if the user gave only one path, propose the natural alternative yourself (e.g. 'Take the offer' vs 'Stay in current role') — comparing against the status quo is almost always the real decision. (2) Propose a starter rubric in plain prose: 3-6 weighted criteria drawn from what they told you PLUS one or two criteria they did not mention but the relevant expertise says matter (name why in half a sentence). State plainly that the rubric is theirs to edit — you propose, they decide. (3) Offer the choice explicitly, as a choice block: score now at honest confidence (missing evidence lowers confidence, never blocks a score, and you will show what would raise it), or answer your single best question first. If the opening message says score now AND supplies the criteria and weights, save that user-owned rubric as approved and score immediately. If Jaspen is proposing the rubric, show every criterion and weight first and ask once; do not score an unseen rubric. When the user later approves that exact shown rubric or says score it now, approve it and score immediately. NEVER claim scoring started unless a scoring tool succeeded. NEVER open with questions that have no visible destination. Exception: a bare one-liner with no context ('should I quit?') gets your single best scorecard-framed question, with 'score it anyway' offered as a choice option. "
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
     "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the shared scoring system, which evaluates every option against the same criteria and builds the trade-off comparison. After calling it, state only that all N were queued (name them if there are only a few). Do not promise that cards were created; the scoring operation reports success or a retryable failure separately. If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead. "
     "HARD RULE — multi-option requests ALWAYS batch: if the user gave two or more options to compare, you MUST use queue_scorecards for the whole set. NEVER score them one at a time with generate_scorecard, and NEVER abandon the batch midway to 'use the standard approach' — that produces a single card on the generic default rubric and breaks the comparison. If the user also gave their own criteria/weights, call set_scoring_rubric FIRST so the batch is scored on THEIR rubric, not the generic default. Only fall back to the generic default dimensions when the user has given no criteria and explicitly wants a quick score.\n"
@@ -2241,7 +2241,16 @@ def _mutation_result_summary(tool_name, result_payload):
         return {}
 
     summary = {"confirmation": str(result_payload.get("confirmation") or "").strip()}
-    if tool_name == "generate_scorecard":
+    if tool_name == "set_scoring_rubric":
+        rubric = result_payload.get("rubric") if isinstance(result_payload.get("rubric"), dict) else {}
+        summary["rubric"] = {
+            "approval_status": rubric.get("approval_status"),
+            "criteria": [
+                {"label": item.get("label"), "weight": item.get("weight")}
+                for item in (rubric.get("criteria") or []) if isinstance(item, dict)
+            ],
+        }
+    elif tool_name == "generate_scorecard":
         scorecard = result_payload.get("scorecard") if isinstance(result_payload.get("scorecard"), dict) else {}
         summary.update({
             "scorecard_id": scorecard.get("analysis_id") or scorecard.get("id"),
@@ -2913,6 +2922,16 @@ def _failed_scoring_action(executed_actions):
     return None
 
 
+def _blocked_scoring_action(executed_actions):
+    for action in executed_actions or []:
+        if not isinstance(action, dict) or action.get("tool") != "generate_scorecard":
+            continue
+        result = action.get("result") if isinstance(action.get("result"), dict) else {}
+        if not result.get("ok"):
+            return result
+    return None
+
+
 def _apply_scoring_failure_state(reply, usage, executed_actions):
     failure = _failed_scoring_action(executed_actions)
     if not failure:
@@ -2938,6 +2957,9 @@ def _finalize_agent_reply(
     scoring_failure = _failed_scoring_action(executed_actions)
     if scoring_failure:
         return str(scoring_failure.get("error") or "Jaspen couldn't complete scoring. Your request is saved. Try again.")
+    blocked_scoring = _blocked_scoring_action(executed_actions)
+    if blocked_scoring:
+        return str(blocked_scoring.get("error") or "Scoring did not start.")
     final_reply = str(reply or "").strip() or fallback_reply
     if tool_confirmations:
         confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
@@ -5405,8 +5427,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                                 "properties": {
                                     "key": {"type": "string"},
                                     "value": {},
-                                    "source": {"type": "string", "enum": ["user", "document", "assumed"]},
+                                    "source": {"type": "string", "enum": ["user", "document", "connector", "assumed"]},
                                     "evidence": {"type": "string"},
+                                    "source_id": {"type": "string"},
+                                    "locator": {},
                                     "basis": {"type": "string"},
                                     "bounds": {},
                                     "affects": {"type": "array", "items": {"type": "string"}}
@@ -5455,7 +5479,38 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                                     },
                                     "attributes": {
                                         "type": "object",
-                                        "description": "Structured option facts already captured with value, source, and evidence entries.",
+                                        "description": "Canonical option facts keyed by field name. Every fact must include its normalized value, source classification, and exact evidence excerpt.",
+                                        "additionalProperties": {
+                                            "type": "object",
+                                            "properties": {
+                                                "value": {},
+                                                "source": {"type": "string", "enum": ["user", "document", "connector", "assumed"]},
+                                                "evidence": {"type": "string"},
+                                                "source_id": {"type": "string"},
+                                                "locator": {},
+                                                "basis": {"type": "string"},
+                                                "bounds": {},
+                                                "affects": {"type": "array", "items": {"type": "string"}},
+                                            },
+                                            "required": ["value", "source", "evidence"],
+                                            "additionalProperties": False,
+                                        },
+                                    },
+                                    "fields": {
+                                        "type": "array",
+                                        "description": "Alternate list form using the same canonical fact objects as set_option_attributes.",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "key": {"type": "string"}, "value": {},
+                                                "source": {"type": "string", "enum": ["user", "document", "connector", "assumed"]},
+                                                "evidence": {"type": "string"}, "source_id": {"type": "string"},
+                                                "locator": {}, "basis": {"type": "string"}, "bounds": {},
+                                                "affects": {"type": "array", "items": {"type": "string"}},
+                                            },
+                                            "required": ["key", "value", "source", "evidence"],
+                                            "additionalProperties": False,
+                                        },
                                     },
                                 },
                                 "required": ["name"],
@@ -5862,7 +5917,13 @@ def _refresh_decision_record_after_score(user, thread_id):
 def _rubric_approval_from_message(message, criteria=None, existing_rubric=None):
     text = str(message or "").strip().lower()
     labels = [str(item.get("label") or "").strip().lower() for item in (criteria or []) if isinstance(item, dict)]
-    if len([label for label in labels if label and label in text]) >= 2 and re.search(r"\d+(?:\.\d+)?\s*%", text):
+    matched_labels = [label for label in labels if label and label in text]
+    explicit_score = bool(re.search(r"\b(?:score|rescore|re-score)\s+(?:it|this|them|these|all|now)(?:\s+now)?\b", text))
+    stated_weights = re.findall(r"\b\d+(?:\.\d+)?\s*%?", text)
+    if len(matched_labels) >= 2 and (
+        re.search(r"\d+(?:\.\d+)?\s*%", text)
+        or (explicit_score and len(stated_weights) >= 2)
+    ):
         return True
     if not re.search(r"\b(?:approve|approved|looks good|use (?:this|that|the) rubric|accept (?:this|that|the) rubric)\b", text):
         return False
@@ -6130,7 +6191,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             current_app.logger.warning("Rejected %d non-canonical fact(s) for option %s", len(rejected_fields), option_identity)
         session["facts_changed"] = True
         sessions[session_key or thread_id] = session
-        save_user_sessions(user_id, sessions)
+        if not save_user_sessions(user_id, sessions):
+            return _tool_error(
+                "The fact update could not be saved. The existing score remains unchanged.",
+                code="fact_update_persist_failed",
+            )
 
         updated = None
         if target_id:
@@ -6145,6 +6210,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     merged["metrics"] = calculate_metrics(current, kit.get("metrics"), context=session.get("kit_context"))
                 return merged
             updated = apply_scorecard_edit_in_place(user_id, thread_id, target_id, _apply)
+            if not isinstance(updated, dict):
+                return _tool_error(
+                    "The canonical fact was saved, but the selected scorecard could not be marked for re-score.",
+                    code="fact_update_scorecard_failed",
+                )
         return _tool_success({
             "tool": tool_name,
             "option": option,
@@ -6223,10 +6293,59 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             authoritative_key = claimed_key if claimed_key in registry else None
             option_key = resolve_option_key(_queue_session, name, authoritative_key=authoritative_key)
             stored_attributes = option_attributes(_queue_session, option_key, name)
-            attributes = dict(it.get("attributes") or stored_attributes or {})
+            raw_attributes = it.get("attributes") if isinstance(it.get("attributes"), dict) else None
+            raw_fields = it.get("fields") if isinstance(it.get("fields"), list) else None
+            if raw_fields is not None:
+                raw_attributes = {
+                    str(field.get("key") or ""): field
+                    for field in raw_fields if isinstance(field, dict) and field.get("key")
+                }
+            rejected_attributes = []
+            if raw_attributes is not None:
+                queue_kit = get_decision_kit(
+                    _queue_session.get("decision_kit"), _queue_session.get("decision_kit_version")
+                ) if _queue_session.get("decision_kit") else None
+                scoped_corpus = option_fact_text(
+                    _thread_user_corpus(user_id, thread_id),
+                    name,
+                    [str(candidate.get("name") or "") for candidate in raw if isinstance(candidate, dict)],
+                )
+                attributes = normalize_option_facts(
+                    raw_attributes,
+                    kit=queue_kit,
+                    source_text=scoped_corpus,
+                    option_name=name,
+                    rejected_fields=rejected_attributes,
+                )
+                for field_key, entry in list(attributes.items()):
+                    source = str(entry.get("source") or "").lower()
+                    evidence = str(entry.get("evidence") or "").strip()
+                    invalid_reason = None
+                    if source == "user" and (not evidence or evidence.lower() not in scoped_corpus.lower()):
+                        invalid_reason = "Evidence was not found verbatim in the option's user-authored section"
+                    elif source in {"document", "connector"} and not evidence:
+                        invalid_reason = "Evidence is required"
+                    if invalid_reason:
+                        rejected_attributes.append({
+                            "field": field_key,
+                            "value": entry.get("value"),
+                            "source": source,
+                            "evidence": evidence,
+                            "reason": invalid_reason,
+                        })
+                        attributes.pop(field_key, None)
+            else:
+                attributes = dict(stored_attributes or {})
             if attributes:
                 store_option_attributes(_queue_session, option_key, attributes, name)
-            queue.append({"name": name, "description": desc, "locked": locked, "option_key": option_key, "attributes": attributes})
+            queue.append({
+                "name": name,
+                "description": desc,
+                "locked": locked,
+                "option_key": option_key,
+                "attributes": attributes,
+                "rejected_attributes": rejected_attributes,
+            })
         if not queue:
             current_app.logger.warning("queue_scorecards: no valid names parsed from: %r", tool_input)
             return _tool_error("Each idea needs a name.", code="invalid_queue")
@@ -6353,12 +6472,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             allow_single_pending=not bool(rescore_target),
         )
         stored_by_name = option_attributes(session, option_key, requested_name)
-        attributes = dict(
-            (rescore_target or {}).get("attributes")
-            or tool_input.get("attributes")
-            or stored_by_name
-            or {}
-        )
+        attributes = dict((rescore_target or {}).get("attributes") or {})
+        attributes.update(stored_by_name or {})
+        attributes.update(tool_input.get("attributes") or {})
         rejected_fields = []
         attributes = normalize_option_facts(
             attributes,
@@ -8896,6 +9012,15 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
     if not text:
         return text
     sources = [str(user_message or ""), _thread_user_corpus(user_id, thread_id)]
+    for action in actions or []:
+        if not isinstance(action, dict):
+            continue
+        result = action.get("result") if isinstance(action.get("result"), dict) else None
+        if result and result.get("ok"):
+            # Successful tool results are application-owned canonical output.
+            # This lets normalized rubric weights and computed score values be
+            # repeated without treating them as unsupported model arithmetic.
+            sources.append(json.dumps(result, default=str))
     try:
         cards = _collect_session_scorecards(
             session or {}, user_id=user_id, thread_id=thread_id

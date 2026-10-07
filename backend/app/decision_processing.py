@@ -34,8 +34,15 @@ def _structured_gate_result(definition, attributes):
     source = str(entry.get("source") or "").lower()
     if source == "assumed":
         return None
-    expected = definition.get("pass_value", True)
-    status = "pass" if entry.get("value") == expected else "fail"
+    value = entry.get("value")
+    status_values = definition.get("status_values") if isinstance(definition.get("status_values"), dict) else {}
+    if status_values:
+        status = str(status_values.get(str(value).strip().lower()) or "unknown").lower()
+        if status not in {"pass", "fail", "unknown"}:
+            status = "unknown"
+    else:
+        expected = definition.get("pass_value", True)
+        status = "pass" if value == expected else "fail"
     return {
         "status": status,
         "evidence": [str(entry.get("evidence"))] if entry.get("evidence") else [],
@@ -43,6 +50,25 @@ def _structured_gate_result(definition, attributes):
         "source": source or "user",
         "basis": f"Resolved from canonical fact {fact_key}.",
     }
+
+
+def rubric_with_kit_gate_config(rubric, kit):
+    """Attach Decision Kit evidence bindings to matching approved gates."""
+    if not isinstance(rubric, dict) or not isinstance(rubric.get("criteria"), list):
+        return rubric
+    suggestions = {
+        str(item.get("key") or ""): item
+        for item in ((kit or {}).get("gate_suggestions") or [])
+        if isinstance(item, dict) and item.get("key")
+    }
+    criteria = []
+    for item in rubric["criteria"]:
+        if not isinstance(item, dict) or not item.get("gate"):
+            criteria.append(item)
+            continue
+        configured = suggestions.get(str(item.get("key") or ""))
+        criteria.append({**configured, **item} if configured else item)
+    return {**rubric, "criteria": criteria}
 
 
 def _gate_applies(item, option_key=None, option_name=None):

@@ -130,6 +130,25 @@ def store_option_attributes(session, option_key, attributes, display_name=None):
         return
     by_key = session.get("option_attributes_by_key") if isinstance(session.get("option_attributes_by_key"), dict) else {}
     current = by_key.get(str(option_key)) if isinstance(by_key.get(str(option_key)), dict) else {}
+    history_by_key = session.get("option_attribute_history_by_key") if isinstance(session.get("option_attribute_history_by_key"), dict) else {}
+    option_history = history_by_key.get(str(option_key)) if isinstance(history_by_key.get(str(option_key)), list) else []
+    for field, replacement in (attributes or {}).items():
+        previous = current.get(field)
+        if not isinstance(previous, dict) or previous == replacement:
+            continue
+        previous_material = {
+            key: value for key, value in previous.items()
+            if key not in {"created_at", "updated_at", "superseded_at"}
+        }
+        replacement_material = {
+            key: value for key, value in (replacement if isinstance(replacement, dict) else {"value": replacement}).items()
+            if key not in {"created_at", "updated_at", "superseded_at"}
+        }
+        if previous_material != replacement_material:
+            option_history.append({"field": str(field), "previous": dict(previous)})
+    if option_history:
+        history_by_key[str(option_key)] = option_history
+        session["option_attribute_history_by_key"] = history_by_key
     by_key[str(option_key)] = {**current, **(attributes or {})}
     session["option_attributes_by_key"] = by_key
     # Keep the old name index readable during migration, but canonical reads use
@@ -150,7 +169,7 @@ def rubric_identity(rubric):
             key: _plain(item.get(key))
             for key in (
                 "key", "label", "description", "weight", "is_risk", "group", "gate", "gate_rule",
-                "option_key", "scope", "fact_key", "pass_value",
+                "option_key", "scope", "fact_key", "pass_value", "status_values", "evidence_fields",
             )
             if item.get(key) is not None
         })
@@ -206,7 +225,8 @@ def canonical_decision_state(
             continue
         gate_defs.append(_plain({
             key: item.get(key) for key in (
-                "key", "gate_rule", "option_key", "scope", "fact_key", "pass_value"
+                "key", "gate_rule", "option_key", "scope", "fact_key", "pass_value",
+                "status_values", "evidence_fields",
             ) if item.get(key) is not None
         }))
     gate_defs.sort(key=lambda item: str(item.get("key") or ""))

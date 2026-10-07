@@ -315,6 +315,149 @@ def test_approved_rubric_cannot_be_downgraded_or_replaced_by_agent(app, db, test
     assert session['rubric_proposal']['criteria'] != before['criteria']
 
 
+def test_material_fact_update_uses_option_key_history_and_forces_holistic_rescore(app, db, test_user, monkeypatch):
+    strategy, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    tid = 'material-fact-rescore'
+    seed_rfp_thread(test_user, tid, decision_kit='rfp_vendor_selection')
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'] = [
+        {'role': 'user', 'content': 'Boulder build-out is $250,000.'},
+        {'role': 'user', 'content': 'Build-out is now $320,000.'},
+    ]
+    assert save_user_sessions(test_user.id, sessions)
+    mock_accounting(monkeypatch)
+    judged_values = []
+
+    def scorer(*args, **kwargs):
+        value = kwargs['attributes']['proposal_price']['value']
+        judged_values.append(value)
+        score = 55 if value == 250_000 else 48
+        return ({'jaspen_score': score, 'score_category': 'Mixed', 'dimensions': {
+            'total_cost_ownership': {'score': score, 'confidence': 'medium'},
+        }, 'gates': []}, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1})
+
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', scorer)
+    first_fact = agent._execute_mutation_tool(
+        'set_option_attributes',
+        {'option': 'Boulder', 'fields': [{
+            'key': 'proposal_price', 'value': '$250,000', 'source': 'user',
+            'evidence': 'Boulder build-out is $250,000.',
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    first = agent._execute_mutation_tool(
+        'generate_scorecard', {'name': 'Boulder', 'idea_description': 'Evaluate Boulder.'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert first_fact['ok'] and first['ok']
+    card_id = first['scorecard']['id']
+    option_key = first['scorecard']['option_key']
+    first_fingerprint = first['scorecard']['decision_fingerprint']
+
+    changed = agent._execute_mutation_tool(
+        'set_option_attributes',
+        {'option': 'Boulder', 'scorecard_id': card_id, 'fields': [{
+            'key': 'proposal_price', 'value': '$320,000', 'source': 'user',
+            'evidence': 'Build-out is now $320,000.',
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    rescored = agent._execute_mutation_tool(
+        'generate_scorecard', {
+            'name': 'Boulder', 'idea_description': 'Re-evaluate Boulder holistically.',
+            'rescore_scorecard_id': card_id,
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert changed['ok'] and rescored['ok'] and rescored['rescored']
+    assert rescored['scorecard_id'] == card_id
+    assert rescored['updated_scorecard']['option_key'] == option_key
+    assert rescored['updated_scorecard']['attributes']['proposal_price']['value'] == 320_000
+    assert rescored['updated_scorecard']['decision_fingerprint'] != first_fingerprint
+    assert judged_values == [250_000, 320_000]
+    session = load_user_sessions(test_user.id)[tid]
+    history = session['option_attribute_history_by_key'][option_key]
+    assert history[-1]['previous']['value'] == 250_000
+    assert history[-1]['previous']['evidence'] == 'Boulder build-out is $250,000.'
+
+
+def test_proposed_rubric_is_visible_with_weights_before_approval(app, db, test_user):
+    _, agent = modules()
+    tid = 'visible-proposed-rubric'
+    seed_thread(test_user, tid)
+    session = agent.load_user_sessions(test_user.id)[tid]
+    result, _ = agent._execute_local_tool(
+        'set_scoring_rubric', {'criteria': [
+            {'label': 'Financial Value', 'weight': 60},
+            {'label': 'Delivery Confidence', 'weight': 40},
+        ]},
+        readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
+        user_turn_count=1, mutations_this_turn=0,
+        user_message='Help me evaluate this option.', session=session,
+    )
+    action = {'tool': 'set_scoring_rubric', 'result': result}
+    reply = agent._finalize_agent_reply(
+        'Please review the proposed rubric.', '', [],
+        user_id=test_user.id, thread_id=tid, executed_actions=[action],
+    )
+    reply = agent._sanitize_assistant_numeric_claims(
+        reply + '\n' + result['confirmation'], user_message='Help me evaluate this option.',
+        session=session, user_id=test_user.id, thread_id=tid, actions=[action],
+    )
+    agent._apply_rubric_action_to_session(session, [action])
+
+    assert result['rubric']['approval_status'] == 'proposed'
+    assert 'Financial Value 60%' in reply
+    assert 'Delivery Confidence 40%' in reply
+    assert session['scoring_rubric']['presented_at']
+
+
+def test_first_turn_score_now_with_user_owned_rubric_scores_immediately(app, db, test_user, monkeypatch):
+    strategy, agent = modules()
+    tid = 'first-turn-score-now'
+    seed_thread(test_user, tid)
+    session = agent.load_user_sessions(test_user.id)[tid]
+    message = 'Use Financial Value 60% and Delivery Confidence 40%. Score it now.'
+    rubric_result, count = agent._execute_local_tool(
+        'set_scoring_rubric', {'criteria': [
+            {'label': 'Financial Value', 'weight': 60},
+            {'label': 'Delivery Confidence', 'weight': 40},
+        ]},
+        readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
+        user_turn_count=1, mutations_this_turn=0, user_message=message, session=session,
+    )
+    assert rubric_result['ok'] and rubric_result['rubric']['approval_status'] == 'approved'
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', lambda *a, **k: ({
+        'jaspen_score': 62, 'score_category': 'Good',
+        'dimensions': {'financial_value': {'score': 62, 'confidence': 'assumed'}},
+        'gates': [],
+    }, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1}))
+    scored, _ = agent._execute_local_tool(
+        'generate_scorecard', {'name': 'Boulder', 'idea_description': 'Evaluate Boulder.'},
+        readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
+        user_turn_count=1, mutations_this_turn=count, user_message=message, session=session,
+    )
+    assert scored['ok'], scored
+    assert scored['scorecard']['jaspen_score'] == 62
+
+
+def test_blocked_score_cannot_keep_success_narration(app):
+    _, agent = modules()
+    action = {'tool': 'generate_scorecard', 'result': {
+        'ok': False, 'code': 'rubric_approval_required',
+        'error': 'The proposed scoring rubric needs human approval before scoring.',
+    }}
+    reply = agent._finalize_agent_reply(
+        'Now scoring your option.', '', [],
+        user_id='u', thread_id='t', executed_actions=[action],
+    )
+    assert reply == 'The proposed scoring rubric needs human approval before scoring.'
+    assert 'now scoring' not in reply.lower()
+
+
 def test_real_batch_rfp_scoring_keeps_valid_fields_when_one_is_invalid(client, db, test_user, auth_headers, monkeypatch):
     strategy, agent = modules()
     from app.decision_kits import get_decision_kit
@@ -360,6 +503,46 @@ def test_real_batch_rfp_scoring_keeps_valid_fields_when_one_is_invalid(client, d
     assert vendor_a['attributes']['tco']['value'] == 12_500_000
     assert 'unknown_magic' not in vendor_a['attributes']
     assert vendor_a['rejected_attributes'][0]['field'] == 'unknown_magic'
+
+
+def test_single_and_batch_tool_paths_capture_equivalent_canonical_evidence(app, db, test_user):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    single_tid = 'single-evidence-capture'
+    batch_tid = 'batch-evidence-capture'
+    seed_rfp_thread(test_user, single_tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[batch_tid] = {
+        **sessions[single_tid],
+        'session_id': batch_tid,
+        'chat_history': [{'role': 'user', 'content': 'Option A: Contract value $14M.'}],
+    }
+    sessions[single_tid]['chat_history'] = [{'role': 'user', 'content': 'Option A: Contract value $14M.'}]
+    assert save_user_sessions(test_user.id, sessions)
+    field = {
+        'key': 'contract_value', 'value': '$14M', 'source': 'user',
+        'evidence': 'Contract value $14M.', 'source_id': 'message-1',
+        'locator': {'message_index': 0},
+    }
+    single = agent._execute_mutation_tool(
+        'set_option_attributes', {'option': 'Option A', 'fields': [field]},
+        user=test_user, user_id=test_user.id, thread_id=single_tid,
+    )
+    batch = agent._execute_mutation_tool(
+        'queue_scorecards', {'ideas': [{
+            'name': 'Option A', 'description': 'Option A', 'fields': [field],
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=batch_tid,
+    )
+    assert single['ok'] and batch['ok']
+    single_fact = dict(single['option_attributes']['contract_value'])
+    single_fact.pop('updated_at', None)
+    batch_fact = batch['queue'][0]['attributes']['contract_value']
+    assert batch_fact == single_fact
+    assert batch_fact['evidence'] == 'Contract value $14M.'
+    assert batch_fact['source'] == 'user'
+    assert batch_fact['source_id'] == 'message-1'
+    assert batch_fact['locator'] == {'message_index': 0}
 
 
 def test_empty_batch_is_failed_retryable_preserves_queue_and_charges_zero(client, db, test_user, auth_headers, monkeypatch):

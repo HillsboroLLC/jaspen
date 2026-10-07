@@ -95,8 +95,9 @@ def test_batch_uses_the_same_scorer_and_result_as_single(app, monkeypatch):
         {"key": "risk", "label": "Risk", "weight": 0.4, "is_risk": True},
     ]}
     corpus = "The user described strong fit."
-    single = strategy._generate_jaspen_scorecard(None, "Option A", "test", rubric=rubric, evidence_corpus=corpus)
-    batch, _summary = strategy._generate_batch_scorecards(None, [{"name": "Option A"}], rubric=rubric, evidence_corpus=corpus, llm_model="test")
+    attributes = {"fit_evidence": {"value": "documented", "source": "user", "evidence": corpus}}
+    single = strategy._generate_jaspen_scorecard(None, "Option A", "test", rubric=rubric, evidence_corpus=corpus, attributes=attributes)
+    batch, _summary = strategy._generate_batch_scorecards(None, [{"name": "Option A", "attributes": attributes}], rubric=rubric, evidence_corpus=corpus, llm_model="test")
 
     for key in ("jaspen_score", "score_category", "data_confidence"):
         assert batch[0][key] == single[key]
@@ -107,6 +108,7 @@ def test_batch_uses_the_same_scorer_and_result_as_single(app, monkeypatch):
         right_refs = right.pop("evidence_references", [])
         assert left == right
         assert [ref["excerpt"] for ref in left_refs] == [ref["excerpt"] for ref in right_refs]
+    assert batch[0]["attributes"] == single["attributes"] == attributes
 
 
 def test_batch_and_single_apply_identical_per_option_gates(app, monkeypatch):
@@ -192,6 +194,73 @@ def test_gate_judge_path_requires_and_preserves_exact_canonical_citation(app, mo
         )
         assert card["gates"][0]["status"] == status
         assert card["gates"][0]["evidence"] == [quote]
+
+
+@pytest.mark.parametrize("fact_value,quote,status", [
+    ("confirmed", "surety confirmed in writing", "pass"),
+    ("declined", "surety declined", "fail"),
+    ("pending", "still pending", "unknown"),
+])
+def test_rfp_surety_gate_receives_bound_canonical_evidence(app, monkeypatch, fact_value, quote, status):
+    from app.routes import strategy
+
+    rubric = {"approval_status": "approved", "criteria": [
+        {"key": "surety_confirmation", "label": "Surety / bond confirmation", "gate": True, "gate_rule": "surety can support the required bond"},
+        {"key": "delivery_capability_capacity", "label": "Delivery", "weight": 1.0},
+    ]}
+    response = {
+        "dimensions": {"delivery_capability_capacity": {
+            "score": 70, "confidence": "medium", "source": "conversation",
+            "evidence": [quote], "rationale": "Grounded in the cited surety evidence.",
+        }},
+        "gates": [{
+            "key": "surety_confirmation", "status": status, "confidence": "medium",
+            "source": "conversation", "evidence": [quote], "basis": "The cited surety evidence establishes this status.",
+        }],
+    }
+    prompts = []
+    def provider(messages, **_kwargs):
+        prompts.append(messages[0]["content"])
+        return json.dumps(response), {"provider": "test"}
+    monkeypatch.setattr(strategy, "_strategy_generate_reply", provider)
+    attributes = {"surety_status": {"value": fact_value, "source": "user", "evidence": quote}}
+    card = strategy._generate_jaspen_scorecard(
+        None, "Boulder", "test", rubric=rubric, attributes=attributes,
+        evidence_corpus=quote, decision_kit="rfp_bid", decision_kit_version=1,
+        option_key="opt-boulder", option_name="Boulder",
+    )
+    assert '"gate_keys"' in prompts[0] and '"surety_confirmation"' in prompts[0]
+    assert card["gates"][0]["status"] == status
+    assert card["gates"][0]["evidence"] == [quote]
+
+
+def test_rfp_gate_keeps_verified_evidence_when_typed_status_is_missing(app, monkeypatch):
+    from app.routes import strategy
+
+    quote = "surety confirmed in writing"
+    rubric = {"approval_status": "approved", "criteria": [
+        {"key": "surety_confirmation", "label": "Surety / bond confirmation", "gate": True},
+        {"key": "delivery_capability_capacity", "label": "Delivery", "weight": 1.0},
+    ]}
+    response = {
+        "dimensions": {"delivery_capability_capacity": {
+            "score": 70, "confidence": "medium", "source": "conversation",
+            "evidence": [quote], "rationale": "Grounded.",
+        }},
+        "gates": [{
+            "key": "surety_confirmation", "status": "pass", "confidence": "medium",
+            "source": "conversation", "evidence": [quote], "basis": "The citation confirms surety support.",
+        }],
+    }
+    monkeypatch.setattr(strategy, "_strategy_generate_reply", lambda *a, **k: (json.dumps(response), {"provider": "test"}))
+    attributes = {"mandatory_requirements": {"value": ["surety"], "source": "user", "evidence": quote}}
+    card = strategy._generate_jaspen_scorecard(
+        None, "Boulder", "test", rubric=rubric, attributes=attributes,
+        evidence_corpus=quote, decision_kit="rfp_bid", decision_kit_version=1,
+        option_key="opt-boulder", option_name="Boulder",
+    )
+    assert card["gates"][0]["status"] == "pass"
+    assert card["gates"][0]["evidence"] == [quote]
 
 
 def test_gate_scoped_to_another_option_is_not_applied(app):

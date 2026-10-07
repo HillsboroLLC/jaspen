@@ -21,6 +21,7 @@ KIT = {
         {"key": "pursuit_cost", "label": "Pursuit cost", "type": "money", "unit": "USD", "affects": ["financial_attractiveness"]},
         {"key": "pursuit_effort_fte_weeks", "label": "Pursuit effort", "type": "number", "unit": "FTE-weeks"},
         {"key": "capacity_draw", "label": "Capacity / bonding draw", "type": "money", "unit": "USD", "affects": ["delivery_capability_capacity", "capacity_available"]},
+        {"key": "surety_status", "label": "Surety / bond status", "type": "enum", "affects": ["delivery_capability_capacity", "surety_confirmation"]},
         {"key": "incumbent", "label": "Incumbent", "type": "text"},
         {"key": "competitors", "label": "Competitors", "type": "list"},
         {"key": "relationship", "label": "Relationship", "type": "enum"},
@@ -37,7 +38,26 @@ KIT = {
     ],
     "gate_suggestions": [
         {"key": "submission_deadline", "label": "Able to submit by deadline", "rule": "submission_due can be met"},
-        {"key": "capacity_available", "label": "Capacity / bonding available", "rule": "capacity_draw is within available capacity"},
+        {
+            "key": "capacity_available",
+            "label": "Capacity / bonding available",
+            "rule": "capacity_draw is within available capacity",
+            "fact_key": "surety_status",
+            "evidence_fields": ["surety_status", "capacity_draw", "mandatory_requirements"],
+            "status_values": {"confirmed": "pass", "declined": "fail", "pending": "unknown"},
+        },
+        {
+            "key": "surety_confirmation",
+            "label": "Surety / bond confirmation",
+            "rule": "surety can support the required bond",
+            "fact_key": "surety_status",
+            "evidence_fields": ["surety_status", "mandatory_requirements"],
+            "status_values": {
+                "confirmed": "pass",
+                "declined": "fail",
+                "pending": "unknown",
+            },
+        },
     ],
     "metrics": [
         {"key": "expected_value", "label": "Expected margin", "formula": "expected_value", "inputs": ["contract_value", "win_probability", "margin_pct"]},
