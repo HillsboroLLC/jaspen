@@ -41,10 +41,11 @@ MEMORY_CANDIDATE_LIMIT = 25
 MEMORY_SELECTION_LIMIT = 3
 
 # Below this, a record is not relevant enough to be worth a person's attention
-# or the model's context. Roughly: one strong field match (title weighs 3.0) or
-# two weaker ones. Ranking highest among poor matches is not relevance --
+# or the model's context. A record now needs more than one weak lexical overlap;
+# a shared city or generic business word cannot admit unrelated precedent.
+# Ranking highest among poor matches is not relevance --
 # "we have nothing similar on file" is a valid and useful answer.
-MIN_RELEVANCE_SCORE = 3.0
+MIN_RELEVANCE_SCORE = 5.0
 
 # Fenced as data. Mirrors the existing <user_message> convention in
 # routes/ai_agent.py so the model treats the contents the same way: something a
@@ -240,6 +241,9 @@ def render_memory_prompt(bundle):
 
     for item in bundle['items']:
         lines.append(f"- Decision record {item['decision_record_id']} — \"{item['title']}\"")
+        source_date = item.get('decided_at') or item.get('created_at')
+        if source_date:
+            lines.append(f"  Source date: {source_date}")
         lines.append(f"  Status: {STATE_LABEL.get(item['state'], item['state'])}")
         if item.get('human_decision'):
             lines.append(f"  What the organization DECIDED (a person): {item['human_decision']}")
@@ -264,7 +268,11 @@ def render_memory_prompt(bundle):
         'though what it taught may still apply. A record with no recorded '
         'decision shows analysis that was done, not a choice that was made. '
         'Having no relevant history is normal and is not a reason to be less '
-        'confident about the current decision.',
+        'confident about the current decision. Never use this history to populate '
+        'a current fact, assumption, rubric, gate, recommendation, or mutation tool '
+        'input. If a prior rubric or gate seems useful, identify its source decision '
+        'and ask the user whether to adopt it; it remains inactive until the user '
+        'explicitly accepts it in this thread.',
         '',
     ])
     return '\n'.join(lines)

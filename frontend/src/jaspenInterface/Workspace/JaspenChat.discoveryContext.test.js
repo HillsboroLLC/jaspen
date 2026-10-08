@@ -13,6 +13,11 @@ test('Discovery presents objective, Decision Kit, and honest Data Context separa
   expect(source).toContain('disabled={!isConnected}');
 });
 
+test('batch scoring failure keeps an explicit Retry action', () => {
+  expect(source).toContain("actionLabel: 'Retry'");
+  expect(source).toContain('void drainScoreQueue(tid, queuedCount)');
+});
+
 test('active objective and RFP kit render in the upper-right context', () => {
   expect(source).toContain('className="jas-context-right"');
   expect(source).toContain('Session objective:');

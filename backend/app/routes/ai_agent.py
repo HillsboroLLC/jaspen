@@ -997,6 +997,48 @@ def _rfp_subtype_question_needed(session):
     )
 
 
+def _message_supplies_weighted_rubric(user_message):
+    return len(re.findall(r"\b\d+(?:\.\d+)?\s*%", str(user_message or ""))) >= 2
+
+
+def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
+    """Persist and render the exact starter rubric before it can be approved."""
+    if not isinstance(session, dict) or not session.get("decision_kit"):
+        return None
+    current = session.get("scoring_rubric")
+    if isinstance(current, dict) and current.get("criteria"):
+        return None
+    if _message_supplies_weighted_rubric(user_message):
+        return None
+    kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
+    criteria = [dict(item) for item in (kit.get("starter_rubric") or []) if isinstance(item, dict)]
+    if not criteria:
+        return None
+    presented_at = _iso_now()
+    rubric = {
+        "criteria": criteria,
+        "source": "jaspen_proposed",
+        "created_at": presented_at,
+        "presented_at": presented_at,
+        "approval_status": "proposed",
+    }
+    session["scoring_rubric"] = rubric
+    sessions = load_user_sessions(user_id) or {}
+    key, durable = _resolve_user_session(sessions, thread_id)
+    if isinstance(durable, dict):
+        durable["scoring_rubric"] = rubric
+        sessions[key or thread_id] = durable
+        if not save_user_sessions(user_id, sessions):
+            return None
+    lines = ["Here’s the RFP rubric I propose for your review:"]
+    for item in criteria:
+        label = item.get("label") or item.get("key")
+        weight = int(round(float(item.get("weight") or 0) * 100))
+        lines.append(f"- {label}: {weight}%")
+    lines.append("Approve this rubric, edit it, or tell me to score with it. You decide the criteria and weights.")
+    return "\n".join(lines)
+
+
 def _is_objective_offtopic_turn(user_message):
     text = str(user_message or "").strip().lower()
     if not text:
@@ -2083,89 +2125,13 @@ def extract_and_update_user_memory(user_id, project_name, problem_statement, sco
 
 
 def _cross_session_memory_prompt_suffix(user_id, thread_id):
-    if not user_id:
-        return ""
+    """Retired: raw recent threads and model-authored prose are not evidence.
 
-    # Inject persistent user memory first
-    user_memory = _load_user_memory(user_id)
-    memory_lines = []
-    if isinstance(user_memory, dict) and user_memory:
-        memory_lines.append("Persistent user memory (what I know about this user across all projects):")
-        if user_memory.get("business_summary"):
-            memory_lines.append(f"- Business: {user_memory['business_summary']}")
-        if user_memory.get("industry"):
-            memory_lines.append(f"- Industry: {user_memory['industry']}")
-        if user_memory.get("company_size"):
-            memory_lines.append(f"- Company size: {user_memory['company_size']}")
-        challenges = user_memory.get("key_challenges")
-        if isinstance(challenges, list) and challenges:
-            memory_lines.append(f"- Key challenges: {'; '.join(str(c) for c in challenges[:4])}")
-        decisions = user_memory.get("decisions_made")
-        if isinstance(decisions, list) and decisions:
-            memory_lines.append(f"- Prior decisions: {'; '.join(str(d) for d in decisions[:4])}")
-
-    try:
-        sessions = load_user_sessions(user_id)
-    except Exception:
-        current_app.logger.exception("Failed loading user sessions for cross-session memory")
-        return ("\n" + "\n".join(memory_lines)) if memory_lines else ""
-    if not isinstance(sessions, dict) or not sessions:
-        return ("\n" + "\n".join(memory_lines)) if memory_lines else ""
-
-    target_thread = str(thread_id or "").strip()
-    candidates = []
-    for key, session in sessions.items():
-        if not isinstance(session, dict):
-            continue
-        session_thread_id = str(session.get("session_id") or key or "").strip()
-        if not session_thread_id or session_thread_id == target_thread:
-            continue
-        ts = _parse_iso_datetime(session.get("timestamp")) or _parse_iso_datetime(session.get("created"))
-        ts_sort = ts or datetime.fromtimestamp(0)
-        candidates.append((ts_sort, session))
-
-    # Skip sentinel session — it holds internal memory metadata, not a real project
-    candidates = [
-        (ts, s) for ts, s in (
-            (
-                _parse_iso_datetime(session.get("timestamp")) or _parse_iso_datetime(session.get("created")) or datetime.fromtimestamp(0),
-                session,
-            )
-            for key, session in sessions.items()
-            if isinstance(session, dict)
-            and str(session.get("session_id") or key or "").strip() not in ("", target_thread, _USER_MEMORY_SESSION_KEY)
-            and key != _USER_MEMORY_SESSION_KEY
-        )
-    ]
-
-    if not candidates and not memory_lines:
-        return ""
-
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    lines = []
-    if memory_lines:
-        lines.extend(memory_lines)
-
-    recent_lines = ["Cross-session memory (same user, recent projects):"]
-    added = 0
-    for _, session in candidates:
-        snippet = _session_memory_snippet(session)
-        if not snippet:
-            continue
-        recent_lines.append(f"- {snippet}")
-        added += 1
-        if added >= 3:
-            break
-
-    if added > 0:
-        recent_lines.append(
-            "- Reuse relevant context from these prior projects when helpful, but prioritize the current thread."
-        )
-        lines.extend(recent_lines)
-
-    if not lines:
-        return ""
-    return "\n" + "\n".join(lines)
+    Organization-wide learning is supplied exclusively by attributed Decision
+    Records in ``_organizational_memory_prompt_suffix``. Personal continuity
+    may return later only through user-approved structured profile fields.
+    """
+    return ""
 
 
 def _format_component_label(key):
@@ -3016,6 +2982,12 @@ def _finalize_agent_reply(
     blocked_scoring = _blocked_scoring_action(executed_actions)
     if blocked_scoring:
         return str(blocked_scoring.get("error") or "Scoring did not start.")
+    for action in executed_actions or []:
+        if not isinstance(action, dict) or action.get("tool") != "queue_scorecards":
+            continue
+        result = action.get("result") if isinstance(action.get("result"), dict) else {}
+        if result.get("ok"):
+            return str(result.get("confirmation") or "The options were queued for scoring.")
     final_reply = str(reply or "").strip() or fallback_reply
     if tool_confirmations:
         confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
@@ -3337,11 +3309,9 @@ def _readiness_phase_prompt_suffix(readiness):
 def _organizational_memory_prompt_suffix(user_id, thread_id):
     """PHASE 7. Prior organizational decisions relevant to this one.
 
-    Distinct from _cross_session_memory_prompt_suffix above, which is the
-    PERSONAL layer -- what Jaspen knows about this individual across their own
-    projects. The two stay separate inputs with separate provenance and are
-    never merged into one blob: one is "what you have told me about you", the
-    other is "what your organization has decided and learned".
+    This is the only cross-thread context channel. Raw recent conversations and
+    model-authored replies are deliberately excluded; organizational learning
+    comes from attributed, permission-aware Decision Records.
 
     Best-effort and silent on failure: memory is an enhancement, and a
     retrieval problem must never break the conversation.
@@ -3380,10 +3350,15 @@ def _decision_kit_prompt_suffix(user_id, thread_id):
             return ""
         kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
         hints = "; ".join(kit.get("interviewer_hints") or [])
+        canonical_fields = ", ".join(
+            str(field.get("key")) for field in (kit.get("fields") or [])
+            if isinstance(field, dict) and field.get("key")
+        )
         return (
             f"\n\n[DECISION KIT — {kit['label']} v{kit['version']}] "
             "Keep Discovery → Scoring → Trade-Off → Execution unchanged. The kit is separate from the objective lens. "
             "Use only structured attributes supplied by the user or documents; never invent numeric facts. "
+            f"When saving facts, use these canonical field keys exactly: {canonical_fields}. "
             f"Highest-value missing facts: {hints}. Ask at most one or two per turn, and stop asking when the user says score. "
             "Jaspen recommends; only the human records the decision."
         )
@@ -6102,13 +6077,21 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 c.get("group") or c.get("category") or c.get("section") or c.get("bucket") or ""
             ).strip() or None
             is_gate = bool(c.get("gate"))
+            description = str(
+                c.get("description") or c.get("notes") or c.get("what_it_measures") or ""
+            ).strip() or None
+            # Rubric meaning belongs to the human. A provider may normalize a
+            # label, but it may not silently add criterion instructions that
+            # the user did not supply in this turn.
+            if description and description.casefold() not in str(user_message or "").casefold():
+                description = None
             criteria.append({
                 "key": key,
                 "label": label,
                 "weight": 0.0 if is_gate else weight,
                 "is_risk": bool(c.get("is_risk")),
                 "group": "Must-haves" if is_gate else group,
-                "description": (str(c.get("description") or c.get("notes") or c.get("what_it_measures") or "").strip() or None),
+                "description": description,
                 "gate": is_gate,
                 "gate_rule": (str(c.get("gate_rule") or c.get("rule") or "").strip() or None) if is_gate else None,
             })
@@ -6205,12 +6188,13 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             card for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
             if str(card.get("id") or card.get("analysis_id") or "").strip() == target_id
         ), None) if target_id else None
-        from ..decision_state import resolve_option_key, store_option_attributes
+        from ..decision_state import migrate_option_attribute_keys, resolve_option_key, store_option_attributes
         option_key = resolve_option_key(
             session,
             option,
             authoritative_key=(target_card or {}).get("option_key"),
         )
+        migrate_option_attribute_keys(session, option_key, kit=kit, display_name=option)
         corpus = _thread_user_corpus(user_id, thread_id)
         normalized = {}
         rejected_fields = []
@@ -6257,13 +6241,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if target_id:
             from .strategy import apply_scorecard_edit_in_place
             from ..decision_metrics import calculate_metrics
+            from ..decision_state import migrate_attribute_mapping
             def _apply(card):
-                current = dict(card.get("attributes") or {})
+                current = migrate_attribute_mapping(card.get("attributes"), kit=kit)
                 current.update(normalized)
                 merged = {**card, "option_key": option_key, "attributes": current, "facts_changed": True}
                 if session.get("decision_kit"):
-                    kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
-                    merged["metrics"] = calculate_metrics(current, kit.get("metrics"), context=session.get("kit_context"))
+                    active_kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
+                    merged["metrics"] = calculate_metrics(current, active_kit.get("metrics"), context=session.get("kit_context"))
                 return merged
             updated = apply_scorecard_edit_in_place(user_id, thread_id, target_id, _apply)
             if not isinstance(updated, dict):
@@ -6343,11 +6328,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 or it.get("notes") or it.get("rationale") or it.get("desc") or ""
             ).strip() or name
             locked = bool(it.get("locked") or it.get("is_locked") or it.get("required") or it.get("anchor"))
-            from ..decision_state import option_attributes, resolve_option_key, store_option_attributes
+            from ..decision_state import migrate_option_attribute_keys, option_attributes, resolve_option_key, store_option_attributes
             registry = _queue_session.get("option_registry") if isinstance(_queue_session.get("option_registry"), dict) else {}
             claimed_key = str(it.get("option_key") or "").strip()
             authoritative_key = claimed_key if claimed_key in registry else None
             option_key = resolve_option_key(_queue_session, name, authoritative_key=authoritative_key)
+            queue_kit = get_decision_kit(
+                _queue_session.get("decision_kit"), _queue_session.get("decision_kit_version")
+            ) if _queue_session.get("decision_kit") else None
+            migrate_option_attribute_keys(_queue_session, option_key, kit=queue_kit, display_name=name)
             stored_attributes = option_attributes(_queue_session, option_key, name)
             raw_attributes = it.get("attributes") if isinstance(it.get("attributes"), dict) else None
             raw_fields = it.get("fields") if isinstance(it.get("fields"), list) else None
@@ -6357,9 +6346,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     for field in raw_fields if isinstance(field, dict) and field.get("key")
                 }
             rejected_attributes = []
-            queue_kit = get_decision_kit(
-                _queue_session.get("decision_kit"), _queue_session.get("decision_kit_version")
-            ) if _queue_session.get("decision_kit") else None
             if raw_attributes is not None:
                 scoped_corpus = option_fact_text(
                     _thread_user_corpus(user_id, thread_id),
@@ -6536,13 +6522,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         scoped_evidence_corpus = option_fact_text(
             evidence_corpus, requested_name, known_option_names
         ) or evidence_corpus
-        from ..decision_state import option_attributes, resolve_option_key, store_option_attributes
+        from ..decision_state import migrate_option_attribute_keys, option_attributes, resolve_option_key, store_option_attributes
         option_key = resolve_option_key(
             session,
             requested_name,
             authoritative_key=(rescore_target or {}).get("option_key"),
             allow_single_pending=not bool(rescore_target),
         )
+        migrate_option_attribute_keys(session, option_key, kit=kit, display_name=requested_name)
         stored_by_name = option_attributes(session, option_key, requested_name)
         attributes = dict((rescore_target or {}).get("attributes") or {})
         attributes.update(stored_by_name or {})
@@ -9102,6 +9089,19 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
     if not text:
         return text
     sources = [str(user_message or ""), _thread_user_corpus(user_id, thread_id)]
+    # Persisted rubrics are application-owned state. Render their normalized
+    # weights in the same percent form shown to users so the prose guard keeps
+    # those exact values while continuing to reject provider arithmetic.
+    for rubric_key in ("scoring_rubric", "rubric_proposal"):
+        rubric = (session or {}).get(rubric_key) if isinstance(session, dict) else None
+        if not isinstance(rubric, dict):
+            continue
+        sources.append("; ".join(
+            f'{criterion.get("label") or criterion.get("key")} '
+            f'{int(round(float(criterion.get("weight") or 0) * 100))}%'
+            for criterion in (rubric.get("criteria") or [])
+            if isinstance(criterion, dict)
+        ))
     for action in actions or []:
         if not isinstance(action, dict):
             continue
@@ -9181,6 +9181,15 @@ def _generate_assistant_reply(
             [],
             [],
             None,
+        )
+    rubric_proposal = _present_decision_kit_rubric(
+        session, user_id=user_id, thread_id=thread_id, user_message=user_message,
+    )
+    if rubric_proposal:
+        return (
+            rubric_proposal,
+            {"provider": "deterministic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            [], [], None,
         )
     if attachments:
         legacy_model = _anthropic_model_for_selection(model_selection)
@@ -9388,6 +9397,18 @@ def _stream_assistant_reply_events(
                 "undo_snapshot": None,
             })
         yield {"type": "delta", "text": RFP_SUBTYPE_QUESTION}
+        return
+    rubric_proposal = _present_decision_kit_rubric(
+        session, user_id=user_id, thread_id=thread_id, user_message=user_message,
+    )
+    if rubric_proposal:
+        if isinstance(state, dict):
+            state.update({
+                "reply": rubric_proposal,
+                "usage": {"provider": "deterministic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                "actions": [], "mutations": [], "undo_snapshot": None,
+            })
+        yield {"type": "delta", "text": rubric_proposal}
         return
     if attachments:
         legacy_model = _anthropic_model_for_selection(model_selection)

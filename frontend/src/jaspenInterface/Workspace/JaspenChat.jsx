@@ -2256,7 +2256,12 @@ const drainScoreQueue = async (tid, queuedCount = 0) => {
     console.error('[scoreBatch]', err);
     const payload = err?.data || {};
     const reset = payload?.cycle_reset_at ? ` Reset: ${new Date(payload.cycle_reset_at).toLocaleString()}.` : '';
-    showToast(payload?.error ? `${payload.error}${reset}` : (err?.message || 'Could not score the queued options — try again.'), 'error');
+    showToast(payload?.error ? `${payload.error}${reset}` : (err?.message || 'Could not score the queued options — try again.'), 'error', {
+      actionLabel: 'Retry',
+      onAction: () => {
+        void drainScoreQueue(tid, queuedCount);
+      },
+    });
   } finally {
     scoreDrainingRef.current = false;
     setBatchScoring(null);

@@ -414,6 +414,67 @@ def test_proposed_rubric_is_visible_with_weights_before_approval(app, db, test_u
     assert session['scoring_rubric']['presented_at']
 
 
+def test_decision_kit_starter_rubric_is_persisted_and_rendered_before_provider_runs(app, db, test_user, monkeypatch):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    tid = 'kit-rubric-before-provider'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid].update({
+        'decision_kit': 'rfp_bid', 'decision_kit_version': 1,
+        'decision_kit_family': 'rfp',
+    })
+    assert save_user_sessions(test_user.id, sessions)
+    session = load_user_sessions(test_user.id)[tid]
+    monkeypatch.setattr(
+        agent, '_resolve_governed_routes',
+        lambda *a, **k: pytest.fail('provider routing must not run before the rubric is shown'),
+    )
+
+    reply, usage, actions, _, _ = agent._generate_assistant_reply(
+        'Help me evaluate this RFP.', [], {}, {'llm_model': 'test'},
+        session=session, user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert usage['provider'] == 'deterministic' and actions == []
+    assert 'Win probability & competitive position: 20%' in reply
+    assert 'Contract & commercial risk: 10%' in reply
+    durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
+    assert durable['approval_status'] == 'proposed'
+    assert durable['presented_at']
+    assert len(durable['criteria']) == 6
+
+
+def test_provider_cannot_add_unspoken_rubric_meaning(app, db, test_user):
+    _, agent = modules()
+    tid = 'rubric-description-grounding'
+    seed_thread(test_user, tid)
+    result = agent._execute_mutation_tool(
+        'set_scoring_rubric', {'criteria': [
+            {'label': 'Financial Value', 'weight': 60, 'description': 'Use a secret model rule.'},
+            {'label': 'Delivery Confidence', 'weight': 40, 'description': 'Another secret rule.'},
+        ]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+        user_message='Use Financial Value 60% and Delivery Confidence 40%. Score it now.',
+    )
+    assert result['ok'] and result['rubric']['approval_status'] == 'approved'
+    assert all(item['description'] is None for item in result['rubric']['criteria'])
+
+
+def test_numeric_guard_allows_persisted_rubric_weights_but_rejects_model_math(app):
+    _, agent = modules()
+    session = {'scoring_rubric': {'approval_status': 'proposed', 'criteria': [
+        {'key': 'value', 'label': 'Financial Value', 'weight': 0.6},
+        {'key': 'delivery', 'label': 'Delivery Confidence', 'weight': 0.4},
+    ]}}
+    reply = agent._sanitize_assistant_numeric_claims(
+        'Financial Value 60%. Delivery Confidence 40%. $42M leaves $48M of your $90M headroom.',
+        user_message='', session=session, actions=[],
+    )
+    assert 'Financial Value 60%' in reply and 'Delivery Confidence 40%' in reply
+    assert '$42M' not in reply and '$48M' not in reply and '$90M' not in reply
+
+
 def test_first_turn_score_now_with_user_owned_rubric_scores_immediately(app, db, test_user, monkeypatch):
     strategy, agent = modules()
     tid = 'first-turn-score-now'
@@ -543,6 +604,147 @@ def test_single_and_batch_tool_paths_capture_equivalent_canonical_evidence(app, 
     assert batch_fact['source'] == 'user'
     assert batch_fact['source_id'] == 'message-1'
     assert batch_fact['locator'] == {'message_index': 0}
+
+
+@pytest.mark.parametrize(('raw_value', 'canonical_value'), [
+    ('confirmed in writing', 'confirmed'),
+    ('surety declined', 'declined'),
+    ('still pending', 'pending'),
+])
+def test_ambiguous_bonding_field_uses_schema_value_to_reach_surety_gate(
+    app, db, test_user, raw_value, canonical_value,
+):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    tid = f'surety-alias-{canonical_value}'
+    seed_rfp_thread(test_user, tid)
+    evidence = f'Option A: Bonding requirement is {raw_value}.'
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'] = [{'role': 'user', 'content': evidence}]
+    assert save_user_sessions(test_user.id, sessions)
+
+    queued = agent._execute_mutation_tool(
+        'queue_scorecards', {'ideas': [{
+            'name': 'Option A', 'description': 'Option A', 'fields': [{
+                'key': 'bonding_requirement', 'value': raw_value,
+                'source': 'user', 'evidence': evidence,
+            }],
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert queued['ok'], queued
+    attributes = queued['queue'][0]['attributes']
+    assert attributes['surety_status']['value'] == canonical_value
+    assert 'capacity_draw' not in attributes
+
+
+def test_numeric_bonding_requirement_remains_capacity_draw(app):
+    from app.decision_facts import normalize_option_facts
+    from app.decision_kits import get_decision_kit
+
+    facts = normalize_option_facts({
+        'bonding_requirement': {
+            'value': '$5M', 'source': 'user', 'evidence': 'Bonding requirement is $5M.',
+        },
+    }, kit=get_decision_kit('rfp_bid'))
+    assert facts['capacity_draw']['value'] == 5_000_000
+    assert 'surety_status' not in facts
+
+
+def test_material_update_migrates_legacy_alias_without_erasing_other_facts(app, db, test_user):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    tid = 'legacy-alias-material-update'
+    seed_rfp_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    session = sessions[tid]
+    session['chat_history'] = [{'role': 'user', 'content': 'Build-out is now $320,000.'}]
+    session['option_registry'] = {'stable-a': {
+        'option_key': 'stable-a', 'display_name': 'Option A',
+        'aliases': ['option a'], 'status': 'pending',
+    }}
+    session['option_aliases'] = {'option a': 'stable-a'}
+    session['option_attributes_by_key'] = {'stable-a': {
+        'buildout_cost': {'value': 240000, 'source': 'user', 'evidence': 'Buildout cost is $240,000.'},
+        'contract_value': {'value': 14000000, 'source': 'user', 'evidence': 'Contract value $14M.'},
+    }}
+    assert save_user_sessions(test_user.id, sessions)
+
+    result = agent._execute_mutation_tool(
+        'set_option_attributes', {'option': 'Option A', 'fields': [{
+            'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
+            'evidence': 'Build-out is now $320,000.',
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert result['ok'], result
+    session = load_user_sessions(test_user.id)[tid]
+    current = session['option_attributes_by_key']['stable-a']
+    assert set(current) == {'build_out_cost', 'contract_value'}
+    assert current['build_out_cost']['value'] == 320000
+    history = session['option_attribute_history_by_key']['stable-a']
+    assert [item['previous']['value'] for item in history] == [240000]
+
+
+def test_scorecard_attribute_endpoint_uses_the_same_canonical_alias_migration(
+    client, db, test_user, auth_headers,
+):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    tid = 'attribute-endpoint-alias-update'
+    seed_rfp_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    session = sessions[tid]
+    session['chat_history'] = [{'role': 'user', 'content': 'Build-out is now $320,000.'}]
+    session['option_registry'] = {'stable-a': {
+        'option_key': 'stable-a', 'display_name': 'Option A',
+        'aliases': ['option a'], 'status': 'scored',
+    }}
+    session['option_aliases'] = {'option a': 'stable-a'}
+    session['option_attributes_by_key'] = {'stable-a': {
+        'buildout_cost': {'value': 240000, 'source': 'user', 'evidence': 'Buildout cost is $240,000.'},
+        'contract_value': {'value': 14000000, 'source': 'user', 'evidence': 'Contract value $14M.'},
+    }}
+    assert save_user_sessions(test_user.id, sessions)
+    upsert_scorecard(user_id=test_user.id, thread_id=tid, payload={
+        'id': 'legacy-attribute-card', 'project_name': 'Option A',
+        'option_key': 'stable-a', 'jaspen_score': 50,
+        'attributes': session['option_attributes_by_key']['stable-a'],
+    })
+    db.session.commit()
+
+    response = client.patch(
+        f'/api/v1/strategy/threads/{tid}/scorecards/legacy-attribute-card/attributes',
+        headers=auth_headers,
+        json={'attributes': {'build_out_cost': {
+            'value': '$320,000', 'source': 'user',
+            'evidence': 'Build-out is now $320,000.',
+        }}},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    attributes = response.get_json()['attributes']
+    assert set(attributes) == {'build_out_cost', 'contract_value'}
+    assert attributes['build_out_cost']['value'] == 320000
+    durable = agent.load_user_sessions(test_user.id)[tid]
+    assert set(durable['option_attributes_by_key']['stable-a']) == {
+        'build_out_cost', 'contract_value',
+    }
+
+
+def test_successful_queue_reply_uses_only_deterministic_confirmation(app):
+    _, agent = modules()
+    action = {'tool': 'queue_scorecards', 'result': {
+        'ok': True,
+        'confirmation': 'Queued 3 options for scoring.',
+    }}
+    reply = agent._finalize_agent_reply(
+        'Option A passes its surety gate and the cards are coming.', '', [],
+        user_id='u', thread_id='t', executed_actions=[action],
+    )
+    assert reply == 'Queued 3 options for scoring.'
 
 
 def test_rfp_queue_stops_when_canonical_fact_persistence_fails(app, db, test_user, monkeypatch):

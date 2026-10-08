@@ -160,6 +160,59 @@ def store_option_attributes(session, option_key, attributes, display_name=None):
         session["option_attributes"] = legacy
 
 
+def migrate_attribute_mapping(attributes, *, kit=None):
+    """Return a copy with only schema-proven aliases collapsed."""
+    from .decision_facts import canonical_field_key
+
+    current = dict(attributes or {})
+    for field in list(current):
+        canonical = canonical_field_key(field, kit)
+        if not canonical or canonical == field:
+            continue
+        alias_entry = current.pop(field)
+        current.setdefault(canonical, alias_entry)
+    return current
+
+
+def migrate_option_attribute_keys(session, option_key, *, kit=None, display_name=None):
+    """Collapse schema-proven aliases without touching unrelated facts."""
+    if not isinstance(session, dict) or not option_key:
+        return {}
+    from .decision_facts import canonical_field_key
+
+    by_key = session.get("option_attributes_by_key") if isinstance(session.get("option_attributes_by_key"), dict) else {}
+    current = dict(by_key.get(str(option_key)) or {})
+    if not current:
+        return current
+    history_by_key = session.get("option_attribute_history_by_key") if isinstance(session.get("option_attribute_history_by_key"), dict) else {}
+    option_history = list(history_by_key.get(str(option_key)) or [])
+    changed = False
+    for field in list(current):
+        canonical = canonical_field_key(field, kit)
+        if not canonical or canonical == field:
+            continue
+        alias_entry = current.pop(field)
+        existing = current.get(canonical)
+        if isinstance(existing, dict) and existing != alias_entry:
+            option_history.append({"field": canonical, "previous": dict(alias_entry), "migrated_from": field})
+        else:
+            current[canonical] = alias_entry
+        changed = True
+    if not changed:
+        return current
+    by_key[str(option_key)] = current
+    session["option_attributes_by_key"] = by_key
+    if option_history:
+        history_by_key[str(option_key)] = option_history
+        session["option_attribute_history_by_key"] = history_by_key
+    if display_name:
+        legacy = session.get("option_attributes") if isinstance(session.get("option_attributes"), dict) else {}
+        legacy[stable_option_identity(None, display_name)] = dict(current)
+        legacy[_option_alias(display_name)] = dict(current)
+        session["option_attributes"] = legacy
+    return current
+
+
 def rubric_identity(rubric):
     criteria = []
     for item in ((rubric or {}).get("criteria") or []):

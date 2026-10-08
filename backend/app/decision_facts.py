@@ -33,6 +33,14 @@ _ALIASES = {
     "five_yr_tco": "tco",
 }
 
+# Shared schema-owned semantic identities. These are not a phrase extractor;
+# they define which provider field keys represent the same canonical fact in
+# every Decision Kit and general scoring path.
+_COMMON_FIELD_DEFINITIONS = {
+    "build_out_cost": {"aliases": ["buildout_cost"]},
+    "monthly_lease": {"aliases": ["lease_monthly", "monthly_rent"]},
+}
+
 _MONTHS = {
     name.lower(): number for number, name in enumerate(
         ("", "January", "February", "March", "April", "May", "June", "July",
@@ -124,6 +132,14 @@ def canonical_field_key(key, kit=None):
             for alias in aliases
         }:
             return canonical
+    for canonical, definition in _COMMON_FIELD_DEFINITIONS.items():
+        aliases = [canonical, *(definition.get("aliases") or [])]
+        if normalized in {
+            re.sub(r"[^a-z0-9]+", "_", str(alias or "").strip().lower()).strip("_")
+            for alias in aliases
+        }:
+            normalized = canonical
+            break
     normalized = _ALIASES.get(normalized, normalized)
     if definitions and normalized not in definitions:
         return None
@@ -159,15 +175,42 @@ def normalize_value(value, field):
         return _team(value)
     if kind == "object":
         return dict(value) if isinstance(value, dict) else None
-    return str(value).strip() or None
+    normalized = str(value).strip() or None
+    if kind == "enum" and normalized:
+        value_aliases = (field or {}).get("value_aliases") or {}
+        alias_key = re.sub(r"\s+", " ", normalized.casefold()).strip(" .")
+        normalized = value_aliases.get(alias_key, normalized)
+    return normalized
 
 
 def normalize_fact_entry(key, raw, *, kit=None, default_source="user", default_evidence=""):
     definitions = field_definitions(kit)
-    canonical = canonical_field_key(key, kit)
+    entry = dict(raw) if isinstance(raw, dict) else {"value": raw}
+    normalized_key = re.sub(r"[^a-z0-9]+", "_", str(key or "").strip().lower()).strip("_")
+    normalized_raw_value = re.sub(
+        r"\s+", " ", str(entry.get("value") or "").casefold()
+    ).strip(" .")
+    canonical = None
+    # Some provider field names are ambiguous without their value. A Decision
+    # Kit may resolve those aliases only for an explicit, bounded enum value;
+    # missing or numeric values continue through the ordinary canonical alias.
+    for candidate, definition in definitions.items():
+        for alias, accepted_values in (definition.get("conditional_aliases") or {}).items():
+            normalized_alias = re.sub(
+                r"[^a-z0-9]+", "_", str(alias or "").strip().lower()
+            ).strip("_")
+            accepted = {
+                re.sub(r"\s+", " ", str(value or "").casefold()).strip(" .")
+                for value in (accepted_values or [])
+            }
+            if normalized_key == normalized_alias and normalized_raw_value in accepted:
+                canonical = candidate
+                break
+        if canonical:
+            break
+    canonical = canonical or canonical_field_key(key, kit)
     if canonical is None:
         raise ValueError(f"Unknown decision field: {key}")
-    entry = dict(raw) if isinstance(raw, dict) else {"value": raw}
     source = str(entry.get("source") or default_source).strip().lower()
     if source not in {"user", "document", "connector", "calculated", "assumed"}:
         raise ValueError(f"Invalid source for {canonical}")

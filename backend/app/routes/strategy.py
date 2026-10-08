@@ -10250,16 +10250,25 @@ def scorecard_attributes(thread_id, scorecard_id):
         return jsonify({'error': 'No valid attributes supplied', 'code': 'invalid_attributes'}), 400
 
     from ..decision_metrics import calculate_metrics
-    current_attributes = dict(card.get('attributes') or {})
-    current_attributes.update(normalized)
-    card['attributes'] = current_attributes
-    card['facts_changed'] = True
-    from ..decision_state import register_option, store_option_attributes
+    from ..decision_state import (
+        migrate_attribute_mapping,
+        migrate_option_attribute_keys,
+        register_option,
+        store_option_attributes,
+    )
     option_key = register_option(
         session,
         card.get('project_name') or card.get('name') or 'Option',
         authoritative_key=card.get('option_key'),
     )
+    migrate_option_attribute_keys(
+        session, option_key, kit=kit,
+        display_name=card.get('project_name') or card.get('name'),
+    )
+    current_attributes = migrate_attribute_mapping(card.get('attributes'), kit=kit)
+    current_attributes.update(normalized)
+    card['attributes'] = current_attributes
+    card['facts_changed'] = True
     card['option_key'] = option_key
     store_option_attributes(
         session, option_key, normalized,
