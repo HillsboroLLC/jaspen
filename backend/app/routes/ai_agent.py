@@ -6303,13 +6303,22 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             card for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
             if str(card.get("id") or card.get("analysis_id") or "").strip() == target_id
         ), None) if target_id else None
-        from ..decision_state import migrate_option_attribute_keys, resolve_option_key, store_option_attributes
+        from ..decision_state import migrate_attribute_mapping, migrate_option_attribute_keys, resolve_option_key, store_option_attributes
         option_key = resolve_option_key(
             session,
             option,
             authoritative_key=(target_card or {}).get("option_key"),
         )
         migrate_option_attribute_keys(session, option_key, kit=kit, display_name=option)
+        # Older records may have a complete fact set only on the scorecard while
+        # the stable option-key store contains a later partial update. Hydrate
+        # the canonical option record first so replacing one fact cannot erase
+        # unchanged current facts during the subsequent holistic re-score.
+        target_attributes = migrate_attribute_mapping(
+            (target_card or {}).get("attributes"), kit=kit,
+        )
+        if target_attributes:
+            store_option_attributes(session, option_key, target_attributes, option)
         corpus = _thread_user_corpus(user_id, thread_id)
         normalized = {}
         rejected_fields = []
@@ -6365,7 +6374,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if target_id:
             from .strategy import apply_scorecard_edit_in_place
             from ..decision_metrics import calculate_metrics
-            from ..decision_state import migrate_attribute_mapping
             def _apply(card):
                 current = migrate_attribute_mapping(card.get("attributes"), kit=kit)
                 current.update(normalized)
@@ -6879,6 +6887,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             scorecard = _normalize_scorecard_payload(scorecard)
             scorecard["decision_fingerprint"] = decision_fp
             scorecard["canonical_judgment_id"] = decision_fp
+            scorecard["decision_state"] = decision_state
+            scorecard["decision_state_reusable"] = state_is_reusable(decision_state)
             scorecard["facts_changed"] = False
 
         # RE-SCORE IN PLACE: when the user edits the OPEN idea in a way that
@@ -6904,7 +6914,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     else (existing.get("name") or existing.get("project_name") or requested_name)
                 )
                 updated_card = {
-                    **(scorecard_payload if isinstance(scorecard_payload, dict) else {}),
+                    # Start with the same complete canonical envelope persisted
+                    # for a newly-created scorecard, then retain only the stable
+                    # record identity and user-owned display fields.
+                    **scorecard,
                     "id": keep_id,
                     "analysis_id": existing.get("analysis_id") or keep_id,
                     "thread_id": thread_id,
@@ -6923,6 +6936,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     "kit_context": session.get("kit_context") if isinstance(session.get("kit_context"), dict) else {},
                     "scoring_rubric": rubric,
                     "decision_fingerprint": decision_fp,
+                    "canonical_judgment_id": decision_fp,
+                    "decision_state": decision_state,
+                    "decision_state_reusable": state_is_reusable(decision_state),
+                    "rejected_attributes": rejected_fields,
                     "facts_changed": False,
                     "timestamp": generated_at,
                     "createdAt": existing.get("createdAt") or generated_at,

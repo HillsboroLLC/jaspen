@@ -3,7 +3,7 @@ import json
 import sys
 import pytest
 from flask import current_app
-from app.models import AIOperation, AIProviderAttempt, UsageEvent
+from app.models import AIOperation, AIProviderAttempt, Scorecard, UsageEvent
 from app.scorecards import upsert_scorecard
 from app.ai_runtime import execute_customer_operation
 
@@ -319,10 +319,18 @@ def test_material_fact_update_uses_option_key_history_and_forces_holistic_rescor
     strategy, agent = modules()
     from app.routes.sessions import load_user_sessions, save_user_sessions
     tid = 'material-fact-rescore'
-    seed_rfp_thread(test_user, tid, decision_kit='rfp_vendor_selection')
+    seed_thread(test_user, tid)
     sessions = load_user_sessions(test_user.id)
+    sessions[tid]['scoring_rubric'] = {
+        'approval_status': 'approved',
+        'approved_by_user_at': '2026-10-09T10:00:00Z',
+        'criteria': [
+            {'key': 'financial_value', 'label': 'Financial value', 'weight': 0.6},
+            {'key': 'delivery_confidence', 'label': 'Delivery confidence', 'weight': 0.4},
+        ],
+    }
     sessions[tid]['chat_history'] = [
-        {'role': 'user', 'content': 'Boulder build-out is $250,000.'},
+        {'role': 'user', 'content': 'Boulder build-out is $240,000 and the lease term is 5 years.'},
         {'role': 'user', 'content': 'Build-out is now $320,000.'},
     ]
     assert save_user_sessions(test_user.id, sessions)
@@ -332,18 +340,25 @@ def test_material_fact_update_uses_option_key_history_and_forces_holistic_rescor
     def scorer(*args, **kwargs):
         value = kwargs['attributes']['build_out_cost']['value']
         judged_values.append(value)
-        score = 55 if value == 250_000 else 48
+        score = 55 if value == 240_000 else 48
         return ({'jaspen_score': score, 'score_category': 'Mixed', 'dimensions': {
-            'total_cost_ownership': {'score': score, 'confidence': 'medium'},
+            'financial_value': {'score': score, 'confidence': 'medium'},
+            'delivery_confidence': {'score': score, 'confidence': 'medium'},
         }, 'gates': []}, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1})
 
     monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', scorer)
     first_fact = agent._execute_mutation_tool(
         'set_option_attributes',
-        {'option': 'Boulder', 'fields': [{
-            'key': 'build_out_cost', 'value': '$250,000', 'source': 'user',
-            'evidence': 'Boulder build-out is $250,000.',
-        }]},
+        {'option': 'Boulder', 'fields': [
+            {
+                'key': 'build_out_cost', 'value': '$240,000', 'source': 'user',
+                'evidence': 'Boulder build-out is $240,000 and the lease term is 5 years.',
+            },
+            {
+                'key': 'lease_term_years', 'value': '5', 'source': 'user',
+                'evidence': 'Boulder build-out is $240,000 and the lease term is 5 years.',
+            },
+        ]},
         user=test_user, user_id=test_user.id, thread_id=tid,
     )
     first = agent._execute_mutation_tool(
@@ -375,12 +390,31 @@ def test_material_fact_update_uses_option_key_history_and_forces_holistic_rescor
     assert rescored['scorecard_id'] == card_id
     assert rescored['updated_scorecard']['option_key'] == option_key
     assert rescored['updated_scorecard']['attributes']['build_out_cost']['value'] == 320_000
+    assert rescored['updated_scorecard']['attributes']['lease_term_years']['value'] == '5'
     assert rescored['updated_scorecard']['decision_fingerprint'] != first_fingerprint
-    assert judged_values == [250_000, 320_000]
+    assert rescored['updated_scorecard']['decision_state']['facts']['build_out_cost']['value'] == 320_000
+    assert rescored['updated_scorecard']['decision_state']['facts']['lease_term_years']['value'] == '5'
+    assert rescored['updated_scorecard']['decision_state_reusable'] is True
+    persisted = Scorecard.query.filter_by(id=card_id, thread_id=tid).one()
+    assert persisted.data['attributes']['lease_term_years']['value'] == '5'
+    assert persisted.data['decision_state']['facts']['build_out_cost']['value'] == 320_000
+    assert persisted.data['decision_state']['facts']['lease_term_years']['value'] == '5'
+    assert persisted.data['decision_state_reusable'] is True
+    repeated = agent._execute_mutation_tool(
+        'generate_scorecard', {
+            'name': 'Boulder', 'idea_description': 'Re-evaluate Boulder holistically.',
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert repeated['ok']
+    assert repeated['scorecard']['meta']['reused_source_scorecard_id'] == card_id
+    assert repeated['scorecard']['decision_fingerprint'] == rescored['updated_scorecard']['decision_fingerprint']
+    assert repeated['scorecard']['decision_state_reusable'] is True
+    assert judged_values == [240_000, 320_000]
     session = load_user_sessions(test_user.id)[tid]
     history = session['option_attribute_history_by_key'][option_key]
-    assert history[-1]['previous']['value'] == 250_000
-    assert history[-1]['previous']['evidence'] == 'Boulder build-out is $250,000.'
+    assert history[-1]['previous']['value'] == 240_000
+    assert history[-1]['previous']['evidence'] == 'Boulder build-out is $240,000 and the lease term is 5 years.'
 
 
 def test_proposed_rubric_is_visible_with_weights_before_approval(app, db, test_user):
