@@ -244,6 +244,70 @@ def normalize_fact_entry(key, raw, *, kit=None, default_source="user", default_e
     return canonical, result
 
 
+_GENERIC_EVIDENCE_TERMS = {
+    "amount", "date", "expected", "first", "requirement", "status", "value", "year",
+}
+
+
+def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None):
+    """Return an exact user excerpt supporting a canonical field/value pair.
+
+    A provider may paraphrase an excerpt, but stored provenance must remain the
+    user's words. Matching therefore requires both a schema-owned field signal
+    and the same normalized value; a coincidental number elsewhere in the turn
+    is insufficient. No value is extracted or invented here.
+    """
+    corpus = str(source_text or "")
+    claimed = str(claimed_evidence or "").strip()
+    if not corpus:
+        return None
+    claimed_excerpt = None
+    if claimed:
+        start = corpus.casefold().find(claimed.casefold())
+        if start >= 0:
+            claimed_excerpt = corpus[start:start + len(claimed)]
+
+    canonical = canonical_field_key(key, kit)
+    if not canonical:
+        return None
+    definitions = field_definitions(kit)
+    definition = definitions.get(canonical) or _COMMON_FIELD_DEFINITIONS.get(canonical, {})
+    expected = normalize_value(value, definition)
+    if expected is None:
+        return None
+
+    phrases = [canonical, definition.get("label"), *(definition.get("aliases") or [])]
+    field_terms = {
+        token
+        for phrase in phrases if phrase
+        for token in re.findall(r"[a-z0-9]+", str(phrase).casefold().replace("_", " "))
+        if len(token) >= 3 and token not in _GENERIC_EVIDENCE_TERMS
+    }
+    if not field_terms:
+        return None
+
+    numeric_kind = str(definition.get("type") or "").lower() in {"money", "number", "percentage"}
+    corpus_candidates = [
+        part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", corpus) if part.strip()
+    ]
+    candidates = ([claimed_excerpt] if claimed_excerpt else []) + list(reversed(corpus_candidates))
+    for sentence in candidates:
+        sentence_terms = set(re.findall(r"[a-z0-9]+", sentence.casefold().replace("-", " ")))
+        if not field_terms.intersection(sentence_terms):
+            continue
+        if numeric_kind:
+            raw_numbers = re.findall(
+                r"\$?\s*[0-9][0-9,]*(?:\.[0-9]+)?\s*[kmb%]?",
+                sentence,
+                flags=re.I,
+            )
+            if any(normalize_value(raw_number, definition) == expected for raw_number in raw_numbers):
+                return sentence
+        elif str(expected).casefold() in sentence.casefold():
+            return sentence
+    return None
+
+
 def _candidate(pattern, text, key, *, flags=re.I, group=1):
     match = re.search(pattern, text, flags)
     if not match:

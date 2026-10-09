@@ -87,7 +87,7 @@ from app.evaluation_telemetry import (
     evaluation_id_for_new_scorecard,
     evaluation_id_for_scorecard,
 )
-from app.decision_facts import normalize_fact_entry, normalize_option_facts, option_fact_text
+from app.decision_facts import ground_user_evidence, normalize_fact_entry, normalize_option_facts, option_fact_text
 from app.decision_kits import get_decision_kit, normalize_decision_kit
 from app.connector_store import get_connector_settings, get_thread_sync_profile, update_thread_sync_profile
 from app.jira_sync import sync_wbs_to_jira
@@ -3251,6 +3251,12 @@ def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn, use
     rubric = (session or {}).get("scoring_rubric") if isinstance(session, dict) else None
     rubric_ready = bool(isinstance(rubric, dict) and rubric.get("criteria"))
     score_tool = str(tool_name or "").strip() in {"generate_scorecard", "queue_scorecards"}
+    if score_tool and isinstance(session, dict) and session.get("_fact_update_failure"):
+        session.pop("_fact_update_failure", None)
+        return _scoring_tool_failure(
+            "I couldn’t verify and save the fact update, so I did not re-score. Your existing scorecard is unchanged. Try again.",
+            code="fact_update_required",
+        )
     from ..decision_state import rubric_is_approved
     if score_tool and explicit_score and isinstance(session, dict):
         session["scoring_intent"] = {"status": "requested", "source": "user"}
@@ -4494,6 +4500,13 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
         and isinstance(result.get("rubric"), dict)
     ):
         session["scoring_rubric"] = result["rubric"]
+    if tool_name == "set_option_attributes" and isinstance(session, dict):
+        if isinstance(result, dict) and result.get("ok"):
+            session.pop("_fact_update_failure", None)
+        else:
+            session["_fact_update_failure"] = {
+                "code": (result or {}).get("code") if isinstance(result, dict) else "fact_update_failed",
+            }
 
     # Only a mutation that actually SUCCEEDED counts toward the per-turn cap.
     # A malformed or rejected call (e.g. a generate_scorecard missing a field)
@@ -6308,10 +6321,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             if source not in {"user", "document", "connector", "assumed"}:
                 rejected_fields.append({"field": str(field.get("key") or ""), "value": field.get("value"), "reason": "Invalid source"})
                 continue
-            if source == "user" and evidence.lower() not in corpus.lower():
-                rejected_fields.append({"field": str(field.get("key") or ""), "value": field.get("value"), "reason": "Evidence was not found verbatim in the user's words"})
-                continue
-            if source in {"user", "document", "connector"} and not evidence:
+            if source in {"document", "connector"} and not evidence:
                 rejected_fields.append({"field": str(field.get("key") or ""), "value": field.get("value"), "reason": "Evidence is required"})
                 continue
             try:
@@ -6319,6 +6329,18 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             except ValueError as exc:
                 rejected_fields.append({"field": str(field.get("key") or ""), "value": field.get("value"), "source": source, "evidence": evidence, "reason": str(exc)})
                 continue
+            if source == "user":
+                grounded = ground_user_evidence(
+                    key, entry.get("value"), evidence, user_message or corpus, kit=kit,
+                ) or ground_user_evidence(key, entry.get("value"), evidence, corpus, kit=kit)
+                if not grounded:
+                    rejected_fields.append({
+                        "field": str(field.get("key") or ""), "value": field.get("value"),
+                        "source": source, "evidence": evidence,
+                        "reason": "Evidence could not be grounded in the user's words",
+                    })
+                    continue
+                entry["evidence"] = grounded
             normalized[key] = {**entry, "updated_at": _iso_now()}
         if not normalized:
             error = _tool_error("No valid structured fields were provided.", code="invalid_option_attributes")
@@ -6465,8 +6487,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     source = str(entry.get("source") or "").lower()
                     evidence = str(entry.get("evidence") or "").strip()
                     invalid_reason = None
-                    if source == "user" and (not evidence or evidence.lower() not in scoped_corpus.lower()):
-                        invalid_reason = "Evidence was not found verbatim in the option's user-authored section"
+                    if source == "user":
+                        grounded = ground_user_evidence(
+                            field_key, entry.get("value"), evidence, scoped_corpus, kit=queue_kit,
+                        )
+                        if grounded:
+                            entry["evidence"] = grounded
+                        else:
+                            invalid_reason = "Evidence could not be grounded in the option's user-authored section"
                     elif source in {"document", "connector"} and not evidence:
                         invalid_reason = "Evidence is required"
                     if invalid_reason:
@@ -9276,6 +9304,8 @@ def _generate_assistant_reply(
     attachments=None,
     disable_mutations=False,
 ):
+    if isinstance(session, dict):
+        session.pop("_fact_update_failure", None)
     routing_signals = _conversation_routing_signals(
         user_message,
         chat_history,
@@ -9492,6 +9522,8 @@ def _stream_assistant_reply_events(
     attachments=None,
     disable_mutations=False,
 ):
+    if isinstance(session, dict):
+        session.pop("_fact_update_failure", None)
     routing_signals = _conversation_routing_signals(
         user_message,
         chat_history,

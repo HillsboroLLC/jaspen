@@ -15,7 +15,7 @@ from app.decision_confidence import (
     decision_summary,
     evidence_profile,
 )
-from app.decision_facts import apply_assumption_confidence_caps, normalize_option_facts
+from app.decision_facts import apply_assumption_confidence_caps, ground_user_evidence, normalize_option_facts
 from app.evidence_references import attach_evidence_references, reference_supports_decision
 from app.models import Scorecard, UsageEvent, User
 from app.ai_audit import persist_operation
@@ -10265,15 +10265,23 @@ def scorecard_attributes(thread_id, scorecard_id):
         evidence = str(raw.get('evidence') or '').strip()
         if source not in {'user', 'document', 'connector', 'assumed'}:
             return jsonify({'error': f'Invalid source for {key}', 'code': 'invalid_attribute_source'}), 400
-        if source == 'user' and evidence.lower() not in corpus.lower():
-            return jsonify({'error': f'Evidence for {key} was not found verbatim in the user input', 'code': 'unverified_attribute_evidence'}), 400
-        if source in {'user', 'document', 'connector'} and not evidence:
+        if source in {'document', 'connector'} and not evidence:
             return jsonify({'error': f'Evidence is required for {key}', 'code': 'missing_attribute_evidence'}), 400
         try:
             from ..decision_facts import normalize_fact_entry
             canonical_key, entry = normalize_fact_entry(key, raw, kit=kit)
         except ValueError as exc:
             return jsonify({'error': str(exc), 'code': 'invalid_attribute'}), 400
+        if source == 'user':
+            grounded = ground_user_evidence(
+                canonical_key, entry.get('value'), evidence, corpus, kit=kit,
+            )
+            if not grounded:
+                return jsonify({
+                    'error': f'Evidence for {key} could not be grounded in the user input',
+                    'code': 'unverified_attribute_evidence',
+                }), 400
+            entry['evidence'] = grounded
         normalized[canonical_key] = {**entry, 'updated_at': datetime.utcnow().isoformat()}
     if not normalized:
         return jsonify({'error': 'No valid attributes supplied', 'code': 'invalid_attributes'}), 400

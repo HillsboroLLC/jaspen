@@ -330,7 +330,7 @@ def test_material_fact_update_uses_option_key_history_and_forces_holistic_rescor
     judged_values = []
 
     def scorer(*args, **kwargs):
-        value = kwargs['attributes']['proposal_price']['value']
+        value = kwargs['attributes']['build_out_cost']['value']
         judged_values.append(value)
         score = 55 if value == 250_000 else 48
         return ({'jaspen_score': score, 'score_category': 'Mixed', 'dimensions': {
@@ -341,7 +341,7 @@ def test_material_fact_update_uses_option_key_history_and_forces_holistic_rescor
     first_fact = agent._execute_mutation_tool(
         'set_option_attributes',
         {'option': 'Boulder', 'fields': [{
-            'key': 'proposal_price', 'value': '$250,000', 'source': 'user',
+            'key': 'build_out_cost', 'value': '$250,000', 'source': 'user',
             'evidence': 'Boulder build-out is $250,000.',
         }]},
         user=test_user, user_id=test_user.id, thread_id=tid,
@@ -358,7 +358,7 @@ def test_material_fact_update_uses_option_key_history_and_forces_holistic_rescor
     changed = agent._execute_mutation_tool(
         'set_option_attributes',
         {'option': 'Boulder', 'scorecard_id': card_id, 'fields': [{
-            'key': 'proposal_price', 'value': '$320,000', 'source': 'user',
+            'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
             'evidence': 'Build-out is now $320,000.',
         }]},
         user=test_user, user_id=test_user.id, thread_id=tid,
@@ -374,7 +374,7 @@ def test_material_fact_update_uses_option_key_history_and_forces_holistic_rescor
     assert changed['ok'] and rescored['ok'] and rescored['rescored']
     assert rescored['scorecard_id'] == card_id
     assert rescored['updated_scorecard']['option_key'] == option_key
-    assert rescored['updated_scorecard']['attributes']['proposal_price']['value'] == 320_000
+    assert rescored['updated_scorecard']['attributes']['build_out_cost']['value'] == 320_000
     assert rescored['updated_scorecard']['decision_fingerprint'] != first_fingerprint
     assert judged_values == [250_000, 320_000]
     session = load_user_sessions(test_user.id)[tid]
@@ -602,6 +602,101 @@ def test_common_canonical_fact_update_survives_active_decision_kit(app, db, test
     stored = load_user_sessions(test_user.id)[tid]
     values = list(stored['option_attributes_by_key'].values())
     assert values[0]['build_out_cost']['value'] == 320000
+
+
+def test_material_update_binds_provider_paraphrase_to_exact_user_evidence(app, db, test_user):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'paraphrased-material-update-evidence'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'] = [{
+        'role': 'user', 'content': 'Build-out is now $320,000.',
+    }]
+    assert save_user_sessions(test_user.id, sessions)
+
+    result = agent._execute_mutation_tool(
+        'set_option_attributes', {'option': 'Boulder', 'fields': [{
+            'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
+            'evidence': 'Build-out cost: $320,000',
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+        user_message='Build-out is now $320,000.',
+    )
+
+    assert result['ok'], result
+    fact = result['option_attributes']['build_out_cost']
+    assert fact['value'] == 320000
+    assert fact['evidence'] == 'Build-out is now $320,000.'
+
+
+def test_material_update_can_bind_user_evidence_when_provider_omits_quote(app, db, test_user):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'omitted-material-update-evidence'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'] = [{
+        'role': 'user', 'content': 'Build-out is now $320,000.',
+    }]
+    assert save_user_sessions(test_user.id, sessions)
+
+    result = agent._execute_mutation_tool(
+        'set_option_attributes', {'option': 'Boulder', 'fields': [{
+            'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
+            'evidence': '',
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+        user_message='Build-out is now $320,000.',
+    )
+
+    assert result['ok'], result
+    assert result['option_attributes']['build_out_cost']['evidence'] == 'Build-out is now $320,000.'
+
+
+def test_failed_fact_grounding_blocks_same_turn_rescore(app, db, test_user, monkeypatch):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'failed-fact-update-blocks-rescore'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'] = [{
+        'role': 'user', 'content': 'Monthly lease is now $320,000.',
+    }]
+    assert save_user_sessions(test_user.id, sessions)
+    session = load_user_sessions(test_user.id)[tid]
+
+    failed, count = agent._execute_local_tool(
+        'set_option_attributes', {'option': 'Boulder', 'fields': [{
+            'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
+            'evidence': 'Build-out cost: $320,000',
+        }]},
+        readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
+        user_turn_count=2, mutations_this_turn=0,
+        user_message='Monthly lease is now $320,000.', session=session,
+    )
+    assert failed['ok'] is False
+    assert count == 0
+    assert failed['rejected_fields'][0]['reason'] == "Evidence could not be grounded in the user's words"
+
+    monkeypatch.setattr(
+        agent, '_execute_mutation_tool',
+        lambda *a, **k: pytest.fail('scoring must not run after a failed fact update'),
+    )
+    blocked, _ = agent._execute_local_tool(
+        'generate_scorecard', {'name': 'Boulder', 'idea_description': 'Re-score Boulder.'},
+        readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
+        user_turn_count=2, mutations_this_turn=count,
+        user_message='Monthly lease is now $320,000.', session=session,
+    )
+    assert blocked['ok'] is False
+    assert blocked['failure_state'] is True
+    assert blocked['code'] == 'fact_update_required'
+    assert blocked['action'] == {'type': 'retry', 'label': 'Retry'}
+    assert 'did not re-score' in blocked['error']
 
 
 def test_numeric_guard_allows_persisted_rubric_weights_but_rejects_model_math(app):
