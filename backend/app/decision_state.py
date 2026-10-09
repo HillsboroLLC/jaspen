@@ -301,7 +301,15 @@ def canonical_decision_state(
 
 
 def decision_state_fingerprint(state):
-    encoded = json.dumps(state, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str)
+    # Option keys identify records inside a thread; they are not scoring facts.
+    # Two people evaluating the same canonical evidence under the same rubric,
+    # objective, gates, and Decision Kit must reuse one organizational judgment
+    # even though their local option records have different UUIDs.
+    material_state = {
+        key: value for key, value in (state or {}).items()
+        if key != "option_identity"
+    }
+    encoded = json.dumps(material_state, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str)
     return hashlib.sha256(encoded.encode()).hexdigest()
 
 

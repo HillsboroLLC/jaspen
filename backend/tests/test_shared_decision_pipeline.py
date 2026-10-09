@@ -161,6 +161,47 @@ def test_real_judge_path_rejects_uniform_ungrounded_default(app, monkeypatch):
         )
 
 
+def test_uniform_assumed_default_is_rejected_even_when_reference_counts_vary(app, monkeypatch):
+    from app.routes import strategy
+
+    quotes = ["Revenue is $1M.", "Build-out is $200,000."]
+    response = {
+        "dimensions": {
+            "fit": {
+                "score": 45, "confidence": "assumed", "source": "assumed",
+                "evidence": quotes, "rationale": "Defaulted despite evidence.",
+                "what_would_improve": "Provide more evidence.",
+            },
+            "risk": {
+                "score": 45, "confidence": "assumed", "source": "assumed",
+                "evidence": [quotes[0]], "rationale": "Defaulted despite evidence.",
+                "what_would_improve": "Provide more evidence.",
+            },
+        },
+        "gates": [],
+        "assumptions": ["The provider ignored the supplied facts."],
+    }
+    monkeypatch.setattr(
+        strategy, "_strategy_generate_reply",
+        lambda *a, **k: (json.dumps(response), {"provider": "test"}),
+    )
+    attributes = {
+        "revenue": {"value": 1_000_000, "source": "user", "evidence": quotes[0]},
+        "build_out_cost": {"value": 200_000, "source": "user", "evidence": quotes[1]},
+    }
+    rubric = {"approval_status": "approved", "criteria": [
+        {"key": "fit", "label": "Fit", "weight": 0.5},
+        {"key": "risk", "label": "Risk", "weight": 0.5, "is_risk": True},
+    ]}
+
+    with pytest.raises(strategy.UngroundedScorecardJudgment, match="ungrounded default"):
+        strategy._generate_jaspen_scorecard(
+            None, "Boulder", "test", rubric=rubric,
+            attributes=attributes, evidence_corpus=" ".join(quotes),
+            option_key="opt-boulder", option_name="Boulder",
+        )
+
+
 def test_gate_judge_path_requires_and_preserves_exact_canonical_citation(app, monkeypatch):
     from app.routes import strategy
 
@@ -711,3 +752,86 @@ def test_schema_owned_aliases_cannot_create_duplicate_semantic_fields():
     assert set(current) == {"build_out_cost"}
     assert current["build_out_cost"]["value"] == 320000
     assert session["option_attribute_history_by_key"]["stable-option"][0]["previous"]["value"] == 240000
+
+
+def test_year_one_revenue_aliases_share_one_canonical_field():
+    from app.decision_facts import normalize_option_facts
+
+    single = normalize_option_facts({
+        "projected_first_year_revenue": {
+            "value": "$1.2M", "source": "user", "evidence": "Revenue is $1.2M.",
+        },
+    })
+    batch = normalize_option_facts({
+        "projected_year1_revenue": {
+            "value": "$1.2M", "source": "user", "evidence": "Revenue is $1.2M.",
+        },
+    })
+    assert single == batch
+    assert set(single) == {"projected_first_year_revenue"}
+
+
+def test_scoring_fingerprint_ignores_thread_local_option_identity():
+    from app.decision_fingerprint import scoring_fingerprint
+
+    common = {
+        "attributes": {"revenue": {"value": 1_000_000, "source": "user"}},
+        "rubric": {"approval_status": "approved", "criteria": [
+            {"key": "fit", "label": "Fit", "weight": 1.0},
+        ]},
+        "objective": "balanced", "decision_kit": None,
+        "decision_kit_version": None,
+    }
+    assert scoring_fingerprint(option_key="opt-one", option_name="Boulder", **common) == scoring_fingerprint(
+        option_key="opt-another-thread", option_name="Boulder expansion", **common,
+    )
+    changed = {**common, "attributes": {
+        "revenue": {"value": 2_000_000, "source": "user"},
+    }}
+    assert scoring_fingerprint(option_key="opt-one", **common) != scoring_fingerprint(
+        option_key="opt-one", **changed,
+    )
+
+
+def test_batch_reuses_the_org_judgment_for_identical_canonical_state(app, monkeypatch):
+    from app.decision_fingerprint import scoring_fingerprint
+    from app.decision_facts import normalize_option_facts
+    from app.routes import strategy
+
+    attributes = normalize_option_facts({
+        "projected_first_year_revenue": {
+            "value": 1_200_000, "source": "user", "evidence": "Revenue is $1.2M.",
+        },
+    })
+    rubric = {"approval_status": "approved", "criteria": [
+        {"key": "fit", "label": "Fit", "weight": 1.0},
+    ]}
+    source_card = {
+        "jaspen_score": 63, "score_category": "Good",
+        "dimensions": {"fit": {
+            "score": 63, "raw_score": 63, "confidence": "medium",
+            "evidence": ["Revenue is $1.2M."],
+        }},
+        "attributes": attributes,
+    }
+    expected = scoring_fingerprint(
+        option_key="single-thread-key", option_name="Boulder",
+        attributes=attributes, rubric=rubric, objective="balanced",
+        decision_kit=None, decision_kit_version=None,
+    )
+    monkeypatch.setattr(
+        strategy, "_generate_jaspen_scorecard",
+        lambda *a, **k: pytest.fail("identical canonical state must use the stored judgment"),
+    )
+
+    cards, _ = strategy._generate_batch_scorecards(
+        None,
+        [{"name": "Boulder", "option_key": "different-batch-key", "attributes": attributes}],
+        rubric=rubric, strategy_objective="balanced",
+        evidence_corpus="Boulder: Revenue is $1.2M.", llm_model="test",
+        reuse_lookup=lambda fingerprint, _state: dict(source_card) if fingerprint == expected else None,
+    )
+
+    assert cards[0]["jaspen_score"] == 63
+    assert cards[0]["reused_stored_result"] is True
+    assert cards[0]["decision_fingerprint"] == expected

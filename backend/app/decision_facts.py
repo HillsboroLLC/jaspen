@@ -37,8 +37,13 @@ _ALIASES = {
 # they define which provider field keys represent the same canonical fact in
 # every Decision Kit and general scoring path.
 _COMMON_FIELD_DEFINITIONS = {
-    "build_out_cost": {"aliases": ["buildout_cost"]},
-    "monthly_lease": {"aliases": ["lease_monthly", "monthly_rent"]},
+    "build_out_cost": {"aliases": ["buildout_cost"], "type": "money", "unit": "USD"},
+    "monthly_lease": {"aliases": ["lease_monthly", "monthly_rent"], "type": "money", "unit": "USD"},
+    "projected_first_year_revenue": {
+        "aliases": ["projected_year1_revenue", "projected_year_one_revenue"],
+        "type": "money",
+        "unit": "USD",
+    },
 }
 
 _MONTHS = {
@@ -214,7 +219,8 @@ def normalize_fact_entry(key, raw, *, kit=None, default_source="user", default_e
     source = str(entry.get("source") or default_source).strip().lower()
     if source not in {"user", "document", "connector", "calculated", "assumed"}:
         raise ValueError(f"Invalid source for {canonical}")
-    value = normalize_value(entry.get("value"), definitions.get(canonical, {}))
+    field_definition = definitions.get(canonical) or _COMMON_FIELD_DEFINITIONS.get(canonical, {})
+    value = normalize_value(entry.get("value"), field_definition)
     if entry.get("value") not in (None, "") and value is None:
         raise ValueError(f"Invalid value for {canonical}")
     evidence = str(entry.get("evidence") or default_evidence or "").strip()
@@ -228,9 +234,9 @@ def normalize_fact_entry(key, raw, *, kit=None, default_source="user", default_e
             "bounds": entry.get("bounds"),
             "affects": [str(item) for item in (entry.get("affects") or []) if str(item).strip()],
         }
-    if definitions.get(canonical, {}).get("unit"):
-        result["unit"] = definitions[canonical]["unit"]
-    elif str(definitions.get(canonical, {}).get("type") or "").lower() == "percentage":
+    if field_definition.get("unit"):
+        result["unit"] = field_definition["unit"]
+    elif str(field_definition.get("type") or "").lower() == "percentage":
         result["unit"] = "percent_points"
     return canonical, result
 

@@ -445,6 +445,72 @@ def test_decision_kit_starter_rubric_is_persisted_and_rendered_before_provider_r
     assert len(durable['criteria']) == 6
 
 
+def test_general_objective_rubric_is_persisted_and_rendered_in_full(app, db, test_user, monkeypatch):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions
+    tid = 'general-rubric-before-provider'
+    seed_thread(test_user, tid)
+    session = load_user_sessions(test_user.id)[tid]
+    monkeypatch.setattr(
+        agent, '_resolve_governed_routes',
+        lambda *a, **k: pytest.fail('provider must not author the application rubric'),
+    )
+
+    reply, usage, actions, _, _ = agent._generate_assistant_reply(
+        'Show me the scoring rubric and weights.', [], {}, {'llm_model': 'test'},
+        session=session, user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert usage['provider'] == 'deterministic' and actions == []
+    expected = [
+        'Market opportunity: 18%', 'Financial viability: 20%',
+        'Execution readiness: 18%', 'Strategic alignment: 16%',
+        'Risk profile: 16%', 'Evidence quality: 12%',
+    ]
+    assert all(line in reply for line in expected)
+    durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
+    assert durable['approval_status'] == 'proposed'
+    assert durable['presented_at']
+    assert len(durable['criteria']) == 6
+
+
+def test_streaming_inferred_rfp_renders_all_starter_criteria_without_provider(app, db, test_user, monkeypatch):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    tid = 'streaming-inferred-rfp-rubric'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid].update({
+        'decision_kit': 'rfp_vendor_selection', 'decision_kit_version': 1,
+        'decision_kit_family': 'rfp', 'decision_kit_source': 'discovery_inference',
+    })
+    assert save_user_sessions(test_user.id, sessions)
+    session = load_user_sessions(test_user.id)[tid]
+    monkeypatch.setattr(
+        agent, '_resolve_governed_routes',
+        lambda *a, **k: pytest.fail('provider must not render the starter rubric'),
+    )
+    state = {}
+
+    events = list(agent._stream_assistant_reply_events(
+        'We received vendor proposals and need to select one.', [], {},
+        {'llm_model': 'test'}, session=session, state=state,
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    ))
+
+    reply = state['reply']
+    assert events == [{'type': 'delta', 'text': reply}]
+    expected = [
+        'Functional / technical fit: 25%', 'Total cost of ownership: 20%',
+        'Implementation risk & timeline: 20%', 'Vendor viability & references: 15%',
+        'Integration & compliance: 10%', 'Commercial terms: 10%',
+    ]
+    assert all(line in reply for line in expected)
+    durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
+    assert durable['approval_status'] == 'proposed'
+    assert len(durable['criteria']) == 6
+
+
 def test_provider_cannot_add_unspoken_rubric_meaning(app, db, test_user):
     _, agent = modules()
     tid = 'rubric-description-grounding'
@@ -1112,6 +1178,72 @@ def test_rescore_identity_mismatch_cannot_overwrite_another_option(app, db, test
     by_id = {card['id']: card for card in cards}
     assert by_id['aurora']['jaspen_score'] == 30
     assert by_id['commerce']['jaspen_score'] == 59
+
+
+def test_rescore_accepts_a_registered_alias_for_the_same_option(app, db, test_user, monkeypatch):
+    strategy, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    tid = 'rescore-same-option-alias'
+    card = {
+        'id': 'boulder', 'project_name': 'Boulder Pearl Street',
+        'name': 'Boulder Pearl Street', 'option_key': 'stable-boulder',
+        'jaspen_score': 52,
+        'attributes': {'build_out_cost': {
+            'value': 240000, 'source': 'user', 'evidence': 'Build-out is $240,000.',
+        }},
+    }
+    seed_thread(test_user, tid, [card])
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['option_registry'] = {'stable-boulder': {
+        'option_key': 'stable-boulder', 'display_name': 'Boulder Pearl Street',
+        'aliases': ['boulder pearl street', 'boulder pearl street second location'],
+        'status': 'scored',
+    }}
+    sessions[tid]['option_aliases'] = {
+        'boulder pearl street': 'stable-boulder',
+        'boulder pearl street second location': 'stable-boulder',
+    }
+    sessions[tid]['option_attributes_by_key'] = {
+        'stable-boulder': card['attributes'],
+    }
+    sessions[tid]['chat_history'] = [{
+        'role': 'user', 'content': 'Build-out is now $320,000.',
+    }]
+    assert save_user_sessions(test_user.id, sessions)
+    upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=card)
+    db.session.commit()
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', lambda *a, **k: ({
+        'jaspen_score': 48, 'score_category': 'Fair',
+        'dimensions': {'financial_viability': {'score': 48, 'confidence': 'medium'}},
+        'gates': [],
+    }, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1}))
+
+    changed = agent._execute_mutation_tool(
+        'set_option_attributes', {
+            'option': 'Boulder Pearl Street Second Location',
+            'scorecard_id': 'boulder',
+            'fields': [{
+                'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
+                'evidence': 'Build-out is now $320,000.',
+            }],
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    rescored = agent._execute_mutation_tool(
+        'generate_scorecard', {
+            'rescore_scorecard_id': 'boulder',
+            'name': 'Boulder Pearl Street Second Location',
+            'idea_description': 'Re-score after the material fact update.',
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert changed['ok'], changed
+    assert rescored['ok'] and rescored['rescored'], rescored
+    assert rescored['updated_scorecard']['id'] == 'boulder'
+    assert rescored['updated_scorecard']['option_key'] == 'stable-boulder'
+    assert rescored['updated_scorecard']['attributes']['build_out_cost']['value'] == 320000
 
 
 def test_failed_chat_audit_retains_provider_attempts(app, db, test_user):

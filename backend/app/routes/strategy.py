@@ -243,6 +243,32 @@ _OBJECTIVE_DIMENSION_WEIGHTS = {
     "balanced":  {"market_opportunity": 0.18, "financial_viability": 0.20, "execution_readiness": 0.18, "strategic_alignment": 0.16, "risk_profile": 0.16, "evidence_quality": 0.12},
 }
 
+_DEFAULT_RUBRIC_LABELS = {
+    "market_opportunity": "Market opportunity",
+    "financial_viability": "Financial viability",
+    "execution_readiness": "Execution readiness",
+    "strategic_alignment": "Strategic alignment",
+    "risk_profile": "Risk profile",
+    "evidence_quality": "Evidence quality",
+}
+
+
+def default_objective_rubric(objective="balanced"):
+    """Return the application-owned proposed rubric for a general decision."""
+    objective_key = _normalize_strategy_objective(objective) or "balanced"
+    weights = _OBJECTIVE_DIMENSION_WEIGHTS.get(
+        objective_key, _OBJECTIVE_DIMENSION_WEIGHTS["balanced"],
+    )
+    return [
+        {
+            "key": key,
+            "label": _DEFAULT_RUBRIC_LABELS[key],
+            "weight": weight,
+            "is_risk": key == "risk_profile",
+        }
+        for key, weight in weights.items()
+    ]
+
 
 def _normalize_strategy_objective(value, default='balanced'):
     text = str(value or '').strip().lower()
@@ -2583,7 +2609,10 @@ def _validate_grounded_scorecard_judgment(payload, criteria, attributes, approve
         raise UngroundedScorecardJudgment(
             "The judge ignored all canonical evidence supplied for this option."
         )
-    if len(signatures) > 1 and len(set(signatures)) == 1 and signatures[0][:2] == (45.0, "assumed"):
+    if (
+        len(signatures) > 1
+        and all(signature[:2] == (45.0, "assumed") for signature in signatures)
+    ):
         raise UngroundedScorecardJudgment(
             "The judge returned an ungrounded default judgment for every criterion."
         )

@@ -1001,17 +1001,39 @@ def _message_supplies_weighted_rubric(user_message):
     return len(re.findall(r"\b\d+(?:\.\d+)?\s*%", str(user_message or ""))) >= 2
 
 
+def _rubric_proposal_requested(user_message):
+    return bool(re.search(
+        r"\b(?:rubric|criteria|weights?|score\s+(?:it|this|them|these|all|now))\b",
+        str(user_message or ""),
+        re.I,
+    ))
+
+
 def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
-    """Persist and render the exact starter rubric before it can be approved."""
-    if not isinstance(session, dict) or not session.get("decision_kit"):
+    """Persist and render the exact application rubric before approval."""
+    if not isinstance(session, dict) or not user_id or not thread_id:
         return None
     current = session.get("scoring_rubric")
     if isinstance(current, dict) and current.get("criteria"):
         return None
     if _message_supplies_weighted_rubric(user_message):
         return None
-    kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
-    criteria = [dict(item) for item in (kit.get("starter_rubric") or []) if isinstance(item, dict)]
+    kit = (
+        get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
+        if session.get("decision_kit") else None
+    )
+    if kit:
+        criteria = [
+            dict(item) for item in (kit.get("starter_rubric") or [])
+            if isinstance(item, dict)
+        ]
+        rubric_label = f"{kit.get('label') or 'Decision Kit'} rubric"
+    else:
+        if not _rubric_proposal_requested(user_message):
+            return None
+        from .strategy import default_objective_rubric
+        criteria = default_objective_rubric(session.get("strategy_objective"))
+        rubric_label = "scoring rubric"
     if not criteria:
         return None
     presented_at = _iso_now()
@@ -1030,7 +1052,7 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
         sessions[key or thread_id] = durable
         if not save_user_sessions(user_id, sessions):
             return None
-    lines = ["Here’s the RFP rubric I propose for your review:"]
+    lines = [f"Here’s the {rubric_label} I propose for your review:"]
     for item in criteria:
         label = item.get("label") or item.get("key")
         weight = int(round(float(item.get("weight") or 0) * 100))
@@ -3588,6 +3610,27 @@ def _scorecard_option_identities(scorecard):
     }
 
 
+def _requested_name_matches_scorecard(session, scorecard, requested_name):
+    """Match a re-score name through the code-owned option registry."""
+    requested_identity = _normalized_option_identity(requested_name)
+    if requested_identity and requested_identity in _scorecard_option_identities(scorecard):
+        return True
+    if not isinstance(session, dict) or not requested_identity:
+        return False
+    target_key = str((scorecard or {}).get("option_key") or "").strip()
+    if not target_key:
+        return False
+    aliases = session.get("option_aliases") if isinstance(session.get("option_aliases"), dict) else {}
+    if str(aliases.get(requested_identity) or "").strip() == target_key:
+        return True
+    registry = session.get("option_registry") if isinstance(session.get("option_registry"), dict) else {}
+    target = registry.get(target_key) if isinstance(registry.get(target_key), dict) else {}
+    return requested_identity in {
+        _normalized_option_identity(alias) for alias in (target.get("aliases") or [])
+        if _normalized_option_identity(alias)
+    }
+
+
 def _resolve_rescore_target(user_id, thread_id, session, scorecard_id, requested_name):
     """Return the exact card eligible for an in-place re-score, or an error.
 
@@ -3597,7 +3640,6 @@ def _resolve_rescore_target(user_id, thread_id, session, scorecard_id, requested
     stale active-card id from another option.
     """
     target_id = str(scorecard_id or "").strip()
-    requested_identity = _normalized_option_identity(requested_name)
     cards = _collect_session_scorecards(
         session,
         user_id=user_id,
@@ -3615,7 +3657,7 @@ def _resolve_rescore_target(user_id, thread_id, session, scorecard_id, requested
             "The scorecard selected for re-scoring no longer exists in this thread.",
             code="rescore_target_not_found",
         )
-    if not requested_identity or requested_identity not in _scorecard_option_identities(target):
+    if not _requested_name_matches_scorecard(session, target, requested_name):
         return None, _tool_error(
             "The selected scorecard belongs to a different option. Re-scoring was stopped without changing any scorecard.",
             code="rescore_option_mismatch",
@@ -5993,6 +6035,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         _compute_scenario_scorecard,
         _compact_scorecard_title,
         _create_scenario_record,
+        _deterministic_executive_summary,
         _extract_baseline_inputs,
         _generate_jaspen_scorecard,
         _normalize_scorecard_payload,
@@ -6740,6 +6783,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "reused_source_scorecard_id": reused_source_id,
             },
         }
+        scorecard["executive_summary"] = _deterministic_executive_summary(scorecard)
+        section_provenance = scorecard.get("section_provenance") if isinstance(scorecard.get("section_provenance"), dict) else {}
+        section_provenance["executive_summary"] = "deterministic"
+        scorecard["section_provenance"] = section_provenance
 
         if decision_kit:
             scorecard = _normalize_scorecard_payload(scorecard)
@@ -6761,8 +6808,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             def _do_rescore(existing):
                 if (
                     str(existing.get("id") or existing.get("analysis_id") or "").strip() != rescore_id
-                    or _normalized_option_identity(requested_name)
-                    not in _scorecard_option_identities(existing)
+                    or not _requested_name_matches_scorecard(session, existing, requested_name)
                 ):
                     return None
                 keep_id = str(existing.get("id") or existing.get("analysis_id") or rescore_id)
@@ -6770,7 +6816,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     _compact_scorecard_title(requested_name) if str(tool_input.get("name") or "").strip()
                     else (existing.get("name") or existing.get("project_name") or requested_name)
                 )
-                return {
+                updated_card = {
                     **(scorecard_payload if isinstance(scorecard_payload, dict) else {}),
                     "id": keep_id,
                     "analysis_id": existing.get("analysis_id") or keep_id,
@@ -6803,6 +6849,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                         "model_type": model_selection["model_type"],
                     },
                 }
+                updated_card["executive_summary"] = _deterministic_executive_summary(updated_card)
+                section_provenance = updated_card.get("section_provenance") if isinstance(updated_card.get("section_provenance"), dict) else {}
+                section_provenance["executive_summary"] = "deterministic"
+                updated_card["section_provenance"] = section_provenance
+                return updated_card
 
             updated = apply_scorecard_edit_in_place(user_id, thread_id, rescore_id, _do_rescore)
             if isinstance(updated, dict):
