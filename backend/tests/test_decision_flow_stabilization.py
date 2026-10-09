@@ -331,7 +331,6 @@ def test_material_fact_update_uses_option_key_history_and_forces_holistic_rescor
     }
     sessions[tid]['chat_history'] = [
         {'role': 'user', 'content': 'Boulder build-out is $240,000 and the lease term is 5 years.'},
-        {'role': 'user', 'content': 'Build-out is now $320,000.'},
     ]
     assert save_user_sessions(test_user.id, sessions)
     mock_accounting(monkeypatch)
@@ -369,14 +368,22 @@ def test_material_fact_update_uses_option_key_history_and_forces_holistic_rescor
     card_id = first['scorecard']['id']
     option_key = first['scorecard']['option_key']
     first_fingerprint = first['scorecard']['decision_fingerprint']
+    update_message = "The contractor's final bid came in, and the build-out is now $320,000."
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'].append({'role': 'user', 'content': update_message})
+    agent._apply_rfp_decision_context(sessions[tid], update_message)
+    assert sessions[tid].get('decision_kit') is None
+    assert sessions[tid].get('decision_kit_family') is None
+    assert sessions[tid].get('decision_kit_change_pending') is None
+    assert save_user_sessions(test_user.id, sessions)
 
     changed = agent._execute_mutation_tool(
         'set_option_attributes',
         {'option': 'Boulder', 'scorecard_id': card_id, 'fields': [{
             'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
-            'evidence': 'Build-out is now $320,000.',
+            'evidence': 'the build-out is now $320,000',
         }]},
-        user=test_user, user_id=test_user.id, thread_id=tid,
+        user=test_user, user_id=test_user.id, thread_id=tid, user_message=update_message,
     )
     rescored = agent._execute_mutation_tool(
         'generate_scorecard', {
@@ -415,6 +422,66 @@ def test_material_fact_update_uses_option_key_history_and_forces_holistic_rescor
     history = session['option_attribute_history_by_key'][option_key]
     assert history[-1]['previous']['value'] == 240_000
     assert history[-1]['previous']['evidence'] == 'Boulder build-out is $240,000 and the lease term is 5 years.'
+
+
+@pytest.mark.parametrize('message', [
+    "The contractor's final bid came in at $320,000.",
+    'The vendor sent a revised proposal for the build-out.',
+    'We need to compare the supplier proposal with the original estimate.',
+])
+def test_incidental_rfp_language_cannot_switch_an_established_general_decision(app, message):
+    _, agent = modules()
+    facts = {
+        'build_out_cost': {'value': 240000, 'source': 'user'},
+        'lease_term_years': {'value': '5', 'source': 'user'},
+    }
+    session = {
+        'active_evaluation_scorecard_id': 'card-1',
+        'decision_kit': None,
+        'decision_kit_version': None,
+        'option_attributes_by_key': {'boulder': facts.copy()},
+    }
+
+    agent._apply_rfp_decision_context(session, message)
+
+    assert session.get('decision_kit') is None
+    assert session.get('decision_kit_version') is None
+    assert session.get('decision_kit_family') is None
+    assert session.get('decision_kit_source') is None
+    assert session.get('decision_kit_change_pending') is None
+    assert session['option_attributes_by_key']['boulder'] == facts
+
+
+def test_explicit_kit_change_on_established_decision_requires_confirmation_and_preserves_facts(app):
+    _, agent = modules()
+    facts = {
+        'build_out_cost': {'value': 320000, 'source': 'user'},
+        'lease_term_years': {'value': '5', 'source': 'user'},
+    }
+    session = {
+        'active_evaluation_scorecard_id': 'card-1',
+        'decision_kit': None,
+        'decision_kit_version': None,
+        'option_attributes_by_key': {'boulder': facts.copy()},
+    }
+
+    agent._apply_rfp_decision_context(
+        session, 'Change this decision to the RFP vendor selection Decision Kit.',
+    )
+
+    assert session.get('decision_kit') is None
+    assert session['decision_kit_change_pending']['target'] == 'rfp_vendor_selection'
+    assert agent._decision_kit_change_question_needed(session) is True
+    assert session['option_attributes_by_key']['boulder'] == facts
+
+    agent._apply_rfp_decision_context(session, 'Confirm the Decision Kit change.')
+
+    assert session['decision_kit'] == 'rfp_vendor_selection'
+    assert session['decision_kit_source'] == 'user_confirmed'
+    assert session['decision_kit_rescore_required'] is True
+    assert session['decision_kit_preserve_existing_facts'] is True
+    assert session.get('decision_kit_change_pending') is None
+    assert session['option_attributes_by_key']['boulder'] == facts
 
 
 def test_proposed_rubric_is_visible_with_weights_before_approval(app, db, test_user):

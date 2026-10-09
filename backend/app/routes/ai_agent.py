@@ -937,6 +937,43 @@ def _has_rfp_decision_context(user_message):
     )
 
 
+def _decision_state_established(session):
+    """Return whether this thread already owns a scored decision identity."""
+    if not isinstance(session, dict):
+        return False
+    if session.get("active_evaluation_scorecard_id"):
+        return True
+    registry = session.get("option_registry") if isinstance(session.get("option_registry"), dict) else {}
+    if any(isinstance(item, dict) and item.get("status") == "scored" for item in registry.values()):
+        return True
+    result = session.get("result") if isinstance(session.get("result"), dict) else {}
+    candidates = [result, result.get("_baseline_scorecard")]
+    candidates.extend(result.get("scorecard_snapshots") or [])
+    return any(
+        isinstance(card, dict)
+        and (card.get("jaspen_score") is not None or card.get("decision_fingerprint"))
+        for card in candidates
+    )
+
+
+def _explicit_decision_kit_change_requested(user_message):
+    text = str(user_message or "").strip().lower()
+    return bool(re.search(
+        r"\b(?:change|switch|set|use|apply|move)\b.{0,45}\b(?:decision kit|rfp|vendor selection|bid[- /]?no[- ]?bid)\b"
+        r"|\bthis (?:decision )?(?:is|should be|needs to be)\b.{0,25}\b(?:rfp|vendor selection|bid[- /]?no[- ]?bid)\b",
+        text,
+        re.I,
+    ))
+
+
+def _confirmed_decision_kit_change(user_message):
+    return bool(re.search(
+        r"\b(?:confirm(?:ed)?|yes[, ]+(?:change|switch)|proceed with (?:the )?(?:change|switch))\b",
+        str(user_message or ""),
+        re.I,
+    ))
+
+
 def _apply_rfp_decision_context(session, user_message, *, explicit_selection=None):
     """Apply manual or inferred RFP context to one persisted session state."""
     if not isinstance(session, dict):
@@ -944,6 +981,40 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
     explicit = str(explicit_selection or "").strip().lower()
     inferred = _infer_rfp_decision_kit(user_message)
     has_context = _has_rfp_decision_context(user_message) or bool(inferred)
+    pending_change = session.get("decision_kit_change_pending") if isinstance(session.get("decision_kit_change_pending"), dict) else None
+    if pending_change:
+        if re.search(r"\b(?:cancel|do not change|don't change|keep (?:it|this|the current))\b", str(user_message or ""), re.I):
+            session.pop("decision_kit_change_pending", None)
+            return
+        if _confirmed_decision_kit_change(user_message):
+            target = pending_change.get("target")
+            kit = get_decision_kit(target) if target else None
+            session["decision_kit"] = target
+            session["decision_kit_version"] = kit.get("version") if kit else None
+            session["decision_kit_family"] = "rfp" if target else None
+            session["decision_kit_source"] = "user_confirmed" if target else None
+            session["decision_kit_rescore_required"] = True
+            session["decision_kit_preserve_existing_facts"] = True
+            session.pop("decision_kit_change_pending", None)
+            session.pop("decision_kit_conflict", None)
+            return
+    if _decision_state_established(session):
+        current = session.get("decision_kit")
+        target = inferred
+        if explicit in {"rfp_bid", "rfp_vendor_selection"}:
+            target = explicit
+        if target == current or not target:
+            return
+        # Incidental later language teaches the current turn; it cannot mutate
+        # the established decision identity. Only an explicit request starts a
+        # confirmation flow, and no kit/facts change before confirmation.
+        if explicit or _explicit_decision_kit_change_requested(user_message):
+            session["decision_kit_change_pending"] = {
+                "from": current,
+                "target": target,
+                "requested_at": _iso_now(),
+            }
+        return
     if explicit == "rfp":
         session["decision_kit_family"] = "rfp"
         session["decision_kit_source"] = "user"
@@ -982,6 +1053,7 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
 
 
 RFP_SUBTYPE_QUESTION = "Are you responding to this RFP, or selecting a vendor?"
+DECISION_KIT_CHANGE_QUESTION = "This decision is already established. Confirm that you want to change its Decision Kit and re-score it."
 ANALYSIS_UNAVAILABLE_MESSAGE = "Jaspen’s analysis is unavailable right now. Your message is saved. Try again."
 
 
@@ -995,6 +1067,10 @@ def _rfp_subtype_question_needed(session):
         and session.get("decision_kit_family") == "rfp"
         and (not session.get("decision_kit") or session.get("decision_kit_conflict"))
     )
+
+
+def _decision_kit_change_question_needed(session):
+    return bool(isinstance(session, dict) and isinstance(session.get("decision_kit_change_pending"), dict))
 
 
 def _message_supplies_weighted_rubric(user_message):
@@ -6669,8 +6745,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         )
         migrate_option_attribute_keys(session, option_key, kit=kit, display_name=requested_name)
         stored_by_name = option_attributes(session, option_key, requested_name)
-        attributes = dict((rescore_target or {}).get("attributes") or {})
-        attributes.update(stored_by_name or {})
+        persisted_attributes = dict((rescore_target or {}).get("attributes") or {})
+        persisted_attributes.update(stored_by_name or {})
+        attributes = dict(persisted_attributes)
         attributes.update(tool_input.get("attributes") or {})
         rejected_fields = []
         attributes = normalize_option_facts(
@@ -6680,6 +6757,21 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             option_name=requested_name,
             rejected_fields=rejected_fields,
         )
+        if session.get("decision_kit_preserve_existing_facts"):
+            # A human-confirmed kit change may alter which fields the overlay
+            # understands, but it cannot delete established canonical facts.
+            # Preserve only facts that were already stored; provider-supplied
+            # unknown fields remain rejected by the active kit schema.
+            for existing_key, existing_value in persisted_attributes.items():
+                if existing_key in attributes:
+                    continue
+                try:
+                    preserved_key, preserved_entry = normalize_fact_entry(
+                        existing_key, existing_value, kit=None,
+                    )
+                except ValueError:
+                    continue
+                attributes[preserved_key] = preserved_entry
         option_identity = _normalized_option_identity(requested_name)
         store_option_attributes(session, option_key, attributes, requested_name)
         if rejected_fields:
@@ -9330,6 +9422,12 @@ def _generate_assistant_reply(
         session=session,
         view_context=view_context,
     )
+    if _decision_kit_change_question_needed(session):
+        return (
+            DECISION_KIT_CHANGE_QUESTION,
+            {"provider": "deterministic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+            [], [], None,
+        )
     if _rfp_subtype_question_needed(session):
         session["rfp_subtype_question_asked"] = True
         return (
@@ -9548,6 +9646,15 @@ def _stream_assistant_reply_events(
         session=session,
         view_context=view_context,
     )
+    if _decision_kit_change_question_needed(session):
+        if isinstance(state, dict):
+            state.update({
+                "reply": DECISION_KIT_CHANGE_QUESTION,
+                "usage": {"provider": "deterministic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+                "actions": [], "mutations": [], "undo_snapshot": None,
+            })
+        yield {"type": "delta", "text": DECISION_KIT_CHANGE_QUESTION}
+        return
     if _rfp_subtype_question_needed(session):
         session["rfp_subtype_question_asked"] = True
         if isinstance(state, dict):
@@ -11353,7 +11460,7 @@ def conversation_start():
         view_context=view_context_raw,
         starter_lever_defaults=starter_lever_defaults,
     )
-    if not raw_decision_kit and inferred_decision_kit:
+    if not raw_decision_kit and inferred_decision_kit and not _decision_state_established(session):
         session["decision_kit_source"] = "discovery_inference"
     session["organization_id"] = session.get("organization_id") or active_org_id
     session["created_by_user_id"] = session.get("created_by_user_id") or user_id
@@ -13271,11 +13378,24 @@ def update_thread(thread_id):
             return jsonify({"error": str(exc), "code": "invalid_decision_kit"}), 400
         kit = get_decision_kit(next_kit) if next_kit else None
         previous_kit = session.get("decision_kit")
+        if (
+            previous_kit != next_kit
+            and _decision_state_established(session)
+            and not bool(data.get("confirm_decision_kit_change"))
+        ):
+            return jsonify({
+                "error": DECISION_KIT_CHANGE_QUESTION,
+                "code": "decision_kit_change_confirmation_required",
+                "confirmation_required": True,
+                "current_decision_kit": previous_kit,
+                "requested_decision_kit": next_kit,
+            }), 409
         session["decision_kit"] = next_kit
         session["decision_kit_version"] = kit.get("version") if kit else None
         session["decision_kit_source"] = str(data.get("decision_kit_source") or "user") if next_kit else None
         if previous_kit != next_kit and session.get("result"):
             session["decision_kit_rescore_required"] = True
+            session["decision_kit_preserve_existing_facts"] = True
     if kit_context_supplied:
         incoming_context = data.get("kit_context")
         if not isinstance(incoming_context, dict):
