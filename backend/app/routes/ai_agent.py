@@ -3003,6 +3003,8 @@ def _finalize_agent_reply(
         return str(scoring_failure.get("error") or "Jaspen couldn't complete scoring. Your request is saved. Try again.")
     blocked_scoring = _blocked_scoring_action(executed_actions)
     if blocked_scoring:
+        if str(blocked_scoring.get("code") or "") == "rubric_approval_required":
+            return "Approve the proposed rubric to continue scoring, then try again."
         return str(blocked_scoring.get("error") or "Scoring did not start.")
     for action in executed_actions or []:
         if not isinstance(action, dict) or action.get("tool") != "queue_scorecards":
@@ -6004,6 +6006,63 @@ def _rubric_approval_from_message(message, criteria=None, existing_rubric=None):
         return False
     from ..decision_state import rubric_identity
     return rubric_identity(existing_rubric)["criteria"] == rubric_identity({"criteria": criteria})["criteria"]
+
+
+def _approve_presented_rubric_for_turn(session, *, user_id, thread_id, user_message):
+    """Approve the exact displayed proposal before a provider handles a turn.
+
+    Approval is a user action, so the application owns it. Requiring the model
+    to echo the proposal through ``set_scoring_rubric`` lets harmless payload
+    differences turn an explicit approval into a new proposal. This changes
+    only a rubric already persisted with ``presented_at``; weighted criteria
+    supplied in the current message still use the normal capture path.
+    """
+    if not isinstance(session, dict):
+        return False
+    rubric = session.get("scoring_rubric")
+    from ..decision_state import rubric_is_approved
+    if (
+        not isinstance(rubric, dict)
+        or not isinstance(rubric.get("criteria"), list)
+        or not rubric.get("presented_at")
+        or rubric_is_approved(rubric)
+        or _message_supplies_weighted_rubric(user_message)
+    ):
+        return False
+    text = str(user_message or "")
+    explicit_approval = bool(re.search(
+        r"\b(?:approve|approved|looks good|use (?:this|that|the) rubric|accept (?:this|that|the) rubric)\b",
+        text,
+        re.I,
+    ))
+    explicit_score = bool(re.search(
+        r"\b(?:score|rescore|re-score)\s+(?:it|this|them|these|all|now)(?:\s+now)?\b",
+        text,
+        re.I,
+    ))
+    if not (explicit_approval or explicit_score):
+        return False
+
+    approved = copy.deepcopy(rubric)
+    approved["approval_status"] = "approved"
+    approved["source"] = "user"
+    approved["approved_by_user_at"] = _iso_now()
+
+    sessions = load_user_sessions(user_id) or {}
+    key, durable = _resolve_user_session(sessions, thread_id)
+    if not isinstance(durable, dict):
+        return False
+    durable["scoring_rubric"] = approved
+    sessions[key or thread_id] = durable
+    if not save_user_sessions(user_id, sessions):
+        current_app.logger.error(
+            "Explicit rubric approval could not be persisted for thread %s", thread_id
+        )
+        return False
+    session["scoring_rubric"] = approved
+    if explicit_score:
+        session["scoring_intent"] = {"status": "requested", "source": "user"}
+    return True
 
 
 def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None, user_message=""):
@@ -9233,6 +9292,9 @@ def _generate_assistant_reply(
             [],
             None,
         )
+    _approve_presented_rubric_for_turn(
+        session, user_id=user_id, thread_id=thread_id, user_message=user_message,
+    )
     rubric_proposal = _present_decision_kit_rubric(
         session, user_id=user_id, thread_id=thread_id, user_message=user_message,
     )
@@ -9449,6 +9511,9 @@ def _stream_assistant_reply_events(
             })
         yield {"type": "delta", "text": RFP_SUBTYPE_QUESTION}
         return
+    _approve_presented_rubric_for_turn(
+        session, user_id=user_id, thread_id=thread_id, user_message=user_message,
+    )
     rubric_proposal = _present_decision_kit_rubric(
         session, user_id=user_id, thread_id=thread_id, user_message=user_message,
     )

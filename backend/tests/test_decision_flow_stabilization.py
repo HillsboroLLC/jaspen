@@ -527,6 +527,83 @@ def test_provider_cannot_add_unspoken_rubric_meaning(app, db, test_user):
     assert all(item['description'] is None for item in result['rubric']['criteria'])
 
 
+def test_plain_approval_persists_exact_presented_rubric_before_provider(app, db, test_user, monkeypatch):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'plain-rubric-approval-live-turn'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    criteria = [
+        {'key': 'fit', 'label': 'Strategic fit', 'weight': 0.6},
+        {'key': 'risk', 'label': 'Delivery risk', 'weight': 0.4, 'is_risk': True},
+    ]
+    sessions[tid]['scoring_rubric'] = {
+        'criteria': criteria,
+        'source': 'jaspen_proposed',
+        'created_at': '2026-10-09T10:00:00Z',
+        'presented_at': '2026-10-09T10:00:00Z',
+        'approval_status': 'proposed',
+    }
+    assert save_user_sessions(test_user.id, sessions)
+    session = load_user_sessions(test_user.id)[tid]
+
+    monkeypatch.setattr(agent, '_resolve_governed_routes', lambda *a, **k: ([{
+        'provider': 'anthropic', 'model': 'test-model', 'model_key': 'test',
+    }], {}))
+
+    def provider(*args, **kwargs):
+        active = kwargs['session']['scoring_rubric']
+        durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
+        assert active['approval_status'] == 'approved'
+        assert durable['approval_status'] == 'approved'
+        assert active['criteria'] == criteria == durable['criteria']
+        return 'Scoring started.', {'provider': 'anthropic', 'model': 'test-model'}, [], [], None
+
+    monkeypatch.setattr(agent, '_generate_assistant_reply_anthropic', provider)
+    reply, _, _, _, _ = agent._generate_assistant_reply(
+        'I approve this rubric as shown. Score it now.', [], {},
+        {'llm_model': 'test-model'}, session=session, user=test_user,
+        user_id=test_user.id, thread_id=tid,
+    )
+
+    approved = load_user_sessions(test_user.id)[tid]['scoring_rubric']
+    assert reply == 'Scoring started.'
+    assert approved['criteria'] == criteria
+    assert approved['source'] == 'user'
+    assert approved['approval_status'] == 'approved'
+    assert approved['approved_by_user_at']
+
+
+def test_common_canonical_fact_update_survives_active_decision_kit(app, db, test_user):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'common-fact-update-with-kit'
+    seed_rfp_thread(test_user, tid, decision_kit='rfp_vendor_selection')
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'] = [{
+        'role': 'user', 'content': 'Build-out is now $320,000.',
+    }]
+    assert save_user_sessions(test_user.id, sessions)
+
+    result = agent._execute_mutation_tool(
+        'set_option_attributes', {'option': 'RegionalERP', 'fields': [{
+            'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
+            'evidence': 'Build-out is now $320,000.',
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+        user_message='Build-out is now $320,000.',
+    )
+
+    assert result['ok'], result
+    assert result['rejected_fields'] == []
+    assert result['option_attributes']['build_out_cost']['value'] == 320000
+    stored = load_user_sessions(test_user.id)[tid]
+    values = list(stored['option_attributes_by_key'].values())
+    assert values[0]['build_out_cost']['value'] == 320000
+
+
 def test_numeric_guard_allows_persisted_rubric_weights_but_rejects_model_math(app):
     _, agent = modules()
     session = {'scoring_rubric': {'approval_status': 'proposed', 'criteria': [
@@ -581,7 +658,8 @@ def test_blocked_score_cannot_keep_success_narration(app):
         'Now scoring your option.', '', [],
         user_id='u', thread_id='t', executed_actions=[action],
     )
-    assert reply == 'The proposed scoring rubric needs human approval before scoring.'
+    assert reply == 'Approve the proposed rubric to continue scoring, then try again.'
+    assert 'needs human approval' not in reply.lower()
     assert 'now scoring' not in reply.lower()
 
 

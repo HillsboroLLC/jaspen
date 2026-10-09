@@ -146,7 +146,10 @@ def canonical_field_key(key, kit=None):
             normalized = canonical
             break
     normalized = _ALIASES.get(normalized, normalized)
-    if definitions and normalized not in definitions:
+    # Shared canonical fields remain valid when a Decision Kit is active. A
+    # kit adds typed fields; it must not make the shared schema reject a fact
+    # that the same capture layer already stored on an earlier turn.
+    if definitions and normalized not in definitions and normalized not in _COMMON_FIELD_DEFINITIONS:
         return None
     return normalized or None
 
