@@ -6815,6 +6815,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     raw_attributes,
                     kit=queue_kit,
                     source_text=scoped_corpus,
+                    extract=True,
+                    extract_types={"date"},
                     option_name=name,
                     rejected_fields=rejected_attributes,
                 )
@@ -7031,6 +7033,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             attributes,
             kit=kit,
             source_text=scoped_evidence_corpus,
+            extract=True,
+            extract_types={"date"},
             option_name=requested_name,
             rejected_fields=rejected_fields,
         )

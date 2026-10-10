@@ -59,7 +59,14 @@ KIT = {
         {"key": "contract_commercial_risk", "label": "Contract & commercial risk", "weight": 0.10, "is_risk": True},
     ],
     "gate_suggestions": [
-        {"key": "submission_deadline", "label": "Able to submit by deadline", "rule": "submission_due can be met"},
+        {
+            "key": "submission_deadline",
+            "label": "Able to submit by deadline",
+            "rule": "submission_due is still in the future",
+            "fact_key": "submission_due",
+            "evidence_fields": ["submission_due"],
+            "resolver": "future_date",
+        },
         {
             "key": "capacity_available",
             "label": "Capacity / bonding available",

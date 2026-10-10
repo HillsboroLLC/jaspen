@@ -251,6 +251,51 @@ def test_real_single_rfp_generate_scorecard_tool_path_normalizes_aliases(app, db
     assert card['context_notes'] == []
 
 
+def test_rfp_queue_persists_explicit_submission_dates_omitted_by_provider(app, db, test_user):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'rfp-queue-date-capture'
+    seed_rfp_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'] = [{
+        'role': 'user',
+        'content': (
+            'Denver Water: Contract value $12M. Submission due November 20, 2026. '
+            'Adams County: Contract value $10M. Submission due November 21, 2026.'
+        ),
+    }]
+    assert save_user_sessions(test_user.id, sessions)
+
+    result = agent._execute_mutation_tool(
+        'queue_scorecards',
+        {'ideas': [
+            {
+                'name': 'Denver Water',
+                'attributes': {'contract_value': {
+                    'value': '$12M', 'source': 'user', 'evidence': 'Contract value $12M',
+                }},
+            },
+            {
+                'name': 'Adams County',
+                'attributes': {'contract_value': {
+                    'value': '$10M', 'source': 'user', 'evidence': 'Contract value $10M',
+                }},
+            },
+        ]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert result['ok'] is True, result
+    assert [item['attributes']['submission_due']['value'] for item in result['queue']] == [
+        '2026-11-20', '2026-11-21',
+    ]
+    durable = load_user_sessions(test_user.id)[tid]
+    assert [item['attributes']['submission_due']['value'] for item in durable['scorecard_queue']] == [
+        '2026-11-20', '2026-11-21',
+    ]
+
+
 def test_model_title_expansion_keeps_code_owned_option_identity_and_facts(app, db, test_user, monkeypatch):
     strategy, agent = modules()
     tid = 'stable-option-identity'

@@ -287,6 +287,7 @@ def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None)
         return None
 
     numeric_kind = str(definition.get("type") or "").lower() in {"money", "number", "percentage"}
+    date_kind = str(definition.get("type") or "").lower() == "date"
     corpus_candidates = [
         part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", corpus) if part.strip()
     ]
@@ -302,6 +303,13 @@ def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None)
                 flags=re.I,
             )
             if any(normalize_value(raw_number, definition) == expected for raw_number in raw_numbers):
+                return sentence
+        elif date_kind:
+            raw_dates = re.findall(
+                r"[A-Za-z]{3,9}\s+\d{1,2}(?:,?\s+\d{4})?|\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}",
+                sentence,
+            )
+            if any(normalize_value(raw_date, definition) == expected for raw_date in raw_dates):
                 return sentence
         elif str(expected).casefold() in sentence.casefold():
             return sentence
@@ -398,6 +406,7 @@ def normalize_option_facts(
     kit=None,
     source_text="",
     extract=False,
+    extract_types=None,
     option_name=None,
     rejected_fields=None,
 ):
@@ -428,11 +437,20 @@ def normalize_option_facts(
     # candidates from the governed AI/tool extraction boundary, then validates
     # them here. Phrase matching must never define canonical meaning.
     if extract:
+        allowed_types = {
+            str(value or "").strip().lower() for value in (extract_types or [])
+            if str(value or "").strip()
+        }
+        definitions = field_definitions(kit)
         for key, value, evidence in extract_candidate_facts(source_text, kit):
             canonical, entry = normalize_fact_entry(
                 key, {"value": value, "source": "user", "evidence": evidence}, kit=kit
             )
-            normalized[canonical] = entry
+            if allowed_types and str((definitions.get(canonical) or {}).get("type") or "").lower() not in allowed_types:
+                continue
+            # The governed fact payload remains authoritative. Deterministic
+            # extraction only fills an explicit typed fact the provider omitted.
+            normalized.setdefault(canonical, entry)
     return normalized
 
 

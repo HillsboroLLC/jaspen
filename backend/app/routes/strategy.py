@@ -2626,8 +2626,11 @@ def _validate_grounded_scorecard_judgment(payload, criteria, attributes, approve
         gate = gates_by_key.get(key)
         if not isinstance(gate, dict):
             raise UngroundedScorecardJudgment(f"The judge omitted gate {key}.")
+        status = str(gate.get("status") or "").strip().lower()
+        if status not in {"pass", "fail", "unknown"}:
+            raise UngroundedScorecardJudgment(f"Gate {key} has an invalid status.")
         structured = str(gate.get("basis") or "").startswith("Resolved from canonical fact ")
-        if not structured and not gate.get("evidence"):
+        if status in {"pass", "fail"} and not structured and not gate.get("evidence"):
             raise UngroundedScorecardJudgment(f"Gate {key} has no verified canonical evidence.")
         if not str(gate.get("basis") or "").strip():
             raise UngroundedScorecardJudgment(f"Gate {key} has no rationale.")
@@ -3520,6 +3523,8 @@ def _generate_batch_scorecards(
             item.get("attributes") or {},
             kit=kit,
             source_text=scoped_corpus,
+            extract=True,
+            extract_types={"date"},
             option_name=name,
             rejected_fields=rejected_fields,
         )

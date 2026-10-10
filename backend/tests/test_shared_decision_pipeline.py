@@ -1,5 +1,6 @@
 import json
 import pytest
+from datetime import date, timedelta
 
 
 def test_governed_extraction_candidates_normalize_types_units_and_provenance(app):
@@ -42,6 +43,150 @@ def test_unknown_and_invalid_fields_are_rejected_without_losing_valid_facts(app)
     assert "fictional_total" not in facts
     assert "margin_pct" not in facts
     assert {item["field"] for item in rejected} == {"fictional_total", "margin_pct"}
+
+
+def test_explicit_submission_date_is_captured_when_provider_omits_it(app):
+    from app.decision_facts import normalize_option_facts
+    from app.decision_kits import get_decision_kit
+
+    facts = normalize_option_facts(
+        {},
+        kit=get_decision_kit("rfp_bid"),
+        source_text="Denver Water: submission due November 20, 2026.",
+        extract=True,
+        extract_types={"date"},
+    )
+
+    assert facts["submission_due"] == {
+        "value": "2026-11-20",
+        "source": "user",
+        "evidence": "submission due November 20, 2026",
+    }
+
+
+def test_missing_gate_evidence_becomes_unknown_without_rejecting_scorecard(app, monkeypatch):
+    from app.routes import strategy
+
+    rubric = {"approval_status": "approved", "criteria": [
+        {"key": "fit", "label": "Fit", "weight": 1.0},
+        {"key": "unverified_gate", "label": "Unverified requirement", "gate": True},
+    ]}
+    response = {
+        "dimensions": {"fit": {
+            "score": 70, "confidence": "medium", "source": "conversation",
+            "evidence": ["The option fits our stated strategy."], "rationale": "Grounded.",
+        }},
+        "gates": [{
+            "key": "unverified_gate", "status": "pass", "confidence": "medium",
+            "source": "conversation", "evidence": [], "basis": "",
+        }],
+    }
+    monkeypatch.setattr(
+        strategy, "_strategy_generate_reply",
+        lambda *a, **k: (json.dumps(response), {"provider": "test"}),
+    )
+
+    card = strategy._generate_jaspen_scorecard(
+        None, "Option", "test", rubric=rubric,
+        evidence_corpus="The option fits our stated strategy.",
+    )
+
+    assert card["gates"] == [{
+        "key": "unverified_gate",
+        "label": "Unverified requirement",
+        "rule": "",
+        "status": "unknown",
+        "evidence": [],
+        "basis": "No verified evidence yet",
+        "confidence": "assumed",
+        "source": "assumed",
+    }]
+
+
+def test_three_bid_rfp_dates_surety_metrics_and_verdicts(app, monkeypatch):
+    from app.routes import strategy
+    from app.decision_kits import get_decision_kit
+
+    kit = get_decision_kit("rfp_bid")
+    rubric = {"approval_status": "approved", "criteria": [
+        *[dict(item) for item in kit["starter_rubric"]],
+        *[
+            {
+                "key": item["key"], "label": item["label"], "weight": 0,
+                "gate": True, "gate_rule": item["rule"],
+            }
+            for item in kit["gate_suggestions"]
+        ],
+    ]}
+
+    current_quote = {"value": ""}
+
+    def provider(_messages, **_kwargs):
+        quote = current_quote["value"]
+        return json.dumps({
+            "dimensions": {
+                item["key"]: {
+                    "score": 70, "confidence": "medium", "source": "conversation",
+                    "evidence": [quote], "rationale": "Grounded in the supplied bid facts.",
+                }
+                for item in kit["starter_rubric"]
+            },
+            "gates": [],
+        }), {"provider": "test"}
+
+    monkeypatch.setattr(strategy, "_strategy_generate_reply", provider)
+    options = [
+        ("Denver", 12_000_000, 35, 3.6, 45_000, "confirmed", 151_200, 3.36, "Bid"),
+        ("Adams", 10_000_000, 30, 4, 30_000, "pending", 120_000, 4, "Bid with conditions"),
+        ("CDOT", 20_000_000, 25, 3, 80_000, "declined", 150_000, 1.875, "No-Bid"),
+    ]
+    for name, contract, win, margin, pursuit, surety, expected_value, roi, verdict in options:
+        quote = (
+            f"{name}: Contract value ${contract}. Win probability {win}%. Margin {margin}%. "
+            f"Pursuit cost ${pursuit}. Surety {surety}. Submission due November 20, 2026."
+        )
+        current_quote["value"] = quote
+        attributes = {
+            "contract_value": {"value": contract, "source": "user", "evidence": quote},
+            "win_probability": {"value": win, "source": "user", "evidence": quote},
+            "margin_pct": {"value": margin, "source": "user", "evidence": quote},
+            "pursuit_cost": {"value": pursuit, "source": "user", "evidence": quote},
+            "surety_status": {"value": surety, "source": "user", "evidence": quote},
+            "submission_due": {"value": "2026-11-20", "source": "user", "evidence": quote},
+        }
+        card = strategy._generate_jaspen_scorecard(
+            None, quote, "test", rubric=rubric, attributes=attributes,
+            evidence_corpus=quote, option_key=name.lower(), option_name=name,
+            decision_kit="rfp_bid", decision_kit_version=1,
+        )
+        assert card["metrics"]["expected_value"]["value"] == expected_value
+        assert card["metrics"]["pursuit_roi"]["value"] == roi
+        assert card["recommendation"]["label"] == verdict
+        deadline = next(gate for gate in card["gates"] if gate["key"] == "submission_deadline")
+        assert deadline["status"] == "pass"
+
+
+def test_submission_deadline_gate_is_deterministic_for_future_past_and_missing(app):
+    from app.decision_kits import get_decision_kit
+    from app.decision_processing import normalize_gates
+
+    kit = get_decision_kit("rfp_bid")
+    definition = next(item for item in kit["gate_suggestions"] if item["key"] == "submission_deadline")
+    rubric = {"approval_status": "approved", "criteria": [{
+        **definition, "gate": True, "gate_rule": definition["rule"],
+    }]}
+    future = (date.today() + timedelta(days=2)).isoformat()
+    past = (date.today() - timedelta(days=2)).isoformat()
+
+    assert normalize_gates([], rubric, "", attributes={
+        "submission_due": {"value": future, "source": "user", "evidence": future},
+    })[0]["status"] == "pass"
+    assert normalize_gates([], rubric, "", attributes={
+        "submission_due": {"value": past, "source": "user", "evidence": past},
+    })[0]["status"] == "fail"
+    missing = normalize_gates([], rubric, "", attributes={})[0]
+    assert missing["status"] == "unknown"
+    assert missing["basis"] == "No verified evidence yet"
 
 
 def test_five_year_tco_alias_maps_to_vendor_selection_tco(app):

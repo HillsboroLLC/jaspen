@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from datetime import date, datetime, timezone
 
 from .decision_kits import get_decision_kit
 from .decision_metrics import calculate_metrics
@@ -35,6 +36,22 @@ def _structured_gate_result(definition, attributes):
     if source == "assumed":
         return None
     value = entry.get("value")
+    resolver = str(definition.get("resolver") or "").strip().lower()
+    if resolver == "future_date":
+        try:
+            value_date = date.fromisoformat(str(value))
+        except (TypeError, ValueError):
+            status = "unknown"
+        else:
+            today = datetime.now(timezone.utc).date()
+            status = "pass" if value_date > today else ("fail" if value_date < today else "unknown")
+        return {
+            "status": status,
+            "evidence": [str(entry.get("evidence"))] if entry.get("evidence") else [],
+            "confidence": "medium" if source == "user" else "high",
+            "source": source or "user",
+            "basis": f"Resolved from canonical fact {fact_key}.",
+        }
     status_values = definition.get("status_values") if isinstance(definition.get("status_values"), dict) else {}
     if status_values:
         status = str(status_values.get(str(value).strip().lower()) or "unknown").lower()
@@ -144,6 +161,10 @@ def normalize_gates(raw_gates, rubric, evidence_corpus="", option_key=None, opti
             basis = structured["basis"]
         elif source == "assumed":
             status = "unknown"
+        if status == "unknown" and not evidence and not structured:
+            basis = "No verified evidence yet"
+            source = "assumed"
+            confidence = "assumed"
         normalized.append({
             "key": key,
             "label": definition.get("label") or key,
