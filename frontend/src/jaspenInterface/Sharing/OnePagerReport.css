@@ -125,6 +125,7 @@
 .op-takeaways { background: var(--op-tint); padding: 30px 30px 26px; }
 .op-takeaways .op-h2 { margin-bottom: 18px; }
 .op-takeaway__title { font-weight: 700; font-size: 15px; }
+.op-disclaimer { margin: 10px 0 0; font-size: 13px; color: #5B6280; }
 
 .op-pills { display: flex; flex-wrap: wrap; gap: 10px; }
 .op-pill { padding: 8px 14px; border-radius: 999px; background: var(--op-soft); font-size: 15px; }

@@ -125,6 +125,7 @@ function Change({ model }) {
 
 function Takeaways({ model, text }) {
   return (
+    <>
     <section className="op-section op-takeaways" aria-labelledby="op-takeaways">
       <h2 id="op-takeaways" className="op-h2">{text.takeaway_title}</h2>
       <div className="op-grid op-grid--tight">
@@ -136,6 +137,8 @@ function Takeaways({ model, text }) {
         ))}
       </div>
     </section>
+    <p className="op-disclaimer">{model.numbersNote}</p>
+    </>
   );
 }
 
