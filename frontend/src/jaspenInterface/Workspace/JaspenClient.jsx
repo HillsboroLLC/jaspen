@@ -1487,9 +1487,10 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   getThreadBundle: async (threadId, { msg_limit = 50, scn_limit = 50 } = {}) =>
     getJSON(endpoints.threadBundle(threadId, msg_limit, scn_limit), { withSid: true }),
 
-  // Score exactly one queued idea; client loops this until { done: true }.
-  scoreNext: async (threadId) =>
-    postJSON(endpoints.scoreNext(threadId), {}, { withSid: true }),
+  // Score exactly one named queued option. Naming the target lets the client
+  // continue through the rest of a queue when one option needs a Retry.
+  scoreNext: async (threadId, name = '') =>
+    postJSON(endpoints.scoreNext(threadId), { name }, { withSid: true }),
 
   // Score ALL queued ideas in one model pass (the 'build the Excel' path).
   scoreBatch: async (threadId) =>

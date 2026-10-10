@@ -6539,7 +6539,7 @@ def create_ai_scenario(thread_id):
 
 @strategy_bp.route('/threads/<thread_id>/score-next', methods=['POST'])
 @jwt_required()
-@limiter.limit('10 per minute')
+@limiter.limit('60 per minute')
 @limiter.shared_limit(_claude_hourly_limit, scope=AI_CONVERSATION_SCOPE)
 @limiter.shared_limit(_claude_daily_limit, scope=AI_CONVERSATION_SCOPE)
 def score_next_queued(thread_id):
@@ -6581,7 +6581,27 @@ def score_next_queued(thread_id):
         if not queue:
             return jsonify({'done': True, 'remaining': 0, 'scorecard': None})
 
-        item = queue[0]
+        body = request.get_json(silent=True) or {}
+        requested_name = str(body.get('name') or '').strip()
+        item = next(
+            (
+                queued for queued in queue
+                if requested_name
+                and str(queued.get('name') or '').strip().lower() == requested_name.lower()
+            ),
+            None,
+        )
+        if requested_name and item is None:
+            return jsonify({
+                'ok': False,
+                'error': 'The requested option is no longer queued.',
+                'name': requested_name,
+                'remaining': len(queue),
+                'done': len(queue) == 0,
+                'failure_state': True,
+                'retryable': False,
+            }), 409
+        item = item or queue[0]
         name = str(item.get('name') or '').strip()
         description = str(item.get('description') or '').strip() or name
 
@@ -6601,23 +6621,49 @@ def score_next_queued(thread_id):
         if not isinstance(session2, dict):
             session2, sessions2 = session, sessions
 
+        if not (isinstance(result, dict) and result.get('ok')):
+            # Keep the failed option queued so Retry can target it again. The
+            # client requests each original queue item by name, so one failure
+            # does not block later options from being scored and persisted.
+            current_queue = [
+                q for q in (session2.get('scorecard_queue') or [])
+                if isinstance(q, dict) and str(q.get('name') or '').strip()
+            ]
+            failure_message = (
+                f"Jaspen couldn't score {name}. Your request is saved. "
+                'The remaining queued options will continue. Try again.'
+            )
+            chat_history = session2.get('chat_history') if isinstance(session2.get('chat_history'), list) else []
+            chat_history.append({
+                'role': 'assistant',
+                'content': failure_message,
+                'failure_state': True,
+                'retryable': True,
+                'score_queue_error': True,
+                'failed_option_name': name,
+                'action': {'type': 'retry', 'label': 'Retry'},
+                'timestamp': datetime.utcnow().isoformat(),
+            })
+            session2['chat_history'] = chat_history
+            session2['timestamp'] = datetime.utcnow().isoformat()
+            sessions2[session_key or thread_id] = session2
+            save_user_sessions(user_id, sessions2)
+            return jsonify({
+                'ok': False,
+                'error': failure_message,
+                'name': name,
+                'remaining': len(current_queue),
+                'done': False,
+                'failure_state': True,
+                'retryable': True,
+                'action': {'type': 'retry', 'label': 'Retry'},
+            })
+
         remaining_queue = [
             q for q in (session2.get('scorecard_queue') or [])
             if isinstance(q, dict) and str(q.get('name') or '').strip().lower() != name.lower()
         ]
         session2['scorecard_queue'] = remaining_queue
-
-        if not (isinstance(result, dict) and result.get('ok')):
-            # Don't loop forever on a bad item — it's already removed from the queue.
-            sessions2[session_key or thread_id] = session2
-            save_user_sessions(user_id, sessions2)
-            return jsonify({
-                'ok': False,
-                'error': (result or {}).get('error') or 'Failed to score idea.',
-                'name': name,
-                'remaining': len(remaining_queue),
-                'done': len(remaining_queue) == 0,
-            })
 
         artifact = result.get('artifact') if isinstance(result.get('artifact'), dict) else None
         entry = _artifact_chat_entry(artifact) if artifact else None

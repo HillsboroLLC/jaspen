@@ -1112,6 +1112,8 @@ function toUiMessages(history = []) {
         canUndo: Boolean(msg?.undo?.available),
         undoApplied: Boolean(msg?.undo?.applied),
         regenerated: Boolean(msg?.regenerated),
+        scoreQueueError: Boolean(msg?.score_queue_error || msg?.scoreQueueError),
+        failedOptionName: String(msg?.failed_option_name || msg?.failedOptionName || '').trim() || null,
         alternativesCount: Array.isArray(msg?.alternatives) ? msg.alternatives.length : 0,
         attachments: Array.isArray(msg?.attachments)
           ? msg.attachments
@@ -2222,7 +2224,7 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
     // at a time (each is its own fast request, so no synchronous batch can time
     // out). The guard inside drainScoreQueue makes the recursive refresh safe.
     if (Array.isArray(bundle?.scorecard_queue) && bundle.scorecard_queue.length > 0 && !scoreDrainingRef.current) {
-      void drainScoreQueue(tid, bundle.scorecard_queue.length);
+      void drainScoreQueue(tid, bundle.scorecard_queue);
     }
   } catch (e) {
     showToast(e?.message || 'We could not refresh this thread right now.', 'error', {
@@ -2236,30 +2238,73 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
   }
 };
 
-// Score every queued idea in ONE model pass (the 'build the Excel' path), then
-// refresh so all the cards render together. One request, one generation — no
-// per-card loop, no timeout.
-const drainScoreQueue = async (tid, queuedCount = 0) => {
+// Drain the queue one named option per request. Each successful card is durable
+// before the next request begins; a failed option stays queued for Retry while
+// later options continue independently.
+const drainScoreQueue = async (tid, queuedItems = []) => {
   if (!tid || scoreDrainingRef.current) return;
-  scoreDrainingRef.current = true;
-  setBatchScoring({ count: queuedCount || 0 });
-  try {
-    const r = await Jaspen.scoreBatch(tid);
-    const n = (r && typeof r.count === 'number') ? r.count : (Array.isArray(r?.scored) ? r.scored.length : 0);
+  const items = (Array.isArray(queuedItems) ? queuedItems : [])
+    .filter((item) => item && typeof item === 'object' && String(item.name || '').trim())
+    .map((item) => ({ ...item, name: String(item.name).trim() }));
+  if (!items.length) {
     await refreshBundle(tid);
-    if (r?.reason || (Array.isArray(r?.not_persisted_project_names) && r.not_persisted_project_names.length > 0)) {
-      showToast(r?.message || `${n} projects were retained. Some projects were not generated or saved; review the portfolio limit.`, 'warning');
-    } else if (n > 0) {
-      showToast(`Scored and retained ${n} option${n === 1 ? '' : 's'}.`, 'success');
+    return;
+  }
+  scoreDrainingRef.current = true;
+  setBatchScoring({ count: items.length, completed: 0 });
+  let scoredCount = 0;
+  const failures = [];
+  try {
+    for (const item of items) {
+      try {
+        const result = await Jaspen.scoreNext(tid, item.name);
+        if (result?.ok === false) {
+          failures.push({ name: item.name, message: result?.error || 'Scoring failed.' });
+        } else if (result?.scorecard) {
+          scoredCount += 1;
+        }
+      } catch (error) {
+        console.error('[scoreNext]', item.name, error);
+        failures.push({
+          name: item.name,
+          message: error?.message || 'Scoring failed.',
+          needsLocalFailureMessage: true,
+        });
+      }
+      setBatchScoring({ count: items.length, completed: scoredCount + failures.length });
+      // Render each durable card (and any persisted failure state) immediately.
+      await refreshBundle(tid);
+    }
+    await refreshBundle(tid);
+    // A transport failure may prevent the server from recording its own
+    // failure bubble. Add those messages after the final refresh so bundle
+    // hydration cannot immediately overwrite the visible Retry state.
+    const localFailures = failures.filter((failure) => failure.needsLocalFailureMessage);
+    if (localFailures.length > 0) {
+      setMessages((prev) => [
+        ...prev,
+        ...localFailures.map((failure, index) => ({
+          id: `score-queue-error-${Date.now()}-${index}-${failure.name}`,
+          role: 'ai',
+          text: `Jaspen couldn't score ${failure.name}. Your request is saved. Try again.`,
+          scoreQueueError: true,
+          failedOptionName: failure.name,
+        })),
+      ]);
+    }
+    if (failures.length > 0) {
+      showToast(`${scoredCount} option${scoredCount === 1 ? '' : 's'} scored. ${failures.length} still need${failures.length === 1 ? 's' : ''} Retry.`, 'warning');
+    } else if (scoredCount > 0) {
+      showToast(`Scored and retained ${scoredCount} option${scoredCount === 1 ? '' : 's'}.`, 'success');
     }
   } catch (err) {
-    console.error('[scoreBatch]', err);
+    console.error('[scoreQueue]', err);
     const payload = err?.data || {};
     const reset = payload?.cycle_reset_at ? ` Reset: ${new Date(payload.cycle_reset_at).toLocaleString()}.` : '';
     showToast(payload?.error ? `${payload.error}${reset}` : (err?.message || 'Could not score the queued options — try again.'), 'error', {
       actionLabel: 'Retry',
       onAction: () => {
-        void drainScoreQueue(tid, queuedCount);
+        void refreshBundle(tid);
       },
     });
   } finally {
@@ -3593,8 +3638,20 @@ const renderMessageActions = (message, messageKey, idx, total) => {
     && Boolean(message?.hasMutations)
     && Boolean(message?.canUndo);
   const canRetryStream = Boolean(message?.streamError) && !isStreamingReply && !retryingStream && !busy;
+  const canRetryScoreQueue = Boolean(message?.scoreQueueError) && Boolean(activeThreadId) && !scoreDrainingRef.current;
   return (
     <div className="jas-message-actions">
+      {canRetryScoreQueue && (
+        <button
+          type="button"
+          className="jas-message-retry-btn"
+          onClick={() => { void refreshBundle(activeThreadId); }}
+          aria-label={`Retry scoring${message?.failedOptionName ? ` ${message.failedOptionName}` : ''}`}
+          title="Retry"
+        >
+          <FontAwesomeIcon icon={faRotate} /> Retry
+        </button>
+      )}
       {canRetryStream && (
         <button
           type="button"

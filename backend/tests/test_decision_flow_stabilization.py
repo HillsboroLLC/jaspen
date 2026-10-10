@@ -1496,6 +1496,82 @@ def test_empty_batch_is_failed_retryable_preserves_queue_and_charges_zero(client
     assert test_user.credits_remaining == initial_credits
 
 
+def test_score_next_targets_each_option_and_keeps_only_failure_for_retry(
+    client, test_user, auth_headers, monkeypatch
+):
+    _, agent = modules()
+    tid = 'independent-score-next-queue'
+    queue = [
+        {'name': 'Option A', 'description': 'First option'},
+        {'name': 'Option B', 'description': 'Second option'},
+        {'name': 'Option C', 'description': 'Third option'},
+    ]
+    seed_rfp_thread(test_user, tid, queue=queue)
+
+    failed = {'Option B'}
+
+    def score_one(_tool, tool_input, **_kwargs):
+        name = tool_input['name']
+        if name in failed:
+            return {'ok': False, 'error': 'Provider unavailable.'}
+        scorecard = {'id': f'card-{name}', 'project_name': name, 'jaspen_score': 60}
+        return {
+            'ok': True,
+            'scorecard': scorecard,
+            'artifact': {'type': 'scorecard', 'data': scorecard},
+        }
+
+    monkeypatch.setattr(agent, '_execute_mutation_tool', score_one)
+
+    first = client.post(
+        f'/api/v1/strategy/threads/{tid}/score-next',
+        headers=auth_headers,
+        json={'name': 'Option A'},
+    )
+    second = client.post(
+        f'/api/v1/strategy/threads/{tid}/score-next',
+        headers=auth_headers,
+        json={'name': 'Option B'},
+    )
+    third = client.post(
+        f'/api/v1/strategy/threads/{tid}/score-next',
+        headers=auth_headers,
+        json={'name': 'Option C'},
+    )
+
+    assert first.status_code == second.status_code == third.status_code == 200
+    assert first.get_json()['ok'] is True
+    failure = second.get_json()
+    assert failure['ok'] is False
+    assert failure['failure_state'] is True
+    assert failure['action'] == {'type': 'retry', 'label': 'Retry'}
+    assert third.get_json()['ok'] is True
+
+    stored = agent.load_user_sessions(test_user.id)[tid]
+    assert [item['name'] for item in stored['scorecard_queue']] == ['Option B']
+    artifacts = [
+        item.get('artifact', {}).get('data', {}).get('project_name')
+        for item in stored['chat_history']
+        if isinstance(item.get('artifact'), dict)
+    ]
+    assert artifacts == ['Option A', 'Option C']
+    failure_messages = [
+        item for item in stored['chat_history'] if item.get('score_queue_error')
+    ]
+    assert failure_messages[-1]['failed_option_name'] == 'Option B'
+    assert failure_messages[-1]['action'] == {'type': 'retry', 'label': 'Retry'}
+
+    failed.clear()
+    retry = client.post(
+        f'/api/v1/strategy/threads/{tid}/score-next',
+        headers=auth_headers,
+        json={'name': 'Option B'},
+    )
+    assert retry.status_code == 200
+    assert retry.get_json()['ok'] is True
+    assert agent.load_user_sessions(test_user.id)[tid]['scorecard_queue'] == []
+
+
 def test_failed_single_scoring_turn_is_explicit_saved_retryable_and_zero_credit(client, db, test_user, auth_headers, monkeypatch):
     _, agent = modules()
     tid = 'live-failed-single-score'
