@@ -3524,7 +3524,7 @@ def _generate_batch_scorecards(
             kit=kit,
             source_text=scoped_corpus,
             extract=True,
-            extract_types={"date"},
+            extract_types={"date", "enum"},
             option_name=name,
             rejected_fields=rejected_fields,
         )

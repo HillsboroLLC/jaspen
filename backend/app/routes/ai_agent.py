@@ -1183,7 +1183,21 @@ def _decision_kit_change_question_needed(session):
 
 
 def _message_supplies_weighted_rubric(user_message):
-    return len(re.findall(r"\b\d+(?:\.\d+)?\s*%", str(user_message or ""))) >= 2
+    text = str(user_message or "")
+    if len(re.findall(r"\b\d+(?:\.\d+)?\s*%", text)) < 2:
+        return False
+    if re.search(r"\b(?:rubric|criteria|criterion|weights?|weighted|prioriti[sz]e)\b", text, re.I):
+        return True
+    # Ordinary option facts often contain several percentages. They are not a
+    # user-authored rubric. Require at least two percentage-bearing clauses
+    # that are not recognizable probability, margin, rate, or participation facts.
+    fact_terms = re.compile(r"\b(?:win\s+probability|probability|margin|rate|participation)\b", re.I)
+    weighted_percentages = 0
+    for clause in re.split(r"[,;\n]+", text):
+        if fact_terms.search(clause):
+            continue
+        weighted_percentages += len(re.findall(r"\b\d+(?:\.\d+)?\s*%", clause))
+    return weighted_percentages >= 2
 
 
 def _rubric_proposal_requested(user_message):
@@ -6816,7 +6830,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     kit=queue_kit,
                     source_text=scoped_corpus,
                     extract=True,
-                    extract_types={"date"},
+                    extract_types={"date", "enum"},
                     option_name=name,
                     rejected_fields=rejected_attributes,
                 )
@@ -7034,7 +7048,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             kit=kit,
             source_text=scoped_evidence_corpus,
             extract=True,
-            extract_types={"date"},
+            extract_types={"date", "enum"},
             option_name=requested_name,
             rejected_fields=rejected_fields,
         )

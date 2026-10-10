@@ -352,6 +352,27 @@ def extract_candidate_facts(text, kit):
         found = _candidate(pattern, text, key)
         if found:
             candidates.append(found)
+    # Enumerated aliases are schema-owned values, so an exact phrase can fill
+    # a missing enum without asking the model to restate it. Keep the complete
+    # source sentence as provenance and prefer the longest matching alias.
+    captured_keys = {key for key, _value, _evidence in candidates}
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", text) if part.strip()]
+    for key, definition in definitions.items():
+        if key in captured_keys or str(definition.get("type") or "").lower() != "enum":
+            continue
+        aliases = definition.get("value_aliases") if isinstance(definition.get("value_aliases"), dict) else {}
+        matches = []
+        for phrase, canonical_value in aliases.items():
+            phrase = str(phrase or "").strip()
+            if not phrase:
+                continue
+            for sentence in sentences:
+                match = re.search(rf"(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])", sentence, re.I)
+                if match:
+                    matches.append((len(phrase), match.start(), canonical_value, sentence))
+        if matches:
+            _length, _position, value, evidence = max(matches, key=lambda item: (item[0], -item[1]))
+            candidates.append((key, value, evidence))
     return candidates
 
 

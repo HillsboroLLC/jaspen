@@ -261,8 +261,9 @@ def test_rfp_queue_persists_explicit_submission_dates_omitted_by_provider(app, d
     sessions[tid]['chat_history'] = [{
         'role': 'user',
         'content': (
-            'Denver Water: Contract value $12M. Submission due November 20, 2026. '
-            'Adams County: Contract value $10M. Submission due November 21, 2026.'
+            'Denver Water: Contract value $12M. Submission due November 20, 2026. Surety confirmed. '
+            'Adams County: Contract value $10M. Submission due November 21, 2026. '
+            'The bond is still pending surety review.'
         ),
     }]
     assert save_user_sessions(test_user.id, sessions)
@@ -290,10 +291,25 @@ def test_rfp_queue_persists_explicit_submission_dates_omitted_by_provider(app, d
     assert [item['attributes']['submission_due']['value'] for item in result['queue']] == [
         '2026-11-20', '2026-11-21',
     ]
+    assert [item['attributes']['surety_status']['value'] for item in result['queue']] == [
+        'confirmed', 'pending',
+    ]
     durable = load_user_sessions(test_user.id)[tid]
     assert [item['attributes']['submission_due']['value'] for item in durable['scorecard_queue']] == [
         '2026-11-20', '2026-11-21',
     ]
+    assert durable['scorecard_queue'][1]['attributes']['surety_status']['value'] == 'pending'
+
+
+def test_rfp_fact_percentages_do_not_masquerade_as_a_custom_rubric(app):
+    _, agent = modules()
+
+    assert agent._message_supplies_weighted_rubric(
+        'Denver: win probability 35%, expected margin 18%. Adams: win probability 40%, margin 20%.'
+    ) is False
+    assert agent._message_supplies_weighted_rubric(
+        'Use financial value 60% and delivery confidence 40%.'
+    ) is True
 
 
 def test_model_title_expansion_keeps_code_owned_option_identity_and_facts(app, db, test_user, monkeypatch):

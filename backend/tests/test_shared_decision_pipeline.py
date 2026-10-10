@@ -542,6 +542,31 @@ def test_typed_gate_fact_resolves_in_code_and_free_text_gate_is_not_cacheable(ap
     )) is False
 
 
+def test_rfp_kit_fact_bindings_make_complete_canonical_state_reusable(app):
+    from app.decision_kits import get_decision_kit
+    from app.decision_state import canonical_decision_state, state_is_reusable
+
+    kit = get_decision_kit("rfp_bid")
+    rubric = {"approval_status": "approved", "criteria": [
+        *[dict(item) for item in kit["starter_rubric"]],
+        *[{
+            "key": gate["key"], "label": gate["label"], "gate": True,
+            "gate_rule": gate["rule"], "weight": 0,
+        } for gate in kit["gate_suggestions"]],
+    ]}
+    state = canonical_decision_state(
+        option_key="adams", option_name="Adams County",
+        attributes={
+            "submission_due": {"value": "2026-11-25", "source": "user"},
+            "surety_status": {"value": "pending", "source": "user"},
+        },
+        rubric=rubric, gates=rubric["criteria"],
+        decision_kit="rfp_bid", decision_kit_version=1,
+    )
+
+    assert state_is_reusable(state) is True
+
+
 def test_model_overall_math_is_ignored_and_missing_values_stay_null(app, monkeypatch):
     from app.routes import strategy
 
@@ -679,6 +704,7 @@ def test_single_and_batch_use_identical_judge_contract_and_outputs(app, monkeypa
     attributes = normalize_option_facts({
         "contract_value": {"value": 14_000_000, "source": "user", "evidence": "Contract value $14M"},
         "margin_pct": {"value": 8, "source": "user", "evidence": "Margin 8%"},
+        "surety_status": {"value": "confirmed", "source": "user", "evidence": "Surety confirmed."},
     }, kit=kit, extract=False)
     response = {"dimensions": {
         item["key"]: {"score": 63, "confidence": "medium", "source": "conversation", "evidence": ["Contract value $14M"], "rationale": "Grounded."}

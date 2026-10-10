@@ -352,7 +352,23 @@ def state_is_reusable(state):
         return False
     facts = state.get("facts") or {}
     evidence = state.get("evidence") or []
-    for gate in state.get("gates") or []:
+    gate_definitions = list(state.get("gates") or [])
+    kit_state = state.get("decision_kit") if isinstance(state.get("decision_kit"), dict) else {}
+    kit_key = kit_state.get("key")
+    if kit_key:
+        from .decision_kits import get_decision_kit
+        kit = get_decision_kit(kit_key, kit_state.get("version"))
+        configured = {
+            str(item.get("key") or ""): item
+            for item in (kit.get("gate_suggestions") or [])
+            if isinstance(item, dict) and item.get("key")
+        }
+        gate_definitions = [
+            {**configured.get(str(gate.get("key") or ""), {}), **gate}
+            if isinstance(gate, dict) else gate
+            for gate in gate_definitions
+        ]
+    for gate in gate_definitions:
         fact_key = str(gate.get("fact_key") or "")
         has_fact = bool(fact_key and isinstance(facts.get(fact_key), dict))
         has_claim = any(
