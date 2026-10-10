@@ -259,7 +259,10 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     failedCount > 0 && { title: `${failedCount === 1 ? 'One option misses' : `${failedCount} options miss`} a must-have`, body: standings.filter((s) => s.failedGates.length).map((s) => s.name).join(', ') },
     change[0] && { title: 'The biggest unknown', body: change[0].label },
     criteria.length > 0 && { title: rubricApproved ? 'Criteria you set' : 'Criteria proposed by Jaspen', body: `${weighted.length} weighted criteria${mustHaves.length ? ` plus ${mustHaves.length} must-have${mustHaves.length > 1 ? 's' : ''}` : ''}.` },
-    { title: 'Numbers you can trust', body: 'Scores and figures are calculated by Jaspen from your inputs.' },
+    {
+      title: 'How the numbers work',
+      body: 'Figures are calculated from your inputs; criterion scores are Jaspen’s assessment. Confidence does not mean correctness. Please review your data for accuracy.',
+    },
     { title: 'Leadership makes the call', body: 'Jaspen informs. Your team decides.', accent: true },
   ].filter(Boolean);
 

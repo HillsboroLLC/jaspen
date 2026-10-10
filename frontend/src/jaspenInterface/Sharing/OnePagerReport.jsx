@@ -371,7 +371,11 @@ export default function OnePagerReport({
         </section>
 
         <footer className="op-footer">
-          <span>Prepared with Jaspen. Scores and figures are calculated by Jaspen, not estimated by AI.</span>
+          <span>
+            Prepared with Jaspen. Totals, dollar figures and must-have checks are calculated from your inputs.
+            Criterion scores are Jaspen’s assessment, which you can review under “See how this was scored.”
+            Confidence does not mean correctness. Please review your data for accuracy.
+          </span>
           <a href="https://jaspen.ai">jaspen.ai</a>
         </footer>
       </article>
