@@ -3408,7 +3408,7 @@
 }
 
 /* =========================================================
-   Fixed bottom-right tips carousel (Manus-style)
+   Fixed bottom-right tips surface
    ========================================================= */
 
 .jas-floattip {
@@ -3419,16 +3419,10 @@
   background: var(--white, #fff);
   border: 1px solid var(--border, #dde3ee);
   border-radius: 12px;
-  padding: 11px 30px 10px 12px;
+  padding: 11px 8px 10px 12px;
   box-shadow: 0 4px 18px rgba(15, 23, 42, 0.11);
   z-index: 200;
   animation: floattip-in 0.2s ease-out both;
-  transition: opacity 0.18s ease, transform 0.18s ease;
-}
-
-.jas-floattip.is-exiting {
-  opacity: 0;
-  transform: translateX(14px);
 }
 
 @keyframes floattip-in {
@@ -3460,6 +3454,43 @@
   color: var(--navy, #1a2f5e);
 }
 
+.jas-floattip-heading {
+  margin: 0 26px 7px 0;
+  color: var(--muted, #64748b);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.jas-floattip-list {
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-width: thin;
+}
+
+.jas-floattip-list:focus-visible {
+  border-radius: 6px;
+  outline: 2px solid var(--focus-ring, #8b5cf6);
+  outline-offset: 2px;
+}
+
+.jas-floattip-item {
+  border-bottom: 1px solid var(--border, #dde3ee);
+  padding: 0 0 10px;
+}
+
+.jas-floattip-item + .jas-floattip-item {
+  padding-top: 10px;
+}
+
+.jas-floattip-item:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
 .jas-floattip-title {
   margin: 0 0 3px;
   font-size: 0.76rem;
@@ -3473,31 +3504,6 @@
   font-size: 0.7rem;
   color: var(--muted, #64748b);
   line-height: 1.45;
-}
-
-/* Progress dots */
-.jas-floattip-dots {
-  display: flex;
-  gap: 4px;
-  margin-top: 9px;
-  align-items: center;
-}
-
-.jas-floattip-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 999px;
-  background: var(--border, #dde3ee);
-  transition: background 0.15s, width 0.15s;
-}
-
-.jas-floattip-dot.active {
-  background: var(--navy, #1a2f5e);
-  width: 14px;
-}
-
-.jas-floattip-dot.past {
-  background: #b0bcd4;
 }
 
 @media (max-width: 640px) {

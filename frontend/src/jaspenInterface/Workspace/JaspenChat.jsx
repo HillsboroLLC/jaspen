@@ -59,6 +59,7 @@ import ShareButton from '../Sharing/ShareButton';
 import IntakeReceipt from './IntakeReceipt';
 import RfpRecommendationTrace from './RfpRecommendationTrace';
 import RecordDecisionPanel from './RecordDecisionPanel';
+import WorkspaceTips from './components/WorkspaceTips';
 
 // Tab components
 import ScoreDashboard   from './ScoreDashboard';
@@ -5318,22 +5319,6 @@ useEffect(() => {
       devWarn('[onboarding] Failed to persist profile onboarding state', result?.error || 'unknown error');
     }
   }, [updateUiPreferences, user?.ui_preferences]);
-
-  // Dismissible tips carousel — fixed bottom-right, one card at a time
-  const [tipIndex, setTipIndex] = useState(() => {
-    try { return parseInt(localStorage.getItem('jaspen_tip_idx') || '0', 10); } catch { return 0; }
-  });
-  const [tipExiting, setTipExiting] = useState(false);
-  const dismissTip = () => {
-    if (tipExiting) return;
-    setTipExiting(true);
-    setTimeout(() => {
-      const next = tipIndex + 1;
-      try { localStorage.setItem('jaspen_tip_idx', String(next)); } catch { /* noop */ }
-      setTipIndex(next);
-      setTipExiting(false);
-    }, 200);
-  };
 
   const deferSetupPrompt = () => {
     const previousSelection = readOnboardingState(user)?.selection || onboardingInitialSelection || null;
@@ -14836,27 +14821,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         onCancel={() => setConfirmDialog(null)}
       />
 
-      {/* Fixed bottom-right tips carousel */}
-      {tipIndex < WORKSPACE_TIPS.length && (
-        <div
-          key={WORKSPACE_TIPS[tipIndex].id}
-          className={`jas-floattip${tipExiting ? ' is-exiting' : ''}`}
-          role="note"
-          aria-label="Tip"
-        >
-          <button className="jas-floattip-close" onClick={dismissTip} aria-label="Dismiss tip">×</button>
-          <p className="jas-floattip-title">{WORKSPACE_TIPS[tipIndex].title}</p>
-          <p className="jas-floattip-body">{WORKSPACE_TIPS[tipIndex].body}</p>
-          <div className="jas-floattip-dots">
-            {WORKSPACE_TIPS.map((t, i) => (
-              <span
-                key={t.id}
-                className={`jas-floattip-dot${i === tipIndex ? ' active' : i < tipIndex ? ' past' : ''}`}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+      <WorkspaceTips tips={WORKSPACE_TIPS} />
     </div>
   );
 }
