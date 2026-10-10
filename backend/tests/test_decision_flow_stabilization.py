@@ -292,6 +292,264 @@ def test_model_title_expansion_keeps_code_owned_option_identity_and_facts(app, d
     assert session['option_aliases']['boulder pearl street second location'] == original_key
 
 
+def test_scored_option_cannot_be_reused_as_a_differently_named_new_option(
+    app, db, test_user, monkeypatch,
+):
+    """A stale pending registry entry must not let option B take over option A."""
+    strategy, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'sequential-then-new-option'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['scoring_rubric'] = {
+        'approval_status': 'approved',
+        'approved_by_user_at': '2026-10-10T10:00:00Z',
+        'criteria': [
+            {'key': 'financial_value', 'label': 'Financial value', 'weight': 0.6},
+            {'key': 'location_fit', 'label': 'Location fit', 'weight': 0.4},
+        ],
+    }
+    sessions[tid]['chat_history'] = [{
+        'role': 'user',
+        'content': (
+            'Coffee Kiosk at Union Station has build-out cost $85,000 '
+            'and monthly lease $7,200.'
+        ),
+    }]
+    assert save_user_sessions(test_user.id, sessions)
+    mock_accounting(monkeypatch)
+
+    provider_calls = []
+
+    def scorer(*args, **kwargs):
+        attributes = kwargs.get('attributes') or {}
+        provider_calls.append({
+            key: entry.get('value') for key, entry in attributes.items()
+            if isinstance(entry, dict)
+        })
+        return ({
+            'jaspen_score': 60,
+            'score_category': 'Good',
+            'dimensions': {
+                'financial_value': {'score': 60, 'confidence': 'high'},
+                'location_fit': {'score': 60, 'confidence': 'high'},
+            },
+            'gates': [],
+        }, {
+            'provider': 'test', 'model': 'test',
+            'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2,
+        })
+
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', scorer)
+    union_attributes = {
+        'build_out_cost': {
+            'value': '$85,000', 'source': 'user',
+            'evidence': 'build-out cost $85,000',
+        },
+        'monthly_lease': {
+            'value': '$7,200', 'source': 'user',
+            'evidence': 'monthly lease $7,200',
+        },
+    }
+    first = agent._execute_mutation_tool(
+        'generate_scorecard', {
+            'name': 'Coffee Kiosk at Union Station',
+            'idea_description': 'Score the Union Station kiosk.',
+            'attributes': union_attributes,
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert first['ok'], first
+    union_card = first['scorecard']
+
+    # Reproduce the live session shape: the scorecard is durable, while its
+    # sole registry entry is still marked pending. The old title-expansion
+    # shortcut treated the next name as another alias for this option.
+    sessions = load_user_sessions(test_user.id)
+    union_key = union_card['option_key']
+    sessions[tid]['option_registry'][union_key]['status'] = 'pending'
+    sessions[tid]['chat_history'].append({
+        'role': 'user',
+        'content': (
+            'Coffee Kiosk at Airport Terminal B has build-out cost $140,000 '
+            'and monthly lease $12,500.'
+        ),
+    })
+    assert save_user_sessions(test_user.id, sessions)
+
+    airport = agent._execute_mutation_tool(
+        'generate_scorecard', {
+            'name': 'Coffee Kiosk at Airport Terminal B',
+            'idea_description': 'Score the Airport Terminal B kiosk.',
+            'attributes': {
+                'build_out_cost': {
+                    'value': '$140,000', 'source': 'user',
+                    'evidence': 'build-out cost $140,000',
+                },
+                'monthly_lease': {
+                    'value': '$12,500', 'source': 'user',
+                    'evidence': 'monthly lease $12,500',
+                },
+            },
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert airport['ok'], airport
+    airport_card = airport['scorecard']
+    assert airport_card['option_key'] != union_key
+    assert airport_card['attributes']['build_out_cost']['value'] == 140_000
+    assert airport_card['attributes']['monthly_lease']['value'] == 12_500
+    assert airport_card['decision_fingerprint'] != union_card['decision_fingerprint']
+    assert airport_card['meta']['reused_source_scorecard_id'] is None
+
+    # The first option remains independently reusable after the second is added.
+    union_again = agent._execute_mutation_tool(
+        'generate_scorecard', {
+            'name': 'Coffee Kiosk at Union Station',
+            'idea_description': 'Score the Union Station kiosk.',
+            'attributes': union_attributes,
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert union_again['ok'], union_again
+    assert union_again['scorecard']['option_key'] == union_key
+    assert union_again['scorecard']['decision_fingerprint'] == union_card['decision_fingerprint']
+    assert union_again['scorecard']['meta']['reused_source_scorecard_id'] == union_card['id']
+    assert provider_calls == [
+        {'build_out_cost': 85_000, 'monthly_lease': 7_200},
+        {'build_out_cost': 140_000, 'monthly_lease': 12_500},
+    ]
+
+
+def test_single_option_then_batch_reuses_a_without_reusing_it_for_b(
+    app, client, db, test_user, auth_headers, monkeypatch,
+):
+    strategy, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'single-then-batch-option-identity'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['scoring_rubric'] = {
+        'approval_status': 'approved',
+        'approved_by_user_at': '2026-10-10T10:00:00Z',
+        'criteria': [
+            {'key': 'financial_value', 'label': 'Financial value', 'weight': 0.6},
+            {'key': 'location_fit', 'label': 'Location fit', 'weight': 0.4},
+        ],
+    }
+    sessions[tid]['chat_history'] = [{
+        'role': 'user',
+        'content': (
+            'Option A: Coffee Kiosk at Union Station. Build-out cost $85,000. '
+            'Monthly lease $7,200. '
+            'Option B: Coffee Kiosk at Airport Terminal B. Build-out cost $140,000. '
+            'Monthly lease $12,500.'
+        ),
+    }]
+    assert save_user_sessions(test_user.id, sessions)
+    mock_accounting(monkeypatch)
+    provider_names = []
+
+    def scorer(*args, **kwargs):
+        provider_names.append(kwargs.get('option_name'))
+        return ({
+            'jaspen_score': 60,
+            'score_category': 'Good',
+            'dimensions': {
+                'financial_value': {'score': 60, 'confidence': 'high'},
+                'location_fit': {'score': 60, 'confidence': 'high'},
+            },
+            'gates': [],
+        }, {
+            'provider': 'test', 'model': 'test',
+            'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2,
+        })
+
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', scorer)
+    union_attributes = {
+        'build_out_cost': {
+            'value': '$85,000', 'source': 'user',
+            'evidence': 'Build-out cost $85,000.',
+        },
+        'monthly_lease': {
+            'value': '$7,200', 'source': 'user',
+            'evidence': 'Monthly lease $7,200.',
+        },
+    }
+    first = agent._execute_mutation_tool(
+        'generate_scorecard', {
+            'name': 'Coffee Kiosk at Union Station',
+            'idea_description': 'Score the Union Station kiosk.',
+            'attributes': union_attributes,
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert first['ok'], first
+
+    queued = agent._execute_mutation_tool(
+        'queue_scorecards', {'ideas': [
+            {
+                'name': 'Coffee Kiosk at Union Station',
+                'description': 'Score the Union Station kiosk.',
+                'attributes': union_attributes,
+            },
+            {
+                'name': 'Coffee Kiosk at Airport Terminal B',
+                'description': 'Score the Airport Terminal B kiosk.',
+                'attributes': {
+                    'build_out_cost': {
+                        'value': '$140,000', 'source': 'user',
+                        'evidence': 'Build-out cost $140,000.',
+                    },
+                    'monthly_lease': {
+                        'value': '$12,500', 'source': 'user',
+                        'evidence': 'Monthly lease $12,500.',
+                    },
+                },
+            },
+        ]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert queued['ok'], queued
+    queued_by_name = {item['name']: item for item in queued['queue']}
+    assert queued_by_name['Coffee Kiosk at Union Station']['option_key'] == first['scorecard']['option_key']
+    assert queued_by_name['Coffee Kiosk at Airport Terminal B']['option_key'] != first['scorecard']['option_key']
+
+    response = client.post(
+        f'/api/v1/strategy/threads/{tid}/score-batch', headers=auth_headers, json={},
+    )
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['count'] == 2
+
+    rows = Scorecard.query.filter_by(thread_id=tid).all()
+    cards = [dict(row.data or {}) for row in rows]
+    airport = next(card for card in cards if card.get('project_name') == 'Coffee Kiosk at Airport Terminal B')
+    union_batch = next(
+        card for card in cards
+        if card.get('project_name') == 'Coffee Kiosk at Union Station'
+        and card.get('id') != first['scorecard']['id']
+    )
+    assert airport['option_key'] != first['scorecard']['option_key']
+    assert airport['attributes']['build_out_cost']['value'] == 140_000
+    assert airport['decision_fingerprint'] != first['scorecard']['decision_fingerprint']
+    assert not (
+        airport.get('reused_source_scorecard_id')
+        or (airport.get('meta') or {}).get('reused_source_scorecard_id')
+    )
+    assert (
+        union_batch.get('reused_source_scorecard_id')
+        or (union_batch.get('meta') or {}).get('reused_source_scorecard_id')
+    ) == first['scorecard']['id']
+    assert union_batch['decision_fingerprint'] == first['scorecard']['decision_fingerprint']
+    assert provider_names == [
+        'Coffee Kiosk at Union Station',
+        'Coffee Kiosk at Airport Terminal B',
+    ]
+
+
 def test_approved_rubric_cannot_be_downgraded_or_replaced_by_agent(app, db, test_user):
     _, agent = modules()
     tid = 'immutable-approved-rubric'

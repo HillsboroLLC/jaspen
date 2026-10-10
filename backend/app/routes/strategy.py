@@ -3750,16 +3750,20 @@ def analyze_project():
                 'code': 'rubric_approval_required',
             }), 409
         identity_session = current_session if isinstance(current_session, dict) else {}
-        from ..decision_state import option_attributes, resolve_option_key
+        from ..decision_state import option_attributes, option_name_matches_key, resolve_option_key
         supplied_key = str(data.get('option_key') or '').strip()
         registry = identity_session.get('option_registry') if isinstance(identity_session.get('option_registry'), dict) else {}
-        authoritative_key = supplied_key if supplied_key in registry else None
         identity_label = requested_name or (current_session or {}).get('name') or 'Primary option'
+        authoritative_key = (
+            supplied_key
+            if supplied_key in registry and option_name_matches_key(identity_session, supplied_key, identity_label)
+            else None
+        )
         provisional_option_key = resolve_option_key(
             identity_session,
             identity_label,
             authoritative_key=authoritative_key,
-            allow_single_pending=True,
+            allow_single_pending=not bool(existing_peers),
         )
         legacy_attributes = option_attributes(identity_session, provisional_option_key, requested_name)
         from ..decision_fingerprint import scoring_fingerprint

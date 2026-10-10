@@ -6374,12 +6374,23 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not isinstance(session, dict):
             return _tool_error("Thread not found.", code="thread_not_found")
         kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version")) if session.get("decision_kit") else None
-        target_id = str(tool_input.get("scorecard_id") or view_active_scorecard_id or "").strip()
+        explicit_target_id = str(tool_input.get("scorecard_id") or "").strip()
+        target_id = str(explicit_target_id or view_active_scorecard_id or "").strip()
         target_card = next((
             card for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
             if str(card.get("id") or card.get("analysis_id") or "").strip() == target_id
         ), None) if target_id else None
         from ..decision_state import migrate_attribute_mapping, migrate_option_attribute_keys, resolve_option_key, store_option_attributes
+        if target_card and not _requested_name_matches_scorecard(session, target_card, option):
+            if explicit_target_id:
+                return _tool_error(
+                    "The selected scorecard belongs to a different option. Its facts were not changed.",
+                    code="option_fact_target_mismatch",
+                )
+            # An open card is presentation context, not proof that a newly named
+            # option is the same decision alternative.
+            target_card = None
+            target_id = ""
         option_key = resolve_option_key(
             session,
             option,
@@ -6536,10 +6547,20 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 or it.get("notes") or it.get("rationale") or it.get("desc") or ""
             ).strip() or name
             locked = bool(it.get("locked") or it.get("is_locked") or it.get("required") or it.get("anchor"))
-            from ..decision_state import migrate_option_attribute_keys, option_attributes, resolve_option_key, store_option_attributes
+            from ..decision_state import (
+                migrate_option_attribute_keys,
+                option_attributes,
+                option_name_matches_key,
+                resolve_option_key,
+                store_option_attributes,
+            )
             registry = _queue_session.get("option_registry") if isinstance(_queue_session.get("option_registry"), dict) else {}
             claimed_key = str(it.get("option_key") or "").strip()
-            authoritative_key = claimed_key if claimed_key in registry else None
+            authoritative_key = (
+                claimed_key
+                if claimed_key in registry and option_name_matches_key(_queue_session, claimed_key, name)
+                else None
+            )
             option_key = resolve_option_key(_queue_session, name, authoritative_key=authoritative_key)
             queue_kit = get_decision_kit(
                 _queue_session.get("decision_kit"), _queue_session.get("decision_kit_version")
@@ -6723,6 +6744,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         decision_kit_version = session.get("decision_kit_version")
         kit = get_decision_kit(decision_kit, decision_kit_version) if decision_kit else None
         evidence_corpus = _thread_user_corpus(user_id, thread_id)
+        existing_scorecards = _collect_session_scorecards(
+            session, user_id=user_id, thread_id=thread_id,
+        )
         known_option_names = [
             str(item.get("name") or "").strip()
             for item in (session.get("scorecard_queue") or [])
@@ -6730,21 +6754,38 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         ]
         known_option_names.extend(
             str(card.get("project_name") or card.get("name") or "").strip()
-            for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+            for card in existing_scorecards
             if isinstance(card, dict) and (card.get("project_name") or card.get("name"))
         )
         scoped_evidence_corpus = option_fact_text(
             evidence_corpus, requested_name, known_option_names
         ) or evidence_corpus
-        from ..decision_state import migrate_option_attribute_keys, option_attributes, resolve_option_key, store_option_attributes
+        from ..decision_state import (
+            migrate_option_attribute_keys,
+            option_attributes,
+            registered_option_key,
+            resolve_option_key,
+            store_option_attributes,
+        )
+        registered_key_before_resolution = registered_option_key(session, requested_name)
+        allow_pending_title_expansion = not bool(rescore_target) and not existing_scorecards
         option_key = resolve_option_key(
             session,
             requested_name,
             authoritative_key=(rescore_target or {}).get("option_key"),
-            allow_single_pending=not bool(rescore_target),
+            allow_single_pending=allow_pending_title_expansion,
         )
         migrate_option_attribute_keys(session, option_key, kit=kit, display_name=requested_name)
-        stored_by_name = option_attributes(session, option_key, requested_name)
+        may_inherit_registered_facts = bool(
+            rescore_target
+            or registered_key_before_resolution == option_key
+            or allow_pending_title_expansion
+        )
+        stored_by_name = (
+            option_attributes(session, option_key, requested_name)
+            if may_inherit_registered_facts
+            else {}
+        )
         persisted_attributes = dict((rescore_target or {}).get("attributes") or {})
         persisted_attributes.update(stored_by_name or {})
         attributes = dict(persisted_attributes)

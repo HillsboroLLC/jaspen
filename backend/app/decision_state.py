@@ -51,6 +51,34 @@ def _option_registry(session):
     return registry, aliases
 
 
+def registered_option_key(session, display_name):
+    """Return the key already registered for this exact normalized name."""
+    registry, aliases = _option_registry(session)
+    alias = _option_alias(display_name)
+    key = str(aliases.get(alias) or "").strip() if alias else ""
+    if key in registry:
+        return key
+    if not alias:
+        return None
+    for candidate_key, item in registry.items():
+        if not isinstance(item, dict):
+            continue
+        registered_aliases = {
+            _option_alias(value)
+            for value in [item.get("display_name"), *(item.get("aliases") or [])]
+            if _option_alias(value)
+        }
+        if alias in registered_aliases:
+            return str(candidate_key)
+    return None
+
+
+def option_name_matches_key(session, option_key, display_name):
+    """Prove that a caller-supplied name belongs to an existing option key."""
+    key = str(option_key or "").strip()
+    return bool(key and registered_option_key(session, display_name) == key)
+
+
 def register_option(session, display_name, *, authoritative_key=None, status="pending"):
     """Create or update a code-owned option identity in one decision session."""
     registry, aliases = _option_registry(session)
