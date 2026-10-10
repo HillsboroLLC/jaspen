@@ -189,3 +189,26 @@ def test_workspace_saves_report_edits_on_the_scorecard_and_shares_inherit_them(c
     token = _share(client, auth_headers)
     snapshot = client.get(f'/api/v1/shares/public/{token}').get_json()['snapshot']
     assert snapshot['presentation'] == {'colors': {'accent': '#0F6E77'}, 'text': {'brand_name': 'ACME BUILDERS'}}
+
+
+def test_rereading_a_card_keeps_fact_resolved_gates():
+    from app.decision_processing import apply_decision_kit
+
+    card = {
+        'project_name': 'Denver',
+        'decision_kit': 'rfp_bid',
+        'attributes': {
+            'surety_status': {'value': 'confirmed', 'source': 'user', 'evidence': 'surety confirmed'},
+            'submission_due': {'value': '2099-11-20', 'source': 'user', 'evidence': 'due November 20, 2099'},
+        },
+        # As stored: gate criteria without the kit's fact bindings.
+        'scoring_rubric': {'status': 'approved', 'criteria': [
+            {'key': 'submission_deadline', 'label': 'Able to submit by deadline', 'gate': True, 'weight': 0},
+            {'key': 'surety_confirmation', 'label': 'Surety / bond confirmation', 'gate': True, 'weight': 0},
+        ]},
+        'gates': [],
+    }
+    reread = apply_decision_kit(card, decision_kit='rfp_bid')
+    assert {g['key']: g['status'] for g in reread['gates']} == {
+        'submission_deadline': 'pass', 'surety_confirmation': 'pass',
+    }

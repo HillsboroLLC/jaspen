@@ -889,6 +889,8 @@ export default function JaspenWorkspace() {
   // cosmetic overrides applied, plus the owner's saved report edits.
   // ?view=classic keeps the previous card canvas reachable as a fallback.
   const classicCanvas = searchParams.get('view') === 'classic';
+  const onePagerMode = isScorecard && !classicCanvas;
+  const [reportEditing, setReportEditing] = useState(false);
   const workspaceReportSnapshot = useMemo(() => ({
     scorecard: rendered || {},
     context: {
@@ -1765,7 +1767,7 @@ export default function JaspenWorkspace() {
       >
         <div style={{ padding:'14px 16px', borderBottom:'1px solid #e6eaf2' }}>
           <div style={{ fontSize:12, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.06em', fontWeight:600 }}>
-            Workspace · Beta
+            Workspace
           </div>
           <div style={{ fontSize:14, color:'#0f172a', marginTop:4, fontWeight:600 }}>
             {displayTitle}
@@ -1978,22 +1980,71 @@ export default function JaspenWorkspace() {
             ) : (
               <h1 style={{ margin:0, fontSize:18, fontWeight:600, color:'#0f172a' }}>{displayTitle}</h1>
             )}
-            <span style={{ padding:'2px 8px', borderRadius:10, background:'#fef3c7', color:'#92400e', fontSize:10, fontWeight:600, letterSpacing:'0.04em' }}>
-              BETA
-            </span>
-            {saving && (
+            {!onePagerMode && saving && (
               <span style={{ fontSize:11, color:'#94a3b8' }}>Saving…</span>
             )}
-            {!saving && saveError && (
+            {!onePagerMode && !saving && saveError && (
               <span style={{ fontSize:11, color:'#dc2626' }} title={saveError}>Save failed</span>
             )}
-            {!saving && !saveError && exportError && (
+            {!onePagerMode && !saving && !saveError && exportError && (
               <span style={{ fontSize:11, color:'#dc2626' }} title={exportError}>{exportError}</span>
             )}
-            {!saving && !saveError && !exportError && Object.keys(overrides).length > 0 && (
+            {!onePagerMode && !saving && !saveError && !exportError && Object.keys(overrides).length > 0 && (
               <span style={{ fontSize:11, color:'#94a3b8' }}>Saved</span>
             )}
           </div>
+          {onePagerMode ? (
+          <div className="op-shell op-topbar" aria-label="Scorecard actions">
+            <button type="button" className="op-btn" onClick={() => setReportEditing(true)} disabled={reportEditing}>Edit</button>
+            <EmailResultsButton
+              ref={emailResultsRef}
+              hideTrigger
+              threadId={threadId}
+              scorecardId={scorecardId}
+              outputTypes={['scorecard_detail']}
+            />
+            <button type="button" className="op-btn" onClick={() => emailResultsRef.current?.open()}>Email</button>
+            <ShareButton
+              threadId={threadId}
+              artifactType="scorecard"
+              scorecardId={scorecardId}
+              className="op-btn op-btn--primary"
+              label="Share link"
+            />
+            <button type="button" className="op-btn" onClick={() => downloadExport('pptx', 'pptx', 'PowerPoint')} disabled={Boolean(scorecardExporting)}>
+              {scorecardExporting ? 'Working…' : 'PowerPoint'}
+            </button>
+            <button
+              type="button"
+              className="op-btn op-btn--accent"
+              onClick={() => buildExecutionPlan({ source: 'scorecard', scorecard_id: scorecardId })}
+              disabled={Boolean(buildingPlan)}
+              title={buildPlanError || 'Generate an execution plan from this scorecard'}
+            >
+              {buildingPlan ? 'Building…' : (buildPlanError ? 'Retry plan' : 'Build Execution Plan')}
+            </button>
+            <button type="button" className="op-btn op-btn--quiet" onClick={flushSave} disabled={saving} title="Save now">
+              {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save'}
+            </button>
+            <button
+              type="button"
+              className="op-btn op-btn--quiet"
+              onClick={resetOverrides}
+              disabled={Object.keys(overrides).length === 0}
+              title={Object.keys(overrides).length === 0 ? 'No manual edits to reset' : 'Reset manual edits to the original'}
+            >
+              Reset
+            </button>
+            <Link
+              to={`/new?sid=${encodeURIComponent(threadId)}`}
+              title="Back to Jaspen"
+              style={{ display:'inline-flex', alignItems:'center', gap:6, color:'#475569', textDecoration:'none', fontSize:13, paddingLeft:4, whiteSpace:'nowrap' }}
+            >
+              <FontAwesomeIcon icon={faArrowLeft} />
+              Back to Jaspen
+            </Link>
+          </div>
+          ) : (
           <div style={{ display:'flex', gap:8 }}>
             {/* Force-save: explicit reassurance even though edits auto-save. */}
             {isScorecard && (
@@ -2164,7 +2215,14 @@ export default function JaspenWorkspace() {
               Back to Jaspen
             </Link>
           </div>
+          )}
         </div>
+
+        {onePagerMode && (saveError || exportError) && (
+          <div role="alert" style={{ padding:'6px 28px', background:'#fff5f5', borderBottom:'1px solid #f3d0d0', color:'#b42318', fontSize:12 }}>
+            {saveError ? `Save failed: ${saveError}` : exportError}
+          </div>
+        )}
 
         {/* Canvas */}
         <div data-ws-canvas style={{ flex:1, overflow:'auto', background: isTradeoff ? undefined : '#eceff5', padding: isTradeoff ? 0 : '32px 48px' }}>
@@ -2741,6 +2799,9 @@ export default function JaspenWorkspace() {
               canEdit={isScorecard}
               onSavePresentation={async (presentation) => { setOverride('report_presentation', presentation); }}
               notes={workspaceNotes}
+              showActions={false}
+              editing={reportEditing}
+              onEditingChange={setReportEditing}
             />
           </div>
           )

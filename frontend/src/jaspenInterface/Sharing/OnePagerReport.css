@@ -231,3 +231,10 @@
 .op-risks li + li { margin-top: 10px; }
 .op-masthead__company { margin-top: 4px; font-size: 15px; color: #4A5170; font-weight: 600; }
 @media (max-width: 600px) { .op-featured__row { grid-template-columns: 1fr; } }
+
+/* Workspace top bar: the report's pill buttons live in the page header. */
+.op-shell.op-topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; background: transparent; font-family: 'Source Sans 3', 'Inter Tight', system-ui, sans-serif; }
+.op-topbar .op-btn { min-height: 38px; padding: 0 14px; font-size: 14px; }
+.op-btn--accent { border-color: var(--op-accent); color: var(--op-accent); }
+.op-btn--quiet { border-color: transparent; color: #4A5170; }
+.op-btn--quiet:hover:not(:disabled) { border-color: #D5D8E3; }

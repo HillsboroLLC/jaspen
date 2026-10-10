@@ -199,9 +199,12 @@ def apply_decision_kit(scorecard, *, decision_kit=None, decision_kit_version=Non
     output["decision_kit_version"] = int(decision_kit_version or kit["version"])
     output["attributes"] = dict(output.get("attributes") or {})
     output["metrics"] = calculate_metrics(output["attributes"], kit.get("metrics"), context=kit_context)
+    # Stored rubrics do not keep the kit's gate bindings (fact_key, resolver),
+    # so attach them here as scoring does; otherwise re-reading a card turns
+    # fact-resolved gates (pass/fail) back into "unknown".
     output["gates"] = normalize_gates(
         output.get("gates"),
-        output.get("scoring_rubric") or output.get("rubric"),
+        rubric_with_kit_gate_config(output.get("scoring_rubric") or output.get("rubric"), kit),
         evidence_corpus,
         option_key=output.get("option_key"),
         option_name=output.get("project_name") or output.get("initiative_name") or output.get("name"),

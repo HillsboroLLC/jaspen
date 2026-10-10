@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import SharedArtifactView from './SharedArtifactView';
 import { REPORT_SECTIONS, applyPresentation, buildReportModel } from './reportModel';
@@ -462,14 +462,28 @@ function Editor({ draft, setDraft, onSave, onCancel, saving, error }) {
 // PDF. The owner (sharing is paid-only) can edit colors, wording and layout.
 export default function OnePagerReport({
   artifactType, snapshot, title, createdAt, actions = null, canEdit = false, onSavePresentation = null, notes = [],
+  showActions = true, editing: editingProp, onEditingChange = null,
 }) {
   const model = useMemo(
     () => buildReportModel({ artifactType, snapshot, title, createdAt }),
     [artifactType, snapshot, title, createdAt],
   );
   const saved = useMemo(() => applyPresentation(model, snapshot?.presentation), [model, snapshot]);
-  const [editing, setEditing] = useState(false);
+  // Editing can be driven from outside (the Workspace top bar) or by the
+  // report's own Edit button on the share page.
+  const [editingLocal, setEditingLocal] = useState(false);
+  const controlled = typeof editingProp === 'boolean';
+  const editing = controlled ? editingProp : editingLocal;
+  const setEditing = (value) => {
+    if (onEditingChange) onEditingChange(value);
+    if (!controlled) setEditingLocal(value);
+  };
   const [draft, setDraft] = useState(saved);
+  const wasEditing = useRef(false);
+  useEffect(() => {
+    if (editing && !wasEditing.current) setDraft(saved);
+    wasEditing.current = editing;
+  }, [editing, saved]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -547,12 +561,14 @@ export default function OnePagerReport({
           </div>
         </header>
 
+        {showActions && (
         <nav className="op-actions" aria-label="Report actions">
           {actions}
           {canEdit && !editing && (
             <button type="button" className="op-btn" onClick={startEdit}>Edit</button>
           )}
         </nav>
+        )}
 
         {leadSection && <div className="op-lead-section">{sections[leadSection]}</div>}
 
