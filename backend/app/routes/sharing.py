@@ -344,7 +344,7 @@ def manage_share(token):
     })
 
 
-@sharing_bp.route('/manage/<token>/presentation', methods=['PUT'])
+@sharing_bp.route('/manage/<token>/presentation', methods=['PUT', 'PATCH'])
 @jwt_required()
 @limiter.limit('60 per minute')
 def save_share_presentation(token):

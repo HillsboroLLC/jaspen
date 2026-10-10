@@ -4,9 +4,9 @@
 // replaced by the owner's presentation edits, but numbers never are.
 
 export const REPORT_SECTIONS = [
+  { key: 'strength', label: 'How strong is the case?' },
   { key: 'standings', label: 'Where each option stands' },
   { key: 'featured', label: 'The strongest case' },
-  { key: 'strength', label: 'How strong is the case?' },
   { key: 'change', label: 'What could change the answer' },
   { key: 'takeaways', label: 'What leadership should know' },
   { key: 'criteria', label: 'The criteria you approved' },
@@ -68,9 +68,20 @@ const money = (value) => {
   return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 };
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+const formatDate = (value) => {
+  const [y, m, d] = String(value).split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+// Model summaries often just restate the score; the report already shows it.
+const restatesScore = (text) => /\bscores?\s+\d+\s*\/\s*100\b|\b\d+\s*\/\s*100\b/i.test(String(text || ''));
+
 export const formatFactValue = (fact) => {
   const value = fact?.value;
   const unit = String(fact?.unit || '').toLowerCase();
+  if (typeof value === 'string' && ISO_DATE.test(value)) return formatDate(value);
   if (unit === 'usd') return money(value);
   if (unit === 'percent_points' || unit === 'percent') return `${value}%`;
   if (unit && Number.isFinite(Number(value))) return `${value} ${unit}`;
@@ -133,6 +144,29 @@ const gatesOf = (card) => (Array.isArray(card?.gates) ? card.gates.filter(Boolea
 
 const gateStatus = (gate) => String(gate?.status || gate?.result || '').toLowerCase();
 
+// A plain-language lead built from code-owned results; the model's own
+// summary is used only when it adds reasoning instead of restating a score.
+function summaryFor({ featured, featuredName, cards, standings, verify }) {
+  if (!featured) return '';
+  const verdict = verdictFor(featured).toLowerCase();
+  const sentences = [];
+  if (cards.length > 1) {
+    sentences.push(`We compared ${cards.length} options against the criteria. ${featuredName} is the strongest case: ${verdict}.`);
+    const missing = standings.filter((s) => s.failedGates.length).map((s) => s.name);
+    if (missing.length) {
+      sentences.push(`${missing.join(' and ')} ${missing.length === 1 ? 'misses' : 'miss'} a must-have as things stand.`);
+    }
+  } else {
+    sentences.push(`${featuredName}: ${verdict}.`);
+    const reasoning = firstSentences(featured.executive_summary || featured.strategic_rationale, 1);
+    if (reasoning && !restatesScore(reasoning)) sentences.push(reasoning);
+  }
+  if (verify.length) {
+    sentences.push(`${verify.length === 1 ? 'One thing is' : `${Math.min(verify.length, 5)} things are`} worth checking before committing.`);
+  }
+  return sentences.join(' ');
+}
+
 export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
   const cards = artifactType === 'tradeoff'
     ? (Array.isArray(snapshot?.scorecards) ? snapshot.scorecards : [])
@@ -147,27 +181,46 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
   });
   const featured = ranked[0] || null;
 
+  const gateLabel = (g) => g.label || humanize(g.key);
+  const headlineMetric = (card) => {
+    const [key, metric] = Object.entries(card?.metrics || {}).find(([, m]) => m?.value !== null && m?.value !== undefined) || [];
+    return key ? `${metric.label || humanize(key)} ${formatMetric(key, metric)}` : '';
+  };
+  // What decides each option, in words: a failed must-have first, then an
+  // unconfirmed one, then the model's reasoning unless it only restates the score.
+  const whyFor = (card) => {
+    const unknown = gatesOf(card).filter((g) => ['unknown', 'pending'].includes(gateStatus(g))).map(gateLabel);
+    const summary = firstSentences(card.executive_summary || card.strategic_rationale || card.executive_narrative, 1);
+    const parts = [];
+    if (unknown.length) parts.push(`Not confirmed yet: ${unknown.join(', ')}.`);
+    if (summary && !restatesScore(summary)) parts.push(summary);
+    const metric = headlineMetric(card);
+    if (!parts.length && metric) parts.push(`${metric}, calculated by Jaspen.`);
+    return parts.join(' ');
+  };
+
   const standings = ranked.map((card) => ({
     name: cardName(card),
     verdict: verdictFor(card),
     score: cardScore(card),
-    why: firstSentences(card.executive_summary || card.strategic_rationale || card.executive_narrative, 1),
-    failedGates: gatesOf(card).filter((g) => gateStatus(g) === 'fail').map((g) => g.label || humanize(g.key)),
+    why: whyFor(card),
+    failedGates: gatesOf(card).filter((g) => gateStatus(g) === 'fail').map(gateLabel),
   }));
 
   const facts = Object.entries(featured?.facts || {});
+  const passedGates = gatesOf(featured).filter((g) => gateStatus(g) === 'pass').map(gateLabel);
   const supported = [
     ...facts
       .filter(([, f]) => String(f?.source || 'user').toLowerCase() !== 'assumed')
       .map(([key, f]) => `${f.label || humanize(key)}: ${formatFactValue(f)}`),
-    ...gatesOf(featured).filter((g) => gateStatus(g) === 'pass').map((g) => `${g.label || humanize(g.key)} met`),
+    ...(passedGates.length ? [`Must-haves met: ${passedGates.join(', ')}`] : []),
   ];
   const assumptions = [
-    ...(Array.isArray(featured?.assumptions) ? featured.assumptions.map(assumptionText) : []),
+    ...(Array.isArray(featured?.assumptions) ? featured.assumptions.map((a) => firstSentences(assumptionText(a), 1)) : []),
     ...facts
       .filter(([, f]) => String(f?.source || '').toLowerCase() === 'assumed')
       .map(([key, f]) => `${f.label || humanize(key)}: ${formatFactValue(f)} (assumed)`),
-  ].filter(Boolean);
+  ].filter(Boolean).slice(0, 4);
   const dims = dimensionsOf(featured);
   const weak = dims
     .filter((d) => d.confidence === 'assumed' || d.confidence === 'low')
@@ -224,8 +277,7 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     headline: artifactType === 'tradeoff'
       ? (String(title || '').trim().endsWith('?') && String(title).length <= 140 ? String(title).trim() : 'Which option should we choose?')
       : `Should we pursue ${featuredName}?`,
-    summary: firstSentences(featured?.executive_summary || featured?.strategic_rationale, 2)
-      || (featured ? `${featuredName} is the strongest case at ${verdictFor(featured).toLowerCase()}.` : ''),
+    summary: summaryFor({ featured, featuredName, cards, standings, verify }),
     featured_question: featured ? `Should we commit to ${featuredName}?` : '',
     takeaway_title: 'What leadership should know',
     next_step_title: verify.length

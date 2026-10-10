@@ -128,7 +128,8 @@ def test_clearing_edits_removes_presentation(client, paid_user, auth_headers):
     token = _share(client, auth_headers)
     client.put(f'/api/v1/shares/manage/{token}/presentation',
                json={'presentation': {'text': {'headline': 'X'}}}, headers=auth_headers)
-    cleared = client.put(f'/api/v1/shares/manage/{token}/presentation',
+    # The web client's JSON helper sends PATCH; both verbs save.
+    cleared = client.patch(f'/api/v1/shares/manage/{token}/presentation',
                          json={'presentation': {}}, headers=auth_headers)
     assert cleared.status_code == 200
     link = SharedArtifact.query.filter_by(token=token).first()

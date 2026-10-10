@@ -53,7 +53,7 @@ test('features the strongest verdict and keeps numbers from code', () => {
   expect(model.featured.supported).toEqual([
     'Contract Value: $2,400,000',
     'Win Probability: 35%',
-    'Surety / bond confirmation met',
+    'Must-haves met: Surety / bond confirmation',
   ]);
   expect(model.featured.assumptions).toEqual(['Margin: 18% (assumed)']);
   expect(model.standings.map((s) => s.name)).toEqual(['Denver Water pump station', 'CDOT bridge rehab']);
@@ -90,6 +90,25 @@ test('criteria separate weighted criteria from must-haves', () => {
 test('a long thread name is not used as the headline', () => {
   const model = buildReportModel({ artifactType: 'tradeoff', snapshot, title: "We're a construction firm deciding which bids" });
   expect(model.defaults.headline).toBe('Which option should we choose?');
+});
+
+test('strength comes first by default', () => {
+  const model = buildReportModel({ artifactType: 'tradeoff', snapshot, title: '' });
+  expect(applyPresentation(model).order[0]).toBe('strength');
+});
+
+test('summary and reasons say what decides each option instead of restating scores', () => {
+  const restating = { ...snapshot, scorecards: snapshot.scorecards.map((c) => ({ ...c, executive_summary: `${c.project_name} scores ${c.jaspen_score}/100 based on the information currently available.` })) };
+  const model = buildReportModel({ artifactType: 'tradeoff', snapshot: restating, title: '' });
+  expect(model.defaults.summary).toBe('We compared 2 options against the criteria. Denver Water pump station is the strongest case: bid. CDOT bridge rehab misses a must-have as things stand. One thing is worth checking before committing.');
+  expect(model.standings[0].why).toBe('Expected margin $151,200, calculated by Jaspen.');
+  expect(model.standings.map((s) => s.why).join(' ')).not.toMatch(/\/100/);
+});
+
+test('dates read as dates', () => {
+  const dated = { scorecard: { project_name: 'X', jaspen_score: 60, facts: { submission_due: { value: '2026-11-20', source: 'user' } } } };
+  const model = buildReportModel({ artifactType: 'scorecard', snapshot: dated, title: 'X' });
+  expect(model.featured.supported).toEqual(['Submission Due: Nov 20, 2026']);
 });
 
 test('general decisions without a kit get a plain-language verdict band', () => {

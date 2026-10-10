@@ -305,6 +305,11 @@ export default function OnePagerReport({
     next_step: <NextStep text={view.text} />,
   };
 
+  const visibleOrder = view.order.filter((key) => !view.hidden.has(key));
+  // Case strength leads the report, above the decision question, when it is
+  // first in the layout (the default). Owners can move it down in Edit.
+  const leadSection = visibleOrder[0] === 'strength' ? 'strength' : null;
+
   return (
     <div className={`op-shell${editing ? ' op-shell--editing' : ''}`}>
       <article className="op-report" style={style}>
@@ -326,6 +331,8 @@ export default function OnePagerReport({
           )}
         </nav>
 
+        {leadSection && <div className="op-lead-section">{sections[leadSection]}</div>}
+
         <section className="op-headline">
           <h1 className="op-h1">{view.text.headline}</h1>
           {view.text.summary && <p className="op-lead">{view.text.summary}</p>}
@@ -342,7 +349,7 @@ export default function OnePagerReport({
           )}
         </section>
 
-        {view.order.filter((key) => !view.hidden.has(key)).map((key) => (
+        {visibleOrder.filter((key) => key !== leadSection).map((key) => (
           <React.Fragment key={key}>{sections[key]}</React.Fragment>
         ))}
 
