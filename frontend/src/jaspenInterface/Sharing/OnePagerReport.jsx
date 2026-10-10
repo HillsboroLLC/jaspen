@@ -6,15 +6,6 @@ import './OnePagerReport.css';
 
 const EVIDENCE_LABELS = { none: 'No evidence', weak: 'Weak evidence', strong: 'Strong evidence' };
 
-function List({ items, empty }) {
-  if (!items.length) return <p className="op-muted">{empty}</p>;
-  return (
-    <ul className="op-list">
-      {items.map((item) => <li key={item}>{item}</li>)}
-    </ul>
-  );
-}
-
 function Standings({ model }) {
   if (model.standings.length < 2) return null;
   return (
@@ -470,7 +461,7 @@ function Editor({ draft, setDraft, onSave, onCancel, saving, error }) {
 // The shareable decision report. Same template on the share link and the
 // PDF. The owner (sharing is paid-only) can edit colors, wording and layout.
 export default function OnePagerReport({
-  artifactType, snapshot, title, createdAt, actions = null, canEdit = false, onSavePresentation = null,
+  artifactType, snapshot, title, createdAt, actions = null, canEdit = false, onSavePresentation = null, notes = [],
 }) {
   const model = useMemo(
     () => buildReportModel({ artifactType, snapshot, title, createdAt }),
@@ -583,6 +574,14 @@ export default function OnePagerReport({
 
         {visibleOrder.filter((key) => key !== leadSection).map((key) => (
           <React.Fragment key={key}>{sections[key]}</React.Fragment>
+        ))}
+
+        {notes.map((note) => (
+          <section key={note.id || note.heading} className="op-section" aria-label={note.heading || 'Note'}>
+            {note.heading && <h2 className="op-h2">{note.heading}</h2>}
+            <div className="op-rule" />
+            {note.body.split(/\n\n+/).map((para) => <p key={para} className="op-body op-para">{para}</p>)}
+          </section>
         ))}
 
         <section className="op-section op-details">

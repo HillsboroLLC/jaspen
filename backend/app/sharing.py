@@ -393,6 +393,14 @@ def build_snapshot(*, artifact_type, cards, include_evidence, scorecard_id=None,
         }
         if context:
             snapshot['context'] = context
+        # A share made from the scorecard carries the owner's Workspace edits.
+        overrides = card.get('display_overrides') if isinstance(card.get('display_overrides'), dict) else {}
+        try:
+            presentation = sanitize_presentation(overrides.get('report_presentation') or {})
+        except ValueError:
+            presentation = {}
+        if presentation:
+            snapshot['presentation'] = presentation
         return snapshot, card_title(card), wanted, count_evidence_passages(card)
 
     if artifact_type == ARTIFACT_TRADEOFF:

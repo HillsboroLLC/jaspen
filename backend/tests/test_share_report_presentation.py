@@ -173,3 +173,19 @@ def test_owner_branding_slots_are_accepted_and_limited():
     }}
     with pytest.raises(ValueError):
         sanitize_presentation({'text': {'brand_name': 'x' * 61}})
+
+
+def test_workspace_saves_report_edits_on_the_scorecard_and_shares_inherit_them(client, paid_user, auth_headers):
+    url = f'/api/v1/strategy/threads/{THREAD}/scorecards/report-card-a/overrides'
+    saved = client.patch(url, json={'report_presentation': {
+        'text': {'brand_name': 'ACME BUILDERS'}, 'colors': {'accent': '#0f6e77'},
+    }}, headers=auth_headers)
+    assert saved.status_code == 200, saved.get_json()
+
+    rejected = client.patch(url, json={'report_presentation': {'colors': {'accent': '#ffffff'}}}, headers=auth_headers)
+    assert rejected.status_code == 400
+    assert rejected.get_json()['code'] == 'low_contrast'
+
+    token = _share(client, auth_headers)
+    snapshot = client.get(f'/api/v1/shares/public/{token}').get_json()['snapshot']
+    assert snapshot['presentation'] == {'colors': {'accent': '#0F6E77'}, 'text': {'brand_name': 'ACME BUILDERS'}}

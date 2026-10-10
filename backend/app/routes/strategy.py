@@ -8951,6 +8951,10 @@ _ALLOWED_OVERRIDE_KEYS = {
     # (localStorage 'jw-layout-*'), which meant the arrangement never reached the
     # server and exports could not reproduce it. list[{key,x,y,w,h,...}].
     'section_layout',
+    # The one-pager scorecard's owner edits: colors, wording, branding and
+    # section layout. Validated by app.sharing.sanitize_presentation; numbers
+    # are never part of it.
+    'report_presentation',
 }
 
 # Built-in canvas sections whose arrangement we persist. Anything else is
@@ -8962,6 +8966,10 @@ def _coerce_override_value(key, value):
     """Best-effort sanitization. Returns the cleaned value, or None to delete."""
     if value is None:
         return None  # caller treats None as "remove this key"
+    if key == 'report_presentation':
+        from app.sharing import sanitize_presentation
+        cleaned = sanitize_presentation(value)  # raises ValueError on unsafe edits
+        return cleaned or None
     if key in {'title', 'subtitle', 'executive_summary', 'narrative', 'theme',
                'recommended_scenario'}:
         s = str(value).strip()
@@ -9304,7 +9312,10 @@ def scorecard_display_overrides(thread_id, scorecard_id):
             if raw_key not in _ALLOWED_OVERRIDE_KEYS:
                 # ignore unknown keys rather than 400'ing — keeps the API forward-compatible
                 continue
-            cleaned = _coerce_override_value(raw_key, raw_value)
+            try:
+                cleaned = _coerce_override_value(raw_key, raw_value)
+            except ValueError as error:
+                return jsonify({'error': 'These report edits are not supported.', 'code': str(error)}), 400
             if cleaned is None or cleaned == '':
                 next_overrides.pop(raw_key, None)
             else:

@@ -286,7 +286,10 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     failedGates: gatesOf(card).filter((g) => gateStatus(g) === 'fail').map(gateLabel),
   }));
 
-  const facts = Object.entries(featured?.facts || {});
+  // Share snapshots carry `facts`; the live card in Workspace keeps them in
+  // its canonical decision state.
+  const facts = Object.entries(featured?.facts || featured?.decision_state?.facts || {})
+    .filter(([, f]) => f && typeof f === 'object' && f.value !== null && f.value !== undefined && f.value !== '');
   const passedGates = gatesOf(featured).filter((g) => gateStatus(g) === 'pass').map(gateLabel);
   const keyFacts = facts
     .filter(([, f]) => String(f?.source || 'user').toLowerCase() !== 'assumed')

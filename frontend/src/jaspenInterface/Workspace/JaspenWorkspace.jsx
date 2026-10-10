@@ -35,6 +35,7 @@ import { userMessageWhitespaceStyle } from './messageFormatting';
 import { downloadRenderedWorkspacePdf } from './scorecardPdf';
 import EmailResultsButton from './EmailResultsButton';
 import ShareButton from '../Sharing/ShareButton';
+import OnePagerReport from '../Sharing/OnePagerReport';
 
 // Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
 // drag the corner to resize to ANY size (not 4 fixed widths). WidthProvider makes
@@ -884,6 +885,23 @@ export default function JaspenWorkspace() {
   }, [sectionLayout, threadId, scorecardId, loading, isScorecard]);
 
   const rendered = useMemo(() => applyOverrides(snapshot, overrides), [snapshot, overrides]);
+  // The one-pager scorecard: built from the live card with Workspace's
+  // cosmetic overrides applied, plus the owner's saved report edits.
+  // ?view=classic keeps the previous card canvas reachable as a fallback.
+  const classicCanvas = searchParams.get('view') === 'classic';
+  const workspaceReportSnapshot = useMemo(() => ({
+    scorecard: rendered || {},
+    context: {
+      ...(bundle?.strategy_objective ? { strategy_objective: bundle.strategy_objective } : {}),
+      ...(bundle?.decision_kit || rendered?.decision_kit ? { decision_kit: bundle?.decision_kit || rendered?.decision_kit } : {}),
+    },
+    presentation: overrides?.report_presentation || {},
+  }), [rendered, bundle?.strategy_objective, bundle?.decision_kit, overrides?.report_presentation]);
+  const workspaceNotes = useMemo(() => (
+    (Array.isArray(overrides?.custom_blocks) ? overrides.custom_blocks : [])
+      .map((block) => ({ id: block.id, heading: String(block.heading || '').trim(), body: String(block.body || '').trim() }))
+      .filter((block) => block.heading || block.body)
+  ), [overrides?.custom_blocks]);
 
   // Reversal across the option set, computed server-side. It cannot come from
   // the selected scorecard because no single card can see its peers, so it
@@ -2258,6 +2276,7 @@ export default function JaspenWorkspace() {
               }}
             />
           ) : (
+          classicCanvas ? (
           <div
             ref={scorecardExportRef}
             data-scorecard-export
@@ -2706,6 +2725,25 @@ export default function JaspenWorkspace() {
               Click any heading, summary, risk, or scenario above to edit, or “+ Add block” to add your own section. Only the score and dimensions stay locked — use the chat to rescore those.
             </div>
           </div>
+          ) : (
+          <div
+            ref={scorecardExportRef}
+            data-scorecard-export
+            // The scorecard IS the one-pager: same template as the share link
+            // and the PDF. White background stays — this node is the export root.
+            style={{ maxWidth: 1240, margin: '0 auto', background: '#fff' }}
+          >
+            <OnePagerReport
+              artifactType="scorecard"
+              snapshot={workspaceReportSnapshot}
+              title={displayTitle}
+              createdAt={rendered?.timestamp || rendered?.createdAt || null}
+              canEdit={isScorecard}
+              onSavePresentation={async (presentation) => { setOverride('report_presentation', presentation); }}
+              notes={workspaceNotes}
+            />
+          </div>
+          )
           )}
         </div>
       </main>
