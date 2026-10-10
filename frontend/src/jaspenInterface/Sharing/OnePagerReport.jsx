@@ -396,10 +396,18 @@ function Editor({ draft, setDraft, onSave, onCancel, saving, error }) {
   ];
   return (
     <aside className="op-editor" aria-label="Edit report">
-      <div className="op-editor__head">
+      {/* Pinned at the top so Save / Cancel / close are always in reach,
+          however long the editor gets. */}
+      <div className="op-editor__bar">
         <strong>Edit report</strong>
-        <span className="op-muted op-small">Scores and figures can’t be edited. Change the facts in Jaspen to change a number.</span>
+        <span className="op-editor__bar-actions">
+          <button type="button" className="op-btn" onClick={onCancel} disabled={saving}>Cancel</button>
+          <button type="button" className="op-btn op-btn--primary" onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          <button type="button" className="op-editor__close" onClick={onCancel} aria-label="Close editor" disabled={saving}>×</button>
+        </span>
       </div>
+      {error && <p className="op-editor__error" role="alert">{error}</p>}
+      <p className="op-muted op-small op-editor__note">Scores and figures can’t be edited. Change the facts in Jaspen to change a number.</p>
       <fieldset className="op-editor__group">
         <legend>Colors</legend>
         {[['accent', 'Accent'], ['ink', 'Text'], ['tint', 'Panel tint']].map(([slot, label]) => (
@@ -449,11 +457,6 @@ function Editor({ draft, setDraft, onSave, onCancel, saving, error }) {
           </select>
         </label>
       </fieldset>
-      {error && <p className="op-editor__error" role="alert">{error}</p>}
-      <div className="op-editor__actions">
-        <button type="button" className="op-btn" onClick={onCancel} disabled={saving}>Cancel</button>
-        <button type="button" className="op-btn op-btn--primary" onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
-      </div>
     </aside>
   );
 }

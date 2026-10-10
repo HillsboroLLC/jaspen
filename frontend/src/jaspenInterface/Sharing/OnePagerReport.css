@@ -239,3 +239,14 @@
 .op-btn--quiet { border-color: transparent; color: #4A5170; }
 .op-btn--quiet:hover:not(:disabled) { border-color: #D5D8E3; }
 .op-shell.op-topbar--row { flex-basis: 100%; justify-content: flex-start; }
+
+.op-editor { padding-top: 0; }
+.op-editor__bar {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: 0 -20px; padding: 12px 20px; background: #FFFFFF; border-bottom: 1px solid var(--op-line);
+}
+.op-editor__bar-actions { display: flex; align-items: center; gap: 8px; }
+.op-editor__bar .op-btn { min-height: 34px; padding: 0 14px; font-size: 14px; }
+.op-editor__close { width: 30px; height: 30px; border: none; background: transparent; font-size: 22px; line-height: 1; color: #4A5170; cursor: pointer; border-radius: 6px; }
+.op-editor__close:hover { background: var(--op-soft); }
+.op-editor__note { margin: 0; }
