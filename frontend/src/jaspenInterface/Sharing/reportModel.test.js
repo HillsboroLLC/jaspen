@@ -112,6 +112,42 @@ test('a score shared by every weak criterion is shown once', () => {
   expect(model2.change.find((c) => c.label === 'Win probability').evidence).toBe('strong');
 });
 
+test('production sections appear only when the scorecard has content for them', () => {
+  const rich = { scorecard: bid('Denver', 64, 'Bid', {
+    executive_summary: 'First paragraph.\n\nSecond paragraph.',
+    key_insights: ['Margin is healthy', { summary: 'Client relationship is new' }],
+    financial_impact: { roi_opportunity: '$151K', _numeric: { x: 1 } },
+    npv_irr_analysis: { npv: 120000, assumptions: { discount_rate: '8%' } },
+    decision_framework: { recommendation: 'Proceed with conditions', key_question: 'Can we staff it?' },
+    ai_insights: [{ file_name: 'pipeline.csv', summary: 'Two similar bids won last year' }],
+    assumptions: ['Crew available in Q4', 'Steel prices hold'],
+  }) };
+  const model = buildReportModel({ artifactType: 'scorecard', snapshot: rich, title: 'Denver' });
+  expect(model.executive).toEqual(['First paragraph.', 'Second paragraph.']);
+  expect(model.drivers).toEqual(['Margin is healthy', 'Client relationship is new']);
+  expect(model.breakdown.map((r) => r.label)).toEqual(['Win probability', 'Delivery capacity']);
+  expect(model.financials).toEqual([
+    { title: 'Financial impact', rows: [{ label: 'Roi Opportunity', value: '$151K' }] },
+    { title: 'NPV & IRR', rows: [{ label: 'Npv', value: '120,000' }, { label: 'Assumptions: Discount Rate', value: '8%' }] },
+  ]);
+  expect(model.framework).toEqual([
+    { label: 'Recommendation', value: 'Proceed with conditions' },
+    { label: 'Key Question', value: 'Can we staff it?' },
+  ]);
+  expect(model.insights).toEqual([{ source: 'pipeline.csv', text: 'Two similar bids won last year' }]);
+  expect(model.sharpen).toEqual(['Crew available in Q4', 'Steel prices hold']);
+
+  const bare = buildReportModel({ artifactType: 'scorecard', snapshot: { scorecard: { project_name: 'X', jaspen_score: 50 } }, title: 'X' });
+  expect([bare.executive, bare.drivers, bare.financials, bare.framework, bare.insights, bare.sharpen]).toEqual([[], [], [], [], [], []]);
+});
+
+test('an older saved layout keeps its order and gains new sections', () => {
+  const model = buildReportModel({ artifactType: 'tradeoff', snapshot, title: '' });
+  const view = applyPresentation(model, { layout: { order: ['standings', 'strength', 'featured', 'change', 'exposure', 'takeaways', 'criteria', 'next_step'] } });
+  expect(view.order.slice(0, 3)).toEqual(['standings', 'strength', 'executive']);
+  expect(view.order).toHaveLength(15);
+});
+
 test('criteria separate weighted criteria from must-haves', () => {
   const model = buildReportModel({ artifactType: 'tradeoff', snapshot, title: '' });
   expect(model.rubricApproved).toBe(true);

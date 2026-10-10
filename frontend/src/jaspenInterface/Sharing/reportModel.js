@@ -5,10 +5,17 @@
 
 export const REPORT_SECTIONS = [
   { key: 'strength', label: 'How strong is the case?' },
+  { key: 'executive', label: 'Executive summary' },
   { key: 'standings', label: 'Where each option stands' },
   { key: 'featured', label: 'The strongest case' },
+  { key: 'drivers', label: 'What drove this score' },
+  { key: 'breakdown', label: 'How each criterion scored' },
   { key: 'change', label: 'Where it’s weak, and how to make it stronger' },
   { key: 'exposure', label: 'Where it’s exposed, and what to do' },
+  { key: 'financials', label: 'Financial picture' },
+  { key: 'framework', label: 'Decision framework' },
+  { key: 'insights', label: 'Insights from your data' },
+  { key: 'sharpen', label: 'What would sharpen this score' },
   { key: 'takeaways', label: 'What leadership should know' },
   { key: 'criteria', label: 'The criteria you approved' },
   { key: 'next_step', label: 'Next step' },
@@ -133,6 +140,7 @@ const dimensionsOf = (card) => {
       rationale: firstSentences(d.rationale || d.summary || d.reasoning, 1),
       improve: firstSentences(d.what_would_improve || d.improvement || d.how_to_improve, 1),
       weight: weights[key] ?? (Number(d.weight) || 0),
+      gate: Boolean(criteriaOf(card).find((c) => c.key === key)?.gate),
     }));
 };
 
@@ -140,6 +148,49 @@ const assumptionText = (item) => {
   if (typeof item === 'string') return item;
   if (!item || typeof item !== 'object') return '';
   return item.statement || item.assumption || item.text || item.label || item.description || '';
+};
+
+// Flattens a scorecard object (financial impact, valuation, framework…) into
+// readable label/value rows. Only plain values are shown; nested detail
+// stays in "See how this was scored".
+const plainValue = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value.toLocaleString('en-US') : null;
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'string') return value.trim() || null;
+  if (Array.isArray(value)) {
+    const parts = value.map((item) => (typeof item === 'object' && item ? (item.text || item.title || item.description || item.label) : item))
+      .map(plainValue).filter(Boolean);
+    return parts.length ? parts.join('; ') : null;
+  }
+  return null;
+};
+
+export const flattenRows = (obj) => {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return [];
+  const rows = [];
+  Object.entries(obj).forEach(([key, value]) => {
+    if (key.startsWith('_')) return;
+    const direct = plainValue(value);
+    if (direct !== null) {
+      rows.push({ label: humanize(key), value: direct });
+      return;
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      Object.entries(value).forEach(([innerKey, inner]) => {
+        if (innerKey.startsWith('_')) return;
+        const innerValue = plainValue(inner);
+        if (innerValue !== null) rows.push({ label: `${humanize(key)}: ${humanize(innerKey)}`, value: innerValue });
+      });
+    }
+  });
+  return rows;
+};
+
+const textOf = (entry) => {
+  if (typeof entry === 'string') return entry.trim();
+  if (!entry || typeof entry !== 'object') return '';
+  return String(entry.summary || entry.title || entry.description || entry.text || entry.insight?.insight_text || '').trim();
 };
 
 const riskText = (item) => {
@@ -156,6 +207,12 @@ const recommendationOf = (item) => {
     .filter(([, value]) => value)
     .map(([label, value]) => `${label}: ${value}`);
   return text ? { text, chips } : null;
+};
+
+const evidenceLevel = (d) => {
+  if (!d.confidence || d.confidence === 'assumed' || d.confidence === 'none') return 'none';
+  if (d.confidence === 'high') return 'strong';
+  return 'weak';
 };
 
 const gatesOf = (card) => (Array.isArray(card?.gates) ? card.gates.filter(Boolean) : []);
@@ -239,7 +296,9 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
       .filter(([, f]) => String(f?.source || '').toLowerCase() === 'assumed')
       .map(([key, f]) => `${f.label || humanize(key)}: ${formatFactValue(f)} (assumed)`),
   ].filter(Boolean).slice(0, 4);
-  const dims = dimensionsOf(featured);
+  const allDims = dimensionsOf(featured);
+  // Must-haves are pass/fail checks, not weighted scores.
+  const dims = allDims.filter((d) => !d.gate);
   const isAssumed = (d) => d.confidence === 'assumed' || d.confidence === 'low';
   const weak = dims
     .filter((d) => isAssumed(d) || (Number.isFinite(d.score) && d.score < 60))
@@ -263,11 +322,6 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
 
   // Production's "Improve next" advice travels with each weak criterion,
   // labeled by how much evidence stands behind it.
-  const evidenceLevel = (d) => {
-    if (!d.confidence || d.confidence === 'assumed' || d.confidence === 'none') return 'none';
-    if (d.confidence === 'high') return 'strong';
-    return 'weak';
-  };
   const change = weak.slice(0, 3).map((d) => ({
     label: d.label,
     evidence: evidenceLevel(d),
@@ -286,6 +340,41 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     risks: (featured?.top_risks || featured?.risks || []).map((r) => firstSentences(riskText(r), 1)).filter(Boolean).slice(0, 3),
     moves: (featured?.recommendations || []).map(recommendationOf).filter(Boolean).slice(0, 3),
   };
+
+  // Production scorecard sections, carried over when they have content.
+  const executive = String(featured?.executive_summary || featured?.executive_narrative || '')
+    .split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+  const keyInsights = Array.isArray(featured?.key_insights)
+    ? featured.key_insights
+    : (typeof featured?.key_insights === 'string' ? [featured.key_insights] : []);
+  const drivers = [...new Set(keyInsights.map(textOf).filter(Boolean))].slice(0, 5);
+  const breakdown = dims.map((d) => ({
+    label: d.label,
+    weight: d.weight ? Math.round(d.weight * 100) : null,
+    score: Number.isFinite(d.score) ? Math.round(d.score) : null,
+    evidence: evidenceLevel(d),
+    rationale: d.rationale,
+  })).sort((a, b) => (b.weight || 0) - (a.weight || 0));
+  const GATE_STATUS_LABELS = { pass: 'Passed', fail: 'Failed', unknown: 'Not confirmed', pending: 'Not confirmed' };
+  const mustHaveRows = gatesOf(featured).map((g) => ({
+    label: gateLabel(g),
+    status: GATE_STATUS_LABELS[gateStatus(g)] || 'Not confirmed',
+    tone: gateStatus(g) === 'pass' ? 'strong' : gateStatus(g) === 'fail' ? 'none' : 'weak',
+  }));
+  const financials = [
+    ['Financial impact', featured?.financial_impact],
+    ['Investment analysis', featured?.investment_analysis],
+    ['NPV & IRR', featured?.npv_irr_analysis],
+    ['Valuation', featured?.valuation],
+    ['Before', featured?.before_after_financials?.before],
+    ['After', featured?.before_after_financials?.after],
+  ].map(([title, obj]) => ({ title, rows: flattenRows(obj).slice(0, 8) })).filter((g) => g.rows.length);
+  const framework = flattenRows(featured?.decision_framework || featured?.strategic_decision_framework).slice(0, 10);
+  const insights = (Array.isArray(featured?.ai_insights) ? featured.ai_insights : [])
+    .map((entry) => ({ source: String(entry?.file_name || entry?.insight?.file_name || '').trim(), text: textOf(entry) }))
+    .filter((item) => item.text).slice(0, 5);
+  const sharpen = (Array.isArray(featured?.assumptions) ? featured.assumptions : [])
+    .map(assumptionText).map((t) => String(t).trim()).filter(Boolean);
 
   const criteria = criteriaOf(featured);
   const weighted = criteria.filter((c) => !c.gate);
@@ -346,6 +435,14 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     change,
     sharedChangeScore,
     exposure,
+    executive,
+    drivers,
+    breakdown,
+    mustHaveRows,
+    financials,
+    framework,
+    insights,
+    sharpen,
     takeaways,
     numbersNote: 'How the numbers work: figures are calculated from your inputs; criterion scores are Jaspen’s assessment. Confidence does not mean correctness. Please review your data for accuracy.',
     criteria: {
@@ -361,9 +458,18 @@ export function applyPresentation(model, presentation = {}) {
   const text = { ...model.defaults, ...(presentation.text || {}) };
   const colors = { ...DEFAULT_COLORS, ...(presentation.colors || {}) };
   const layout = presentation.layout || {};
-  const order = Array.isArray(layout.order) && layout.order.length === REPORT_SECTIONS.length
-    ? layout.order
-    : REPORT_SECTIONS.map((s) => s.key);
+  const known = REPORT_SECTIONS.map((section) => section.key);
+  const saved = Array.isArray(layout.order) ? layout.order.filter((key) => known.includes(key)) : [];
+  // Sections added after an owner saved a layout slot into their default place.
+  const order = saved.length
+    ? known.reduce((acc, key) => {
+      if (acc.includes(key)) return acc;
+      const index = known.indexOf(key);
+      const before = known.slice(0, index).reverse().find((k) => acc.includes(k));
+      const at = before ? acc.indexOf(before) + 1 : 0;
+      return [...acc.slice(0, at), key, ...acc.slice(at)];
+    }, saved)
+    : known;
   const hidden = new Set(layout.hidden || []);
   return {
     text,

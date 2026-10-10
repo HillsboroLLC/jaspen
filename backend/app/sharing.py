@@ -67,7 +67,9 @@ PRESENTATION_TEXT_SLOTS = {
     'next_step_body': 600,
 }
 PRESENTATION_SECTIONS = (
-    'strength', 'standings', 'featured', 'change', 'exposure', 'takeaways', 'criteria', 'next_step',
+    'strength', 'executive', 'standings', 'featured', 'drivers', 'breakdown', 'change',
+    'exposure', 'financials', 'framework', 'insights', 'sharpen', 'takeaways', 'criteria',
+    'next_step',
 )
 PRESENTATION_EVIDENCE_VARIANTS = ('detailed', 'compact')
 _HEX_COLOR = re.compile(r'^#[0-9a-fA-F]{6}$')

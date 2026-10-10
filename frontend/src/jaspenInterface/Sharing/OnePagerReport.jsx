@@ -4,6 +4,8 @@ import SharedArtifactView from './SharedArtifactView';
 import { REPORT_SECTIONS, applyPresentation, buildReportModel } from './reportModel';
 import './OnePagerReport.css';
 
+const EVIDENCE_LABELS = { none: 'No evidence', weak: 'Weak evidence', strong: 'Strong evidence' };
+
 function List({ items, empty }) {
   if (!items.length) return <p className="op-muted">{empty}</p>;
   return (
@@ -108,8 +110,6 @@ function Strength({ model }) {
   );
 }
 
-const EVIDENCE_LABELS = { none: 'No evidence', weak: 'Weak evidence', strong: 'Strong evidence' };
-
 function Change({ model }) {
   if (!model.change.length) return null;
   return (
@@ -173,6 +173,127 @@ function Exposure({ model }) {
         )}
       </div>
     </section>
+  );
+}
+
+function SectionShell({ id, title, model, children }) {
+  return (
+    <section className="op-section" aria-labelledby={id}>
+      <h2 id={id} className="op-h2">
+        {title}
+        {model.cardCount > 1 && model.featured && <span className="op-h2__note"> · {model.featured.name}</span>}
+      </h2>
+      <div className="op-rule" />
+      {children}
+    </section>
+  );
+}
+
+function Executive({ model }) {
+  if (!model.executive.length) return null;
+  return (
+    <SectionShell id="op-executive" title="Executive summary" model={model}>
+      {model.executive.map((para) => <p key={para} className="op-body op-para">{para}</p>)}
+    </SectionShell>
+  );
+}
+
+function Drivers({ model }) {
+  if (!model.drivers.length) return null;
+  return (
+    <SectionShell id="op-drivers" title="What drove this score" model={model}>
+      <ul className="op-list">{model.drivers.map((item) => <li key={item}>{item}</li>)}</ul>
+    </SectionShell>
+  );
+}
+
+function Breakdown({ model }) {
+  if (!model.breakdown.length && !model.mustHaveRows.length) return null;
+  return (
+    <SectionShell id="op-breakdown" title="How each criterion scored" model={model}>
+      <div className="op-breakdown">
+        {model.breakdown.map((row) => (
+          <div key={row.label} className="op-breakdown__row">
+            <div className="op-breakdown__head">
+              <span className="op-breakdown__label">{row.label}</span>
+              {row.weight !== null && <span className="op-muted op-small">{row.weight}% of the decision</span>}
+              <span className={`op-evidence op-evidence--${row.evidence}`}>{EVIDENCE_LABELS[row.evidence]}</span>
+              {row.score !== null && <span className="op-breakdown__score">{row.score}<span className="op-muted">/100</span></span>}
+            </div>
+            {row.rationale && <div className="op-muted op-small">{row.rationale}</div>}
+          </div>
+        ))}
+        {model.mustHaveRows.map((row) => (
+          <div key={row.label} className="op-breakdown__row">
+            <div className="op-breakdown__head">
+              <span className="op-breakdown__label">{row.label}</span>
+              <span className="op-muted op-small">Must-have</span>
+              <span className={`op-evidence op-evidence--${row.tone}`}>{row.status}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </SectionShell>
+  );
+}
+
+function Rows({ rows }) {
+  return (
+    <dl className="op-rows">
+      {rows.map((row) => (
+        <React.Fragment key={row.label}>
+          <dt>{row.label}</dt>
+          <dd>{row.value}</dd>
+        </React.Fragment>
+      ))}
+    </dl>
+  );
+}
+
+function Financials({ model }) {
+  if (!model.financials.length) return null;
+  return (
+    <SectionShell id="op-financials" title="Financial picture" model={model}>
+      <div className="op-grid">
+        {model.financials.map((group) => (
+          <div key={group.title}>
+            <div className="op-col-label">{group.title}</div>
+            <Rows rows={group.rows} />
+          </div>
+        ))}
+      </div>
+    </SectionShell>
+  );
+}
+
+function Framework({ model }) {
+  if (!model.framework.length) return null;
+  return (
+    <SectionShell id="op-framework" title="Decision framework" model={model}>
+      <Rows rows={model.framework} />
+    </SectionShell>
+  );
+}
+
+function Insights({ model }) {
+  if (!model.insights.length) return null;
+  return (
+    <SectionShell id="op-insights" title="Insights from your data" model={model}>
+      <ul className="op-list">
+        {model.insights.map((item) => (
+          <li key={item.text}>{item.source && <strong>{item.source}: </strong>}{item.text}</li>
+        ))}
+      </ul>
+    </SectionShell>
+  );
+}
+
+function Sharpen({ model }) {
+  if (!model.sharpen.length) return null;
+  return (
+    <SectionShell id="op-sharpen" title="What would sharpen this score" model={model}>
+      <ul className="op-list">{model.sharpen.map((item) => <li key={item}>{item}</li>)}</ul>
+    </SectionShell>
   );
 }
 
@@ -355,8 +476,15 @@ export default function OnePagerReport({
     standings: <Standings model={model} />,
     featured: <Featured model={model} text={view.text} compact={view.evidenceVariant === 'compact'} />,
     strength: <Strength model={model} />,
+    executive: <Executive model={model} />,
+    drivers: <Drivers model={model} />,
+    breakdown: <Breakdown model={model} />,
     change: <Change model={model} />,
     exposure: <Exposure model={model} />,
+    financials: <Financials model={model} />,
+    framework: <Framework model={model} />,
+    insights: <Insights model={model} />,
+    sharpen: <Sharpen model={model} />,
     takeaways: <Takeaways model={model} text={view.text} />,
     criteria: <Criteria model={model} />,
     next_step: <NextStep text={view.text} />,
