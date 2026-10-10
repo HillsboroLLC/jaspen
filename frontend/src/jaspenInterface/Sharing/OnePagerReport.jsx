@@ -108,18 +108,28 @@ function Strength({ model }) {
   );
 }
 
+const EVIDENCE_LABELS = { none: 'No evidence', weak: 'Weak evidence', strong: 'Strong evidence' };
+
 function Change({ model }) {
   if (!model.change.length) return null;
   return (
     <section className="op-section" aria-labelledby="op-change">
-      <h2 id="op-change" className="op-h2">Where it’s weak, and how to make it stronger</h2>
+      <h2 id="op-change" className="op-h2">
+        Where it’s weak, and how to make it stronger
+        {model.sharedChangeScore !== null && (
+          <span className="op-h2__note"> · each scored {model.sharedChangeScore}/100</span>
+        )}
+      </h2>
       <div className="op-rule" />
       <div className="op-grid">
         {model.change.map((item) => (
           <div key={item.label}>
-            <div className="op-grid__title">
-              {item.label}
-              {item.score !== null && <span className="op-weak-score"> {item.score}/100</span>}
+            <div className="op-grid__title">{item.label}</div>
+            <div className="op-evidence-row">
+              <span className={`op-evidence op-evidence--${item.evidence}`}>{EVIDENCE_LABELS[item.evidence]}</span>
+              {model.sharedChangeScore === null && item.score !== null && (
+                <span className="op-weak-score">Scored {item.score}/100</span>
+              )}
             </div>
             <div className="op-muted">{item.detail}</div>
             {item.strengthen && (

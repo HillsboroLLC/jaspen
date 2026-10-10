@@ -261,14 +261,25 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     .reduce((sum, d) => sum + (d.weight || 0), 0);
   const verifiedShare = totalWeight > 0 ? Math.round((verifiedWeight / totalWeight) * 100) : null;
 
-  // Production's "Improve next" advice travels with each weak criterion.
+  // Production's "Improve next" advice travels with each weak criterion,
+  // labeled by how much evidence stands behind it.
+  const evidenceLevel = (d) => {
+    if (!d.confidence || d.confidence === 'assumed' || d.confidence === 'none') return 'none';
+    if (d.confidence === 'high') return 'strong';
+    return 'weak';
+  };
   const change = weak.slice(0, 3).map((d) => ({
     label: d.label,
+    evidence: evidenceLevel(d),
     score: Number.isFinite(d.score) ? Math.round(d.score) : null,
     detail: [d.rationale, d.weight ? `It carries ${Math.round(d.weight * 100)}% of the decision.` : '']
       .filter(Boolean).join(' '),
     strengthen: d.improve,
   }));
+  const changeScores = [...new Set(change.map((c) => c.score).filter((v) => v !== null))];
+  const sharedChangeScore = change.length > 1 && changeScores.length === 1 && change.every((c) => c.score !== null)
+    ? changeScores[0]
+    : null;
   const raiseConfidence = weak.filter(isAssumed).slice(0, 3).map((d) => d.label);
 
   const exposure = {
@@ -333,6 +344,7 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     } : null,
     strength: featured ? { score: cardScore(featured), verifiedShare, raiseConfidence } : null,
     change,
+    sharedChangeScore,
     exposure,
     takeaways,
     numbersNote: 'How the numbers work: figures are calculated from your inputs; criterion scores are Jaspen’s assessment. Confidence does not mean correctness. Please review your data for accuracy.',

@@ -74,6 +74,7 @@ test('case strength splits weight between stated facts and assumptions', () => {
   expect(model.strength).toEqual({ score: 64, verifiedShare: 60, raiseConfidence: ['Delivery capacity'] });
   expect(model.change[0]).toEqual({
     label: 'Delivery capacity',
+    evidence: 'none',
     score: 45,
     detail: 'No staffing data yet. It carries 40% of the decision.',
     strengthen: 'Share crew availability for the bid window.',
@@ -93,6 +94,22 @@ test('carries production guidance: exposure and recommended moves', () => {
     { text: 'Lock a steel quote', chips: ['Impact: High', 'Effort: Low'] },
     { text: 'Confirm crew plan', chips: [] },
   ]);
+});
+
+test('a score shared by every weak criterion is shown once', () => {
+  const same = { scorecard: bid('X', 50, 'Bid', { dimensions: {
+    win: { score: 45, confidence: 'assumed' }, delivery: { score: 45, confidence: 'low' },
+  } }) };
+  const model = buildReportModel({ artifactType: 'scorecard', snapshot: same, title: 'X' });
+  expect(model.sharedChangeScore).toBe(45);
+  expect(model.change.map((c) => c.evidence)).toEqual(['none', 'weak']);
+
+  const different = { scorecard: bid('X', 50, 'Bid', { dimensions: {
+    win: { score: 40, confidence: 'high' }, delivery: { score: 45, confidence: 'assumed' },
+  } }) };
+  const model2 = buildReportModel({ artifactType: 'scorecard', snapshot: different, title: 'X' });
+  expect(model2.sharedChangeScore).toBeNull();
+  expect(model2.change.find((c) => c.label === 'Win probability').evidence).toBe('strong');
 });
 
 test('criteria separate weighted criteria from must-haves', () => {
