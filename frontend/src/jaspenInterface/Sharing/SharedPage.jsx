@@ -2,8 +2,23 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 
 import { API_BASE } from '../../config/apiBase';
-import SharedArtifactView from './SharedArtifactView';
+import { Jaspen } from '../Workspace/JaspenClient';
+import OnePagerReport from './OnePagerReport';
 import './Sharing.css';
+
+const REPORT_FONTS_HREF = 'https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=Source+Sans+3:wght@400;500;600;700&display=swap';
+
+// The one-pager uses the same serif/sans pairing as the sales one-pager.
+function useReportFonts() {
+  useEffect(() => {
+    if (document.querySelector(`link[href="${REPORT_FONTS_HREF}"]`)) return undefined;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = REPORT_FONTS_HREF;
+    document.head.appendChild(link);
+    return undefined;
+  }, []);
+}
 
 const REPORT_REASONS = [
   ['spam', 'Spam or advertising'],
@@ -118,8 +133,36 @@ export default function SharedPage() {
   const location = useLocation();
   const [state, setState] = useState({ phase: 'loading', data: null });
   const [reportOpen, setReportOpen] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
   const printedRef = useRef(false);
   useNoIndex();
+  useReportFonts();
+
+  // Only the link's owner (sharing is paid-only) gets the Edit button. Anyone
+  // else, signed in or not, simply sees the report.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const manage = await Jaspen.getShareManage(token);
+        if (!cancelled) setCanEdit(Boolean(manage?.owner && manage?.can_edit));
+      } catch (_error) {
+        if (!cancelled) setCanEdit(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const savePresentation = useCallback(async (presentation) => {
+    const result = await Jaspen.saveSharePresentation(token, presentation);
+    setState((current) => ({
+      ...current,
+      data: {
+        ...current.data,
+        snapshot: { ...current.data.snapshot, presentation: result?.presentation || {} },
+      },
+    }));
+  }, [token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,30 +222,28 @@ export default function SharedPage() {
     );
   }
 
-  const kindLabel = data.artifact_type === 'tradeoff' ? 'Trade-off comparison' : 'Scorecard';
   return (
-    <div className="shared-page">
-      <header className="shared-page__header">
-        <div className="shared-page__heading">
-          <a className="shared-page__brand" href="https://jaspen.ai">Jaspen</a>
-          <div className="shared-page__kicker">{kindLabel} · shared {formatDate(data.created_at)}</div>
-          <h1 className="shared-page__title">{data.title}</h1>
-          <div className="shared-page__meta">
-            Read-only copy{data.expires_at ? ` · available until ${formatDate(data.expires_at)}` : ''}
-          </div>
-        </div>
-        <div className="shared-page__actions">
-          <button type="button" className="share-btn share-btn--primary" onClick={downloadPdf}>
-            Download PDF
-          </button>
-        </div>
-      </header>
-
-      <main className="shared-page__body">
-        <SharedArtifactView artifactType={data.artifact_type} snapshot={data.snapshot} />
+    <div className="shared-page shared-page--report">
+      <main>
+        <OnePagerReport
+          artifactType={data.artifact_type}
+          snapshot={data.snapshot}
+          title={data.title}
+          createdAt={data.created_at}
+          canEdit={canEdit}
+          onSavePresentation={savePresentation}
+          actions={(
+            <button type="button" className="op-btn op-btn--primary" onClick={downloadPdf}>
+              Download PDF
+            </button>
+          )}
+        />
       </main>
 
       <footer className="shared-page__footer">
+        {data.expires_at && (
+          <span className="shared-page__footer-note">Read-only copy · available until {formatDate(data.expires_at)}</span>
+        )}
         <a href="https://jaspen.ai" className="shared-page__made-with">Made with Jaspen</a>
         <span className="shared-page__footer-note">
           Scores reflect the information available when this was shared. AI can make mistakes.

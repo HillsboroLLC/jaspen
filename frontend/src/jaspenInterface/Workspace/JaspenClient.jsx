@@ -1516,6 +1516,12 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     getJSON(`${API_BASE}/api/v1/shares${threadId ? `?thread_id=${encodeURIComponent(threadId)}` : ''}`),
   revokeShare: async (linkId) =>
     del(`${API_BASE}/api/v1/shares/${encodeURIComponent(linkId)}`),
+  // Owner view of a share link: whether the signed-in viewer may edit the
+  // one-pager, and the saved colors/wording/layout.
+  getShareManage: async (token) =>
+    getJSON(`${API_BASE}/api/v1/shares/manage/${encodeURIComponent(token)}`),
+  saveSharePresentation: async (token, presentation) =>
+    putJSON(`${API_BASE}/api/v1/shares/manage/${encodeURIComponent(token)}/presentation`, { presentation }),
 
   // Connector settings
   getConnectorStatus: async () =>

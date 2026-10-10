@@ -29,6 +29,7 @@ from app.sharing import (
     link_is_live,
     new_token,
     parse_expiry_days,
+    sanitize_presentation,
     set_sharing_disabled,
     sharing_block_reason,
     snapshot_size_ok,
@@ -158,6 +159,8 @@ def _prepare(user, body):
             thread_name=session.get('name'),
             strategy_objective=session.get('strategy_objective'),
             portfolio_summary=session.get('portfolio_summary'),
+            decision_kit=session.get('decision_kit'),
+            data_sources=session.get('report_data_sources'),
         )
     except ValueError as error:
         messages = {
@@ -299,6 +302,76 @@ def revoke_share(link_id):
         link.revoked_by = 'owner'
         db.session.commit()
     return jsonify({'link': _link_json(link)})
+
+
+PRESENTATION_ERRORS = {
+    'invalid_presentation': 'Send the report edits as an object.',
+    'invalid_colors': 'Colors must be six-digit hex values like #A0036C.',
+    'low_contrast': 'That color is too light to read on white. Choose a darker shade.',
+    'invalid_text': 'Report wording must be plain text.',
+    'text_too_long': 'One of the text fields is too long.',
+    'invalid_layout': 'That section layout is not supported.',
+}
+
+
+def _owned_link_by_token(user, token):
+    token = str(token or '').strip()
+    if not token or len(token) > 64:
+        return None
+    link = SharedArtifact.query.filter_by(token=token).first()
+    if link is None or link.owner_user_id != user.id or link.revoked_at is not None:
+        return None
+    return link
+
+
+@sharing_bp.route('/manage/<token>', methods=['GET'])
+@jwt_required()
+@limiter.limit('120 per minute')
+def manage_share(token):
+    """Tell the shared page whether the viewer owns this link and may edit it."""
+    user = _current_user()
+    if user is None:
+        return jsonify({'error': 'User not found.'}), 404
+    link = _owned_link_by_token(user, token)
+    if link is None:
+        return jsonify({'owner': False}), 404
+    snapshot = link.snapshot_json if isinstance(link.snapshot_json, dict) else {}
+    return jsonify({
+        'owner': True,
+        'can_edit': sharing_block_reason(user) is None,
+        'link': _link_json(link),
+        'presentation': snapshot.get('presentation') or {},
+    })
+
+
+@sharing_bp.route('/manage/<token>/presentation', methods=['PUT'])
+@jwt_required()
+@limiter.limit('60 per minute')
+def save_share_presentation(token):
+    """Save the owner's colors, wording and section layout for the report."""
+    user = _current_user()
+    blocked = _blocked(user)
+    if blocked:
+        return blocked
+    link = _owned_link_by_token(user, token)
+    if link is None:
+        return jsonify(UNAVAILABLE), 404
+    try:
+        presentation = sanitize_presentation((request.get_json(silent=True) or {}).get('presentation'))
+    except ValueError as error:
+        code = str(error)
+        return jsonify({'error': PRESENTATION_ERRORS.get(code, 'Could not save these edits.'), 'code': code}), 400
+    snapshot = dict(link.snapshot_json) if isinstance(link.snapshot_json, dict) else {}
+    if presentation:
+        snapshot['presentation'] = presentation
+    else:
+        snapshot.pop('presentation', None)
+    if not snapshot_size_ok(snapshot):
+        return jsonify({'error': 'These edits make the report too large.', 'code': 'too_large'}), 413
+    # Reassign so SQLAlchemy sees the JSON change.
+    link.snapshot_json = snapshot
+    db.session.commit()
+    return jsonify({'presentation': presentation})
 
 
 # ── Public ───────────────────────────────────────────────────────────────────

@@ -13,6 +13,8 @@ jest.mock('../Workspace/JaspenClient', () => ({
     createShare: jest.fn(),
     listShares: jest.fn(),
     revokeShare: jest.fn(),
+    getShareManage: jest.fn(),
+    saveSharePresentation: jest.fn(),
   },
 }));
 
@@ -109,11 +111,47 @@ describe('SharedPage', () => {
     });
     renderAt('/s/tok123');
 
-    expect(await screen.findByRole('heading', { name: 'Paid search' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Should we pursue Paid search?' })).toBeInTheDocument();
     expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/v1/shares/public/tok123'), { credentials: 'omit' });
     expect(screen.getByText('Made with Jaspen')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Report this page' })).toBeInTheDocument();
     expect(document.querySelector('meta[name="robots"]').content).toContain('noindex');
+  });
+
+  test('only the link owner sees Edit, and saved wording replaces the headline', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ artifact_type: 'scorecard', title: 'Paid search', created_at: '2026-09-26T00:00:00Z', expires_at: null, snapshot }),
+    });
+    Jaspen.getShareManage.mockResolvedValue({ owner: true, can_edit: true, presentation: {} });
+    Jaspen.saveSharePresentation.mockResolvedValue({ presentation: { text: { headline: 'Is paid search worth it?' } } });
+    const user = userEvent.setup();
+    renderAt('/s/tok123');
+
+    await user.click(await screen.findByRole('button', { name: 'Edit' }));
+    const headline = screen.getByLabelText('Headline');
+    await user.clear(headline);
+    await user.type(headline, 'Is paid search worth it?');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(Jaspen.saveSharePresentation).toHaveBeenCalledWith('tok123', expect.objectContaining({
+      text: { headline: 'Is paid search worth it?' },
+    }));
+    expect(await screen.findByRole('heading', { name: 'Is paid search worth it?' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  });
+
+  test('visitors who do not own the link get no Edit button', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ artifact_type: 'scorecard', title: 'Paid search', created_at: '2026-09-26T00:00:00Z', expires_at: null, snapshot }),
+    });
+    Jaspen.getShareManage.mockRejectedValue(new Error('HTTP 401'));
+    renderAt('/s/tok123');
+    expect(await screen.findByRole('heading', { name: 'Should we pursue Paid search?' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
   test('shows one message for missing, expired, and revoked links', async () => {

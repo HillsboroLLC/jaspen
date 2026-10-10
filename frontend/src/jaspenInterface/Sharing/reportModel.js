@@ -1,0 +1,282 @@
+// Turns a frozen share snapshot into the content of the one-pager report.
+// Every number shown comes from code-owned fields on the snapshot (score,
+// metrics, gates, rubric weights). Wording is derived here and may be
+// replaced by the owner's presentation edits, but numbers never are.
+
+export const REPORT_SECTIONS = [
+  { key: 'standings', label: 'Where each option stands' },
+  { key: 'featured', label: 'The strongest case' },
+  { key: 'strength', label: 'How strong is the case?' },
+  { key: 'change', label: 'What could change the answer' },
+  { key: 'takeaways', label: 'What leadership should know' },
+  { key: 'criteria', label: 'The criteria you approved' },
+  { key: 'next_step', label: 'Next step' },
+];
+
+export const DEFAULT_COLORS = { accent: '#A0036C', ink: '#1B2342', tint: '#EEF5F7' };
+
+const OBJECTIVE_LABELS = {
+  balanced: 'Balanced',
+  cost: 'Cost Optimization',
+  speed: 'Speed to Market',
+  growth: 'Growth',
+};
+
+const KIT_LABELS = {
+  rfp_bid: 'RFP response',
+  rfp_vendor_selection: 'RFP vendor selection',
+};
+
+const KIT_MASTHEADS = {
+  rfp_bid: 'RFP BID / NO-BID DECISION',
+  rfp_vendor_selection: 'RFP VENDOR SELECTION',
+};
+
+const DATA_SOURCE_LABELS = {
+  jira: 'Jira',
+  salesforce: 'Salesforce',
+  snowflake: 'Snowflake',
+  smartsheet: 'Smartsheet',
+};
+
+const humanize = (key) => String(key || '')
+  .replace(/_/g, ' ')
+  .replace(/\b\w/g, (c) => c.toUpperCase())
+  .replace(/\bPct\b/, '')
+  .trim();
+
+const firstSentences = (text, count = 1) => {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  const parts = clean.match(/[^.!?]+[.!?]+(\s|$)/g) || [clean];
+  return parts.slice(0, count).join('').trim();
+};
+
+export const cardName = (card) => {
+  const overrides = card?.display_overrides || {};
+  return String(overrides.title || card?.project_name || card?.name || card?.label || 'Option').trim();
+};
+
+export const cardScore = (card) => {
+  const value = card?.jaspen_score ?? card?.score;
+  return Number.isFinite(Number(value)) ? Math.round(Number(value)) : null;
+};
+
+const money = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value);
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+};
+
+export const formatFactValue = (fact) => {
+  const value = fact?.value;
+  const unit = String(fact?.unit || '').toLowerCase();
+  if (unit === 'usd') return money(value);
+  if (unit === 'percent_points' || unit === 'percent') return `${value}%`;
+  if (unit && Number.isFinite(Number(value))) return `${value} ${unit}`;
+  return String(value);
+};
+
+const formatMetric = (key, metric) => {
+  const value = metric?.value;
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (/roi|ratio/i.test(key)) return Number.isFinite(n) ? `${n.toFixed(n >= 10 ? 1 : 2).replace(/\.?0+$/, '')}×` : String(value);
+  if (/value|margin|cost|price|revenue|per_/i.test(key)) return money(value);
+  return String(value);
+};
+
+// A plain-language verdict. Decision Kit verdicts come from code; general
+// decisions get a band from the code-calculated score.
+export const verdictFor = (card) => {
+  const label = card?.recommendation?.label;
+  if (label) return label;
+  const score = cardScore(card);
+  if (score === null) return 'Not scored';
+  if (score >= 70) return 'Strong case';
+  if (score >= 50) return 'Promising, with gaps';
+  return 'Weak case';
+};
+
+const VERDICT_RANK = { Bid: 3, 'Strong case': 3, 'Bid with conditions': 2, 'Promising, with gaps': 2 };
+
+const rubricOf = (card) => card?.scoring_rubric || card?.rubric || {};
+
+const criteriaOf = (card) => {
+  const criteria = rubricOf(card).criteria;
+  return Array.isArray(criteria) ? criteria.filter((c) => c && c.key) : [];
+};
+
+const dimensionsOf = (card) => {
+  const dims = card?.dimensions;
+  if (!dims || typeof dims !== 'object' || Array.isArray(dims)) return [];
+  const weights = Object.fromEntries(criteriaOf(card).map((c) => [c.key, Number(c.weight) || 0]));
+  return Object.entries(dims)
+    .filter(([, d]) => d && typeof d === 'object')
+    .map(([key, d]) => ({
+      key,
+      label: d.label || criteriaOf(card).find((c) => c.key === key)?.label || humanize(key),
+      score: Number(d.score),
+      confidence: String(d.confidence || '').toLowerCase(),
+      rationale: firstSentences(d.rationale || d.summary || d.reasoning, 1),
+      weight: weights[key] ?? (Number(d.weight) || 0),
+    }));
+};
+
+const assumptionText = (item) => {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object') return '';
+  return item.statement || item.assumption || item.text || item.label || item.description || '';
+};
+
+const gatesOf = (card) => (Array.isArray(card?.gates) ? card.gates.filter(Boolean) : []);
+
+const gateStatus = (gate) => String(gate?.status || gate?.result || '').toLowerCase();
+
+export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
+  const cards = artifactType === 'tradeoff'
+    ? (Array.isArray(snapshot?.scorecards) ? snapshot.scorecards : [])
+    : (snapshot?.scorecard ? [snapshot.scorecard] : []);
+  const context = snapshot?.context || {};
+  const kit = context.decision_kit || cards.find((c) => c?.decision_kit)?.decision_kit || null;
+  const objective = context.strategy_objective || snapshot?.strategy_objective || null;
+
+  const ranked = [...cards].sort((a, b) => {
+    const rank = (VERDICT_RANK[verdictFor(b)] || 0) - (VERDICT_RANK[verdictFor(a)] || 0);
+    return rank || (cardScore(b) ?? -1) - (cardScore(a) ?? -1);
+  });
+  const featured = ranked[0] || null;
+
+  const standings = ranked.map((card) => ({
+    name: cardName(card),
+    verdict: verdictFor(card),
+    score: cardScore(card),
+    why: firstSentences(card.executive_summary || card.strategic_rationale || card.executive_narrative, 1),
+    failedGates: gatesOf(card).filter((g) => gateStatus(g) === 'fail').map((g) => g.label || humanize(g.key)),
+  }));
+
+  const facts = Object.entries(featured?.facts || {});
+  const supported = [
+    ...facts
+      .filter(([, f]) => String(f?.source || 'user').toLowerCase() !== 'assumed')
+      .map(([key, f]) => `${f.label || humanize(key)}: ${formatFactValue(f)}`),
+    ...gatesOf(featured).filter((g) => gateStatus(g) === 'pass').map((g) => `${g.label || humanize(g.key)} met`),
+  ];
+  const assumptions = [
+    ...(Array.isArray(featured?.assumptions) ? featured.assumptions.map(assumptionText) : []),
+    ...facts
+      .filter(([, f]) => String(f?.source || '').toLowerCase() === 'assumed')
+      .map(([key, f]) => `${f.label || humanize(key)}: ${formatFactValue(f)} (assumed)`),
+  ].filter(Boolean);
+  const dims = dimensionsOf(featured);
+  const weak = dims
+    .filter((d) => d.confidence === 'assumed' || d.confidence === 'low')
+    .sort((a, b) => b.weight - a.weight);
+  const verify = [
+    ...gatesOf(featured)
+      .filter((g) => ['unknown', 'pending'].includes(gateStatus(g)))
+      .map((g) => `${g.label || humanize(g.key)} is not confirmed yet`),
+    ...weak.slice(0, 3).map((d) => d.label),
+  ];
+
+  const metrics = Object.entries(featured?.metrics || {})
+    .map(([key, metric]) => ({ key, label: metric?.label || humanize(key), value: formatMetric(key, metric) }))
+    .filter((m) => m.value);
+
+  const totalWeight = dims.reduce((sum, d) => sum + (d.weight || 0), 0);
+  const verifiedWeight = dims
+    .filter((d) => d.confidence && !['assumed', 'low'].includes(d.confidence))
+    .reduce((sum, d) => sum + (d.weight || 0), 0);
+  const verifiedShare = totalWeight > 0 ? Math.round((verifiedWeight / totalWeight) * 100) : null;
+
+  const change = weak.slice(0, 3).map((d) => ({
+    label: d.label,
+    detail: [d.rationale, d.weight ? `It carries ${Math.round(d.weight * 100)}% of the decision.` : '']
+      .filter(Boolean).join(' '),
+  }));
+
+  const criteria = criteriaOf(featured);
+  const weighted = criteria.filter((c) => !c.gate);
+  const mustHaves = criteria.filter((c) => c.gate);
+  const rubricApproved = ['approved'].includes(String(rubricOf(featured).status || rubricOf(featured).approval_status || '').toLowerCase());
+
+  const failedCount = standings.filter((s) => s.failedGates.length).length;
+  const takeaways = [
+    featured && { title: cards.length > 1 ? 'The strongest option' : 'The option', body: `${cardName(featured)} · ${verdictFor(featured)}` },
+    failedCount > 0 && { title: `${failedCount === 1 ? 'One option misses' : `${failedCount} options miss`} a must-have`, body: standings.filter((s) => s.failedGates.length).map((s) => s.name).join(', ') },
+    change[0] && { title: 'The biggest unknown', body: change[0].label },
+    criteria.length > 0 && { title: rubricApproved ? 'Criteria you set' : 'Criteria proposed by Jaspen', body: `${weighted.length} weighted criteria${mustHaves.length ? ` plus ${mustHaves.length} must-have${mustHaves.length > 1 ? 's' : ''}` : ''}.` },
+    { title: 'Numbers you can trust', body: 'Scores and figures are calculated by Jaspen from your inputs.' },
+    { title: 'Leadership makes the call', body: 'Jaspen informs. Your team decides.', accent: true },
+  ].filter(Boolean);
+
+  const tags = [
+    objective && OBJECTIVE_LABELS[objective] && { kind: 'Objective', label: OBJECTIVE_LABELS[objective] },
+    kit && { kind: 'Decision Kit', label: KIT_LABELS[kit] || humanize(kit) },
+    ...(Array.isArray(context.data_sources) ? context.data_sources : [])
+      .map((s) => ({ kind: 'Data', label: DATA_SOURCE_LABELS[String(s).toLowerCase()] || humanize(s) })),
+  ].filter(Boolean);
+
+  const featuredName = featured ? cardName(featured) : '';
+  const defaults = {
+    // Thread names are often the first message, so only a real question is
+    // reused as the headline; otherwise the decision question is phrased here.
+    headline: artifactType === 'tradeoff'
+      ? (String(title || '').trim().endsWith('?') && String(title).length <= 140 ? String(title).trim() : 'Which option should we choose?')
+      : `Should we pursue ${featuredName}?`,
+    summary: firstSentences(featured?.executive_summary || featured?.strategic_rationale, 2)
+      || (featured ? `${featuredName} is the strongest case at ${verdictFor(featured).toLowerCase()}.` : ''),
+    featured_question: featured ? `Should we commit to ${featuredName}?` : '',
+    takeaway_title: 'What leadership should know',
+    next_step_title: verify.length
+      ? `Next step: check ${verify.length === 1 ? 'one thing' : `${Math.min(verify.length, 5)} things`}, then decide.`
+      : 'Next step: record the decision.',
+    next_step_body: verify.length
+      ? `${verify.slice(0, 3).join('. ')}. Then record the decision so the plan can be built.`
+      : 'Record the decision in Jaspen so the execution plan can be built from it.',
+  };
+
+  return {
+    masthead: KIT_MASTHEADS[kit] || 'DECISION REPORT',
+    tags,
+    preparedOn: createdAt ? new Date(createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '',
+    rubricApproved,
+    cardCount: cards.length,
+    standings,
+    featured: featured ? {
+      name: featuredName,
+      verdict: verdictFor(featured),
+      score: cardScore(featured),
+      supported,
+      assumptions,
+      verify,
+      metrics,
+    } : null,
+    strength: featured ? { score: cardScore(featured), verifiedShare } : null,
+    change,
+    takeaways,
+    criteria: {
+      weighted: weighted.map((c) => ({ label: c.label || humanize(c.key), weight: Math.round((Number(c.weight) || 0) * 100) })),
+      mustHaves: mustHaves.map((c) => c.label || humanize(c.key)),
+    },
+    defaults,
+  };
+}
+
+// Owner edits win for wording, colors and layout; numbers stay derived.
+export function applyPresentation(model, presentation = {}) {
+  const text = { ...model.defaults, ...(presentation.text || {}) };
+  const colors = { ...DEFAULT_COLORS, ...(presentation.colors || {}) };
+  const layout = presentation.layout || {};
+  const order = Array.isArray(layout.order) && layout.order.length === REPORT_SECTIONS.length
+    ? layout.order
+    : REPORT_SECTIONS.map((s) => s.key);
+  const hidden = new Set(layout.hidden || []);
+  return {
+    text,
+    colors,
+    order,
+    hidden,
+    evidenceVariant: layout.evidence_variant === 'compact' ? 'compact' : 'detailed',
+  };
+}

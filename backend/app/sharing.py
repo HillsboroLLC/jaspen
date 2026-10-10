@@ -47,7 +47,30 @@ SCORECARD_FIELDS = frozenset({
     'ai_insights', 'data_confidence', 'confidence', 'evidence_quality',
     'evidence_profile', 'dimensions', 'scores', 'rubric', 'scoring_rubric',
     'group_scores', 'groups', 'locked', 'createdAt', 'display_overrides',
+    # One-pager report: code-owned verdict, metrics and gate outcomes.
+    'recommendation', 'metrics', 'gates', 'decision_kit', 'decision_kit_version',
 })
+
+# Stated facts are shared as label/value pairs. The user's verbatim wording
+# stays behind the include-evidence choice like every other quote.
+FACT_FIELDS = ('value', 'unit', 'source', 'label')
+
+# Owner edits to the one-pager presentation. Numbers are never editable:
+# only colors, the listed wording slots, and section order/visibility.
+PRESENTATION_COLOR_SLOTS = ('accent', 'ink', 'tint')
+PRESENTATION_TEXT_SLOTS = {
+    'headline': 200,
+    'summary': 1200,
+    'featured_question': 300,
+    'takeaway_title': 120,
+    'next_step_title': 160,
+    'next_step_body': 600,
+}
+PRESENTATION_SECTIONS = (
+    'standings', 'featured', 'strength', 'change', 'takeaways', 'criteria', 'next_step',
+)
+PRESENTATION_EVIDENCE_VARIANTS = ('detailed', 'compact')
+_HEX_COLOR = re.compile(r'^#[0-9a-fA-F]{6}$')
 DISPLAY_OVERRIDE_FIELDS = frozenset({'title', 'tradeoff_included'})
 
 # Verbatim passages of the user's own words. Removed everywhere in the
@@ -217,12 +240,106 @@ def sanitize_scorecard(card, *, include_evidence, public_id):
         }
     else:
         kept.pop('display_overrides', None)
+    facts = _shared_facts(card, include_evidence)
+    if facts:
+        kept['facts'] = facts
     kept = _scrub(kept, include_evidence)
     # Real ids are internal. The public copy gets stable positional ids that
     # only need to be unique inside this one snapshot.
     kept['id'] = public_id
     kept['analysis_id'] = public_id
     return kept
+
+
+def _shared_facts(card, include_evidence):
+    """Canonical stated facts as {key: {value, unit, source, label}}."""
+    state = card.get('decision_state') if isinstance(card.get('decision_state'), dict) else {}
+    facts = state.get('facts') if isinstance(state.get('facts'), dict) else {}
+    shared = {}
+    for key, fact in facts.items():
+        if not isinstance(fact, dict) or fact.get('value') in (None, '', [], {}):
+            continue
+        item = {field: copy.deepcopy(fact[field]) for field in FACT_FIELDS if field in fact}
+        if include_evidence and isinstance(fact.get('evidence'), str):
+            item['evidence'] = fact['evidence']
+        shared[str(key)] = item
+    return shared
+
+
+def _contrast_ratio(hex_a, hex_b):
+    def luminance(hex_value):
+        channels = [int(hex_value[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+    light, dark = sorted((luminance(hex_a), luminance(hex_b)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def sanitize_presentation(payload):
+    """Validate owner presentation edits. Raises ValueError(code) on bad input."""
+    if not isinstance(payload, dict):
+        raise ValueError('invalid_presentation')
+    clean = {}
+
+    colors = payload.get('colors') or {}
+    if not isinstance(colors, dict):
+        raise ValueError('invalid_colors')
+    kept_colors = {}
+    for slot in PRESENTATION_COLOR_SLOTS:
+        value = colors.get(slot)
+        if value in (None, ''):
+            continue
+        if not isinstance(value, str) or not _HEX_COLOR.match(value):
+            raise ValueError('invalid_colors')
+        kept_colors[slot] = value.upper()
+    # Accent and ink carry white or body text; both must stay readable on white.
+    for slot in ('accent', 'ink'):
+        if slot in kept_colors and _contrast_ratio(kept_colors[slot], '#FFFFFF') < 4.5:
+            raise ValueError('low_contrast')
+    if kept_colors:
+        clean['colors'] = kept_colors
+
+    text = payload.get('text') or {}
+    if not isinstance(text, dict):
+        raise ValueError('invalid_text')
+    kept_text = {}
+    for slot, limit in PRESENTATION_TEXT_SLOTS.items():
+        value = text.get(slot)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError('invalid_text')
+        value = value.strip()
+        if len(value) > limit:
+            raise ValueError('text_too_long')
+        if value:
+            kept_text[slot] = value
+    if kept_text:
+        clean['text'] = kept_text
+
+    layout = payload.get('layout') or {}
+    if not isinstance(layout, dict):
+        raise ValueError('invalid_layout')
+    order = layout.get('order')
+    if order is not None:
+        if not isinstance(order, list) or sorted(order) != sorted(PRESENTATION_SECTIONS):
+            raise ValueError('invalid_layout')
+    hidden = layout.get('hidden') or []
+    if not isinstance(hidden, list) or any(item not in PRESENTATION_SECTIONS for item in hidden):
+        raise ValueError('invalid_layout')
+    variant = layout.get('evidence_variant')
+    if variant is not None and variant not in PRESENTATION_EVIDENCE_VARIANTS:
+        raise ValueError('invalid_layout')
+    kept_layout = {}
+    if order:
+        kept_layout['order'] = list(order)
+    if hidden:
+        kept_layout['hidden'] = sorted(set(hidden), key=PRESENTATION_SECTIONS.index)
+    if variant:
+        kept_layout['evidence_variant'] = variant
+    if kept_layout:
+        clean['layout'] = kept_layout
+    return clean
 
 
 def card_title(card):
@@ -236,10 +353,27 @@ def card_title(card):
     return 'Scorecard'
 
 
+def _report_context(strategy_objective, decision_kit, data_sources):
+    """Decision framing shown as tags on the one-pager."""
+    context = {}
+    objective = str(strategy_objective or '').strip()
+    if objective:
+        context['strategy_objective'] = objective
+    kit = str(decision_kit or '').strip()
+    if kit:
+        context['decision_kit'] = kit
+    sources = [str(item).strip() for item in (data_sources or []) if str(item or '').strip()]
+    if sources:
+        context['data_sources'] = sources
+    return context
+
+
 def build_snapshot(*, artifact_type, cards, include_evidence, scorecard_id=None,
-                   thread_name=None, strategy_objective=None, portfolio_summary=None):
+                   thread_name=None, strategy_objective=None, portfolio_summary=None,
+                   decision_kit=None, data_sources=None):
     """Return (snapshot, title, source_id, evidence_available) or raise ValueError."""
     cards = [card for card in (cards or []) if isinstance(card, dict)]
+    context = _report_context(strategy_objective, decision_kit, data_sources)
     if artifact_type == ARTIFACT_SCORECARD:
         wanted = str(scorecard_id or '').strip()
         card = next(
@@ -251,6 +385,8 @@ def build_snapshot(*, artifact_type, cards, include_evidence, scorecard_id=None,
         snapshot = {
             'scorecard': sanitize_scorecard(card, include_evidence=include_evidence, public_id='c1'),
         }
+        if context:
+            snapshot['context'] = context
         return snapshot, card_title(card), wanted, count_evidence_passages(card)
 
     if artifact_type == ARTIFACT_TRADEOFF:
@@ -268,6 +404,8 @@ def build_snapshot(*, artifact_type, cards, include_evidence, scorecard_id=None,
             ],
             'strategy_objective': str(strategy_objective or '').strip() or None,
         }
+        if context:
+            snapshot['context'] = context
         if isinstance(portfolio_summary, dict):
             snapshot['portfolio_summary'] = {
                 key: str(portfolio_summary.get(key) or '').strip()
