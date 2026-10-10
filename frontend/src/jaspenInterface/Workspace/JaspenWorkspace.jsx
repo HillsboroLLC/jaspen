@@ -1963,7 +1963,7 @@ export default function JaspenWorkspace() {
 
       {/* === CENTER: canvas === */}
       <main data-ws-main style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
-        <div data-ws-topbar style={{ padding:'18px 28px', borderBottom:'1px solid #e6eaf2', background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <div data-ws-topbar style={{ padding: onePagerMode ? '14px 28px 12px' : '18px 28px', borderBottom:'1px solid #e6eaf2', background:'#fff', display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap: onePagerMode ? 'wrap' : undefined, rowGap: onePagerMode ? 10 : undefined }}>
           <div style={{ display:'flex', alignItems:'baseline', gap:10 }}>
             {isScorecard ? (
               // The top-bar title is the most prominent one — make it inline-
@@ -1993,8 +1993,20 @@ export default function JaspenWorkspace() {
               <span style={{ fontSize:11, color:'#94a3b8' }}>Saved</span>
             )}
           </div>
+          {onePagerMode && (
+            // Two lines: title and Back to Jaspen on top, actions below, so
+            // longer scorecard names never crowd the buttons.
+            <Link
+              to={`/new?sid=${encodeURIComponent(threadId)}`}
+              title="Back to Jaspen"
+              style={{ display:'inline-flex', alignItems:'center', gap:6, color:'#475569', textDecoration:'none', fontSize:13, whiteSpace:'nowrap' }}
+            >
+              <FontAwesomeIcon icon={faArrowLeft} />
+              Back to Jaspen
+            </Link>
+          )}
           {onePagerMode ? (
-          <div className="op-shell op-topbar" aria-label="Scorecard actions">
+          <div className="op-shell op-topbar op-topbar--row" aria-label="Scorecard actions">
             <button type="button" className="op-btn" onClick={() => setReportEditing(true)} disabled={reportEditing}>Edit</button>
             <EmailResultsButton
               ref={emailResultsRef}
@@ -2035,14 +2047,6 @@ export default function JaspenWorkspace() {
             >
               Reset
             </button>
-            <Link
-              to={`/new?sid=${encodeURIComponent(threadId)}`}
-              title="Back to Jaspen"
-              style={{ display:'inline-flex', alignItems:'center', gap:6, color:'#475569', textDecoration:'none', fontSize:13, paddingLeft:4, whiteSpace:'nowrap' }}
-            >
-              <FontAwesomeIcon icon={faArrowLeft} />
-              Back to Jaspen
-            </Link>
           </div>
           ) : (
           <div style={{ display:'flex', gap:8 }}>

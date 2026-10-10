@@ -238,3 +238,4 @@
 .op-btn--accent { border-color: var(--op-accent); color: var(--op-accent); }
 .op-btn--quiet { border-color: transparent; color: #4A5170; }
 .op-btn--quiet:hover:not(:disabled) { border-color: #D5D8E3; }
+.op-shell.op-topbar--row { flex-basis: 100%; justify-content: flex-start; }
