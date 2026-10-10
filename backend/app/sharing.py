@@ -65,6 +65,10 @@ PRESENTATION_TEXT_SLOTS = {
     'takeaway_title': 120,
     'next_step_title': 160,
     'next_step_body': 600,
+    'brand_name': 60,
+    'company_name': 80,
+    'report_label': 80,
+    'tagline': 120,
 }
 PRESENTATION_SECTIONS = (
     'strength', 'executive', 'standings', 'featured', 'drivers', 'breakdown', 'change',

@@ -195,6 +195,20 @@ export default function SharedPage() {
   }, [data]);
 
   const downloadPdf = useCallback(() => window.print(), []);
+  const [copied, setCopied] = useState(false);
+  const shareUrl = typeof window !== 'undefined' ? window.location.href.split('?')[0] : '';
+  const emailHref = data
+    ? `mailto:?subject=${encodeURIComponent(data.title || 'Decision report')}&body=${encodeURIComponent(`Here is the decision report from Jaspen:\n\n${shareUrl}`)}`
+    : '';
+  const copyLink = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_error) {
+      setCopied(false);
+    }
+  }, [shareUrl]);
 
   // "Download PDF" from the share dialog opens this page with ?print=1.
   useEffect(() => {
@@ -233,9 +247,15 @@ export default function SharedPage() {
           canEdit={canEdit}
           onSavePresentation={savePresentation}
           actions={(
-            <button type="button" className="op-btn op-btn--primary" onClick={downloadPdf}>
-              Download PDF
-            </button>
+            <>
+              <button type="button" className="op-btn op-btn--primary" onClick={downloadPdf}>
+                Download PDF
+              </button>
+              <a className="op-btn op-btn--link" href={emailHref}>Email</a>
+              <button type="button" className="op-btn" onClick={copyLink}>
+                {copied ? 'Link copied' : 'Copy link'}
+              </button>
+            </>
           )}
         />
       </main>

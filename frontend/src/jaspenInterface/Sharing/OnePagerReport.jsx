@@ -43,27 +43,43 @@ function Standings({ model }) {
 function Featured({ model, text, compact }) {
   const f = model.featured;
   if (!f) return null;
-  const columns = [
-    ['Supported by evidence', f.supported, 'No stated facts yet.'],
-    ['Depends on assumptions', f.assumptions, 'No assumptions recorded.'],
-    ['Verify before committing', f.verify, 'Nothing flagged to verify.'],
-  ];
+  const assumptions = compact ? f.assumptions.slice(0, 2) : f.assumptions;
+  const verify = compact ? f.verify.slice(0, 2) : f.verify;
   return (
     <section className="op-section op-featured" aria-labelledby="op-featured">
-      <div className="op-kicker">{model.cardCount > 1 ? 'The strongest case' : 'The case'}</div>
-      <h2 id="op-featured" className="op-h2 op-h2--quote">“{text.featured_question}”</h2>
-      <div className={`op-columns${compact ? ' op-columns--compact' : ''}`}>
-        {columns.map(([label, items, empty]) => (
-          <div key={label}>
-            <div className="op-col-label">{label}</div>
-            <List items={compact ? items.slice(0, 2) : items} empty={empty} />
-          </div>
-        ))}
-        <div>
-          <div className="op-col-label op-col-label--accent">For leadership to review</div>
-          <p className="op-body">{f.verdict}{f.score !== null ? ` · case strength ${f.score} of 100` : ''}.</p>
-        </div>
+      <div className="op-featured__top">
+        <div className="op-kicker">{model.cardCount > 1 ? 'The strongest case' : 'The case'}</div>
+        <span className="op-verdict-pill">{f.verdict}{f.score !== null ? ` · ${f.score}/100` : ''}</span>
       </div>
+      <h2 id="op-featured" className="op-h2 op-h2--quote">“{text.featured_question}”</h2>
+
+      {f.keyFacts.length > 0 && (
+        <div className="op-facts" aria-label="What we know">
+          {f.keyFacts.map((fact) => (
+            <div key={fact.label} className="op-fact">
+              <div className="op-fact__label">{fact.label}</div>
+              <div className="op-fact__value">{fact.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {f.mustHavesMet.length > 0 && (
+        <p className="op-body op-musts"><strong>Must-haves met:</strong> {f.mustHavesMet.join(' · ')}</p>
+      )}
+
+      {assumptions.length > 0 && (
+        <div className="op-featured__row">
+          <div className="op-col-label">What we’re assuming</div>
+          <ul className="op-list">{assumptions.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      )}
+      {verify.length > 0 && (
+        <div className="op-featured__row">
+          <div className="op-col-label">Check before committing</div>
+          <ul className="op-list">{verify.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      )}
+
       {f.metrics.length > 0 && (
         <div className="op-metrics">
           {f.metrics.map((m) => <span key={m.key}>{m.label} <strong>{m.value}</strong></span>)}
@@ -147,13 +163,22 @@ function Exposure({ model }) {
   if (!risks.length && !moves.length) return null;
   return (
     <section className="op-section" aria-labelledby="op-exposure">
-      <h2 id="op-exposure" className="op-h2">Where it’s exposed, and what to do</h2>
+      <h2 id="op-exposure" className="op-h2">Risks, mitigations and next moves</h2>
       <div className="op-rule" />
       <div className="op-grid">
         {risks.length > 0 && (
           <div>
-            <div className="op-col-label">Where the plan is exposed</div>
-            <ul className="op-list">{risks.map((risk) => <li key={risk}>{risk}</li>)}</ul>
+            <div className="op-col-label">Risks and mitigations</div>
+            <ul className="op-list op-risks">
+              {risks.map((item) => (
+                <li key={item.risk}>
+                  {item.risk}
+                  {item.mitigation && (
+                    <div className="op-strengthen op-small"><span className="op-strengthen__label">Mitigation:</span> {item.mitigation}</div>
+                  )}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
         {moves.length > 0 && (
@@ -221,6 +246,12 @@ function Breakdown({ model }) {
               {row.score !== null && <span className="op-breakdown__score">{row.score}<span className="op-muted">/100</span></span>}
             </div>
             {row.rationale && <div className="op-muted op-small">{row.rationale}</div>}
+            {row.help && (
+              <div className="op-strengthen op-small"><span className="op-strengthen__label">What would help:</span> {row.help}</div>
+            )}
+            {!row.help && row.satisfied && (
+              <div className="op-strengthen op-small"><span className="op-strengthen__label">Satisfied:</span> nothing more needed here.</div>
+            )}
           </div>
         ))}
         {model.mustHaveRows.map((row) => (
@@ -358,6 +389,12 @@ function Editor({ draft, setDraft, onSave, onCancel, saving, error }) {
     return { ...d, hidden };
   });
   const labels = Object.fromEntries(REPORT_SECTIONS.map((s) => [s.key, s.label]));
+  const brandSlots = [
+    ['brand_name', 'Brand or your name'],
+    ['company_name', 'Company'],
+    ['report_label', 'Report name'],
+    ['tagline', 'Tagline'],
+  ];
   const textSlots = [
     ['headline', 'Headline'],
     ['summary', 'Summary'],
@@ -378,6 +415,15 @@ function Editor({ draft, setDraft, onSave, onCancel, saving, error }) {
           <label key={slot} className="op-editor__color">
             <input type="color" value={draft.colors[slot]} onChange={(e) => setColor(slot, e.target.value)} />
             {label}
+          </label>
+        ))}
+      </fieldset>
+      <fieldset className="op-editor__group">
+        <legend>Branding</legend>
+        {brandSlots.map(([slot, label]) => (
+          <label key={slot} className="op-editor__field">
+            <span>{label}</span>
+            <textarea rows={1} value={draft.text[slot] || ''} onChange={(e) => setText(slot, e.target.value)} />
           </label>
         ))}
       </fieldset>
@@ -501,11 +547,12 @@ export default function OnePagerReport({
         <header className="op-masthead">
           <div>
             <div className="op-masthead__bar" />
-            <div className="op-masthead__brand">JASPEN</div>
+            <div className="op-masthead__brand">{view.text.brand_name || 'JASPEN'}</div>
+            {view.text.company_name && <div className="op-masthead__company">{view.text.company_name}</div>}
           </div>
           <div className="op-masthead__side">
-            <div className="op-masthead__kind">{model.masthead}</div>
-            <div className="op-muted">Evidence. Assumptions. Trade-offs.</div>
+            <div className="op-masthead__kind">{view.text.report_label}</div>
+            {view.text.tagline && <div className="op-muted">{view.text.tagline}</div>}
           </div>
         </header>
 

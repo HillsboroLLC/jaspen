@@ -161,3 +161,15 @@ def test_presentation_validation_rejects_unsafe_edits(payload, code):
 
 def test_tint_may_be_light_because_it_never_carries_text():
     assert sanitize_presentation({'colors': {'tint': '#eef5f7'}}) == {'colors': {'tint': '#EEF5F7'}}
+
+
+def test_owner_branding_slots_are_accepted_and_limited():
+    clean = sanitize_presentation({'text': {
+        'brand_name': 'ACME BUILDERS', 'company_name': 'Acme Builders, Inc.',
+        'report_label': 'Q4 BID REVIEW', 'tagline': '',
+    }})
+    assert clean == {'text': {
+        'brand_name': 'ACME BUILDERS', 'company_name': 'Acme Builders, Inc.', 'report_label': 'Q4 BID REVIEW',
+    }}
+    with pytest.raises(ValueError):
+        sanitize_presentation({'text': {'brand_name': 'x' * 61}})

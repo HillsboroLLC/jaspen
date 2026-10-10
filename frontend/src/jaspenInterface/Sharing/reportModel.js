@@ -11,7 +11,7 @@ export const REPORT_SECTIONS = [
   { key: 'drivers', label: 'What drove this score' },
   { key: 'breakdown', label: 'How each criterion scored' },
   { key: 'change', label: 'Where it’s weak, and how to make it stronger' },
-  { key: 'exposure', label: 'Where it’s exposed, and what to do' },
+  { key: 'exposure', label: 'Risks, mitigations and next moves' },
   { key: 'financials', label: 'Financial picture' },
   { key: 'framework', label: 'Decision framework' },
   { key: 'insights', label: 'Insights from your data' },
@@ -126,6 +126,9 @@ const criteriaOf = (card) => {
   return Array.isArray(criteria) ? criteria.filter((c) => c && c.key) : [];
 };
 
+// The scorecard writes "None" when nothing more is needed for a criterion.
+const NO_ADVICE = /^(none|n\/a|na|nothing|no further action( needed)?)\.?$/i;
+
 const dimensionsOf = (card) => {
   const dims = card?.dimensions;
   if (!dims || typeof dims !== 'object' || Array.isArray(dims)) return [];
@@ -138,7 +141,8 @@ const dimensionsOf = (card) => {
       score: Number(d.score),
       confidence: String(d.confidence || '').toLowerCase(),
       rationale: firstSentences(d.rationale || d.summary || d.reasoning, 1),
-      improve: firstSentences(d.what_would_improve || d.improvement || d.how_to_improve, 1),
+      improve: NO_ADVICE.test(String(d.what_would_improve ?? '').trim()) ? '' : firstSentences(d.what_would_improve || d.improvement || d.how_to_improve, 1),
+      satisfied: NO_ADVICE.test(String(d.what_would_improve ?? '').trim()) && String(d.what_would_improve ?? '').trim() !== '',
       weight: weights[key] ?? (Number(d.weight) || 0),
       gate: Boolean(criteriaOf(card).find((c) => c.key === key)?.gate),
     }));
@@ -284,10 +288,11 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
 
   const facts = Object.entries(featured?.facts || {});
   const passedGates = gatesOf(featured).filter((g) => gateStatus(g) === 'pass').map(gateLabel);
+  const keyFacts = facts
+    .filter(([, f]) => String(f?.source || 'user').toLowerCase() !== 'assumed')
+    .map(([key, f]) => ({ label: f.label || humanize(key), value: formatFactValue(f) }));
   const supported = [
-    ...facts
-      .filter(([, f]) => String(f?.source || 'user').toLowerCase() !== 'assumed')
-      .map(([key, f]) => `${f.label || humanize(key)}: ${formatFactValue(f)}`),
+    ...keyFacts.map((f) => `${f.label}: ${f.value}`),
     ...(passedGates.length ? [`Must-haves met: ${passedGates.join(', ')}`] : []),
   ];
   const assumptions = [
@@ -326,8 +331,9 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     label: d.label,
     evidence: evidenceLevel(d),
     score: Number.isFinite(d.score) ? Math.round(d.score) : null,
-    detail: [d.rationale, d.weight ? `It carries ${Math.round(d.weight * 100)}% of the decision.` : '']
-      .filter(Boolean).join(' '),
+    // The full reasoning lives in "How each criterion scored"; this is the
+    // short priority list of what to fix first.
+    detail: d.weight ? `Carries ${Math.round(d.weight * 100)}% of the decision.` : '',
     strengthen: d.improve,
   }));
   const changeScores = [...new Set(change.map((c) => c.score).filter((v) => v !== null))];
@@ -337,7 +343,13 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
   const raiseConfidence = weak.filter(isAssumed).slice(0, 3).map((d) => d.label);
 
   const exposure = {
-    risks: (featured?.top_risks || featured?.risks || []).map((r) => firstSentences(riskText(r), 1)).filter(Boolean).slice(0, 3),
+    risks: (featured?.top_risks || featured?.risks || [])
+      .map((r) => ({
+        risk: firstSentences(riskText(r), 1),
+        mitigation: typeof r === 'object' && r ? firstSentences(r.mitigation || r.mitigation_plan || r.response || '', 1) : '',
+      }))
+      .filter((r) => r.risk)
+      .slice(0, 4),
     moves: (featured?.recommendations || []).map(recommendationOf).filter(Boolean).slice(0, 3),
   };
 
@@ -354,6 +366,8 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     score: Number.isFinite(d.score) ? Math.round(d.score) : null,
     evidence: evidenceLevel(d),
     rationale: d.rationale,
+    help: d.improve,
+    satisfied: d.satisfied,
   })).sort((a, b) => (b.weight || 0) - (a.weight || 0));
   const GATE_STATUS_LABELS = { pass: 'Passed', fail: 'Failed', unknown: 'Not confirmed', pending: 'Not confirmed' };
   const mustHaveRows = gatesOf(featured).map((g) => ({
@@ -407,6 +421,10 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     summary: summaryFor({ featured, featuredName, cards, standings, verify }),
     featured_question: featured ? `Should we commit to ${featuredName}?` : '',
     takeaway_title: 'What leadership should know',
+    brand_name: 'JASPEN',
+    report_label: KIT_MASTHEADS[kit] || 'DECISION REPORT',
+    tagline: 'Evidence. Assumptions. Trade-offs.',
+    company_name: '',
     next_step_title: verify.length
       ? `Next step: check ${verify.length === 1 ? 'one thing' : `${Math.min(verify.length, 5)} things`}, then decide.`
       : 'Next step: record the decision.',
@@ -427,6 +445,8 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
       verdict: verdictFor(featured),
       score: cardScore(featured),
       supported,
+      keyFacts,
+      mustHavesMet: passedGates,
       assumptions,
       verify,
       metrics,

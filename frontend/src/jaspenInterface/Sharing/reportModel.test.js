@@ -76,7 +76,7 @@ test('case strength splits weight between stated facts and assumptions', () => {
     label: 'Delivery capacity',
     evidence: 'none',
     score: 45,
-    detail: 'No staffing data yet. It carries 40% of the decision.',
+    detail: 'Carries 40% of the decision.',
     strengthen: 'Share crew availability for the bid window.',
   });
 });
@@ -84,12 +84,15 @@ test('case strength splits weight between stated facts and assumptions', () => {
 test('carries production guidance: exposure and recommended moves', () => {
   const withGuidance = {
     scorecard: bid('Denver', 64, 'Bid', {
-      top_risks: [{ risk: 'Crew overlap with the Q4 job. More detail.' }, 'Steel price swings'],
+      top_risks: [{ risk: 'Crew overlap with the Q4 job. More detail.', mitigation: 'Line up a subcontractor crew.' }, 'Steel price swings'],
       recommendations: [{ action: 'Lock a steel quote', expected_impact: 'High', effort: 'Low' }, 'Confirm crew plan'],
     }),
   };
   const model = buildReportModel({ artifactType: 'scorecard', snapshot: withGuidance, title: 'Denver' });
-  expect(model.exposure.risks).toEqual(['Crew overlap with the Q4 job.', 'Steel price swings']);
+  expect(model.exposure.risks).toEqual([
+    { risk: 'Crew overlap with the Q4 job.', mitigation: 'Line up a subcontractor crew.' },
+    { risk: 'Steel price swings', mitigation: '' },
+  ]);
   expect(model.exposure.moves).toEqual([
     { text: 'Lock a steel quote', chips: ['Impact: High', 'Effort: Low'] },
     { text: 'Confirm crew plan', chips: [] },
@@ -146,6 +149,34 @@ test('an older saved layout keeps its order and gains new sections', () => {
   const view = applyPresentation(model, { layout: { order: ['standings', 'strength', 'featured', 'change', 'exposure', 'takeaways', 'criteria', 'next_step'] } });
   expect(view.order.slice(0, 3)).toEqual(['standings', 'strength', 'executive']);
   expect(view.order).toHaveLength(15);
+});
+
+test('every criterion carries what would help, and "None" reads as satisfied', () => {
+  const card = { scorecard: bid('X', 60, 'Bid', { dimensions: {
+    win: { score: 75, confidence: 'medium', what_would_improve: 'Name the incumbent.' },
+    delivery: { score: 90, confidence: 'high', what_would_improve: 'None' },
+  } }) };
+  const model = buildReportModel({ artifactType: 'scorecard', snapshot: card, title: 'X' });
+  const byLabel = Object.fromEntries(model.breakdown.map((r) => [r.label, r]));
+  expect(byLabel['Win probability']).toMatchObject({ help: 'Name the incumbent.', satisfied: false });
+  expect(byLabel['Delivery capacity']).toMatchObject({ help: '', satisfied: true });
+});
+
+test('branding defaults can be replaced by the owner', () => {
+  const model = buildReportModel({ artifactType: 'tradeoff', snapshot, title: '' });
+  expect(model.defaults).toMatchObject({ brand_name: 'JASPEN', report_label: 'RFP BID / NO-BID DECISION', company_name: '' });
+  const view = applyPresentation(model, { text: { brand_name: 'Acme Builders', company_name: 'Acme Builders LLC' } });
+  expect(view.text.brand_name).toBe('Acme Builders');
+  expect(view.text.report_label).toBe('RFP BID / NO-BID DECISION');
+});
+
+test('the strongest case lists key facts as label/value pairs', () => {
+  const model = buildReportModel({ artifactType: 'tradeoff', snapshot, title: '' });
+  expect(model.featured.keyFacts).toEqual([
+    { label: 'Contract Value', value: '$2,400,000' },
+    { label: 'Win Probability', value: '35%' },
+  ]);
+  expect(model.featured.mustHavesMet).toEqual(['Surety / bond confirmation']);
 });
 
 test('criteria separate weighted criteria from must-haves', () => {
