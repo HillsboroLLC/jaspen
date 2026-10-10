@@ -61,6 +61,11 @@ def _patch_generation_success(monkeypatch):
         {"provider": "test", "model": "test", "input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
         [], [], None,
     ))
+    monkeypatch.setattr(ai_agent, "_classify_decision_kit", lambda message, _selection: (
+        {"kit": "rfp_bid", "confidence": "high", "evidence_quote": "RFP"}
+        if "rfp" in message.lower() else
+        {"kit": "none", "confidence": "high", "evidence_quote": ""}
+    ))
 
 # Representative homepage context: the canonical "\n\n"-joined user turns the
 # hero writes to sessionStorage after each successful analyze (see
@@ -125,12 +130,15 @@ class TestHomepageHandoffIntegration:
             assert sessions[thread_id]["decision_kit_family"] == "rfp"
             assert sessions[thread_id]["strategy_objective"] == "growth"
         assert sessions[manual_id]["decision_kit_source"] == "user"
-        assert sessions[inferred_id]["decision_kit_source"] == "discovery_inference"
+        assert sessions[inferred_id]["decision_kit_source"] == "model_inference"
 
-    def test_ambiguous_inferred_rfp_asks_one_subtype_question(self, client, db):
+    def test_ambiguous_inferred_rfp_asks_one_subtype_question(self, client, db, monkeypatch):
         from app.routes import ai_agent
 
         _signup(client)
+        monkeypatch.setattr(ai_agent, "_classify_decision_kit", lambda *_args, **_kwargs: {
+            "kit": "none", "confidence": "low", "evidence_quote": "this RFP",
+        })
         response = client.post(START_URL, json={"message": "Help me with this RFP.", "thread_id": f"thread_{uuid.uuid4().hex[:16]}"})
         assert response.status_code == 200
         assert response.get_json()["reply"] == ai_agent.RFP_SUBTYPE_QUESTION
@@ -164,6 +172,11 @@ class TestHomepageHandoffIntegration:
 
         _signup(client)
         thread_id = f"thread_{uuid.uuid4().hex[:16]}"
+        monkeypatch.setattr(ai_agent, "_classify_decision_kit", lambda message, _selection: (
+            {"kit": "rfp_vendor_selection", "confidence": "high", "evidence_quote": "selecting a vendor"}
+            if "selecting a vendor" in message.lower() else
+            {"kit": "none", "confidence": "low", "evidence_quote": "this RFP"}
+        ))
 
         started = client.post(START_URL, json={
             "message": "Help me with this RFP.",

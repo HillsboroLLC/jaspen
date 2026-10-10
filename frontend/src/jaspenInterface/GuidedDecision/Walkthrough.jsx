@@ -125,6 +125,31 @@ export default function Walkthrough({ user }) {
     setQueue([]);
   }, []);
 
+  // Coachmarks are visual guidance, never ownership of the composer. If the
+  // user starts typing or sends while a later tip (notably “Add context”) is
+  // visible, close the walkthrough and let the original event continue.
+  useEffect(() => {
+    if (!current) return undefined;
+    const fromComposer = (target) => Boolean(target?.closest?.('.jas-chat-input-area'));
+    const onInput = (event) => {
+      if (fromComposer(event.target)) end();
+    };
+    const onSubmit = (event) => {
+      if (fromComposer(event.target)) end();
+    };
+    const onClick = (event) => {
+      if (fromComposer(event.target) && event.target?.closest?.('button[type="submit"]')) end();
+    };
+    document.addEventListener('input', onInput, true);
+    document.addEventListener('submit', onSubmit, true);
+    document.addEventListener('click', onClick, true);
+    return () => {
+      document.removeEventListener('input', onInput, true);
+      document.removeEventListener('submit', onSubmit, true);
+      document.removeEventListener('click', onClick, true);
+    };
+  }, [current, end]);
+
   // Advance to the next still-unseen feature in the queue.
   const advance = useCallback(() => {
     setIdx((i) => {

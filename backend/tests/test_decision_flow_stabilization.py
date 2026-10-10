@@ -247,6 +247,8 @@ def test_real_single_rfp_generate_scorecard_tool_path_normalizes_aliases(app, db
     assert card['attributes']['contract_value']['value'] == 60_000_000
     assert 'made_up_rank' not in card['attributes']
     assert card['rejected_attributes'][0]['field'] == 'made_up_rank'
+    assert card['rejected_attributes'][0]['reason'] == "Evidence could not be grounded in the user's words"
+    assert card['context_notes'] == []
 
 
 def test_model_title_expansion_keeps_code_owned_option_identity_and_facts(app, db, test_user, monkeypatch):
@@ -725,6 +727,10 @@ def test_explicit_kit_change_on_established_decision_requires_confirmation_and_p
 
     agent._apply_rfp_decision_context(
         session, 'Change this decision to the RFP vendor selection Decision Kit.',
+        judgment={
+            'kit': 'rfp_vendor_selection', 'confidence': 'high',
+            'evidence_quote': 'vendor selection',
+        },
     )
 
     assert session.get('decision_kit') is None

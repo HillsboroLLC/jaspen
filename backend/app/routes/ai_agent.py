@@ -895,7 +895,11 @@ def _infer_strategy_objective_from_message(user_message):
 
 
 def _infer_rfp_decision_kit(user_message):
-    """Infer only when Discovery language clearly identifies the user's side."""
+    """Return advisory language hints; never use this result to mutate state.
+
+    Kept for compatibility with older callers/tests.  Decision Kit ownership
+    lives at the governed model boundary in ``_classify_decision_kit``.
+    """
     text = str(user_message or "").strip().lower()
     if not text:
         return None
@@ -926,7 +930,7 @@ def _infer_rfp_decision_kit(user_message):
 
 
 def _has_rfp_decision_context(user_message):
-    """Return true only when Discovery clearly concerns an RFP/proposal decision."""
+    """Return an advisory RFP hint; this must not select a Decision Kit."""
     text = str(user_message or "").strip().lower()
     if not text:
         return False
@@ -974,13 +978,96 @@ def _confirmed_decision_kit_change(user_message):
     ))
 
 
-def _apply_rfp_decision_context(session, user_message, *, explicit_selection=None):
-    """Apply manual or inferred RFP context to one persisted session state."""
+def _validated_decision_kit_judgment(payload, user_message):
+    """Validate a model classification without letting prose become state."""
+    if not isinstance(payload, dict):
+        raise ValueError("Decision Kit classification must be an object.")
+    kit = str(payload.get("kit") or "none").strip().lower()
+    confidence = str(payload.get("confidence") or "low").strip().lower()
+    quote = str(payload.get("evidence_quote") or "").strip()
+    if kit not in {"rfp_bid", "rfp_vendor_selection", "none"}:
+        raise ValueError("Unknown Decision Kit classification.")
+    if confidence not in {"high", "medium", "low"}:
+        raise ValueError("Unknown Decision Kit confidence.")
+    source = str(user_message or "")
+    if quote:
+        start = source.casefold().find(quote.casefold())
+        if start < 0:
+            raise ValueError("Decision Kit evidence quote is not in the user message.")
+        quote = source[start:start + len(quote)]
+    elif kit != "none" or confidence != "high":
+        raise ValueError("Decision Kit classification requires grounded evidence.")
+    return {"kit": kit, "confidence": confidence, "evidence_quote": quote}
+
+
+def _classify_decision_kit(user_message, model_selection):
+    """Let the governed model understand intent; validate its bounded result."""
+    hints = {
+        "rfp_language_present": _has_rfp_decision_context(user_message),
+        "legacy_side_hint": _infer_rfp_decision_kit(user_message),
+    }
+    payload, _usage = _anthropic_json_completion(
+        (
+            "Classify only the decision context in the user's message. Return JSON only with "
+            "kit (rfp_bid, rfp_vendor_selection, or none), confidence (high, medium, low), "
+            "and evidence_quote copied exactly from the user. rfp_bid means the user is the "
+            "bidder deciding whether/how to respond or pursue. rfp_vendor_selection means the "
+            "user is the buyer evaluating proposals/vendors. Use none/high for clearly unrelated "
+            "decisions and none/low for genuinely ambiguous RFP context. Natural statements such "
+            "as 'we are the bidder' or 'we are selecting a vendor' resolve the side. The supplied "
+            "regex hints are advisory and may be wrong. Never infer facts, scores, or arithmetic."
+        ),
+        json.dumps({"user_message": str(user_message or ""), "advisory_hints": hints}),
+        model_name=_anthropic_model_for_selection(model_selection),
+        max_tokens=220,
+        temperature=0,
+        model_selection=model_selection,
+        operation_type="decision_kit_classification",
+    )
+    return _validated_decision_kit_judgment(payload, user_message)
+
+
+def _decision_kit_notice(kit):
+    if kit == "rfp_bid":
+        return "Using the RFP Response Decision Kit because you’re responding as the bidder."
+    if kit == "rfp_vendor_selection":
+        return "Using the RFP Vendor Selection Decision Kit because you’re selecting a vendor."
+    return ""
+
+
+def _prepend_pending_decision_kit_notice(session, reply):
+    notice = str((session or {}).pop("decision_kit_notice_pending", "") or "").strip()
+    text = str(reply or "").strip()
+    if not notice:
+        return text
+    return f"{notice}\n\n{text}" if text else notice
+
+
+def _decision_kit_judgment_for_turn(session, user_message, model_selection, *, explicit_selection=None):
+    """Classify only while Discovery may still establish or explicitly change a kit."""
+    explicit = str(explicit_selection or "").strip().lower()
+    locked = bool(isinstance(session, dict) and session.get("decision_kit_locked"))
+    if explicit in {"rfp_bid", "rfp_vendor_selection"}:
+        return None
+    if _decision_state_established(session) and not _explicit_decision_kit_change_requested(user_message):
+        return None
+    if locked and not _explicit_decision_kit_change_requested(user_message):
+        return None
+    try:
+        return _classify_decision_kit(user_message, model_selection)
+    except Exception:
+        current_app.logger.warning("Decision Kit classification unavailable or invalid", exc_info=True)
+        return None
+
+
+def _apply_rfp_decision_context(session, user_message, *, explicit_selection=None, judgment=None):
+    """Apply an explicit or grounded model-owned kit decision to persisted state."""
     if not isinstance(session, dict):
         return
     explicit = str(explicit_selection or "").strip().lower()
-    inferred = _infer_rfp_decision_kit(user_message)
-    has_context = _has_rfp_decision_context(user_message) or bool(inferred)
+    judged = judgment if isinstance(judgment, dict) else None
+    inferred = judged.get("kit") if judged and judged.get("kit") != "none" else None
+    confidence = judged.get("confidence") if judged else None
     pending_change = session.get("decision_kit_change_pending") if isinstance(session.get("decision_kit_change_pending"), dict) else None
     if pending_change:
         if re.search(r"\b(?:cancel|do not change|don't change|keep (?:it|this|the current))\b", str(user_message or ""), re.I):
@@ -993,12 +1080,13 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
             session["decision_kit_version"] = kit.get("version") if kit else None
             session["decision_kit_family"] = "rfp" if target else None
             session["decision_kit_source"] = "user_confirmed" if target else None
+            session["decision_kit_locked"] = True
             session["decision_kit_rescore_required"] = True
             session["decision_kit_preserve_existing_facts"] = True
             session.pop("decision_kit_change_pending", None)
             session.pop("decision_kit_conflict", None)
             return
-    if _decision_state_established(session):
+    if _decision_state_established(session) or (session.get("decision_kit_locked") and session.get("decision_kit")):
         current = session.get("decision_kit")
         target = inferred
         if explicit in {"rfp_bid", "rfp_vendor_selection"}:
@@ -1018,20 +1106,28 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
     if explicit == "rfp":
         session["decision_kit_family"] = "rfp"
         session["decision_kit_source"] = "user"
+        session["decision_kit_family_locked"] = True
         if inferred:
             kit = get_decision_kit(inferred)
             session["decision_kit"] = inferred
             session["decision_kit_version"] = kit["version"]
+            session["decision_kit_locked"] = True
+            session["decision_kit_remap_required"] = True
         return
     if explicit in {"rfp_bid", "rfp_vendor_selection"}:
         session["decision_kit_family"] = "rfp"
         session["decision_kit_source"] = "user"
+        session["decision_kit_locked"] = True
         if inferred and inferred != explicit:
             session["decision_kit_conflict"] = True
             return
+        kit = get_decision_kit(explicit)
+        session["decision_kit"] = explicit
+        session["decision_kit_version"] = kit["version"]
+        session["decision_kit_remap_required"] = True
         session.pop("decision_kit_conflict", None)
         return
-    if session.get("decision_kit_source") == "user" and session.get("decision_kit"):
+    if session.get("decision_kit_locked") and session.get("decision_kit"):
         if session.get("decision_kit_conflict") and inferred:
             kit = get_decision_kit(inferred)
             session["decision_kit"] = inferred
@@ -1041,15 +1137,28 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
         if inferred and inferred != session.get("decision_kit"):
             session["decision_kit_conflict"] = True
         return
-    if not has_context and session.get("decision_kit_family") != "rfp":
+    if not judged:
         return
-    session["decision_kit_family"] = "rfp"
-    if inferred:
+    if inferred and confidence in {"high", "medium"}:
+        session["decision_kit_family"] = "rfp"
         kit = get_decision_kit(inferred)
         session["decision_kit"] = inferred
         session["decision_kit_version"] = kit["version"]
-        session["decision_kit_source"] = "discovery_inference"
+        session["decision_kit_source"] = "model_inference"
+        session["decision_kit_locked"] = True
+        session["decision_kit_evidence_quote"] = judged.get("evidence_quote")
+        session["decision_kit_notice_pending"] = _decision_kit_notice(inferred)
+        session["decision_kit_remap_required"] = True
         session.pop("decision_kit_conflict", None)
+        return
+    if judged.get("kit") == "none" and confidence in {"high", "medium"} and session.get("decision_kit_family") != "rfp":
+        session["decision_kit_locked"] = True
+        session["decision_kit_source"] = "model_inference"
+        session["decision_kit_evidence_quote"] = judged.get("evidence_quote")
+        return
+    if confidence == "low" and judged.get("kit") == "none" and judged.get("evidence_quote"):
+        session["decision_kit_family"] = "rfp"
+        session["decision_kit_source"] = session.get("decision_kit_source") or "model_ambiguous"
 
 
 RFP_SUBTYPE_QUESTION = "Are you responding to this RFP, or selecting a vendor?"
@@ -2501,6 +2610,8 @@ def _new_session(
         "decision_kit_version": kit.get("version") if kit else None,
         "decision_kit_source": "user" if normalized_kit else None,
         "decision_kit_family": decision_kit_family or ("rfp" if normalized_kit and normalized_kit.startswith("rfp_") else None),
+        "decision_kit_locked": bool(normalized_kit),
+        "decision_kit_family_locked": bool(decision_kit_family == "rfp" or normalized_kit),
         "kit_context": {},
         "intake_context": _sanitize_intake_context(intake_context, fallback_objective=normalized_objective),
         "view_context": _sanitize_view_context(view_context),
@@ -3465,6 +3576,10 @@ def _decision_kit_prompt_suffix(user_id, thread_id):
             "Keep Discovery → Scoring → Trade-Off → Execution unchanged. The kit is separate from the objective lens. "
             "Use only structured attributes supplied by the user or documents; never invent numeric facts. "
             f"When saving facts, use these canonical field keys exactly: {canonical_fields}. "
+            "Map the user's meaning to those fields even when their wording differs. If the kit was just resolved, "
+            "re-read the user-authored messages already in this thread and save all recognizable facts before scoring. "
+            "Pass additional user context with its own descriptive field label; the server will retain it as a "
+            "source-labeled note when it is not part of this kit, rather than silently discarding it. "
             f"Highest-value missing facts: {hints}. Ask at most one or two per turn, and stop asking when the user says score. "
             "Jaspen recommends; only the human records the decision."
         )
@@ -4192,7 +4307,7 @@ def _generate_routed_chat_reply(
         structured_output=operation_type in {
             "scorecard_generation", "score_next", "score_batch", "batch_ranking",
             "batch_clarification", "scenario_generation", "execution_plan",
-            "execution_plan_refinement", "report_generation",
+            "execution_plan_refinement", "report_generation", "decision_kit_classification",
         },
         validation_failures=int(signals.get("validation_failures") or 0),
     )
@@ -4989,6 +5104,48 @@ def _anthropic_messages_from_history(chat_history, max_turns=14):
     if max_turns and len(normalized) > max_turns:
         normalized = normalized[-max_turns:]
     return normalized
+
+
+def _partition_unknown_fact_notes(rejected_fields, source_text=""):
+    notes, rejected = [], []
+    corpus = str(source_text or "")
+    for item in rejected_fields or []:
+        if str((item or {}).get("reason") or "").startswith("Unknown decision field:"):
+            evidence = str((item or {}).get("evidence") or "").strip()
+            source = str((item or {}).get("source") or "user").strip().lower()
+            if source == "user" and (not evidence or evidence.casefold() not in corpus.casefold()):
+                rejected.append({**item, "reason": "Evidence could not be grounded in the user's words"})
+                continue
+            notes.append({
+                "label": str((item or {}).get("field") or "Additional context").strip(),
+                "value": (item or {}).get("value"),
+                "source": (item or {}).get("source") or "user",
+                "evidence": evidence,
+                "reason": "not_in_active_decision_kit",
+            })
+        else:
+            rejected.append(item)
+    return notes, rejected
+
+
+def _store_option_context_notes(session, option_key, notes):
+    if not isinstance(session, dict) or not option_key or not notes:
+        return
+    store = session.get("option_context_notes_by_key")
+    if not isinstance(store, dict):
+        store = {}
+    existing = store.get(option_key) if isinstance(store.get(option_key), list) else []
+    seen = {
+        (str(item.get("label")), json.dumps(item.get("value"), sort_keys=True, default=str), str(item.get("evidence")))
+        for item in existing if isinstance(item, dict)
+    }
+    for note in notes:
+        identity = (str(note.get("label")), json.dumps(note.get("value"), sort_keys=True, default=str), str(note.get("evidence")))
+        if identity not in seen:
+            existing.append({**note, "captured_at": _iso_now()})
+            seen.add(identity)
+    store[option_key] = existing
+    session["option_context_notes_by_key"] = store
 
 
 def _anthropic_history_summary(chat_history, keep_last_turns=16):
@@ -6438,12 +6595,16 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     continue
                 entry["evidence"] = grounded
             normalized[key] = {**entry, "updated_at": _iso_now()}
-        if not normalized:
+        context_notes, rejected_fields = _partition_unknown_fact_notes(rejected_fields, user_message or corpus)
+        _store_option_context_notes(session, option_key, context_notes)
+        if not normalized and not context_notes:
             error = _tool_error("No valid structured fields were provided.", code="invalid_option_attributes")
             error["rejected_fields"] = rejected_fields
             return error
         option_identity = _normalized_option_identity(option)
         store_option_attributes(session, option_key, normalized, option)
+        if normalized or context_notes:
+            session.pop("decision_kit_remap_required", None)
         if rejected_fields:
             rejected_store = session.get("rejected_option_attributes") if isinstance(session.get("rejected_option_attributes"), dict) else {}
             rejected_store[option_identity] = rejected_fields
@@ -6480,6 +6641,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "option": option,
             "option_key": option_key,
             "option_attributes": normalized,
+            "context_notes": context_notes,
             "rejected_fields": rejected_fields,
             "updated_scorecard": updated,
             "facts_changed": True,
@@ -6588,6 +6750,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     option_name=name,
                     rejected_fields=rejected_attributes,
                 )
+                context_notes, rejected_attributes = _partition_unknown_fact_notes(rejected_attributes, scoped_corpus)
+                _store_option_context_notes(_queue_session, option_key, context_notes)
                 for field_key, entry in list(attributes.items()):
                     source = str(entry.get("source") or "").lower()
                     evidence = str(entry.get("evidence") or "").strip()
@@ -6613,7 +6777,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                         attributes.pop(field_key, None)
             else:
                 attributes = dict(stored_attributes or {})
-            if queue_kit and not attributes:
+                context_notes = []
+            if queue_kit and not attributes and not context_notes:
                 error = _tool_error(
                     f"Canonical facts for {name} could not be saved, so the RFP batch was not started. Try again.",
                     code="canonical_facts_required",
@@ -6630,11 +6795,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "locked": locked,
                 "option_key": option_key,
                 "attributes": attributes,
+                "context_notes": context_notes,
                 "rejected_attributes": rejected_attributes,
             })
         if not queue:
             current_app.logger.warning("queue_scorecards: no valid names parsed from: %r", tool_input)
             return _tool_error("Each idea needs a name.", code="invalid_queue")
+        if any(item.get("attributes") or item.get("context_notes") for item in queue):
+            _queue_session.pop("decision_kit_remap_required", None)
         # Queue every option; the parallel scorer bounds provider concurrency.
         overflow = []
         # Canonical option facts must exist durably before any queued score runs.
@@ -6798,6 +6966,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             option_name=requested_name,
             rejected_fields=rejected_fields,
         )
+        context_notes, rejected_fields = _partition_unknown_fact_notes(rejected_fields, scoped_evidence_corpus)
+        _store_option_context_notes(session, option_key, context_notes)
         if session.get("decision_kit_preserve_existing_facts"):
             # A human-confirmed kit change may alter which fields the overlay
             # understands, but it cannot delete established canonical facts.
@@ -6815,12 +6985,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 attributes[preserved_key] = preserved_entry
         option_identity = _normalized_option_identity(requested_name)
         store_option_attributes(session, option_key, attributes, requested_name)
+        if attributes or context_notes:
+            session.pop("decision_kit_remap_required", None)
         if rejected_fields:
             rejected_store = session.get("rejected_option_attributes") if isinstance(session.get("rejected_option_attributes"), dict) else {}
             rejected_store[option_identity] = rejected_fields
             session["rejected_option_attributes"] = rejected_store
             current_app.logger.warning("Rejected %d non-canonical fact(s) while scoring option %s", len(rejected_fields), option_identity)
-        if kit and not attributes:
+        if kit and not attributes and not context_notes:
             error = _tool_error(
                 "Canonical facts could not be established for this RFP option, so scoring was not started. Try again.",
                 code="canonical_facts_required",
@@ -6988,6 +7160,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "option_key": option_key,
             "attributes": attributes,
             "rejected_attributes": rejected_fields,
+            "context_notes": context_notes,
             "metrics": metrics,
             "decision_kit": decision_kit,
             "decision_kit_version": decision_kit_version,
@@ -7234,7 +7407,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 snap for snap in snapshots
                 if str(snap.get("id") or snap.get("analysis_id") or "").strip() in selected_ids
             ]
-        snapshots = [snap for snap in snapshots if isinstance(snap, dict) and snap.get("display_overrides", {}).get("tradeoff_included", True) is not False]
+        snapshots = [snap for snap in snapshots if isinstance(snap, dict) and (snap.get("display_overrides") or {}).get("tradeoff_included", True) is not False]
         if len(snapshots) < 2:
             return _tool_error("At least two scorecards are required to generate a trade-off comparison.", code="insufficient_scorecards")
 
@@ -11469,10 +11642,8 @@ def conversation_start():
         if inferred_objective:
             requested_objective = inferred_objective
     raw_decision_kit = str(data.get("decision_kit") or "").strip().lower()
-    inferred_decision_kit = _infer_rfp_decision_kit(user_message)
     rfp_family_requested = raw_decision_kit == "rfp"
-    inferred_rfp_family = bool(inferred_decision_kit or _has_rfp_decision_context(user_message))
-    requested_decision_kit = inferred_decision_kit if rfp_family_requested else (raw_decision_kit or inferred_decision_kit or None)
+    requested_decision_kit = raw_decision_kit if raw_decision_kit in {"rfp_bid", "rfp_vendor_selection"} else None
     starter_lever_defaults = _sanitize_lever_defaults(data.get("lever_defaults"))
     view_context_supplied = isinstance(data.get("view_context"), dict) or any(
         key in data for key in ("current_view", "active_tab", "active_scorecard_id", "active_scenario_id", "wbs_summary")
@@ -11495,14 +11666,12 @@ def conversation_start():
         strategy_objective=requested_objective,
         objective_explicit=objective_supplied,
         decision_kit=requested_decision_kit,
-        decision_kit_family="rfp" if (rfp_family_requested or inferred_rfp_family) else None,
+        decision_kit_family="rfp" if rfp_family_requested else None,
         organization_id=active_org_id,
         intake_context=intake_context_raw,
         view_context=view_context_raw,
         starter_lever_defaults=starter_lever_defaults,
     )
-    if not raw_decision_kit and inferred_decision_kit and not _decision_state_established(session):
-        session["decision_kit_source"] = "discovery_inference"
     session["organization_id"] = session.get("organization_id") or active_org_id
     session["created_by_user_id"] = session.get("created_by_user_id") or user_id
     session["visibility"] = str(session.get("visibility") or "private").strip().lower() or "private"
@@ -11515,7 +11684,12 @@ def conversation_start():
         session["objective_explicitly_set"] = True
     elif "objective_explicitly_set" not in session:
         session["objective_explicitly_set"] = False
-    _apply_rfp_decision_context(session, user_message, explicit_selection=raw_decision_kit or None)
+    kit_judgment = _decision_kit_judgment_for_turn(
+        session, user_message, model_selection, explicit_selection=raw_decision_kit or None,
+    )
+    _apply_rfp_decision_context(
+        session, user_message, explicit_selection=raw_decision_kit or None, judgment=kit_judgment,
+    )
     if intake_context_supplied:
         session["intake_context"] = _apply_user_profile_defaults_to_intake_context(
             user,
@@ -11775,6 +11949,7 @@ def conversation_start():
                 assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
                     assistant_reply, usage, actions,
                 )
+                assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
                 artifact_messages = _artifact_entries_from_actions(actions)
@@ -11988,6 +12163,7 @@ def conversation_start():
     assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
         assistant_reply, usage, actions,
     )
+    assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
     credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
         user,
@@ -12211,7 +12387,8 @@ def conversation_continue():
 
     # Manual selection is a shortcut. Discovery inference reaches this same
     # persisted state when the user did not click the RFP pill.
-    _apply_rfp_decision_context(session, user_message)
+    kit_judgment = _decision_kit_judgment_for_turn(session, user_message, model_selection)
+    _apply_rfp_decision_context(session, user_message, judgment=kit_judgment)
 
     session_created = False
     session["organization_id"] = session.get("organization_id") or active_org_id
@@ -12460,6 +12637,7 @@ def conversation_continue():
                 assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
                     assistant_reply, usage, actions,
                 )
+                assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
                 artifact_messages = _artifact_entries_from_actions(actions)
@@ -12669,6 +12847,7 @@ def conversation_continue():
     assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
         assistant_reply, usage, actions,
     )
+    assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
     credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
         user,
