@@ -807,7 +807,11 @@ def test_decision_kit_starter_rubric_is_persisted_and_rendered_before_provider_r
     durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
     assert durable['approval_status'] == 'proposed'
     assert durable['presented_at']
-    assert len(durable['criteria']) == 6
+    assert len(durable['criteria']) == 9
+    assert {item['key'] for item in durable['criteria'] if item.get('gate')} == {
+        'submission_deadline', 'capacity_available', 'surety_confirmation',
+    }
+    assert 'Surety / bond confirmation: required gate' in reply
 
 
 def test_general_objective_rubric_is_persisted_and_rendered_in_full(app, db, test_user, monkeypatch):
@@ -837,6 +841,7 @@ def test_general_objective_rubric_is_persisted_and_rendered_in_full(app, db, tes
     assert durable['approval_status'] == 'proposed'
     assert durable['presented_at']
     assert len(durable['criteria']) == 6
+    assert not [item for item in durable['criteria'] if item.get('gate')]
 
 
 def test_streaming_inferred_rfp_renders_all_starter_criteria_without_provider(app, db, test_user, monkeypatch):
@@ -873,7 +878,8 @@ def test_streaming_inferred_rfp_renders_all_starter_criteria_without_provider(ap
     assert all(line in reply for line in expected)
     durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
     assert durable['approval_status'] == 'proposed'
-    assert len(durable['criteria']) == 6
+    assert len(durable['criteria']) == 7
+    assert [item['key'] for item in durable['criteria'] if item.get('gate')] == ['proposal_complete']
 
 
 def test_provider_cannot_add_unspoken_rubric_meaning(app, db, test_user):
@@ -1349,6 +1355,74 @@ def test_successful_queue_reply_uses_only_deterministic_confirmation(app):
         user_id='u', thread_id='t', executed_actions=[action],
     )
     assert reply == 'Queued 3 options for scoring.'
+
+
+def test_blocked_queue_reply_requires_rubric_approval_instead_of_claiming_it_was_queued(app, test_user):
+    _, agent = modules()
+    session = {
+        'scoring_rubric': {
+            'approval_status': 'proposed',
+            'criteria': [
+                {'key': 'value', 'label': 'Value', 'weight': 0.6},
+                {'key': 'risk', 'label': 'Risk', 'weight': 0.4},
+            ],
+        },
+    }
+    result, _ = agent._execute_local_tool(
+        'queue_scorecards', {'ideas': [{'name': 'A'}, {'name': 'B'}]},
+        readiness={}, user=test_user, user_id=test_user.id, thread_id='blocked-queue',
+        user_turn_count=2, mutations_this_turn=0,
+        user_message='Score all options now.', session=session,
+    )
+    assert result['ok'] is False
+    assert result['code'] == 'rubric_approval_required'
+    reply = agent._finalize_agent_reply(
+        'Queued 2 ideas.', '', [], user_id=test_user.id, thread_id='blocked-queue',
+        executed_actions=[{'tool': 'queue_scorecards', 'result': result}],
+    )
+    assert reply == 'Approve the proposed rubric to continue scoring, then try again.'
+
+
+def test_active_decision_kit_adds_required_gates_to_a_custom_proposed_rubric(app, db, test_user):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    tid = 'kit-gates-custom-rubric'
+    seed_rfp_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid].pop('scoring_rubric', None)
+    assert save_user_sessions(test_user.id, sessions)
+
+    result = agent._execute_mutation_tool(
+        'set_scoring_rubric', {'criteria': [
+            {'label': 'Bondability', 'weight': 30},
+            {'label': 'Financial value', 'weight': 70},
+        ]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+        user_message='Propose a rubric for these bids.',
+    )
+
+    assert result['ok'] is True
+    rubric = result['rubric']
+    assert rubric['approval_status'] == 'proposed'
+    gates = {item['key']: item for item in rubric['criteria'] if item.get('gate')}
+    assert set(gates) == {'submission_deadline', 'capacity_available', 'surety_confirmation'}
+    assert all(item['weight'] == 0 and item['source'] == 'decision_kit' for item in gates.values())
+    weighted = [item for item in rubric['criteria'] if not item.get('gate')]
+    assert sum(item['weight'] for item in weighted) == pytest.approx(1.0)
+
+
+def test_custom_criterion_cannot_shadow_a_required_kit_gate(app):
+    _, agent = modules()
+    from app.decision_kits import get_decision_kit
+    merged = agent._rubric_with_required_kit_gates([
+        {'key': 'surety_confirmation', 'label': 'Bondability', 'weight': 0.3},
+        {'key': 'financial_value', 'label': 'Financial value', 'weight': 0.7},
+    ], get_decision_kit('rfp_bid'))
+    surety = next(item for item in merged if item['key'] == 'surety_confirmation')
+    assert surety['gate'] is True
+    assert surety['weight'] == 0
+    assert surety['source'] == 'decision_kit'
+    assert sum(item['weight'] for item in merged if not item.get('gate')) == pytest.approx(1.0)
 
 
 def test_rfp_queue_stops_when_canonical_fact_persistence_fails(app, db, test_user, monkeypatch):

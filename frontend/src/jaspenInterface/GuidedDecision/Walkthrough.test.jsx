@@ -44,7 +44,10 @@ describe('Walkthrough composer ownership', () => {
     render(<Walkthrough user={user} />, { container: host });
 
     act(() => { jest.advanceTimersByTime(750); });
-    expect(screen.getByText('Add context.')).toBeInTheDocument();
+    const tipTitle = screen.getByText('Add context.');
+    expect(tipTitle).toBeInTheDocument();
+    expect(tipTitle.closest('div')).toHaveStyle({ pointerEvents: 'none' });
+    expect(screen.getByRole('button', { name: 'Got it' })).toHaveStyle({ pointerEvents: 'auto' });
 
     fireEvent.input(input, { target: { value: 'Score this now' } });
     expect(input).toHaveValue('Score this now');

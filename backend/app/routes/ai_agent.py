@@ -1194,10 +1194,62 @@ def _rubric_proposal_requested(user_message):
     ))
 
 
+def _rubric_with_required_kit_gates(criteria, kit):
+    """Attach versioned kit gates without changing the weighted rubric."""
+    merged = [dict(item) for item in (criteria or []) if isinstance(item, dict)]
+    existing_by_key = {
+        str(item.get("key") or "").strip(): index for index, item in enumerate(merged)
+        if str(item.get("key") or "").strip()
+    }
+    converted_weighted_criterion = False
+    for gate in (kit or {}).get("gate_suggestions") or []:
+        if not isinstance(gate, dict):
+            continue
+        key = str(gate.get("key") or "").strip()
+        if not key:
+            continue
+        required = {
+            "key": key,
+            "label": str(gate.get("label") or key).strip(),
+            "weight": 0.0,
+            "gate": True,
+            "gate_rule": str(gate.get("rule") or "").strip() or None,
+            "group": "Must-haves",
+            "source": "decision_kit",
+        }
+        if key in existing_by_key:
+            index = existing_by_key[key]
+            converted_weighted_criterion = converted_weighted_criterion or not bool(merged[index].get("gate"))
+            merged[index] = {**merged[index], **required}
+            continue
+        existing_by_key[key] = len(merged)
+        merged.append(required)
+    if converted_weighted_criterion:
+        total = sum(float(item.get("weight") or 0) for item in merged if not item.get("gate")) or 1.0
+        for item in merged:
+            item["weight"] = 0.0 if item.get("gate") else round(float(item.get("weight") or 0) / total, 4)
+    return merged
+
+
+def _ensure_session_decision_kit_gates(session):
+    if not isinstance(session, dict) or not session.get("decision_kit"):
+        return False
+    rubric = session.get("scoring_rubric")
+    if not isinstance(rubric, dict) or not isinstance(rubric.get("criteria"), list):
+        return False
+    kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
+    criteria = _rubric_with_required_kit_gates(rubric.get("criteria"), kit)
+    if criteria == rubric.get("criteria"):
+        return False
+    session["scoring_rubric"] = {**rubric, "criteria": criteria}
+    return True
+
+
 def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
     """Persist and render the exact application rubric before approval."""
     if not isinstance(session, dict) or not user_id or not thread_id:
         return None
+    _ensure_session_decision_kit_gates(session)
     current = session.get("scoring_rubric")
     if isinstance(current, dict) and current.get("criteria"):
         return None
@@ -1208,10 +1260,10 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
         if session.get("decision_kit") else None
     )
     if kit:
-        criteria = [
+        criteria = _rubric_with_required_kit_gates([
             dict(item) for item in (kit.get("starter_rubric") or [])
             if isinstance(item, dict)
-        ]
+        ], kit)
         rubric_label = f"{kit.get('label') or 'Decision Kit'} rubric"
     else:
         if not _rubric_proposal_requested(user_message):
@@ -1240,6 +1292,9 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
     lines = [f"Here’s the {rubric_label} I propose for your review:"]
     for item in criteria:
         label = item.get("label") or item.get("key")
+        if item.get("gate"):
+            lines.append(f"- {label}: required gate")
+            continue
         weight = int(round(float(item.get("weight") or 0) * 100))
         lines.append(f"- {label}: {weight}%")
     lines.append("Approve this rubric, edit it, or tell me to score with it. You decide the criteria and weights.")
@@ -3145,7 +3200,7 @@ def _safe_instructions_reply():
 
 def _failed_scoring_action(executed_actions):
     for action in executed_actions or []:
-        if not isinstance(action, dict) or action.get("tool") != "generate_scorecard":
+        if not isinstance(action, dict) or action.get("tool") not in {"generate_scorecard", "queue_scorecards"}:
             continue
         result = action.get("result") if isinstance(action.get("result"), dict) else {}
         if not result.get("ok") and result.get("failure_state"):
@@ -3155,7 +3210,7 @@ def _failed_scoring_action(executed_actions):
 
 def _blocked_scoring_action(executed_actions):
     for action in executed_actions or []:
-        if not isinstance(action, dict) or action.get("tool") != "generate_scorecard":
+        if not isinstance(action, dict) or action.get("tool") not in {"generate_scorecard", "queue_scorecards"}:
             continue
         result = action.get("result") if isinstance(action.get("result"), dict) else {}
         if not result.get("ok"):
@@ -3427,17 +3482,21 @@ def _has_successful_mutations(mutations):
 def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn, user_message="", session=None):
     if not _is_mutation_tool(tool_name):
         return None
+    normalized_tool = str(tool_name or "").strip()
     # Reversible config (e.g. set_scoring_rubric) is allowed on the first turn and
     # does not count toward the per-turn mutation cap.
-    if str(tool_name or "").strip() in _EXEMPT_MUTATION_TOOLS:
+    # queue_scorecards remains exempt from the cap, but must still pass the
+    # rubric approval guard before recording work for /score-next.
+    if normalized_tool in _EXEMPT_MUTATION_TOOLS and normalized_tool != "queue_scorecards":
         return None
     explicit_score = bool(re.search(
         r"\b(?:score|rescore|re-score)\s+(?:it|this|them|these|all|now)(?:\s+now)?\b",
         str(user_message or ""), re.I,
     ))
+    _ensure_session_decision_kit_gates(session)
     rubric = (session or {}).get("scoring_rubric") if isinstance(session, dict) else None
     rubric_ready = bool(isinstance(rubric, dict) and rubric.get("criteria"))
-    score_tool = str(tool_name or "").strip() in {"generate_scorecard", "queue_scorecards"}
+    score_tool = normalized_tool in {"generate_scorecard", "queue_scorecards"}
     if score_tool and isinstance(session, dict) and session.get("_fact_update_failure"):
         session.pop("_fact_update_failure", None)
         return _scoring_tool_failure(
@@ -3459,6 +3518,8 @@ def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn, use
                 "The scoring rubric is proposed and needs the user's approval before scoring.",
                 code="rubric_approval_required",
             )
+    if normalized_tool == "queue_scorecards":
+        return None
     if user_turn_count <= 1 and not (score_tool and explicit_score and rubric_ready):
         return _tool_error(
             "Mutation tools require at least one prior conversational turn. Ask the user to confirm before executing.",
@@ -6265,6 +6326,7 @@ def _approve_presented_rubric_for_turn(session, *, user_id, thread_id, user_mess
     """
     if not isinstance(session, dict):
         return False
+    _ensure_session_decision_kit_gates(session)
     rubric = session.get("scoring_rubric")
     from ..decision_state import rubric_is_approved
     if (
@@ -6455,6 +6517,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
 
         sessions = load_user_sessions(user_id) or {}
         _key, _sess = _resolve_user_session(sessions, thread_id)
+        active_kit = (
+            get_decision_kit(_sess.get("decision_kit"), _sess.get("decision_kit_version"))
+            if isinstance(_sess, dict) and _sess.get("decision_kit") else None
+        )
+        criteria = _rubric_with_required_kit_gates(criteria, active_kit)
         existing_rubric = _sess.get("scoring_rubric") if isinstance(_sess, dict) and isinstance(_sess.get("scoring_rubric"), dict) else None
         user_approved = _rubric_approval_from_message(user_message, criteria, existing_rubric)
         from ..decision_state import rubric_identity, rubric_is_approved
@@ -6508,7 +6575,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             current_app.logger.exception("set_scoring_rubric best-effort persist failed")
 
         summary = ", ".join(
-            f'{c["label"]} {int(round(c["weight"] * 100))}%' for c in criteria
+            (f'{c["label"]} required gate' if c.get("gate") else f'{c["label"]} {int(round(c["weight"] * 100))}%')
+            for c in criteria
         )
         return {
             "ok": True,

@@ -292,7 +292,10 @@ const tooltip = {
   padding: '16px 16px 12px',
   color: '#1a1d24',
   fontFamily: FONT,
-  pointerEvents: 'auto',
+  // The card may sit above the composer on short viewports. Its body must
+  // never intercept clicks intended for the input underneath; only the two
+  // explicit coach controls are interactive.
+  pointerEvents: 'none',
 };
 const tipTitle = { fontSize: '1rem', fontWeight: 600, margin: '0 0 6px' };
 const tipBody = { fontSize: '0.86rem', lineHeight: 1.5, color: 'rgba(26,29,36,0.62)', margin: '0 0 14px' };
@@ -300,10 +303,10 @@ const tipFooter = { display: 'flex', alignItems: 'center', justifyContent: 'spac
 const dots = { display: 'flex', alignItems: 'center', gap: 6 };
 const primaryBtnSm = {
   fontFamily: FONT, fontSize: '0.85rem', fontWeight: 600, padding: '8px 16px',
-  borderRadius: 9, border: 'none', cursor: 'pointer', background: ACCENT, color: '#fff',
+  borderRadius: 9, border: 'none', cursor: 'pointer', background: ACCENT, color: '#fff', pointerEvents: 'auto',
 };
 const skipLink = {
   fontFamily: FONT, fontSize: '0.85rem', fontWeight: 500, color: 'rgba(26,29,36,0.55)',
   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-  textDecoration: 'underline', textUnderlineOffset: 3,
+  textDecoration: 'underline', textUnderlineOffset: 3, pointerEvents: 'auto',
 };
