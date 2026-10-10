@@ -3463,32 +3463,55 @@
   text-transform: uppercase;
 }
 
-.jas-floattip-list {
-  max-height: 220px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-right: 6px;
-  scrollbar-width: thin;
-}
-
-.jas-floattip-list:focus-visible {
-  border-radius: 6px;
-  outline: 2px solid var(--focus-ring, #8b5cf6);
-  outline-offset: 2px;
-}
-
 .jas-floattip-item {
-  border-bottom: 1px solid var(--border, #dde3ee);
-  padding: 0 0 10px;
+  min-height: 64px;
 }
 
-.jas-floattip-item + .jas-floattip-item {
-  padding-top: 10px;
+.jas-floattip-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
 }
 
-.jas-floattip-item:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
+.jas-floattip-step {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border, #dde3ee);
+  border-radius: 50%;
+  background: var(--white, #fff);
+  color: var(--navy, #1a2f5e);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.jas-floattip-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.jas-floattip-dots {
+  display: flex;
+  gap: 5px;
+}
+
+.jas-floattip-dot {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--border, #dde3ee);
+  cursor: pointer;
+}
+
+.jas-floattip-dot.active {
+  background: var(--navy, #1a2f5e);
 }
 
 .jas-floattip-title {

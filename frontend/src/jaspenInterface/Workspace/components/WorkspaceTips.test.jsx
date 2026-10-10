@@ -11,28 +11,41 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-test('renders every tip in one scrollable surface', () => {
+test('shows one tip at a time and steps through them only when asked', () => {
   render(<WorkspaceTips tips={tips} />);
 
-  expect(screen.getByRole('complementary', { name: 'Workspace tips' })).toBeInTheDocument();
   expect(screen.getByText('First tip')).toBeInTheDocument();
+  expect(screen.queryByText('Second tip')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Previous tip' })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Next tip' }));
   expect(screen.getByText('Second tip')).toBeInTheDocument();
+  expect(screen.getByText('Tip 2 of 3')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Show tip 3' }));
   expect(screen.getByText('Third tip')).toBeInTheDocument();
-  expect(screen.getByLabelText('All workspace tips')).toHaveClass('jas-floattip-list');
+  expect(screen.getByRole('button', { name: 'Next tip' })).toBeDisabled();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Previous tip' }));
+  expect(screen.getByText('Second tip')).toBeInTheDocument();
+  // Stepping never dismisses the carousel.
+  expect(localStorage.getItem('jaspen_tips_dismissed')).toBeNull();
 });
 
-test('the close button dismisses the entire tips surface from any point', () => {
+test.each([0, 1, 2])('the close button dismisses the whole carousel from tip %i', (steps) => {
   render(<WorkspaceTips tips={tips} />);
+  for (let i = 0; i < steps; i += 1) {
+    fireEvent.click(screen.getByRole('button', { name: 'Next tip' }));
+  }
 
   fireEvent.click(screen.getByRole('button', { name: 'Close tips' }));
 
   expect(screen.queryByRole('complementary', { name: 'Workspace tips' })).not.toBeInTheDocument();
-  expect(screen.queryByText('Second tip')).not.toBeInTheDocument();
   expect(localStorage.getItem('jaspen_tips_dismissed')).toBe('true');
   expect(localStorage.getItem('jaspen_tip_idx')).toBe(String(tips.length));
 });
 
-test('keeps a previously closed tips surface dismissed', () => {
+test('keeps a previously closed carousel dismissed', () => {
   localStorage.setItem('jaspen_tips_dismissed', 'true');
 
   render(<WorkspaceTips tips={tips} />);
