@@ -121,6 +121,13 @@
 .op-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px; }
 .op-grid--tight { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px 28px; }
 .op-grid__title { font-weight: 600; font-size: 17px; }
+.op-weak-score { font-weight: 400; font-size: 14px; color: #5B6280; }
+.op-strengthen { margin-top: 6px; font-size: 15px; }
+.op-strengthen__label { font-weight: 700; color: var(--op-accent); }
+.op-list--numbered { padding-left: 20px; }
+.op-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.op-chip { padding: 2px 8px; border-radius: 999px; background: var(--op-soft); font-size: 12px; color: var(--op-muted); }
+.op-raise { margin-top: 2px; }
 
 .op-takeaways { background: var(--op-tint); padding: 30px 30px 26px; }
 .op-takeaways .op-h2 { margin-bottom: 18px; }

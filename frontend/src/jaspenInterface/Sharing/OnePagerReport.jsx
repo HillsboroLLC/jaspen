@@ -100,6 +100,9 @@ function Strength({ model }) {
             </div>
           </>
         )}
+        {s.raiseConfidence.length > 0 && (
+          <p className="op-body op-raise"><strong>To raise confidence, provide:</strong> {s.raiseConfidence.join(', ')}.</p>
+        )}
       </div>
     </section>
   );
@@ -109,15 +112,55 @@ function Change({ model }) {
   if (!model.change.length) return null;
   return (
     <section className="op-section" aria-labelledby="op-change">
-      <h2 id="op-change" className="op-h2">What could change the answer</h2>
+      <h2 id="op-change" className="op-h2">Where it’s weak, and how to make it stronger</h2>
       <div className="op-rule" />
       <div className="op-grid">
         {model.change.map((item) => (
           <div key={item.label}>
-            <div className="op-grid__title">{item.label}</div>
+            <div className="op-grid__title">
+              {item.label}
+              {item.score !== null && <span className="op-weak-score"> {item.score}/100</span>}
+            </div>
             <div className="op-muted">{item.detail}</div>
+            {item.strengthen && (
+              <div className="op-strengthen"><span className="op-strengthen__label">To strengthen:</span> {item.strengthen}</div>
+            )}
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function Exposure({ model }) {
+  const { risks, moves } = model.exposure;
+  if (!risks.length && !moves.length) return null;
+  return (
+    <section className="op-section" aria-labelledby="op-exposure">
+      <h2 id="op-exposure" className="op-h2">Where it’s exposed, and what to do</h2>
+      <div className="op-rule" />
+      <div className="op-grid">
+        {risks.length > 0 && (
+          <div>
+            <div className="op-col-label">Where the plan is exposed</div>
+            <ul className="op-list">{risks.map((risk) => <li key={risk}>{risk}</li>)}</ul>
+          </div>
+        )}
+        {moves.length > 0 && (
+          <div>
+            <div className="op-col-label op-col-label--accent">Recommended moves</div>
+            <ol className="op-list op-list--numbered">
+              {moves.map((move) => (
+                <li key={move.text}>
+                  {move.text}
+                  {move.chips.length > 0 && (
+                    <div className="op-chips">{move.chips.map((chip) => <span key={chip} className="op-chip">{chip}</span>)}</div>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -303,6 +346,7 @@ export default function OnePagerReport({
     featured: <Featured model={model} text={view.text} compact={view.evidenceVariant === 'compact'} />,
     strength: <Strength model={model} />,
     change: <Change model={model} />,
+    exposure: <Exposure model={model} />,
     takeaways: <Takeaways model={model} text={view.text} />,
     criteria: <Criteria model={model} />,
     next_step: <NextStep text={view.text} />,

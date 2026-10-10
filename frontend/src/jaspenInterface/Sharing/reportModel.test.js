@@ -16,7 +16,7 @@ const bid = (name, score, label, extra = {}) => ({
   },
   dimensions: {
     win: { score: 70, confidence: 'medium', rationale: 'Based on past jobs.' },
-    delivery: { score: 45, confidence: 'assumed', rationale: 'No staffing data yet.' },
+    delivery: { score: 45, confidence: 'assumed', rationale: 'No staffing data yet.', what_would_improve: 'Share crew availability for the bid window.' },
   },
   ...extra,
 });
@@ -71,11 +71,28 @@ test('context tags show objective, kit and data sources actually used', () => {
 
 test('case strength splits weight between stated facts and assumptions', () => {
   const model = buildReportModel({ artifactType: 'tradeoff', snapshot, title: '' });
-  expect(model.strength).toEqual({ score: 64, verifiedShare: 60 });
+  expect(model.strength).toEqual({ score: 64, verifiedShare: 60, raiseConfidence: ['Delivery capacity'] });
   expect(model.change[0]).toEqual({
     label: 'Delivery capacity',
+    score: 45,
     detail: 'No staffing data yet. It carries 40% of the decision.',
+    strengthen: 'Share crew availability for the bid window.',
   });
+});
+
+test('carries production guidance: exposure and recommended moves', () => {
+  const withGuidance = {
+    scorecard: bid('Denver', 64, 'Bid', {
+      top_risks: [{ risk: 'Crew overlap with the Q4 job. More detail.' }, 'Steel price swings'],
+      recommendations: [{ action: 'Lock a steel quote', expected_impact: 'High', effort: 'Low' }, 'Confirm crew plan'],
+    }),
+  };
+  const model = buildReportModel({ artifactType: 'scorecard', snapshot: withGuidance, title: 'Denver' });
+  expect(model.exposure.risks).toEqual(['Crew overlap with the Q4 job.', 'Steel price swings']);
+  expect(model.exposure.moves).toEqual([
+    { text: 'Lock a steel quote', chips: ['Impact: High', 'Effort: Low'] },
+    { text: 'Confirm crew plan', chips: [] },
+  ]);
 });
 
 test('criteria separate weighted criteria from must-haves', () => {

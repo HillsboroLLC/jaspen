@@ -7,7 +7,8 @@ export const REPORT_SECTIONS = [
   { key: 'strength', label: 'How strong is the case?' },
   { key: 'standings', label: 'Where each option stands' },
   { key: 'featured', label: 'The strongest case' },
-  { key: 'change', label: 'What could change the answer' },
+  { key: 'change', label: 'Where it’s weak, and how to make it stronger' },
+  { key: 'exposure', label: 'Where it’s exposed, and what to do' },
   { key: 'takeaways', label: 'What leadership should know' },
   { key: 'criteria', label: 'The criteria you approved' },
   { key: 'next_step', label: 'Next step' },
@@ -130,6 +131,7 @@ const dimensionsOf = (card) => {
       score: Number(d.score),
       confidence: String(d.confidence || '').toLowerCase(),
       rationale: firstSentences(d.rationale || d.summary || d.reasoning, 1),
+      improve: firstSentences(d.what_would_improve || d.improvement || d.how_to_improve, 1),
       weight: weights[key] ?? (Number(d.weight) || 0),
     }));
 };
@@ -138,6 +140,22 @@ const assumptionText = (item) => {
   if (typeof item === 'string') return item;
   if (!item || typeof item !== 'object') return '';
   return item.statement || item.assumption || item.text || item.label || item.description || '';
+};
+
+const riskText = (item) => {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object') return '';
+  return item.risk || item.text || item.title || item.description || '';
+};
+
+const recommendationOf = (item) => {
+  if (typeof item === 'string') return { text: item, chips: [] };
+  if (!item || typeof item !== 'object') return null;
+  const text = item.action || item.title || item.recommendation || item.description || item.text || '';
+  const chips = [['Impact', item.expected_impact], ['Effort', item.effort], ['Timing', item.timeline]]
+    .filter(([, value]) => value)
+    .map(([label, value]) => `${label}: ${value}`);
+  return text ? { text, chips } : null;
 };
 
 const gatesOf = (card) => (Array.isArray(card?.gates) ? card.gates.filter(Boolean) : []);
@@ -222,14 +240,15 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
       .map(([key, f]) => `${f.label || humanize(key)}: ${formatFactValue(f)} (assumed)`),
   ].filter(Boolean).slice(0, 4);
   const dims = dimensionsOf(featured);
+  const isAssumed = (d) => d.confidence === 'assumed' || d.confidence === 'low';
   const weak = dims
-    .filter((d) => d.confidence === 'assumed' || d.confidence === 'low')
-    .sort((a, b) => b.weight - a.weight);
+    .filter((d) => isAssumed(d) || (Number.isFinite(d.score) && d.score < 60))
+    .sort((a, b) => (b.weight - a.weight) || (a.score - b.score));
   const verify = [
     ...gatesOf(featured)
       .filter((g) => ['unknown', 'pending'].includes(gateStatus(g)))
       .map((g) => `${g.label || humanize(g.key)} is not confirmed yet`),
-    ...weak.slice(0, 3).map((d) => d.label),
+    ...weak.filter(isAssumed).slice(0, 3).map((d) => d.label),
   ];
 
   const metrics = Object.entries(featured?.metrics || {})
@@ -242,11 +261,20 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     .reduce((sum, d) => sum + (d.weight || 0), 0);
   const verifiedShare = totalWeight > 0 ? Math.round((verifiedWeight / totalWeight) * 100) : null;
 
+  // Production's "Improve next" advice travels with each weak criterion.
   const change = weak.slice(0, 3).map((d) => ({
     label: d.label,
+    score: Number.isFinite(d.score) ? Math.round(d.score) : null,
     detail: [d.rationale, d.weight ? `It carries ${Math.round(d.weight * 100)}% of the decision.` : '']
       .filter(Boolean).join(' '),
+    strengthen: d.improve,
   }));
+  const raiseConfidence = weak.filter(isAssumed).slice(0, 3).map((d) => d.label);
+
+  const exposure = {
+    risks: (featured?.top_risks || featured?.risks || []).map((r) => firstSentences(riskText(r), 1)).filter(Boolean).slice(0, 3),
+    moves: (featured?.recommendations || []).map(recommendationOf).filter(Boolean).slice(0, 3),
+  };
 
   const criteria = criteriaOf(featured);
   const weighted = criteria.filter((c) => !c.gate);
@@ -303,8 +331,9 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
       verify,
       metrics,
     } : null,
-    strength: featured ? { score: cardScore(featured), verifiedShare } : null,
+    strength: featured ? { score: cardScore(featured), verifiedShare, raiseConfidence } : null,
     change,
+    exposure,
     takeaways,
     numbersNote: 'How the numbers work: figures are calculated from your inputs; criterion scores are Jaspen’s assessment. Confidence does not mean correctness. Please review your data for accuracy.',
     criteria: {
