@@ -998,6 +998,7 @@ class ConnectorSyncLog(db.Model):
     status = db.Column(db.String(50), nullable=False, default='success')
     items_synced = db.Column(db.Integer, nullable=False, default=0)
     error_message = db.Column(db.Text, nullable=True)
+    sync_metadata = db.Column(db.JSON, nullable=True)
     created_at = db.Column(
         db.DateTime,
         nullable=False,
@@ -1015,6 +1016,7 @@ class ConnectorSyncLog(db.Model):
             'status': self.status,
             'items_synced': int(self.items_synced or 0),
             'error_message': self.error_message,
+            'sync_metadata': self.sync_metadata if isinstance(self.sync_metadata, dict) else {},
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 

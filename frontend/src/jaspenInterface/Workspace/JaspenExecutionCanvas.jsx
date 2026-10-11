@@ -33,6 +33,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 
 import { Jaspen } from './JaspenClient';
+import PmSyncPanel from './PmSyncPanel';
 
 // ── Palette (matches Claude Design + existing Jaspen chrome) ───────────────
 export const COLOR = {
@@ -1571,6 +1572,11 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
                 <FontAwesomeIcon icon={faArrowRotateRight} style={{ fontSize: 12 }} />
               </button>
             </div>
+            <PmSyncPanel
+              threadId={threadId}
+              planKey={scorecardId || wbs?.scorecard_id || ''}
+              taskCount={totalTasks}
+            />
             <ViewSwitcher value={view} onChange={setView} />
           </div>
         </div>

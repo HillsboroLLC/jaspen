@@ -57,7 +57,9 @@ THREAD_SYNC_STATUS_VALUES = {
     "degraded",
 }
 CONNECTOR_REQUIRED_FIELDS = {
-    "jira_sync": ("jira_base_url", "jira_project_key", "jira_email", "jira_api_token"),
+    # Jira destination is chosen explicitly per execution-plan binding. A
+    # connector credential must never imply a default project.
+    "jira_sync": ("jira_base_url", "jira_email", "jira_api_token"),
     "smartsheet_sync": ("smartsheet_base_url", "smartsheet_sheet_id", "smartsheet_api_token"),
     "salesforce_insights": ("salesforce_auth_base_url", "salesforce_client_id", "salesforce_client_secret"),
     "snowflake_insights": ("snowflake_account", "snowflake_warehouse", "snowflake_database", "snowflake_schema", "snowflake_role", "snowflake_user"),

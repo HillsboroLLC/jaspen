@@ -2070,7 +2070,24 @@ def sync_thread_to_jira(thread_id):
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({"error": "User not found"}), 404
-    return _sync_thread_with_connector(user, thread_id, "jira_sync", sync_wbs_to_jira)
+    # Thin compatibility alias: identity and destination now come from the
+    # durable plan-scoped binding, never the connector's default project.
+    from app.models_pm_sync import PmSyncBinding
+    from app.pm_sync.service import push_binding
+    plan_key = str((request.get_json(silent=True) or {}).get("plan_key") or "").strip()
+    query = PmSyncBinding.query.filter_by(user_id=user.id, thread_id=thread_id, connector_id="jira_sync")
+    if plan_key:
+        query = query.filter_by(plan_key=plan_key)
+    bindings = query.all()
+    if len(bindings) != 1:
+        return jsonify({
+            "error": "Choose a Jira destination for this execution plan before syncing.",
+            "code": "PM_SYNC_BINDING_REQUIRED",
+        }), 409
+    try:
+        return jsonify(push_binding(bindings[0], trigger="legacy_sync_alias")), 200
+    except Exception as exc:
+        return jsonify({"error": str(exc), "code": "PM_SYNC_FAILED"}), 502
 
 
 @connectors_bp.route("/threads/<thread_id>/smartsheet/sync", methods=["POST"])

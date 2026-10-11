@@ -169,6 +169,11 @@ export const endpoints = {
   threadSmartsheetSync: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/smartsheet/sync`,
   threadJiraImport: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/jira_sync/import`,
   threadSmartsheetImport: (threadId) => `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(threadId)}/smartsheet_sync/import`,
+  pmSyncBindings: `${API_BASE}/api/v1/pm-sync/bindings`,
+  pmSyncBinding: (bindingId) => `${API_BASE}/api/v1/pm-sync/bindings/${encodeURIComponent(bindingId)}`,
+  pmSyncNow: (bindingId) => `${API_BASE}/api/v1/pm-sync/bindings/${encodeURIComponent(bindingId)}/sync`,
+  pmSyncPreview: (threadId, planKey, groupUnderEpics = true) => `${API_BASE}/api/v1/pm-sync/preview?thread_id=${encodeURIComponent(threadId)}&plan_key=${encodeURIComponent(planKey || '')}&group_under_epics=${groupUnderEpics ? 'true' : 'false'}`,
+  jiraProjects: `${API_BASE}/api/v1/pm-sync/jira/projects`,
   connectorHealth: (connectorId) => `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/health`,
   connectorAudit: (connectorId) => `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/audit`,
   salesforceOauthStart: `${API_BASE}/api/v1/connectors/salesforce/oauth/start`,
@@ -1553,6 +1558,23 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
 
   importThreadFromSmartsheet: async (threadId) =>
     postJSON(endpoints.threadSmartsheetImport(threadId), {}, { withSid: true }),
+
+  listPmSyncBindings: async (threadId, planKey = '') =>
+    getJSON(`${endpoints.pmSyncBindings}?thread_id=${encodeURIComponent(threadId)}&plan_key=${encodeURIComponent(planKey || '')}`, { withSid: true }),
+
+  listJiraProjects: async () => getJSON(endpoints.jiraProjects, { withSid: true }),
+
+  previewPmSync: async (threadId, planKey, groupUnderEpics = true) =>
+    getJSON(endpoints.pmSyncPreview(threadId, planKey, groupUnderEpics), { withSid: true }),
+
+  createPmSyncBinding: async (payload) =>
+    postJSON(endpoints.pmSyncBindings, payload, { withSid: true }),
+
+  syncPmBinding: async (bindingId) =>
+    postJSON(endpoints.pmSyncNow(bindingId), {}, { withSid: true }),
+
+  updatePmSyncBinding: async (bindingId, payload) =>
+    patchJSON(endpoints.pmSyncBinding(bindingId), payload, { withSid: true }),
 };
 
 // Minimal local persistence

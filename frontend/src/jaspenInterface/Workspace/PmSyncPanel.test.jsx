@@ -1,0 +1,51 @@
+import React from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import PmSyncPanel from './PmSyncPanel';
+import { Jaspen } from './JaspenClient';
+
+jest.mock('./JaspenClient', () => ({ Jaspen: {
+  listPmSyncBindings: jest.fn(), listJiraProjects: jest.fn(), previewPmSync: jest.fn(),
+  createPmSyncBinding: jest.fn(), syncPmBinding: jest.fn(), updateConnectorSettings: jest.fn(), checkConnectorSetup: jest.fn(),
+} }));
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [] });
+  Jaspen.listJiraProjects.mockResolvedValue({ projects: [{ key: 'JST', name: 'Jaspen Test' }] });
+  Jaspen.previewPmSync.mockResolvedValue({ preview: { epics: 2, issues: 3, dependencies: 1, unmapped_owners: 1 } });
+});
+
+it('requires an explicit Jira destination, sync mode, and conflict policy', async () => {
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Send to Jira' }));
+  expect(await screen.findByRole('dialog', { name: /send execution plan to jira/i })).toBeInTheDocument();
+  expect(await screen.findByText(/Will create 2 epics, 3 issues, and 1 “Blocks” link/)).toBeInTheDocument();
+  const send = screen.getByRole('button', { name: /^Send$/ });
+  expect(send).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('Destination project'), { target: { value: 'JST' } });
+  fireEvent.click(screen.getByRole('button', { name: /Push only/i }));
+  expect(send).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: /Ask me each time/i }));
+  expect(send).toBeEnabled();
+});
+
+it('sends the explicit choices and shows durable synced controls', async () => {
+  Jaspen.createPmSyncBinding.mockResolvedValue({
+    binding: { id: 'bind-1', status: 'active', external_container_url: 'https://example.atlassian.net/browse/JST' },
+    result: { success: true, errors: [] },
+  });
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Send to Jira' }));
+  await screen.findByRole('option', { name: /JST · Jaspen Test/ });
+  fireEvent.change(screen.getByLabelText('Destination project'), { target: { value: 'JST' } });
+  fireEvent.click(screen.getByRole('button', { name: /Keep both in sync/i }));
+  fireEvent.click(screen.getByRole('button', { name: /Jaspen wins/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^Send$/ }));
+  await waitFor(() => expect(Jaspen.createPmSyncBinding).toHaveBeenCalledWith(expect.objectContaining({
+    thread_id: 'thread-1', plan_key: 'score-1', external_container_id: 'JST',
+    mode: 'two_way', conflict_policy: 'prefer_jaspen',
+  })));
+  expect(await screen.findByText(/Synced with Jira/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Sync now/i })).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: /View in Jira/i })).toHaveAttribute('href', 'https://example.atlassian.net/browse/JST');
+});

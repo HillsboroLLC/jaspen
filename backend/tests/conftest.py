@@ -38,6 +38,7 @@ from app.models import (
     UserDataset,
     UserSession,
 )
+from app.models_pm_sync import PmSyncBinding, PmSyncLink
 
 
 @pytest.fixture(scope="session")
@@ -159,6 +160,8 @@ def db(app):
         from app.models_decision_record import DecisionRecord
 
         for model in (
+            PmSyncLink,
+            PmSyncBinding,
             DecisionRecord,
             AIProviderAttempt,
             AIOperation,

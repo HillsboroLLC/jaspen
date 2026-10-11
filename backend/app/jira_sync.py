@@ -238,8 +238,10 @@ def _jira_request(config, method, path, payload=None, timeout=20):
 
 def jira_check_connection(user_id):
     config = _jira_runtime_config(user_id)
-    if not _jira_ready(config):
-        missing = [k for k in ("base_url", "project_key", "email", "api_token") if not config.get(k)]
+    # Connection health is account-scoped. Projects are selected explicitly
+    # later, per execution-plan binding, and are not credential requirements.
+    missing = [k for k in ("base_url", "email", "api_token") if not config.get(k)]
+    if missing:
         reason = "Missing required Jira fields: " + ", ".join(missing)
         logger.warning("jira_check_connection user=%s config_incomplete missing=%s", user_id, missing)
         return {"ok": False, "error": reason, "meta": {}}

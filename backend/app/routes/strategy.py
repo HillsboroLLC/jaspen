@@ -5728,6 +5728,8 @@ def _normalize_wbs_task(raw_task):
         status = 'todo'
 
     owner = str(raw_task.get('owner') or raw_task.get('suggested_role') or raw_task.get('owner_role') or '').strip()
+    owner_email = str(raw_task.get('owner_email') or '').strip() or None
+    owner_user_id = str(raw_task.get('owner_user_id') or '').strip() or None
     start_date = str(raw_task.get('start_date') or '').strip() or None
     due_date = str(raw_task.get('due_date') or '').strip() or None
     order = raw_task.get('order')
@@ -5800,6 +5802,12 @@ def _normalize_wbs_task(raw_task):
         'order': order,
         'external_refs': normalized_refs,
     }
+    if owner_email:
+        task['owner_email'] = owner_email
+    if owner_user_id:
+        task['owner_user_id'] = owner_user_id
+    if raw_task.get('updated_at'):
+        task['updated_at'] = str(raw_task.get('updated_at'))
     if priority:
         task['priority'] = priority
     if timeline_days:
@@ -5840,6 +5848,8 @@ def _normalize_project_wbs(payload, existing=None):
     if not isinstance(incoming_phases, list):
         incoming_phases = base.get('phases') if isinstance(base.get('phases'), list) else []
 
+    existing_tasks = base.get('tasks') if isinstance(base.get('tasks'), list) else []
+    existing_by_id = {str(item.get('id')): item for item in existing_tasks if isinstance(item, dict) and item.get('id')}
     tasks = []
     for idx, raw_task in enumerate(incoming_tasks):
         task = _normalize_wbs_task(raw_task)
@@ -5847,6 +5857,16 @@ def _normalize_project_wbs(payload, existing=None):
             continue
         if task.get('order') is None:
             task['order'] = idx + 1
+        prior = existing_by_id.get(str(task['id']))
+        prior_normalized = _normalize_wbs_task(prior) if isinstance(prior, dict) else None
+        if prior_normalized and prior_normalized.get('order') is None:
+            prior_normalized['order'] = idx + 1
+        current_compare = {k: v for k, v in task.items() if k != 'updated_at'}
+        prior_compare = {k: v for k, v in (prior_normalized or {}).items() if k != 'updated_at'}
+        if prior_normalized and current_compare == prior_compare:
+            task['updated_at'] = str(prior.get('updated_at') or task.get('updated_at') or now)
+        else:
+            task['updated_at'] = now
         tasks.append(task)
 
     # Ensure dependency ids refer to tasks in this WBS.
