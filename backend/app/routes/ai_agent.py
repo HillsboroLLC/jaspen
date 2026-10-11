@@ -1229,7 +1229,9 @@ def _message_directs_rubric_change(user_message):
         return False
     return bool(re.search(
         r"\b(?:prioriti[sz]e|matters? most|care most about)\b"
-        r"|\b(?:add|drop|remove|exclude|replace)\b.{0,35}\b(?:criterion|criteria|factor|rubric|weight)?\b"
+        # Adding or removing an OPTION ("remove Bid 3") is not a criteria
+        # change; require a criteria word or a known criterion name.
+        r"|\b(?:add|drop|remove|exclude|replace)\b.{0,35}\b(?:criterion|criteria|factor|rubric|weights?|strategic fit|win probability|financial|delivery|qualifications|contract risk|commercial risk|cost|price|speed|risk)\b"
         r"|\b(?:make|set|change|increase|decrease|raise|lower)\b.{0,45}\b\d+(?:\.\d+)?\s*%"
         r"|\b(?:weight|weigh)\b.{0,35}\b(?:more|less|heavier|higher|lower|\d+(?:\.\d+)?\s*%)",
         text,

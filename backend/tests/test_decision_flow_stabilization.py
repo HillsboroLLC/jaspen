@@ -2318,3 +2318,16 @@ def test_fact_percentages_with_a_rubric_request_are_not_a_custom_rubric():
     assert _message_supplies_weighted_rubric(
         "Use my rubric: Cost 40%, Foot traffic 35%, Lease flexibility 25%. Score it now."
     ) is True
+
+
+def test_option_edits_are_not_criteria_changes():
+    from app.routes.ai_agent import _message_directs_rubric_change
+
+    for message in (
+        "Remove Bid 3 from the comparison.",
+        "Add a fourth option: Aurora library renovation.",
+        "Replace the Adams County bid with Boulder.",
+    ):
+        assert _message_directs_rubric_change(message) is False, message
+    for message in ("Price matters most.", "Make delivery 30%.", "Drop strategic fit.", "Add a criterion for safety record."):
+        assert _message_directs_rubric_change(message) is True, message
