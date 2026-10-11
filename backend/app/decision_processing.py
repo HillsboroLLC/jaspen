@@ -120,8 +120,11 @@ def _gate_applies(item, option_key=None, option_name=None):
 
 def normalize_gates(raw_gates, rubric, evidence_corpus="", option_key=None, option_name=None, attributes=None):
     criteria = (rubric or {}).get("criteria") if isinstance((rubric or {}).get("criteria"), list) else []
-    from .decision_state import rubric_is_approved
-    approved = rubric_is_approved(rubric)
+    from .decision_state import rubric_is_scoring_authorized
+    # Gates belong to any rubric the user authorized scoring against, including
+    # Jaspen's proposed criteria after an explicit "score now". Dropping them
+    # here while the judge validator still requires them fails every score.
+    approved = rubric_is_scoring_authorized(rubric)
     option_key = str(option_key or "").strip()
     definitions = {
         str(item.get("key")): item

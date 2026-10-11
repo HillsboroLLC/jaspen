@@ -75,6 +75,17 @@ def test_mandatory_gate_requires_grounded_evidence_and_can_fail():
     assert failed[0]["status"] == "fail"
 
 
+
+def test_proposed_rubric_authorized_by_score_request_keeps_its_gates():
+    rubric = {**rubric_with_gate(), "approval_status": "proposed", "scoring_authorized_by": "explicit_score_request"}
+    rubric.pop("approved_by_user_at", None)
+    gates = normalize_gates([], rubric, "")
+    assert [gate["key"] for gate in gates] == ["deadline"]
+    assert gates[0]["status"] == "unknown"
+    unauthorized = {**rubric}
+    unauthorized.pop("scoring_authorized_by")
+    assert normalize_gates([], unauthorized, "") == []
+
 @pytest.mark.parametrize("score,confidence,gates,expected", [
     (70, 75, [{"key": "g", "status": "pass"}], "advance"),
     (55, 75, [{"key": "g", "status": "pass"}], "advance_with_conditions"),
