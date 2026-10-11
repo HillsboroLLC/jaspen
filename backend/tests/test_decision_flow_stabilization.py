@@ -858,7 +858,7 @@ def test_decision_kit_starter_rubric_is_persisted_and_rendered_before_provider_r
     )
 
     reply, usage, actions, _, _ = agent._generate_assistant_reply(
-        'Help me evaluate this RFP.', [], {}, {'llm_model': 'test'},
+        'Show me the rubric for this RFP.', [], {}, {'llm_model': 'test'},
         session=session, user=test_user, user_id=test_user.id, thread_id=tid,
     )
 
@@ -993,6 +993,127 @@ def test_user_owned_unweighted_criteria_are_not_replaced_by_kit_starter():
     ) is None
 
 
+def test_score_now_uses_proposed_kit_rubric_without_approval_stop(app, db, test_user, monkeypatch):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'score-now-standard-kit-rubric'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    session = sessions[tid]
+    session.update({
+        'decision_kit': 'rfp_bid', 'decision_kit_version': 1,
+        'decision_kit_family': 'rfp',
+    })
+    message = 'Score all three bids now.'
+    assert agent._ensure_decision_kit_starter_rubric(session, user_message=message) is True
+    sessions[tid] = session
+    assert save_user_sessions(test_user.id, sessions)
+
+    assert agent._present_decision_kit_rubric(
+        session, user_id=test_user.id, thread_id=tid, user_message=message,
+    ) is None
+    assert agent._guard_mutation_tool(
+        'queue_scorecards', user_turn_count=1, mutations_this_turn=0,
+        user_message=message, session=session,
+    ) is None
+    assert session['scoring_rubric']['approval_status'] == 'proposed'
+    assert session['scoring_rubric']['scoring_authorized_by'] == 'explicit_score_request'
+
+    monkeypatch.setattr(agent, '_execute_mutation_tool', lambda *a, **k: {
+        'ok': True,
+        'confirmation': 'Queued all three bids for scoring.',
+    })
+    result, _ = agent._execute_local_tool(
+        'queue_scorecards', {'ideas': [{'name': 'A'}, {'name': 'B'}, {'name': 'C'}]},
+        readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
+        user_turn_count=1, mutations_this_turn=0, user_message=message, session=session,
+    )
+    assert result['ok'] is True
+    durable = load_user_sessions(test_user.id)[tid]
+    assert durable['scoring_rubric']['approval_status'] == 'proposed'
+    assert durable['scoring_rubric']['scoring_authorized_by'] == 'explicit_score_request'
+
+    reply = agent._finalize_agent_reply(
+        '', '', [], user_id=test_user.id, thread_id=tid,
+        executed_actions=[{'tool': 'queue_scorecards', 'result': result}],
+    )
+    assert 'Queued all three bids for scoring.' in reply
+    assert 'I’m weighing these on' in reply
+    assert 'If something matters more to you, tell me and I’ll re-score.' in reply
+    assert 'approve' not in reply.lower()
+    durable = load_user_sessions(test_user.id)[tid]
+    assert durable['scoring_rubric']['criteria_summary_presented_at']
+
+    detail = agent._present_decision_kit_rubric(
+        durable, user_id=test_user.id, thread_id=tid,
+        user_message='Show me the rubric and weights.',
+    )
+    assert 'Here are the standard RFP response rubric criteria I used:' in detail
+    assert 'Win probability & competitive position: weight 20%' in detail
+    assert 'approve' not in detail.lower()
+
+
+def test_plain_looks_good_approves_conversational_criteria_summary(app, db, test_user):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'approve-criteria-summary'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['scoring_rubric'] = {
+        'criteria': [
+            {'key': 'price', 'label': 'Price', 'weight': 0.6},
+            {'key': 'delivery', 'label': 'Delivery', 'weight': 0.4},
+        ],
+        'source': 'jaspen_proposed',
+        'approval_status': 'proposed',
+        'criteria_summary_presented_at': '2026-10-10T21:00:00Z',
+    }
+    assert save_user_sessions(test_user.id, sessions)
+    session = load_user_sessions(test_user.id)[tid]
+
+    assert agent._approve_presented_rubric_for_turn(
+        session, user_id=test_user.id, thread_id=tid, user_message='Looks good.',
+    ) is True
+    assert load_user_sessions(test_user.id)[tid]['scoring_rubric']['approval_status'] == 'approved'
+
+
+def test_plain_language_criteria_change_becomes_user_owned(app, db, test_user):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'plain-language-rubric-change'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['scoring_rubric'] = {
+        'criteria': [
+            {'key': 'price', 'label': 'Price', 'weight': 0.5},
+            {'key': 'delivery', 'label': 'Delivery', 'weight': 0.5},
+        ],
+        'source': 'jaspen_proposed',
+        'approval_status': 'proposed',
+        'criteria_summary_presented_at': '2026-10-10T21:00:00Z',
+    }
+    assert save_user_sessions(test_user.id, sessions)
+
+    result = agent._execute_mutation_tool(
+        'set_scoring_rubric', {'criteria': [
+            {'label': 'Price', 'weight': 70},
+            {'label': 'Delivery', 'weight': 30},
+        ]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+        user_message='Price matters most. Make it 70% and delivery 30%, then re-score.',
+    )
+
+    assert result['ok'] is True
+    assert result['rubric']['approval_status'] == 'approved'
+    assert result['rubric']['source'] == 'user'
+    assert [item['weight'] for item in result['rubric']['criteria']] == [0.7, 0.3]
+    durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
+    assert durable['approval_status'] == 'approved'
+
+
 def test_general_objective_rubric_is_persisted_and_rendered_in_full(app, db, test_user, monkeypatch):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions
@@ -1042,7 +1163,7 @@ def test_streaming_inferred_rfp_renders_all_starter_criteria_without_provider(ap
     state = {}
 
     events = list(agent._stream_assistant_reply_events(
-        'We received vendor proposals and need to select one.', [], {},
+        'We received vendor proposals and need to select one. Show me the rubric.', [], {},
         {'llm_model': 'test'}, session=session, state=state,
         user=test_user, user_id=test_user.id, thread_id=tid,
     ))
@@ -1749,6 +1870,44 @@ def test_score_next_targets_each_option_and_keeps_only_failure_for_retry(
     assert retry.status_code == 200
     assert retry.get_json()['ok'] is True
     assert agent.load_user_sessions(test_user.id)[tid]['scorecard_queue'] == []
+
+
+def test_score_next_accepts_explicitly_authorized_proposed_rubric(
+    client, test_user, auth_headers, monkeypatch,
+):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'score-next-proposed-rubric'
+    seed_rfp_thread(test_user, tid, queue=[{
+        'name': 'Denver Water', 'description': 'Denver Water', 'option_key': 'denver-water',
+    }])
+    sessions = load_user_sessions(test_user.id)
+    rubric = sessions[tid]['scoring_rubric']
+    rubric.pop('approved_by_user_at', None)
+    rubric.update({
+        'approval_status': 'proposed',
+        'source': 'jaspen_proposed',
+        'scoring_authorized_by': 'explicit_score_request',
+    })
+    assert save_user_sessions(test_user.id, sessions)
+    monkeypatch.setattr(agent, '_execute_mutation_tool', lambda *a, **k: {
+        'ok': True,
+        'scorecard': {'id': 'card-denver', 'project_name': 'Denver Water', 'jaspen_score': 60},
+        'artifact': {
+            'type': 'scorecard',
+            'data': {'id': 'card-denver', 'project_name': 'Denver Water', 'jaspen_score': 60},
+        },
+    })
+
+    response = client.post(
+        f'/api/v1/strategy/threads/{tid}/score-next',
+        headers=auth_headers,
+        json={'name': 'Denver Water'},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['ok'] is True
 
 
 def test_failed_single_scoring_turn_is_explicit_saved_retryable_and_zero_credit(client, db, test_user, auth_headers, monkeypatch):

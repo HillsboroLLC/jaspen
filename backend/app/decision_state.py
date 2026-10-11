@@ -257,6 +257,7 @@ def rubric_identity(rubric):
     criteria.sort(key=lambda item: str(item.get("key") or ""))
     return {
         "status": "approved" if rubric_is_approved(rubric) else "proposed",
+        "scoring_authorized": rubric_is_scoring_authorized(rubric),
         "criteria": criteria,
     }
 
@@ -269,6 +270,17 @@ def rubric_is_approved(rubric):
         return status == "approved"
     # Read legacy records without allowing new code to infer approval from time.
     return bool(rubric.get("approved_by_user_at"))
+
+
+def rubric_is_scoring_authorized(rubric):
+    """True when criteria may be scored without mislabeling user ownership."""
+    if rubric_is_approved(rubric):
+        return True
+    return bool(
+        isinstance(rubric, dict)
+        and str(rubric.get("approval_status") or "").strip().lower() == "proposed"
+        and rubric.get("scoring_authorized_by") == "explicit_score_request"
+    )
 
 
 def canonical_decision_state(
@@ -345,7 +357,10 @@ def state_is_reusable(state):
     """Avoid caching judgments that still depend only on unnormalized prose."""
     base = bool(
         isinstance(state, dict)
-        and rubric_is_approved(state.get("rubric"))
+        and (
+            rubric_is_approved(state.get("rubric"))
+            or bool((state.get("rubric") or {}).get("scoring_authorized"))
+        )
         and (state.get("facts") or state.get("evidence"))
     )
     if not base:

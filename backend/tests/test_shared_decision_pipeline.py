@@ -223,6 +223,79 @@ def test_assumed_fact_deterministically_caps_affected_confidence(app):
     assert result["assumption_register"][0]["field"] == "margin_pct"
 
 
+def test_missing_win_probability_scores_with_assumed_confidence(app, monkeypatch):
+    from app.routes import strategy
+
+    rubric = {
+        "approval_status": "proposed",
+        "scoring_authorized_by": "explicit_score_request",
+        "criteria": [
+            {
+                "key": "win_probability_competitive_position",
+                "label": "Win probability & competitive position",
+                "weight": 0.5,
+            },
+            {
+                "key": "financial_attractiveness",
+                "label": "Financial attractiveness",
+                "weight": 0.5,
+            },
+        ],
+    }
+    response = {
+        "dimensions": {
+            "win_probability_competitive_position": {
+                "score": 45,
+                "confidence": "assumed",
+                "source": "assumed",
+                "evidence": [],
+                "rationale": "Win probability was not provided.",
+                "what_would_improve": "Provide a win-probability estimate and basis.",
+            },
+            "financial_attractiveness": {
+                "score": 60,
+                "confidence": "high",
+                "source": "conversation",
+                "evidence": ["Contract value $2,400,000 and expected margin 18%."],
+                "rationale": "The contract value and margin are explicit.",
+            },
+        },
+        "gates": [],
+        "assumptions": ["Win probability is unknown."],
+    }
+    monkeypatch.setattr(
+        strategy,
+        "_strategy_generate_reply",
+        lambda *a, **k: (json.dumps(response), {"provider": "test"}),
+    )
+
+    card = strategy._generate_jaspen_scorecard(
+        None,
+        "Denver Water",
+        "test",
+        rubric=rubric,
+        attributes={
+            "contract_value": {
+                "value": 2_400_000,
+                "source": "user",
+                "evidence": "Contract value $2,400,000 and expected margin 18%.",
+            },
+            "margin_pct": {
+                "value": 18,
+                "source": "user",
+                "evidence": "Contract value $2,400,000 and expected margin 18%.",
+            },
+        },
+        evidence_corpus="Contract value $2,400,000 and expected margin 18%.",
+        decision_kit="rfp_bid",
+        decision_kit_version=1,
+        option_key="denver-water",
+    )
+
+    assert card["dimensions"]["win_probability_competitive_position"]["confidence"] == "assumed"
+    assert card["jaspen_score"] == 52
+
+
 def test_batch_uses_the_same_scorer_and_result_as_single(app, monkeypatch):
     from app.routes import strategy
 

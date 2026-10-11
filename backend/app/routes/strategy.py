@@ -3748,8 +3748,8 @@ def analyze_project():
         legacy_decision_kit = (current_session or {}).get('decision_kit')
         legacy_decision_kit_version = (current_session or {}).get('decision_kit_version')
         legacy_rubric = (current_session or {}).get('scoring_rubric') if isinstance((current_session or {}).get('scoring_rubric'), dict) else None
-        from ..decision_state import rubric_is_approved
-        if isinstance(legacy_rubric, dict) and legacy_rubric.get('criteria') and not rubric_is_approved(legacy_rubric):
+        from ..decision_state import rubric_is_scoring_authorized
+        if isinstance(legacy_rubric, dict) and legacy_rubric.get('criteria') and not rubric_is_scoring_authorized(legacy_rubric):
             return jsonify({
                 'error': 'The proposed scoring rubric needs human approval before scoring.',
                 'code': 'rubric_approval_required',
@@ -6755,8 +6755,8 @@ def score_batch_queued(thread_id):
         plan_key = effective_plan_key(user, current_app.config)
         strategy_objective = _normalize_strategy_objective(session.get('strategy_objective'))
         rubric = session.get('scoring_rubric') if isinstance(session.get('scoring_rubric'), dict) else None
-        from ..decision_state import rubric_is_approved
-        if isinstance(rubric, dict) and rubric.get('criteria') and not rubric_is_approved(rubric):
+        from ..decision_state import rubric_is_scoring_authorized
+        if isinstance(rubric, dict) and rubric.get('criteria') and not rubric_is_scoring_authorized(rubric):
             return jsonify({
                 'ok': False,
                 'code': 'rubric_approval_required',
