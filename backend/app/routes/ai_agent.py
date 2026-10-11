@@ -1186,11 +1186,11 @@ def _message_supplies_weighted_rubric(user_message):
     text = str(user_message or "")
     if len(re.findall(r"\b\d+(?:\.\d+)?\s*%", text)) < 2:
         return False
-    if re.search(r"\b(?:rubric|criteria|criterion|weights?|weighted|prioriti[sz]e)\b", text, re.I):
-        return True
     # Ordinary option facts often contain several percentages. They are not a
-    # user-authored rubric. Require at least two percentage-bearing clauses
-    # that are not recognizable probability, margin, rate, or participation facts.
+    # user-authored rubric, even when the same message asks Jaspen to propose
+    # one ("propose a rubric" + "win probability 35%, margin 18%"). Require at
+    # least two percentage-bearing clauses that are not recognizable
+    # probability, margin, rate, or participation facts.
     fact_terms = re.compile(r"\b(?:win\s+probability|probability|margin|rate|participation)\b", re.I)
     weighted_percentages = 0
     for clause in re.split(r"[,;\n]+", text):

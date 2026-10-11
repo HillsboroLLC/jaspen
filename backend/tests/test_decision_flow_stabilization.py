@@ -2089,3 +2089,17 @@ def test_narration_failure_keeps_completed_action_but_marks_degraded(app, test_u
     assert mutations[0]['success']
     assert usage['degraded'] and usage['error_code'] == 'narration_failed'
     assert 'Queued all seven.' in reply
+
+
+def test_fact_percentages_with_a_rubric_request_are_not_a_custom_rubric():
+    from app.routes.ai_agent import _message_supplies_weighted_rubric
+
+    rfp = (
+        "Bid 1: contract value $2,400,000, our win probability is 35%, expected margin 18%, "
+        "pursuit cost $45,000. Bid 2: win probability 40%, margin 20%. "
+        "Propose a scoring rubric for me to approve before you score."
+    )
+    assert _message_supplies_weighted_rubric(rfp) is False
+    assert _message_supplies_weighted_rubric(
+        "Use my rubric: Cost 40%, Foot traffic 35%, Lease flexibility 25%. Score it now."
+    ) is True
