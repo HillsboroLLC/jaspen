@@ -87,7 +87,14 @@ from app.evaluation_telemetry import (
     evaluation_id_for_new_scorecard,
     evaluation_id_for_scorecard,
 )
-from app.decision_facts import ground_user_evidence, normalize_fact_entry, normalize_option_facts, option_fact_text
+from app.decision_facts import (
+    extract_candidate_facts,
+    field_definitions,
+    ground_user_evidence,
+    normalize_fact_entry,
+    normalize_option_facts,
+    option_fact_text,
+)
 from app.decision_kits import get_decision_kit, normalize_decision_kit
 from app.connector_store import get_connector_settings, get_thread_sync_profile, update_thread_sync_profile
 from app.jira_sync import sync_wbs_to_jira
@@ -702,7 +709,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "[[/choice]]\n"
     "Rules: 2-4 options with short labels; valid JSON on a single line; set allow_multi true ONLY when several answers can sensibly combine; keep allow_text true so the user can still type their own. Use at most ONE choice block per message and still ask only ONE question at a time. For genuinely open-ended questions with no discrete options, just ask in prose (no block). NEVER mention the block, the word 'choice', or its syntax in your prose — write the question naturally, then append the block.\n"
     "\n"
-    "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria and weights (e.g. a list of factors each with a percentage), FIRST call set_scoring_rubric with those exact criteria and weights before scoring anything. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. If the user organizes the criteria into groups (e.g. 'Impact' variables vs 'Fit' variables), pass each criterion's group on the 'group' field so every option gets a sub-score per group and can be placed on a 2-group quadrant. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. set_scoring_rubric is reversible configuration, so it is allowed on the first turn and does not count against the per-turn scoring limit.\n"
+    "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria and weights (e.g. a list of factors each with a percentage), FIRST call set_scoring_rubric with those exact criteria and weights before scoring anything. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. If the user names criteria or priorities without weights, preserve those criteria and ask for weights or propose weights for those same criteria; do not replace them with a generic or Decision Kit rubric. You may separately identify useful Decision Kit additions and ask whether to include them. If the user organizes the criteria into groups (e.g. 'Impact' variables vs 'Fit' variables), pass each criterion's group on the 'group' field so every option gets a sub-score per group and can be placed on a 2-group quadrant. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. set_scoring_rubric is reversible configuration, so it is allowed on the first turn and does not count against the per-turn scoring limit.\n"
     "FIRST-TURN DECISION CONTRACT: when a conversation opens with a substantive decision — a real choice with stakes and some context, whether one option ('should I take this job offer?' with details) or several — your first reply must make the path to a scorecard visible. Do all three: (1) Name the decision and the options you will score; if the user gave only one path, propose the natural alternative yourself (e.g. 'Take the offer' vs 'Stay in current role') — comparing against the status quo is almost always the real decision. (2) Propose a starter rubric in plain prose: 3-6 weighted criteria drawn from what they told you PLUS one or two criteria they did not mention but the relevant expertise says matter (name why in half a sentence). State plainly that the rubric is theirs to edit — you propose, they decide. (3) Offer the choice explicitly, as a choice block: score now at honest confidence (missing evidence lowers confidence, never blocks a score, and you will show what would raise it), or answer your single best question first. If the opening message says score now AND supplies the criteria and weights, save that user-owned rubric as approved and score immediately. If Jaspen is proposing the rubric, show every criterion and weight first and ask once; do not score an unseen rubric. When the user later approves that exact shown rubric or says score it now, approve it and score immediately. NEVER claim scoring started unless a scoring tool succeeded. NEVER open with questions that have no visible destination. Exception: a bare one-liner with no context ('should I quit?') gets your single best scorecard-framed question, with 'score it anyway' offered as a choice option. "
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
     "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the shared scoring system, which evaluates every option against the same criteria and builds the trade-off comparison. After calling it, state only that all N were queued (name them if there are only a few). Do not promise that cards were created; the scoring operation reports success or a retryable failure separately. If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead. "
@@ -1208,6 +1215,64 @@ def _rubric_proposal_requested(user_message):
     ))
 
 
+def _message_supplies_rubric_guidance(user_message):
+    """Recognize user-owned criteria even when the user has not assigned weights."""
+    text = str(user_message or "")
+    return bool(re.search(
+        r"\b(?:my|our)\s+(?:rubric|criteria|priorities)\b"
+        r"|\b(?:rubric|criteria|factors|priorities)\s+(?:is|are|includes?|:)"
+        r"|\b(?:use|judge|evaluate|score|compare)\b.{0,45}\b(?:based on|using|criteria|factors)\b"
+        r"|\b(?:prioriti[sz]e|care most about|matters? most)\b",
+        text,
+        re.I,
+    ))
+
+
+def _format_human_list(items):
+    values = [str(item).strip() for item in (items or []) if str(item).strip()]
+    if len(values) < 2:
+        return values[0] if values else ""
+    if len(values) == 2:
+        return f"{values[0]} and {values[1]}"
+    return f"{', '.join(values[:-1])}, and {values[-1]}"
+
+
+def _rubric_proposal_context(user_message, kit, criteria):
+    """Explain how supplied facts inform a proposed rubric without calling facts weights."""
+    if not kit:
+        return []
+    supplied_keys = []
+    for key, _value, _evidence in extract_candidate_facts(user_message, kit):
+        if key not in supplied_keys:
+            supplied_keys.append(key)
+    if not supplied_keys:
+        return []
+    definitions = field_definitions(kit)
+    supplied_labels = [
+        str((definitions.get(key) or {}).get("label") or key).strip()
+        for key in supplied_keys
+    ]
+    affected_keys = {
+        affected
+        for key in supplied_keys
+        for affected in ((definitions.get(key) or {}).get("affects") or [])
+    }
+    mapped_labels = [
+        str(item.get("label") or item.get("key") or "").strip()
+        for item in (criteria or [])
+        if isinstance(item, dict) and str(item.get("key") or "") in affected_keys
+    ]
+    lines = [
+        f"You already supplied decision inputs for {_format_human_list(supplied_labels)}. "
+        "Those are evidence values, not criterion weights."
+    ]
+    if mapped_labels:
+        lines.append(
+            f"I mapped them into {_format_human_list(mapped_labels)} and kept the remaining criteria as suggestions."
+        )
+    return lines
+
+
 def _rubric_with_required_kit_gates(criteria, kit):
     """Attach versioned kit gates without changing the weighted rubric."""
     merged = [dict(item) for item in (criteria or []) if isinstance(item, dict)]
@@ -1266,7 +1331,7 @@ def _ensure_decision_kit_starter_rubric(session, *, user_message=""):
     current = session.get("scoring_rubric")
     if isinstance(current, dict) and current.get("criteria"):
         return _ensure_session_decision_kit_gates(session)
-    if _message_supplies_weighted_rubric(user_message):
+    if _message_supplies_weighted_rubric(user_message) or _message_supplies_rubric_guidance(user_message):
         return False
     kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
     if not kit:
@@ -1303,7 +1368,7 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
         rubric_label = f"{kit.get('label') or 'Decision Kit'} rubric" if kit else "scoring rubric"
         rubric = current
     else:
-        if _message_supplies_weighted_rubric(user_message):
+        if _message_supplies_weighted_rubric(user_message) or _message_supplies_rubric_guidance(user_message):
             return None
         kit = (
             get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
@@ -1339,15 +1404,16 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
         sessions[key or thread_id] = durable
         if not save_user_sessions(user_id, sessions):
             return None
-    lines = [f"Here’s the {rubric_label} I propose for your review:"]
+    lines = _rubric_proposal_context(user_message, kit, criteria)
+    lines.append(f"Here’s the {rubric_label} I propose for your review:")
     for item in criteria:
         label = item.get("label") or item.get("key")
         if item.get("gate"):
             lines.append(f"- {label}: required gate")
             continue
         weight = int(round(float(item.get("weight") or 0) * 100))
-        lines.append(f"- {label}: {weight}%")
-    lines.append("Approve this rubric, edit it, or tell me to score with it. You decide the criteria and weights.")
+        lines.append(f"- {label}: weight {weight}%")
+    lines.append("Does this reflect what matters, or would you like to change the criteria or weights?")
     return "\n".join(lines)
 
 
@@ -6625,7 +6691,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             current_app.logger.exception("set_scoring_rubric best-effort persist failed")
 
         summary = ", ".join(
-            (f'{c["label"]} required gate' if c.get("gate") else f'{c["label"]} {int(round(c["weight"] * 100))}%')
+            (
+                f'{c["label"]} required gate'
+                if c.get("gate")
+                else f'{c["label"]} weight {int(round(c["weight"] * 100))}%'
+            )
             for c in criteria
         )
         return {

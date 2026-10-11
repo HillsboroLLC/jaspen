@@ -835,8 +835,8 @@ def test_proposed_rubric_is_visible_with_weights_before_approval(app, db, test_u
     agent._apply_rubric_action_to_session(session, [action])
 
     assert result['rubric']['approval_status'] == 'proposed'
-    assert 'Financial Value 60%' in reply
-    assert 'Delivery Confidence 40%' in reply
+    assert 'Financial Value weight 60%' in reply
+    assert 'Delivery Confidence weight 40%' in reply
     assert session['scoring_rubric']['presented_at']
 
 
@@ -863,8 +863,8 @@ def test_decision_kit_starter_rubric_is_persisted_and_rendered_before_provider_r
     )
 
     assert usage['provider'] == 'deterministic' and actions == []
-    assert 'Win probability & competitive position: 20%' in reply
-    assert 'Contract & commercial risk: 10%' in reply
+    assert 'Win probability & competitive position: weight 20%' in reply
+    assert 'Contract & commercial risk: weight 10%' in reply
     durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
     assert durable['approval_status'] == 'proposed'
     assert durable['presented_at']
@@ -917,7 +917,7 @@ def test_inferred_rfp_kit_saves_one_proposal_and_first_approval_allows_scoring(a
     )
 
     assert usage['provider'] == 'deterministic' and actions == []
-    assert 'Win probability & competitive position: 20%' in reply
+    assert 'Win probability & competitive position: weight 20%' in reply
     assert 'Surety / bond confirmation: required gate' in reply
     displayed = load_user_sessions(test_user.id)[tid]['scoring_rubric']
     assert displayed['presented_at']
@@ -934,6 +934,62 @@ def test_inferred_rfp_kit_saves_one_proposal_and_first_approval_allows_scoring(a
     assert agent._guard_mutation_tool(
         'queue_scorecards', user_turn_count=2, mutations_this_turn=0,
         user_message=approval, session=session,
+    ) is None
+
+
+def test_rfp_proposal_acknowledges_supplied_facts_without_calling_them_weights(app, db, test_user, monkeypatch):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'rfp-rubric-context'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid].update({
+        'decision_kit': 'rfp_bid', 'decision_kit_version': 1,
+        'decision_kit_family': 'rfp',
+    })
+    message = (
+        'Denver Water: contract value $2,400,000, win probability 35%, expected margin 18%, '
+        'pursuit cost $45,000, submission due November 20, 2026, and surety confirmed. '
+        'Propose a scoring rubric for me to approve before you score.'
+    )
+    assert agent._ensure_decision_kit_starter_rubric(
+        sessions[tid], user_message=message,
+    ) is True
+    assert save_user_sessions(test_user.id, sessions)
+    session = load_user_sessions(test_user.id)[tid]
+    monkeypatch.setattr(
+        agent, '_resolve_governed_routes',
+        lambda *a, **k: pytest.fail('provider must not replace the saved proposal'),
+    )
+
+    reply, usage, actions, _, _ = agent._generate_assistant_reply(
+        message, [], {}, {'llm_model': 'test'},
+        session=session, user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert usage['provider'] == 'deterministic' and actions == []
+    assert 'You already supplied decision inputs for' in reply
+    assert 'Contract value' in reply and 'Win probability' in reply
+    assert 'Expected margin' in reply and 'Pursuit cost' in reply
+    assert 'Those are evidence values, not criterion weights.' in reply
+    assert 'Win probability & competitive position: weight 20%' in reply
+    assert 'Win probability & competitive position: 20%' not in reply
+
+
+def test_user_owned_unweighted_criteria_are_not_replaced_by_kit_starter():
+    _, agent = modules()
+    session = {'decision_kit': 'rfp_bid', 'decision_kit_version': 1}
+    message = (
+        'Use our criteria: customer relationship, team capacity, and expected margin. '
+        'Suggest weights for those criteria.'
+    )
+
+    assert agent._message_supplies_rubric_guidance(message) is True
+    assert agent._ensure_decision_kit_starter_rubric(session, user_message=message) is False
+    assert 'scoring_rubric' not in session
+    assert agent._present_decision_kit_rubric(
+        session, user_id='user', thread_id='thread', user_message=message,
     ) is None
 
 
@@ -955,9 +1011,9 @@ def test_general_objective_rubric_is_persisted_and_rendered_in_full(app, db, tes
 
     assert usage['provider'] == 'deterministic' and actions == []
     expected = [
-        'Market opportunity: 18%', 'Financial viability: 20%',
-        'Execution readiness: 18%', 'Strategic alignment: 16%',
-        'Risk profile: 16%', 'Evidence quality: 12%',
+        'Market opportunity: weight 18%', 'Financial viability: weight 20%',
+        'Execution readiness: weight 18%', 'Strategic alignment: weight 16%',
+        'Risk profile: weight 16%', 'Evidence quality: weight 12%',
     ]
     assert all(line in reply for line in expected)
     durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
@@ -994,9 +1050,9 @@ def test_streaming_inferred_rfp_renders_all_starter_criteria_without_provider(ap
     reply = state['reply']
     assert events == [{'type': 'delta', 'text': reply}]
     expected = [
-        'Functional / technical fit: 25%', 'Total cost of ownership: 20%',
-        'Implementation risk & timeline: 20%', 'Vendor viability & references: 15%',
-        'Integration & compliance: 10%', 'Commercial terms: 10%',
+        'Functional / technical fit: weight 25%', 'Total cost of ownership: weight 20%',
+        'Implementation risk & timeline: weight 20%', 'Vendor viability & references: weight 15%',
+        'Integration & compliance: weight 10%', 'Commercial terms: weight 10%',
     ]
     assert all(line in reply for line in expected)
     durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
