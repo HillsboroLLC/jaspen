@@ -253,9 +253,9 @@ def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None)
     """Return an exact user excerpt supporting a canonical field/value pair.
 
     A provider may paraphrase an excerpt, but stored provenance must remain the
-    user's words. Matching therefore requires both a schema-owned field signal
-    and the same normalized value; a coincidental number elsewhere in the turn
-    is insufficient. No value is extracted or invented here.
+    user's words. Matching requires the same normalized value and either the
+    schema-owned field signal or a clause with no competing schema field signal.
+    No value is extracted or invented here.
     """
     corpus = str(source_text or "")
     claimed = str(claimed_evidence or "").strip()
@@ -276,15 +276,22 @@ def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None)
     if expected is None:
         return None
 
-    phrases = [canonical, definition.get("label"), *(definition.get("aliases") or [])]
-    field_terms = {
-        token
-        for phrase in phrases if phrase
-        for token in re.findall(r"[a-z0-9]+", str(phrase).casefold().replace("_", " "))
-        if len(token) >= 3 and token not in _GENERIC_EVIDENCE_TERMS
-    }
-    if not field_terms:
-        return None
+    def schema_terms(field_key, field_definition):
+        phrases = [field_key, field_definition.get("label"), *(field_definition.get("aliases") or [])]
+        return {
+            token
+            for phrase in phrases if phrase
+            for token in re.findall(r"[a-z0-9]+", str(phrase).casefold().replace("_", " "))
+            if len(token) >= 3 and token not in _GENERIC_EVIDENCE_TERMS
+        }
+
+    field_terms = schema_terms(canonical, definition)
+    all_definitions = {**_COMMON_FIELD_DEFINITIONS, **definitions}
+    other_field_terms = set().union(*(
+        schema_terms(field_key, field_definition)
+        for field_key, field_definition in all_definitions.items()
+        if field_key != canonical
+    )) if len(all_definitions) > 1 else set()
 
     numeric_kind = str(definition.get("type") or "").lower() in {"money", "number", "percentage"}
     date_kind = str(definition.get("type") or "").lower() == "date"
@@ -293,27 +300,134 @@ def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None)
     ]
     candidates = ([claimed_excerpt] if claimed_excerpt else []) + list(reversed(corpus_candidates))
     for sentence in candidates:
-        sentence_terms = set(re.findall(r"[a-z0-9]+", sentence.casefold().replace("-", " ")))
-        if not field_terms.intersection(sentence_terms):
-            continue
+        is_claimed_fragment = bool(claimed_excerpt and sentence == claimed_excerpt and sentence != corpus)
         if numeric_kind:
-            raw_numbers = re.findall(
-                r"\$?\s*[0-9][0-9,]*(?:\.[0-9]+)?\s*[kmb%]?",
-                sentence,
-                flags=re.I,
-            )
-            if any(normalize_value(raw_number, definition) == expected for raw_number in raw_numbers):
-                return sentence
+            for clause in re.split(r";|,(?!\s*\d)", sentence):
+                raw_numbers = re.findall(
+                    r"\$?\s*[0-9][0-9,]*(?:\.[0-9]+)?\s*[kmb%]?",
+                    clause,
+                    flags=re.I,
+                )
+                if not any(normalize_value(raw_number, definition) == expected for raw_number in raw_numbers):
+                    continue
+                clause_terms = set(re.findall(r"[a-z0-9]+", clause.casefold().replace("-", " ")))
+                if field_terms.intersection(clause_terms):
+                    return sentence
+                # The model owns the semantic assignment for an unlabeled
+                # value. Code accepts it only when no competing schema field
+                # label appears in the same clause as that exact value.
+                if not other_field_terms.intersection(clause_terms) and not is_claimed_fragment:
+                    return sentence
         elif date_kind:
-            raw_dates = re.findall(
-                r"[A-Za-z]{3,9}\s+\d{1,2}(?:,?\s+\d{4})?|\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}",
-                sentence,
-            )
-            if any(normalize_value(raw_date, definition) == expected for raw_date in raw_dates):
+            for clause in re.split(r";|,(?!\s*\d)", sentence):
+                raw_dates = re.findall(
+                    r"[A-Za-z]{3,9}\s+\d{1,2}(?:,?\s+\d{4})?|\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}",
+                    clause,
+                )
+                if not any(normalize_value(raw_date, definition) == expected for raw_date in raw_dates):
+                    continue
+                clause_terms = set(re.findall(r"[a-z0-9]+", clause.casefold().replace("-", " ")))
+                if field_terms.intersection(clause_terms) or not other_field_terms.intersection(clause_terms):
+                    return sentence
+        elif str(definition.get("type") or "").lower() == "enum":
+            accepted_phrases = {str(expected)}
+            for alias, canonical_value in (definition.get("value_aliases") or {}).items():
+                if normalize_value(alias, definition) == expected and canonical_value == expected:
+                    accepted_phrases.add(str(alias))
+            if any(
+                re.search(rf"(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])", sentence, re.I)
+                for phrase in accepted_phrases if phrase
+            ):
                 return sentence
-        elif str(expected).casefold() in sentence.casefold():
-            return sentence
+        else:
+            sentence_terms = set(re.findall(r"[a-z0-9]+", sentence.casefold().replace("-", " ")))
+            if field_terms.intersection(sentence_terms) and str(expected).casefold() in sentence.casefold():
+                return sentence
     return None
+
+
+def option_evidence_identities(session, option_key=None, option_name=None, extra_names=None):
+    """Return current and other known names for evidence containment checks."""
+    session = session if isinstance(session, dict) else {}
+    registry = session.get("option_registry") if isinstance(session.get("option_registry"), dict) else {}
+    alias_index = session.get("option_aliases") if isinstance(session.get("option_aliases"), dict) else {}
+    current_key = str(option_key or "").strip()
+    current = {str(option_name or "").strip()}
+    others = set()
+    for key, item in registry.items():
+        if not isinstance(item, dict):
+            continue
+        values = [item.get("display_name"), *(item.get("aliases") or [])]
+        target = current if current_key and str(key) == current_key else others
+        target.update(str(value or "").strip() for value in values if str(value or "").strip())
+    normalized_current = {
+        re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+        for value in current if value
+    }
+    for value in (extra_names or []):
+        text = str(value or "").strip()
+        normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+        if not text:
+            continue
+        if normalized in normalized_current or (current_key and str(alias_index.get(normalized) or "") == current_key):
+            current.add(text)
+        else:
+            others.add(text)
+    current.discard("")
+    others.difference_update(current)
+    return sorted(current, key=len, reverse=True), sorted(others, key=len, reverse=True)
+
+
+def ground_option_user_evidence(
+    key,
+    value,
+    claimed_evidence,
+    option_source_text,
+    full_source_text,
+    *,
+    kit=None,
+    current_option_names=None,
+    other_option_names=None,
+):
+    """Ground an AI-assigned option fact without expanding option semantics.
+
+    The option section remains the first authority. A verbatim claimed excerpt
+    may fall back to the full user corpus only when it names no known different
+    option. This lets the model assign genuinely shared statements while code
+    continues to enforce exact wording and option containment.
+    """
+    normalized_current = {
+        re.sub(r"[^a-z0-9]+", " ", str(name or "").casefold()).strip()
+        for name in (current_option_names or []) if str(name or "").strip()
+    }
+    normalized_others = {
+        re.sub(r"[^a-z0-9]+", " ", str(name or "").casefold()).strip()
+        for name in (other_option_names or []) if str(name or "").strip()
+    } - normalized_current
+
+    def names_different_option(text):
+        normalized_text = re.sub(r"[^a-z0-9]+", " ", str(text or "").casefold()).strip()
+        return any(
+            re.search(rf"(?<![A-Za-z0-9]){re.escape(name)}(?![A-Za-z0-9])", normalized_text)
+            for name in normalized_others if name
+        )
+
+    grounded = ground_user_evidence(
+        key, value, claimed_evidence, option_source_text, kit=kit,
+    )
+    if grounded and not names_different_option(grounded):
+        return grounded
+    corpus = str(full_source_text or "")
+    claimed = str(claimed_evidence or "").strip()
+    if not corpus or not claimed:
+        return None
+    start = corpus.casefold().find(claimed.casefold())
+    if start < 0:
+        return None
+    excerpt = corpus[start:start + len(claimed)]
+    if names_different_option(excerpt):
+        return None
+    return ground_user_evidence(key, value, excerpt, excerpt, kit=kit)
 
 
 def _candidate(pattern, text, key, *, flags=re.I, group=1):

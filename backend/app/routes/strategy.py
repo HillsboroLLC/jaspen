@@ -15,7 +15,12 @@ from app.decision_confidence import (
     decision_summary,
     evidence_profile,
 )
-from app.decision_facts import apply_assumption_confidence_caps, ground_user_evidence, normalize_option_facts
+from app.decision_facts import (
+    apply_assumption_confidence_caps,
+    ground_option_user_evidence,
+    normalize_option_facts,
+    option_evidence_identities,
+)
 from app.evidence_references import attach_evidence_references, reference_supports_decision
 from app.models import Scorecard, UsageEvent, User
 from app.ai_audit import persist_operation
@@ -10323,6 +10328,18 @@ def scorecard_attributes(thread_id, scorecard_id):
     from ..decision_kits import get_decision_kit
     kit = get_decision_kit(session.get('decision_kit'), session.get('decision_kit_version')) if session.get('decision_kit') else None
     corpus = _thread_user_corpus(user_id, thread_id)
+    option_name = card.get('project_name') or card.get('name') or 'Option'
+    option_key = str(card.get('option_key') or '')
+    known_names = [
+        str(item.get('display_name') or '').strip()
+        for item in (session.get('option_registry') or {}).values()
+        if isinstance(item, dict) and item.get('display_name')
+    ]
+    current_option_names, other_option_names = option_evidence_identities(
+        session, option_key, option_name, known_names,
+    )
+    from ..decision_facts import option_fact_text
+    scoped_corpus = option_fact_text(corpus, option_name, known_names) or corpus
     normalized = {}
     for key, raw in updates.items():
         if not isinstance(raw, dict):
@@ -10339,8 +10356,11 @@ def scorecard_attributes(thread_id, scorecard_id):
         except ValueError as exc:
             return jsonify({'error': str(exc), 'code': 'invalid_attribute'}), 400
         if source == 'user':
-            grounded = ground_user_evidence(
-                canonical_key, entry.get('value'), evidence, corpus, kit=kit,
+            grounded = ground_option_user_evidence(
+                canonical_key, entry.get('value'), evidence,
+                scoped_corpus, corpus, kit=kit,
+                current_option_names=current_option_names,
+                other_option_names=other_option_names,
             )
             if not grounded:
                 return jsonify({

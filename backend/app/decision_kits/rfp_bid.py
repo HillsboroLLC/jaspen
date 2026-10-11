@@ -35,6 +35,10 @@ KIT = {
             },
             "type": "enum",
             "value_aliases": {
+                "approved": "confirmed",
+                "surety approved": "confirmed",
+                "bonding approved": "confirmed",
+                "bond approved": "confirmed",
                 "confirmed in writing": "confirmed",
                 "surety confirmed": "confirmed",
                 "surety declined": "declined",

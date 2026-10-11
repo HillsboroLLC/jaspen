@@ -303,6 +303,127 @@ def test_rfp_queue_persists_explicit_submission_dates_omitted_by_provider(app, d
     assert durable['scorecard_queue'][1]['attributes']['surety_status']['value'] == 'pending'
 
 
+def test_unlabeled_contract_amount_is_grounded_without_cross_field_guessing(app):
+    from app.decision_facts import ground_user_evidence, normalize_fact_entry
+    from app.decision_kits import get_decision_kit
+    from app.decision_metrics import calculate_metrics
+
+    kit = get_decision_kit('rfp_bid')
+    sentence = "Bid 1: Adams County road resurfacing, $4.2M, our margin ~11%."
+    evidence = ground_user_evidence('contract_value', '$4.2M', '$4.2M', sentence, kit=kit)
+    assert evidence == sentence
+    _, contract = normalize_fact_entry(
+        'contract_value', {'value': '$4.2M', 'source': 'user', 'evidence': evidence}, kit=kit,
+    )
+    metrics = calculate_metrics({
+        'contract_value': contract,
+        'win_probability': {'value': 40, 'source': 'user', 'evidence': 'win probability 40%'},
+        'margin_pct': {'value': 11, 'source': 'user', 'evidence': 'margin 11%'},
+    }, kit['metrics'])
+    assert metrics['expected_value']['value'] == 184_800
+    assert ground_user_evidence(
+        'build_out_cost', '$320,000', '$320,000',
+        'Monthly lease is now $320,000.', kit=kit,
+    ) is None
+
+
+def test_surety_approved_alias_normalizes_and_grounds_as_confirmed(app):
+    from app.decision_facts import ground_user_evidence, normalize_fact_entry
+    from app.decision_kits import get_decision_kit
+
+    kit = get_decision_kit('rfp_bid')
+    sentence = 'Surety bonding is approved for all three.'
+    key, entry = normalize_fact_entry(
+        'surety_status', {'value': 'approved', 'source': 'user', 'evidence': sentence}, kit=kit,
+    )
+    assert key == 'surety_status' and entry['value'] == 'confirmed'
+    assert ground_user_evidence(
+        'surety_status', 'confirmed', sentence, sentence, kit=kit,
+    ) == sentence
+
+
+def test_full_corpus_fallback_rejects_evidence_naming_another_option(app):
+    from app.decision_facts import ground_option_user_evidence
+    from app.decision_kits import get_decision_kit
+
+    corpus = 'Bid 1: Adams. Bid 2: Boulder. Bid 3 surety is pending.'
+    assert ground_option_user_evidence(
+        'surety_status', 'pending', 'Bid 3 surety is pending.',
+        'Bid 1: Adams.', corpus, kit=get_decision_kit('rfp_bid'),
+        current_option_names=['Bid 1', 'Adams'],
+        other_option_names=['Bid 2', 'Boulder', 'Bid 3', 'Denver'],
+    ) is None
+    assert ground_option_user_evidence(
+        'surety_status', 'pending', 'Bid 3 surety is pending.',
+        'Bid 3: Denver.', corpus, kit=get_decision_kit('rfp_bid'),
+        current_option_names=['Bid 3', 'Denver'],
+        other_option_names=['Bid 1', 'Adams', 'Bid 2', 'Boulder'],
+    ) == 'Bid 3 surety is pending.'
+
+
+def test_live_rfp_prompt_queues_unlabeled_values_and_shared_surety_for_every_option(
+    app, db, test_user,
+):
+    _, agent = modules()
+    from app.decision_kits import get_decision_kit
+    from app.decision_processing import normalize_gates
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'rfp-unlabeled-shared-evidence'
+    seed_rfp_thread(test_user, tid)
+    prompt = (
+        "We're a regional civil contractor deciding which of three municipal RFPs to bid. "
+        "Bid 1: Adams County road resurfacing, $4.2M, due in 5 weeks, our margin ~11%, we've done similar work. "
+        "Bid 2: Boulder stormwater upgrade, $6.8M, due in 3 weeks, margin ~14%, new client, needs a specialty sub. "
+        "Bid 3: Denver bike lane package, $2.1M, due in 7 weeks, margin ~9%, low risk. "
+        "Surety bonding is approved for all three. Score all three now."
+    )
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'] = [{'role': 'user', 'content': prompt}]
+    assert save_user_sessions(test_user.id, sessions)
+    options = [
+        ('Adams County Road Resurfacing', '$4.2M'),
+        ('Boulder Stormwater Upgrade', '$6.8M'),
+        ('Denver Bike Lane Package', '$2.1M'),
+    ]
+    shared = 'Surety bonding is approved for all three.'
+    result = agent._execute_mutation_tool(
+        'queue_scorecards', {'ideas': [{
+            'name': name,
+            'description': name,
+            'fields': [
+                {'key': 'contract_value', 'value': amount, 'source': 'user', 'evidence': amount},
+                {'key': 'surety_status', 'value': 'confirmed', 'source': 'user', 'evidence': shared},
+            ],
+        } for name, amount in options]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert result['ok'], result
+    kit = get_decision_kit('rfp_bid')
+    rubric = {
+        'approval_status': 'approved',
+        'approved_by_user_at': '2026-10-11T00:00:00Z',
+        'criteria': [
+            {**gate, 'gate': True, 'gate_rule': gate.get('rule')}
+            for gate in kit['gate_suggestions']
+        ],
+    }
+    assert [item['attributes']['contract_value']['value'] for item in result['queue']] == [
+        4_200_000, 6_800_000, 2_100_000,
+    ]
+    for item in result['queue']:
+        attributes = item['attributes']
+        assert attributes['surety_status']['value'] == 'confirmed'
+        assert attributes['surety_status']['evidence'] == shared
+        gates = {
+            gate['key']: gate['status']
+            for gate in normalize_gates([], rubric, prompt, attributes=attributes)
+        }
+        assert gates['capacity_available'] == 'pass'
+        assert gates['surety_confirmation'] == 'pass'
+
+
 def test_rfp_fact_percentages_do_not_masquerade_as_a_custom_rubric(app):
     _, agent = modules()
 

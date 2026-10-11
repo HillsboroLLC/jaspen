@@ -90,9 +90,10 @@ from app.evaluation_telemetry import (
 from app.decision_facts import (
     extract_candidate_facts,
     field_definitions,
-    ground_user_evidence,
+    ground_option_user_evidence,
     normalize_fact_entry,
     normalize_option_facts,
+    option_evidence_identities,
     option_fact_text,
 )
 from app.decision_kits import get_decision_kit, normalize_decision_kit
@@ -6853,6 +6854,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if target_attributes:
             store_option_attributes(session, option_key, target_attributes, option)
         corpus = _thread_user_corpus(user_id, thread_id)
+        known_names = [
+            str(item.get("display_name") or "").strip()
+            for item in (session.get("option_registry") or {}).values()
+            if isinstance(item, dict) and item.get("display_name")
+        ]
+        current_option_names, other_option_names = option_evidence_identities(
+            session, option_key, option, known_names,
+        )
+        scoped_corpus = option_fact_text(corpus, option, known_names) or (user_message or corpus)
         normalized = {}
         rejected_fields = []
         for field in fields:
@@ -6872,9 +6882,12 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 rejected_fields.append({"field": str(field.get("key") or ""), "value": field.get("value"), "source": source, "evidence": evidence, "reason": str(exc)})
                 continue
             if source == "user":
-                grounded = ground_user_evidence(
-                    key, entry.get("value"), evidence, user_message or corpus, kit=kit,
-                ) or ground_user_evidence(key, entry.get("value"), evidence, corpus, kit=kit)
+                grounded = ground_option_user_evidence(
+                    key, entry.get("value"), evidence, scoped_corpus, corpus,
+                    kit=kit,
+                    current_option_names=current_option_names,
+                    other_option_names=other_option_names,
+                )
                 if not grounded:
                     rejected_fields.append({
                         "field": str(field.get("key") or ""), "value": field.get("value"),
@@ -6976,6 +6989,12 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             _queue_session = {}
         queue = []
         seen = set()
+        queue_corpus = _thread_user_corpus(user_id, thread_id)
+        queue_names = [
+            str(candidate.get("name") or candidate.get("idea") or candidate.get("label")
+                or candidate.get("title") or candidate.get("option") or "").strip()
+            for candidate in raw if isinstance(candidate, dict)
+        ]
         for it in raw:
             if isinstance(it, str):
                 it = {"name": it}
@@ -7028,9 +7047,12 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             rejected_attributes = []
             if raw_attributes is not None:
                 scoped_corpus = option_fact_text(
-                    _thread_user_corpus(user_id, thread_id),
+                    queue_corpus,
                     name,
-                    [str(candidate.get("name") or "") for candidate in raw if isinstance(candidate, dict)],
+                    queue_names,
+                )
+                current_option_names, other_option_names = option_evidence_identities(
+                    _queue_session, option_key, name, queue_names,
                 )
                 attributes = normalize_option_facts(
                     raw_attributes,
@@ -7048,8 +7070,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     evidence = str(entry.get("evidence") or "").strip()
                     invalid_reason = None
                     if source == "user":
-                        grounded = ground_user_evidence(
-                            field_key, entry.get("value"), evidence, scoped_corpus, kit=queue_kit,
+                        grounded = ground_option_user_evidence(
+                            field_key, entry.get("value"), evidence,
+                            scoped_corpus, queue_corpus, kit=queue_kit,
+                            current_option_names=current_option_names,
+                            other_option_names=other_option_names,
                         )
                         if grounded:
                             entry["evidence"] = grounded
@@ -7264,6 +7289,35 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             option_name=requested_name,
             rejected_fields=rejected_fields,
         )
+        current_option_names, other_option_names = option_evidence_identities(
+            session, option_key, requested_name, known_option_names,
+        )
+        for field_key, entry in list(attributes.items()):
+            if str(entry.get("source") or "").lower() != "user":
+                continue
+            evidence = str(entry.get("evidence") or "").strip()
+            # Legacy single-score tool payloads may omit evidence entirely.
+            # Preserve that existing behavior; when the model does claim user
+            # evidence, enforce the same exact grounding as every other path.
+            if not evidence:
+                continue
+            grounded = ground_option_user_evidence(
+                field_key, entry.get("value"), evidence,
+                scoped_evidence_corpus, evidence_corpus, kit=kit,
+                current_option_names=current_option_names,
+                other_option_names=other_option_names,
+            )
+            if grounded:
+                entry["evidence"] = grounded
+                continue
+            rejected_fields.append({
+                "field": field_key,
+                "value": entry.get("value"),
+                "source": "user",
+                "evidence": evidence,
+                "reason": "Evidence could not be grounded in the option's user-authored section",
+            })
+            attributes.pop(field_key, None)
         context_notes, rejected_fields = _partition_unknown_fact_notes(rejected_fields, scoped_evidence_corpus)
         _store_option_context_notes(session, option_key, context_notes)
         if session.get("decision_kit_preserve_existing_facts"):
