@@ -115,6 +115,8 @@ def test_queue_keeps_seven_and_never_leaks_continuation(app, db, test_user, monk
     visible = agent._mutation_result_summary('queue_scorecards', result)['confirmation']
     assert 'continue' not in visible.lower() and 'tell the user' not in visible.lower()
     assert len(saved[-1]['seven']['scorecard_queue']) == 7
+    assert "Jaspen's standard criteria" in result['confirmation']
+    assert 'your rubric' not in result['confirmation']
 
 
 def test_short_score_action_routes_as_structured(app):

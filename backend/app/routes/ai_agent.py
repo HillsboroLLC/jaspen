@@ -7120,7 +7120,12 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             error["action"] = {"type": "retry", "label": "Retry"}
             return error
         names = ", ".join(q["name"] for q in queue)
-        confirmation = f"Queued {len(queue)} ideas to score against your rubric: {names}."
+        from ..decision_state import rubric_is_approved
+        criteria_owner = (
+            "your criteria" if rubric_is_approved(_queue_session.get("scoring_rubric"))
+            else "Jaspen's standard criteria"
+        )
+        confirmation = f"Queued {len(queue)} ideas to score against {criteria_owner}: {names}."
         return {
             "ok": True,
             "tool": tool_name,

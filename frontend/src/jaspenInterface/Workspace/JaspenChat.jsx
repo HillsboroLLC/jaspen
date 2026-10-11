@@ -14001,7 +14001,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               }}
             >
               <span aria-hidden="true">⏳</span>
-              {`Scoring your ${batchScoring.count || ''} option${batchScoring.count === 1 ? '' : 's'} against your rubric — this takes ~30–60s. The scorecards will appear above as soon as they're ready.`}
+              {`Scoring your ${batchScoring.count || ''} option${batchScoring.count === 1 ? '' : 's'} — this takes ~30–60s. The scorecards will appear above as soon as they're ready.`}
             </div>
           ) : null}
 
