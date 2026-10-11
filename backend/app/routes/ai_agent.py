@@ -1259,6 +1259,33 @@ def _ensure_session_decision_kit_gates(session):
     return True
 
 
+def _ensure_decision_kit_starter_rubric(session, *, user_message=""):
+    """Create canonical proposed-rubric state as soon as a kit is resolved."""
+    if not isinstance(session, dict) or not session.get("decision_kit"):
+        return False
+    current = session.get("scoring_rubric")
+    if isinstance(current, dict) and current.get("criteria"):
+        return _ensure_session_decision_kit_gates(session)
+    if _message_supplies_weighted_rubric(user_message):
+        return False
+    kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
+    if not kit:
+        return False
+    criteria = _rubric_with_required_kit_gates([
+        dict(item) for item in (kit.get("starter_rubric") or [])
+        if isinstance(item, dict)
+    ], kit)
+    if not criteria:
+        return False
+    session["scoring_rubric"] = {
+        "criteria": criteria,
+        "source": "jaspen_proposed",
+        "created_at": _iso_now(),
+        "approval_status": "proposed",
+    }
+    return True
+
+
 def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
     """Persist and render the exact application rubric before approval."""
     if not isinstance(session, dict) or not user_id or not thread_id:
@@ -1266,35 +1293,44 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
     _ensure_session_decision_kit_gates(session)
     current = session.get("scoring_rubric")
     if isinstance(current, dict) and current.get("criteria"):
-        return None
-    if _message_supplies_weighted_rubric(user_message):
-        return None
-    kit = (
-        get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
-        if session.get("decision_kit") else None
-    )
-    if kit:
-        criteria = _rubric_with_required_kit_gates([
-            dict(item) for item in (kit.get("starter_rubric") or [])
-            if isinstance(item, dict)
-        ], kit)
-        rubric_label = f"{kit.get('label') or 'Decision Kit'} rubric"
-    else:
-        if not _rubric_proposal_requested(user_message):
+        if current.get("approval_status") == "approved" or current.get("presented_at"):
             return None
-        from .strategy import default_objective_rubric
-        criteria = default_objective_rubric(session.get("strategy_objective"))
-        rubric_label = "scoring rubric"
-    if not criteria:
-        return None
+        criteria = current.get("criteria")
+        kit = (
+            get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
+            if session.get("decision_kit") else None
+        )
+        rubric_label = f"{kit.get('label') or 'Decision Kit'} rubric" if kit else "scoring rubric"
+        rubric = current
+    else:
+        if _message_supplies_weighted_rubric(user_message):
+            return None
+        kit = (
+            get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
+            if session.get("decision_kit") else None
+        )
+        if kit:
+            criteria = _rubric_with_required_kit_gates([
+                dict(item) for item in (kit.get("starter_rubric") or [])
+                if isinstance(item, dict)
+            ], kit)
+            rubric_label = f"{kit.get('label') or 'Decision Kit'} rubric"
+        else:
+            if not _rubric_proposal_requested(user_message):
+                return None
+            from .strategy import default_objective_rubric
+            criteria = default_objective_rubric(session.get("strategy_objective"))
+            rubric_label = "scoring rubric"
+        if not criteria:
+            return None
+        rubric = {
+            "criteria": criteria,
+            "source": "jaspen_proposed",
+            "created_at": _iso_now(),
+            "approval_status": "proposed",
+        }
     presented_at = _iso_now()
-    rubric = {
-        "criteria": criteria,
-        "source": "jaspen_proposed",
-        "created_at": presented_at,
-        "presented_at": presented_at,
-        "approval_status": "proposed",
-    }
+    rubric = {**rubric, "presented_at": presented_at}
     session["scoring_rubric"] = rubric
     sessions = load_user_sessions(user_id) or {}
     key, durable = _resolve_user_session(sessions, thread_id)
@@ -11776,6 +11812,7 @@ def conversation_start():
     _apply_rfp_decision_context(
         session, user_message, explicit_selection=raw_decision_kit or None, judgment=kit_judgment,
     )
+    _ensure_decision_kit_starter_rubric(session, user_message=user_message)
     if intake_context_supplied:
         session["intake_context"] = _apply_user_profile_defaults_to_intake_context(
             user,
@@ -12475,6 +12512,7 @@ def conversation_continue():
     # persisted state when the user did not click the RFP pill.
     kit_judgment = _decision_kit_judgment_for_turn(session, user_message, model_selection)
     _apply_rfp_decision_context(session, user_message, judgment=kit_judgment)
+    _ensure_decision_kit_starter_rubric(session, user_message=user_message)
 
     session_created = False
     session["organization_id"] = session.get("organization_id") or active_org_id

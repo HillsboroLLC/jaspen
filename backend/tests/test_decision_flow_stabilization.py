@@ -875,6 +875,68 @@ def test_decision_kit_starter_rubric_is_persisted_and_rendered_before_provider_r
     assert 'Surety / bond confirmation: required gate' in reply
 
 
+def test_inferred_rfp_kit_saves_one_proposal_and_first_approval_allows_scoring(app, db, test_user, monkeypatch):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'inferred-rfp-one-approval'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    session = sessions[tid]
+    first_message = (
+        'We need to decide whether to bid on three public contracts. '
+        'Propose a scoring rubric for me to approve.'
+    )
+    agent._apply_rfp_decision_context(session, first_message, judgment={
+        'kit': 'rfp_bid',
+        'confidence': 'high',
+        'evidence_quote': 'decide whether to bid',
+    })
+
+    assert agent._ensure_decision_kit_starter_rubric(
+        session, user_message=first_message,
+    ) is True
+    assert session['decision_kit'] == 'rfp_bid'
+    proposed = session['scoring_rubric']
+    assert proposed['approval_status'] == 'proposed'
+    assert 'presented_at' not in proposed
+    assert len(proposed['criteria']) == 9
+    assert {item['key'] for item in proposed['criteria'] if item.get('gate')} == {
+        'submission_deadline', 'capacity_available', 'surety_confirmation',
+    }
+    sessions[tid] = session
+    assert save_user_sessions(test_user.id, sessions)
+    monkeypatch.setattr(
+        agent, '_resolve_governed_routes',
+        lambda *a, **k: pytest.fail('provider must not author or present the kit rubric'),
+    )
+
+    reply, usage, actions, _, _ = agent._generate_assistant_reply(
+        first_message, [], {}, {'llm_model': 'test'},
+        session=session, user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert usage['provider'] == 'deterministic' and actions == []
+    assert 'Win probability & competitive position: 20%' in reply
+    assert 'Surety / bond confirmation: required gate' in reply
+    displayed = load_user_sessions(test_user.id)[tid]['scoring_rubric']
+    assert displayed['presented_at']
+    assert displayed['created_at'] == proposed['created_at']
+
+    approval = 'Approved. Score all three bids with it now.'
+    assert agent._approve_presented_rubric_for_turn(
+        session, user_id=test_user.id, thread_id=tid, user_message=approval,
+    ) is True
+    approved = load_user_sessions(test_user.id)[tid]['scoring_rubric']
+    assert approved['approval_status'] == 'approved'
+    assert approved['criteria'] == displayed['criteria']
+    assert session['scoring_intent'] == {'status': 'requested', 'source': 'user'}
+    assert agent._guard_mutation_tool(
+        'queue_scorecards', user_turn_count=2, mutations_this_turn=0,
+        user_message=approval, session=session,
+    ) is None
+
+
 def test_general_objective_rubric_is_persisted_and_rendered_in_full(app, db, test_user, monkeypatch):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions
