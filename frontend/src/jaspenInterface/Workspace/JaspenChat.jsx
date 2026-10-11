@@ -93,6 +93,13 @@ import { formatSmartDate as fmtSmartDate, formatNextResetDate as fmtNextResetDat
 // Styles - Single source of truth
 import "./JaspenChat.css";
 
+
+function riskText(r) {
+  if (typeof r === 'string') return r.trim();
+  if (!r || typeof r !== 'object') return '';
+  return String(r.risk || r.text || r.description || '').trim();
+}
+
 const IS_DEV = process.env.NODE_ENV !== 'production';
 const devWarn = (...args) => {
   if (IS_DEV) console.warn(...args);
@@ -2880,7 +2887,9 @@ const renderScorecardCard = (result, opts = {}) => {
     ];
   }
 
-  const risks = result?.top_risks || [];
+  // Unverified numbers are stripped from risk text upstream, which can leave
+  // an object with no wording. Show only risks that still have words.
+  const risks = (result?.top_risks || []).map(riskText).filter(Boolean);
   const recs = result?.recommendations || [];
   const nextSteps = result?.next_steps || [];
   const recommendedScenario = (recs[0] && typeof recs[0] === 'string') ? recs[0]
@@ -2974,7 +2983,7 @@ const renderScorecardCard = (result, opts = {}) => {
               <p className="jas-scorecard-bottom-col-label">Where the Plan Is Exposed</p>
               {risks.slice(0, 3).map((r, i) => (
                 <p key={i} className="jas-scorecard-risk-item">
-                  · {typeof r === 'string' ? r : (r.risk || r.text || String(r))}
+                  · {r}
                 </p>
               ))}
             </div>
@@ -9591,7 +9600,7 @@ const handleSaveStarter = async () => {
       { key: 'execution_readiness',    label: 'Execution Confidence',    val: comps.execution_readiness ?? comps.executionReadiness ?? comps.readiness ?? comps.team ?? 0 },
     ];
     const clamp = (n) => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
-    const risks = Array.isArray(result.risks) ? result.risks : [];
+    const risks = (Array.isArray(result.risks) ? result.risks : []).map(riskText).filter(Boolean);
 
     return (
       <div className="jas-mini-scorecard">
@@ -9623,7 +9632,7 @@ const handleSaveStarter = async () => {
             <div className="jas-mini-section-title">Where the Plan Is Exposed</div>
             <ul className="jas-mini-risklist">
               {risks.slice(0, 3).map((r, i) => (
-                <li key={i}>{String(r)}</li>
+                <li key={i}>{r}</li>
               ))}
             </ul>
           </div>
