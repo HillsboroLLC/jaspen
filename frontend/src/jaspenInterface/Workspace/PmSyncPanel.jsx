@@ -13,6 +13,10 @@ const buttonStyle = {
   border: `1px solid ${COLOR.line}`, borderRadius: 8, background: '#fff', color: COLOR.navy,
   padding: '8px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
 };
+const inputStyle = {
+  width: '100%', boxSizing: 'border-box', border: `1px solid ${COLOR.line}`, borderRadius: 8,
+  background: '#fff', color: COLOR.navy, padding: '10px 11px', fontSize: 13, outline: 'none',
+};
 
 function Choice({ checked, onClick, title, detail, disabled = false }) {
   return <button type="button" onClick={onClick} aria-pressed={checked} disabled={disabled} style={{
@@ -39,6 +43,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [guidance, setGuidance] = useState('');
   const [connect, setConnect] = useState(null);
   const [connectionTested, setConnectionTested] = useState(false);
   const [logs, setLogs] = useState([]);
@@ -71,12 +76,12 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
 
   const begin = () => {
     setOpen(true); setTool(''); setConnect(null); setConnectionTested(false);
-    setProjects([]); setProjectKey(''); setPreview(null); setError('');
+    setProjects([]); setProjectKey(''); setPreview(null); setError(''); setGuidance('');
   };
 
   const chooseTool = async (nextTool) => {
     if (nextTool !== 'jira') return;
-    setTool(nextTool); setBusy(true); setError('');
+    setTool(nextTool); setBusy(true); setError(''); setGuidance('');
     try {
       const [projectData, previewData] = await Promise.all([
         Jaspen.listJiraProjects(), Jaspen.previewPmSync(threadId, planKey, true),
@@ -85,9 +90,11 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
       setPreview(previewData?.preview || null);
     } catch (e) {
       const message = String(e?.message || e || 'Could not load Jira.');
-      setError(message);
       if (/not connected|configuration is missing/i.test(message)) {
+        setGuidance('Connect Jira to choose or create a project for this execution plan.');
         setConnect({ jira_base_url: '', jira_email: '', jira_api_token: '' });
+      } else {
+        setError(message);
       }
     } finally { setBusy(false); }
   };
@@ -182,7 +189,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     {logs.length > 0 && <details style={{ fontSize:11.5, color:COLOR.ink }}><summary style={{ cursor:'pointer' }}>Sync history</summary><div style={{ position:'absolute', zIndex:20, background:'#fff', border:`1px solid ${COLOR.line}`, borderRadius:8, padding:10, width:330, boxShadow:'0 10px 30px rgba(22,31,59,.12)' }}>{logs.slice(0, 5).map((log) => <div key={log.id} style={{ padding:'5px 0', borderBottom:`1px solid ${COLOR.line2}` }}><strong>{log.status}</strong> · {log.items_synced || 0} changes · {log.created_at ? new Date(log.created_at).toLocaleString() : 'just now'}{(log.sync_metadata?.conflicts || []).map((conflict) => <div key={`${conflict.task_id}-${conflict.field}`} style={{ color:'#9f1239' }}>{conflict.task_id}: choose the {conflict.field} value</div>)}{(log.sync_metadata?.errors || []).map((item, index) => <div key={index} style={{ color:'#9f1239' }}>{item.error}</div>)}</div>)}</div></details>}
   </div>;
 
-  const close = () => { setOpen(false); setTool(''); setConnect(null); setError(''); };
+  const close = () => { setOpen(false); setTool(''); setConnect(null); setError(''); setGuidance(''); };
 
   return <>
     <label style={{ ...buttonStyle, display:'inline-flex', gap:7, alignItems:'center', opacity: (!taskCount || !planKey) ? 0.55 : 1 }}>
@@ -199,14 +206,15 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
           <button type="button" aria-label="Close" onClick={close} style={{ ...buttonStyle, width: 34, height: 34 }}>×</button>
         </div>
         {error && <div role="alert" style={{ padding: 10, borderRadius: 8, background: '#fff1f2', color: '#9f1239', fontSize: 12, marginBottom: 14 }}>{error}</div>}
+        {guidance && <div role="status" style={{ padding: 10, borderRadius: 8, background: COLOR.line2, color: COLOR.navy2, fontSize: 12, marginBottom: 14 }}>{guidance}</div>}
         {!tool ? <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
           <Choice checked={false} onClick={() => chooseTool('jira')} title="Jira" detail="Connect an existing project or create a new one" />
           <Choice checked={false} disabled title="Smartsheet" detail="Coming soon" />
         </div> : connect ? <div style={{ display: 'grid', gap: 10 }}>
           <strong style={{ color: COLOR.navy }}>Connect Jira</strong>
-          <input aria-label="Jira site URL" placeholder="https://company.atlassian.net" value={connect.jira_base_url} onChange={(e) => setConnect({ ...connect, jira_base_url: e.target.value })} />
-          <input aria-label="Jira email" placeholder="you@company.com" value={connect.jira_email} onChange={(e) => setConnect({ ...connect, jira_email: e.target.value })} />
-          <input aria-label="Jira API token" type="password" placeholder="API token" value={connect.jira_api_token} onChange={(e) => setConnect({ ...connect, jira_api_token: e.target.value })} />
+          <input aria-label="Jira site URL" style={inputStyle} placeholder="https://company.atlassian.net" value={connect.jira_base_url} onChange={(e) => setConnect({ ...connect, jira_base_url: e.target.value })} />
+          <input aria-label="Jira email" style={inputStyle} placeholder="you@company.com" value={connect.jira_email} onChange={(e) => setConnect({ ...connect, jira_email: e.target.value })} />
+          <input aria-label="Jira API token" style={inputStyle} type="password" placeholder="API token" value={connect.jira_api_token} onChange={(e) => setConnect({ ...connect, jira_api_token: e.target.value })} />
           <div style={{ color:COLOR.ink, fontSize:12 }}>Create an Atlassian API token, then paste it here. <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noreferrer">Open Atlassian API tokens</a></div>
           <div style={{ display:'flex', gap:8 }}><button type="button" onClick={() => { setTool(''); setConnect(null); setError(''); }} style={buttonStyle}>Back</button><button type="button" onClick={testConnection} disabled={busy || !connect.jira_base_url || !connect.jira_email || !connect.jira_api_token} style={buttonStyle}>{busy ? 'Testing…' : 'Test connection'}</button><button type="button" onClick={saveConnection} disabled={busy || !connectionTested} style={{ ...buttonStyle, border:`1px solid ${connectionTested ? COLOR.rose : COLOR.line}`, background:connectionTested ? COLOR.rose : '#fff', color:connectionTested ? '#fff' : COLOR.mute }}>Save and continue</button></div>
         </div> : <div style={{ display: 'grid', gap: 16 }}>
@@ -220,7 +228,11 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
           </div>
           <label style={{ display:'flex', alignItems:'center', gap:8, color:COLOR.navy, fontSize:12, fontWeight:650 }}><input type="checkbox" checked={mode === 'two_way'} onChange={(e) => setMode(e.target.checked ? 'two_way' : 'push_only')} />Two-way sync <span style={{ color:COLOR.mute, fontWeight:400 }}>(on by default; off is push only)</span></label>
           <details><summary style={{ color:COLOR.navy, fontSize:12, fontWeight:700, cursor:'pointer' }}>Advanced conflict handling</summary><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop:8 }}>{POLICIES.map(([value, label]) => <Choice key={value} checked={policy === value} onClick={() => setPolicy(value)} title={label} />)}</div></details>
-          {preview && <div style={{ background: COLOR.line2, borderRadius: 9, padding: 12, color: COLOR.navy2, fontSize: 12.5 }}>Will create {preview.epics} epic{preview.epics === 1 ? '' : 's'}, {preview.issues} issue{preview.issues === 1 ? '' : 's'}, and {preview.dependencies} “Blocks” link{preview.dependencies === 1 ? '' : 's'}{selectedProject ? ` in ${selectedProject.key}` : ''}. {preview.unmapped_owners} owner{preview.unmapped_owners === 1 ? '' : 's'} will be left unassigned.</div>}
+          {preview && <div style={{ background: COLOR.line2, borderRadius: 9, padding: 12, color: COLOR.navy2, fontSize: 12.5 }}>
+            <div>{preview.structure || `Creates ${preview.issues} tasks.`}{selectedProject ? ` Destination: ${selectedProject.key}.` : ''}</div>
+            {preview.tasks_without_start_date > 0 && <div style={{ marginTop:6 }}>{preview.tasks_without_start_date} task{preview.tasks_without_start_date === 1 ? '' : 's'} {preview.tasks_without_start_date === 1 ? 'has' : 'have'} no start date and won't appear on Jira's timeline.</div>}
+            {preview.unmapped_owners > 0 && <div style={{ marginTop:6 }}>{preview.unmapped_owners} owner{preview.unmapped_owners === 1 ? '' : 's'} will be left unassigned.</div>}
+          </div>}
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><button type="button" onClick={() => { setTool(''); setError(''); }} style={buttonStyle}>Back</button><div style={{ display:'flex', gap:8 }}><button type="button" onClick={close} style={buttonStyle}>Cancel</button><button type="button" onClick={send} disabled={busy || !projectKey} style={{ ...buttonStyle, border:`1px solid ${COLOR.rose}`, background: COLOR.rose, color: '#fff' }}>{busy ? 'Linking…' : 'Link project'}</button></div></div>
         </div>}
       </div>

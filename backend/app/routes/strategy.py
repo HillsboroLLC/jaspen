@@ -5868,15 +5868,36 @@ def _normalize_project_wbs(payload, existing=None):
         prior_normalized = _normalize_wbs_task(prior) if isinstance(prior, dict) else None
         if prior_normalized and prior_normalized.get('order') is None:
             prior_normalized['order'] = idx + 1
-        current_compare = {k: v for k, v in task.items() if k != 'updated_at'}
-        prior_compare = {k: v for k, v in (prior_normalized or {}).items() if k != 'updated_at'}
+        def _normalized_change_value(value):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value.strip() or None
+            if isinstance(value, (list, tuple)):
+                values = [_normalized_change_value(item) for item in value]
+                values = [item for item in values if item is not None]
+                return values or None
+            if isinstance(value, dict):
+                values = {key: _normalized_change_value(item) for key, item in value.items()}
+                return {key: item for key, item in values.items() if item is not None} or None
+            return value
+
+        ignored_change_metadata = {'updated_at', 'field_updated_at', 'pm_sync_state'}
+        current_compare = {
+            k: _normalized_change_value(v) for k, v in task.items()
+            if k not in ignored_change_metadata
+        }
+        prior_compare = {
+            k: _normalized_change_value(v) for k, v in (prior_normalized or {}).items()
+            if k not in ignored_change_metadata
+        }
         if prior_normalized and current_compare == prior_compare:
             task['updated_at'] = str(prior.get('updated_at') or task.get('updated_at') or now)
         else:
             task['updated_at'] = now
         field_times = dict((prior or {}).get('field_updated_at') or {})
         for field in ('title', 'description', 'owner', 'owner_email', 'status', 'start_date', 'due_date'):
-            if not prior_normalized or task.get(field) != prior_normalized.get(field):
+            if not prior_normalized or _normalized_change_value(task.get(field)) != _normalized_change_value(prior_normalized.get(field)):
                 field_times[field] = now
         task['field_updated_at'] = field_times
         tasks.append(task)

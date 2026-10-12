@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from urllib.parse import quote
 
 from app.connector_store import get_connector_settings
@@ -53,6 +53,51 @@ def test_connection(settings):
         raise ValueError("Jira site URL, email, and API token are required.")
     data, _ = _jira_request(config, "GET", "/rest/api/3/myself", timeout=20)
     return {"ok": True, "account_id": str((data or {}).get("accountId") or ""), "base_url": config["base_url"]}
+
+
+def discover_start_date_field(config):
+    """Return Jira's real date-backed start field, never a name-only match."""
+    data, _ = request(config, "GET", "/rest/api/3/field", timeout=20)
+    fields = data if isinstance(data, list) else []
+    system_matches = []
+    custom_matches = []
+    for field in fields:
+        if not isinstance(field, dict):
+            continue
+        schema = field.get("schema") if isinstance(field.get("schema"), dict) else {}
+        field_id = str(field.get("id") or "").strip()
+        system = str(schema.get("system") or "").strip().lower().replace("_", "")
+        schema_type = str(schema.get("type") or "").strip().lower()
+        custom_type = str(schema.get("custom") or "").strip().lower()
+        normalized_name = "".join(ch for ch in str(field.get("name") or "").lower() if ch.isalnum())
+        if field_id and (system == "startdate" or field_id.lower() == "startdate") and schema_type == "date":
+            system_matches.append(field_id)
+        elif (
+            field_id
+            and normalized_name == "startdate"
+            and schema_type == "date"
+            and ("datepicker" in custom_type or "date" in custom_type)
+        ):
+            custom_matches.append(field_id)
+    return (system_matches or custom_matches or [None])[0]
+
+
+def effective_start_date(task):
+    explicit = str((task or {}).get("start_date") or "").strip()[:10]
+    if explicit:
+        return explicit
+    due = str((task or {}).get("due_date") or "").strip()[:10]
+    duration = (task or {}).get("timeline_days")
+    if duration is None:
+        duration = (task or {}).get("estimated_days")
+    try:
+        duration = int(duration)
+        due_date = date.fromisoformat(due)
+    except (TypeError, ValueError):
+        return None
+    if duration < 1:
+        return None
+    return (due_date - timedelta(days=duration)).isoformat()
 
 
 def create_project(user_id, payload):
@@ -136,18 +181,30 @@ def task_fields(task, binding, parent_key=None):
         name = priority_map.get(str(task["priority"]).lower()) or str(task["priority"]).title()
         fields["priority"] = {"name": name}
     start_field = str(config.get("start_date_field_id") or "").strip()
-    if start_field and task.get("start_date"):
-        fields[start_field] = str(task["start_date"])[:10]
+    start_date = effective_start_date(task)
+    if start_field and start_date:
+        fields[start_field] = start_date
     return fields
 
 
-def phase_fields(phase_name, binding):
-    return {
+def phase_fields(phase_name, binding, tasks=None):
+    fields = {
         "project": {"key": binding.external_container_id},
         "issuetype": {"name": "Epic"},
         "summary": str(phase_name)[:255],
         "labels": ["jaspen", f"jaspen_plan_{binding.id.replace('-', '')[:12]}"],
     }
+    tasks = [task for task in (tasks or []) if isinstance(task, dict)]
+    starts = [effective_start_date(task) for task in tasks]
+    starts = [value for value in starts if value]
+    dues = [str(task.get("due_date") or "").strip()[:10] for task in tasks]
+    dues = [value for value in dues if value]
+    start_field = str((binding.config or {}).get("start_date_field_id") or "").strip()
+    if start_field and starts:
+        fields[start_field] = min(starts)
+    if dues:
+        fields["duedate"] = max(dues)
+    return fields
 
 
 def recover_issue(config, binding, entity_id):
@@ -176,9 +233,9 @@ def set_identity(config, binding, issue_key, entity_type, jaspen_id):
         "task_id": jaspen_id,
     })
     frontend = os.getenv("FRONTEND_BASE_URL", "https://jaspen.ai").rstrip("/")
-    global_id = quote(f"system=jaspen&binding={binding.id}&entity={entity_type}:{jaspen_id}", safe="")
-    request(config, "PUT", f"/rest/api/3/issue/{quote(issue_key)}/remotelink?globalId={global_id}", {
-        "globalId": f"system=jaspen&binding={binding.id}&entity={entity_type}:{jaspen_id}",
+    global_id = f"system=jaspen&binding={binding.id}&entity={entity_type}:{jaspen_id}"
+    request(config, "POST", f"/rest/api/3/issue/{quote(issue_key)}/remotelink", {
+        "globalId": global_id,
         "object": {"url": f"{frontend}/new?sid={quote(binding.thread_id)}", "title": "Open in Jaspen"}
     })
 

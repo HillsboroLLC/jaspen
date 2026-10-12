@@ -5,7 +5,7 @@ from app import db
 from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncLink
 from app.pm_sync.provider import get_provider
-from app.pm_sync.service import get_plan, push_binding
+from app.pm_sync.service import _sync_phases, ensure_start_date_field, get_plan, push_binding
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
 
 FIELDS = ("title", "description", "owner", "owner_email", "status", "start_date", "due_date")
@@ -23,8 +23,24 @@ def _dt(value):
         return None
 
 
-def _snapshot(task):
-    return {key: task.get(key) for key in FIELDS}
+def _normalized(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, (list, tuple)):
+        values = [_normalized(item) for item in value]
+        values = [item for item in values if item is not None]
+        return values or None
+    return value
+
+
+def _snapshot(task, binding=None):
+    result = {key: _normalized(task.get(key)) for key in FIELDS}
+    if binding is not None and binding.connector_id == "jira_sync" and (binding.config or {}).get("start_date_field_id"):
+        from app.pm_sync.jira_adapter import effective_start_date
+        result["start_date"] = effective_start_date(task)
+    return result
 
 
 def _field_times(task):
@@ -81,16 +97,27 @@ def reconcile_binding(binding, trigger="sync_now"):
     plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key)
     provider = get_provider(binding.connector_id)
     config = provider.assert_connected(binding.user_id, binding.external_container_id)
+    ensure_start_date_field(binding, config)
     tasks = {str(row.get("id")): row for row in (plan.get("tasks") or []) if isinstance(row, dict) and row.get("id")}
-    links = PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task").all()
+    all_links = PmSyncLink.query.filter_by(binding_id=binding.id).all()
+    phase_result = {"created": 0, "updated": 0, "failed": 0, "errors": []}
+    _sync_phases(binding, plan, config, {(link.entity_type, link.jaspen_id): link for link in all_links}, phase_result)
+    links = [link for link in all_links if link.entity_type == "task"]
     result = {"created": 0, "pulled": 0, "pushed": 0, "deleted": 0, "failed": 0,
               "conflicts": [], "unknown_statuses": [], "errors": []}
+    result["created"] += phase_result["created"]
+    result["pushed"] += phase_result["updated"]
+    result["failed"] += phase_result["failed"]
+    result["errors"].extend(phase_result["errors"])
     changed = False
     for link in links:
         task = tasks.get(link.jaspen_id)
         if not task or not link.external_id:
             continue
         try:
+            if link.last_error:
+                provider.set_identity(config, binding, link.external_id, "task", link.jaspen_id)
+                link.last_error = None
             remote = provider.get_item(config, binding, link.external_id)
             if remote.get("deleted"):
                 task["pm_sync_state"] = {"state": "removed_in_jira", "external_id": link.external_id,
@@ -100,7 +127,7 @@ def reconcile_binding(binding, trigger="sync_now"):
             if remote.get("status_error"):
                 result["unknown_statuses"].append({"task_id": link.jaspen_id, "status": remote["status_error"]})
             base = link.base_snapshot if isinstance(link.base_snapshot, dict) else {}
-            local, local_times = _snapshot(task), _field_times(task)
+            local, local_times = _snapshot(task, binding), _field_times(task)
             outside = remote.get("values") if isinstance(remote.get("values"), dict) else {}
             outside_times = remote.get("changed_at") if isinstance(remote.get("changed_at"), dict) else {}
             supported = set(remote.get("supported_fields") or FIELDS)
@@ -109,7 +136,7 @@ def reconcile_binding(binding, trigger="sync_now"):
             for field in FIELDS:
                 if field not in supported or (field == "status" and remote.get("status_error")):
                     continue
-                previous, here, there = base.get(field), local.get(field), outside.get(field)
+                previous, here, there = _normalized(base.get(field)), local.get(field), _normalized(outside.get(field))
                 local_changed, remote_changed = here != previous, there != previous
                 if not local_changed and not remote_changed:
                     continue
@@ -134,7 +161,7 @@ def reconcile_binding(binding, trigger="sync_now"):
                     result["unknown_statuses"].append({"task_id": link.jaspen_id, "status": outgoing.get("status")})
                 result["pushed"] += 1
             if not task_conflicts:
-                link.base_snapshot = _snapshot(task); link.external_version = _iso(remote.get("version"))
+                link.base_snapshot = _snapshot(task, binding); link.external_version = _iso(remote.get("version"))
                 link.jaspen_version = _iso(task.get("updated_at")); link.last_synced_at = datetime.utcnow()
                 link.state = "active"; link.last_error = None
         except Exception as exc:

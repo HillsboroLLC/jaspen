@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta
 
 from app import db
@@ -9,6 +10,7 @@ from app.scenarios_store import load_scenarios_data
 MODES = {"two_way", "push_only"}
 POLICIES = {"latest_wins", "prefer_external", "prefer_jaspen", "manual_review"}
 STATUSES = {"active", "paused", "error", "partial", "disconnected"}
+GENERIC_PHASE_NAMES = {"", "unphased", "execution", "execution plan", "generated plan", "plan"}
 
 
 def _now():
@@ -34,20 +36,73 @@ def get_plan(user_id, thread_id, plan_key):
     return plan, resolved_key
 
 
+def _clean_phase(value):
+    return str(value or "").strip() or "Unphased"
+
+
+def _meaningful_phase(value):
+    normalized = re.sub(r"\s+", " ", _clean_phase(value).lower()).strip()
+    return normalized not in GENERIC_PHASE_NAMES and not re.fullmatch(r"phase\s*[0-9a-z]+", normalized)
+
+
+def phase_groups(plan):
+    tasks = [task for task in (plan.get("tasks") or []) if isinstance(task, dict) and str(task.get("id") or "").strip()]
+    phase_order = list(dict.fromkeys(_clean_phase(task.get("phase")) for task in tasks))
+    meaningful = [phase for phase in phase_order if _meaningful_phase(phase)]
+    plan_title = str(plan.get("name") or plan.get("title") or "Execution plan").strip() or "Execution plan"
+    if len(meaningful) < 2:
+        stable_key = phase_order[0] if phase_order else "Unphased"
+        return [{"key": stable_key, "title": plan_title, "tasks": tasks}] if tasks else []
+    groups = []
+    for phase in phase_order:
+        phase_tasks = [task for task in tasks if _clean_phase(task.get("phase")) == phase]
+        groups.append({"key": phase, "title": phase if _meaningful_phase(phase) else plan_title, "tasks": phase_tasks})
+    return groups
+
+
+def _phase_snapshot(group, binding):
+    fields = jira_adapter.phase_fields(group["title"], binding, group["tasks"])
+    start_field = str((binding.config or {}).get("start_date_field_id") or "").strip()
+    return {
+        "title": fields.get("summary"),
+        "start_date": fields.get(start_field) if start_field else None,
+        "due_date": fields.get("duedate"),
+    }
+
+
+def ensure_start_date_field(binding, config):
+    current = str((binding.config or {}).get("start_date_field_id") or "").strip()
+    if current:
+        return current
+    try:
+        discovered = jira_adapter.discover_start_date_field(config)
+    except Exception:
+        discovered = None
+    if discovered:
+        binding.config = {**(binding.config or {}), "start_date_field_id": discovered}
+        db.session.flush()
+    return discovered
+
+
 def preview(plan, group_under_epics=True):
     tasks = [task for task in (plan.get("tasks") or []) if isinstance(task, dict) and str(task.get("id") or "").strip()]
-    phases = []
-    for task in tasks:
-        phase = str(task.get("phase") or "Unphased").strip() or "Unphased"
-        if phase not in phases:
-            phases.append(phase)
+    groups = phase_groups(plan) if group_under_epics else []
     dependencies = sum(len(task.get("depends_on") or []) for task in tasks)
     unresolved = len({str(task.get("owner") or "").strip() for task in tasks if str(task.get("owner") or "").strip()})
+    missing_start_dates = sum(1 for task in tasks if not jira_adapter.effective_start_date(task))
+    structures = [
+        f"Creates epic '{group['title']}' with {len(group['tasks'])} task{'s' if len(group['tasks']) != 1 else ''}"
+        for group in groups
+    ] if group_under_epics else [f"Creates {len(tasks)} task{'s' if len(tasks) != 1 else ''} without epics"]
+    if structures:
+        structures[-1] += f", {dependencies} 'Blocks' link{'s' if dependencies != 1 else ''}."
     return {
-        "epics": len(phases) if group_under_epics else 0,
+        "epics": len(groups),
         "issues": len(tasks),
         "dependencies": dependencies,
         "unmapped_owners": unresolved,
+        "tasks_without_start_date": missing_start_dates,
+        "structure": " ".join(structures),
     }
 
 
@@ -69,12 +124,16 @@ def create_binding(user, payload):
     plan, plan_key = get_plan(user.id, thread_id, requested_plan_key)
     jira = jira_adapter.assert_connected(user.id, project_key)
     config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+    try:
+        start_date_field_id = jira_adapter.discover_start_date_field(jira)
+    except Exception:
+        start_date_field_id = None
     config = {
         "task_issue_type": str(config.get("task_issue_type") or "Task"),
         "group_under_epics": bool(config.get("group_under_epics", True)),
         "priority_map": config.get("priority_map") if isinstance(config.get("priority_map"), dict) else {},
         "status_map": config.get("status_map") if isinstance(config.get("status_map"), dict) else {},
-        "start_date_field_id": str(config.get("start_date_field_id") or ""),
+        "start_date_field_id": str(config.get("start_date_field_id") or start_date_field_id or ""),
     }
     binding = PmSyncBinding.query.filter_by(thread_id=thread_id, plan_key=plan_key, connector_id=connector_id).first()
     if binding:
@@ -102,12 +161,74 @@ def create_binding(user, payload):
 
 
 def _snapshot(task):
+    def normalized(value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value.strip() or None
+        if isinstance(value, (list, tuple)):
+            values = [normalized(item) for item in value]
+            values = [item for item in values if item is not None]
+            return values or None
+        return value
     return {
-        key: task.get(key) for key in (
+        key: normalized(task.get(key)) for key in (
             "title", "description", "rationale", "owner", "owner_email", "status",
             "priority", "start_date", "due_date", "phase", "depends_on", "lineage", "updated_at",
         )
     }
+
+
+def _sync_phases(binding, plan, config, existing, result):
+    if not bool((binding.config or {}).get("group_under_epics", True)):
+        return {}
+    task_parents = {}
+    for group in phase_groups(plan):
+        phase_key = group["key"]
+        link = existing.get(("phase", phase_key))
+        issue_key = str(link.external_id if link else "").strip()
+        desired = _phase_snapshot(group, binding)
+        try:
+            if not issue_key:
+                recovered = _recover_or_none(config, binding, f"phase:{phase_key}")
+                if recovered:
+                    issue_key = str(recovered.get("key") or "")
+                else:
+                    created, _ = jira_adapter.request(
+                        config, "POST", "/rest/api/3/issue",
+                        {"fields": jira_adapter.phase_fields(group["title"], binding, group["tasks"])}
+                    )
+                    issue_key = str(created.get("key") or "")
+                    result["created"] += 1
+                jira_adapter.set_identity(config, binding, issue_key, "phase", f"phase:{phase_key}")
+            else:
+                previous = link.base_snapshot if isinstance(link.base_snapshot, dict) else {}
+                if previous != desired:
+                    fields = jira_adapter.phase_fields(group["title"], binding, group["tasks"])
+                    jira_adapter.request(config, "PUT", f"/rest/api/3/issue/{issue_key}", {"fields": jira_adapter.update_fields(fields)})
+                    result["updated"] += 1
+                if link.last_error:
+                    jira_adapter.set_identity(config, binding, issue_key, "phase", f"phase:{phase_key}")
+            _upsert_link(binding, "phase", phase_key, issue_key, snapshot=desired)
+            db.session.commit()
+            for task in group["tasks"]:
+                task_parents[str(task.get("id"))] = issue_key
+        except Exception as exc:
+            db.session.rollback()
+            # Jira may have created the epic before its Jaspen identity link
+            # failed. Keep that external key so a retry repairs the identity
+            # and updates the same epic instead of creating a duplicate.
+            if issue_key:
+                _upsert_link(
+                    binding, "phase", phase_key, issue_key,
+                    snapshot=desired, state="active", error=exc,
+                )
+                db.session.commit()
+                for task in group["tasks"]:
+                    task_parents[str(task.get("id"))] = issue_key
+            result["failed"] += 1
+            result["errors"].append({"entity_type": "phase", "jaspen_id": phase_key, "error": str(exc)})
+    return task_parents
 
 
 def _record_log(binding, trigger, result):
@@ -160,46 +281,21 @@ def push_binding(binding, plan=None, trigger="send"):
     if plan is None:
         plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key)
     config = jira_adapter.assert_connected(binding.user_id, binding.external_container_id)
+    ensure_start_date_field(binding, config)
     tasks = [task for task in (plan.get("tasks") or []) if isinstance(task, dict) and str(task.get("id") or "").strip()]
     existing = {
         (link.entity_type, link.jaspen_id): link
         for link in PmSyncLink.query.filter_by(binding_id=binding.id).all()
     }
     result = {"created": 0, "updated": 0, "dependencies": 0, "failed": 0, "errors": []}
-    phase_keys = {}
-
-    if bool((binding.config or {}).get("group_under_epics", True)):
-        for phase in dict.fromkeys(str(task.get("phase") or "Unphased").strip() or "Unphased" for task in tasks):
-            link = existing.get(("phase", phase))
-            issue_key = str(link.external_id if link else "").strip()
-            try:
-                if not issue_key:
-                    recovered = _recover_or_none(config, binding, f"phase:{phase}")
-                    if recovered:
-                        issue_key = str(recovered.get("key") or "")
-                    else:
-                        created, _ = jira_adapter.request(config, "POST", "/rest/api/3/issue", {"fields": jira_adapter.phase_fields(phase, binding)})
-                        issue_key = str(created.get("key") or "")
-                        result["created"] += 1
-                    jira_adapter.set_identity(config, binding, issue_key, "phase", f"phase:{phase}")
-                else:
-                    jira_adapter.request(config, "PUT", f"/rest/api/3/issue/{issue_key}", {"fields": jira_adapter.update_fields(jira_adapter.phase_fields(phase, binding))})
-                    result["updated"] += 1
-                _upsert_link(binding, "phase", phase, issue_key, snapshot={"title": phase})
-                db.session.commit()
-                phase_keys[phase] = issue_key
-            except Exception as exc:
-                db.session.rollback()
-                result["failed"] += 1
-                result["errors"].append({"entity_type": "phase", "jaspen_id": phase, "error": str(exc)})
+    task_parents = _sync_phases(binding, plan, config, existing, result)
 
     pending = []
     for task in tasks:
         task_id = str(task["id"])
         link = existing.get(("task", task_id))
         issue_key = str(link.external_id if link else "").strip()
-        phase = str(task.get("phase") or "Unphased").strip() or "Unphased"
-        parent = phase_keys.get(phase)
+        parent = task_parents.get(task_id)
         fields = jira_adapter.task_fields(task, binding, parent)
         if not issue_key:
             recovered = _recover_or_none(config, binding, task_id)
@@ -210,7 +306,9 @@ def push_binding(binding, plan=None, trigger="send"):
                 jira_adapter.request(config, "PUT", f"/rest/api/3/issue/{issue_key}", {"fields": jira_adapter.update_fields(fields)})
                 jira_adapter.set_identity(config, binding, issue_key, "task", task_id)
                 jira_adapter.sync_status(config, binding, issue_key, task.get("status"))
-                _upsert_link(binding, "task", task_id, issue_key, parent, _snapshot(task))
+                task_snapshot = _snapshot(task)
+                task_snapshot["start_date"] = jira_adapter.effective_start_date(task)
+                _upsert_link(binding, "task", task_id, issue_key, parent, task_snapshot)
                 db.session.commit()
                 result["updated"] += 1
             except Exception as exc:
@@ -256,7 +354,9 @@ def push_binding(binding, plan=None, trigger="send"):
                 try:
                     jira_adapter.set_identity(config, binding, issue_key, "task", task_id)
                     jira_adapter.sync_status(config, binding, issue_key, task.get("status"))
-                    _upsert_link(binding, "task", task_id, issue_key, parent, _snapshot(task))
+                    task_snapshot = _snapshot(task)
+                    task_snapshot["start_date"] = jira_adapter.effective_start_date(task)
+                    _upsert_link(binding, "task", task_id, issue_key, parent, task_snapshot)
                     db.session.commit()
                     result["created"] += 1
                 except Exception as exc:

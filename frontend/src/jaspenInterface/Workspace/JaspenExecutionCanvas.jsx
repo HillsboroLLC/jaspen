@@ -403,7 +403,8 @@ export function TaskRow({ task, onUpdate, onReorder, isFirst, isLast, phaseName 
       onMouseLeave={() => setShowActions(false)}
       style={{
         display: 'grid',
-        gridTemplateColumns: '20px minmax(0, 1fr) 110px 150px 100px 130px 28px',
+        gridTemplateColumns: '20px minmax(300px, 1fr) 110px 150px 100px 130px 28px',
+        minWidth: 980,
         alignItems: 'center', gap: 14,
         padding: '12px 4px',
         borderTop: isFirst
@@ -544,7 +545,7 @@ export function PhaseCard({ phase, tasks, onUpdateTask, onAddTask, onReorder }) 
       border: `1px solid ${COLOR.line}`,
       borderRadius: 16,
       boxShadow: '0 1px 2px rgba(22,31,59,0.03)',
-      padding: '4px 22px 8px',
+      padding: '4px 22px 8px', overflowX: 'auto',
     }}>
       {/* Header */}
       <div style={{

@@ -4,7 +4,7 @@ import pytest
 
 from app import db as app_db
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
-from app.pm_sync.service import create_binding, preview, push_binding
+from app.pm_sync.service import _sync_phases, create_binding, preview, push_binding
 from app.pm_sync.reconciliation import reconcile_binding, resolve_conflict
 
 
@@ -32,7 +32,8 @@ def _binding(user):
         user_id=user.id, thread_id="thread-1", plan_key="score-1", connector_id="jira_sync",
         external_container_id="JST", external_container_url="https://example.atlassian.net/browse/JST",
         mode="push_only", conflict_policy="manual_review", policy_set_by_user_id=user.id,
-        field_policy_overrides={}, config={"task_issue_type": "Task", "group_under_epics": False}, user_map={},
+        field_policy_overrides={}, config={"task_issue_type": "Task", "group_under_epics": False,
+                                           "start_date_field_id": "customfield_10015"}, user_map={},
     )
     app_db.session.add(row); app_db.session.commit()
     return row
@@ -41,13 +42,29 @@ def _binding(user):
 def test_preview_is_deterministic_and_counts_dependencies():
     assert preview(PLAN, group_under_epics=True) == {
         "epics": 2, "issues": 2, "dependencies": 1, "unmapped_owners": 1,
+        "tasks_without_start_date": 2,
+        "structure": "Creates epic 'Prepare' with 1 task Creates epic 'Deliver' with 1 task, 1 'Blocks' link.",
     }
+
+
+def test_single_generic_phase_uses_plan_title_and_reports_missing_start_dates():
+    plan = {
+        "name": "Denver Water Pump Station — RFP Pursuit and Submission WBS",
+        "tasks": [
+            {"id": "a", "title": "A", "phase": "Generated Plan", "due_date": "2026-11-10", "timeline_days": 2},
+            {"id": "b", "title": "B", "phase": "Generated Plan", "due_date": "2026-11-12"},
+        ],
+    }
+    result = preview(plan, group_under_epics=True)
+    assert result["epics"] == 1
+    assert result["structure"] == "Creates epic 'Denver Water Pump Station — RFP Pursuit and Submission WBS' with 2 tasks, 0 'Blocks' links."
+    assert result["tasks_without_start_date"] == 1
 
 
 def test_binding_requires_explicit_mode_and_conflict_policy(test_user):
     with patch("app.pm_sync.service.get_plan", return_value=(PLAN, "score-1")), patch(
         "app.pm_sync.service.jira_adapter.assert_connected", return_value={"base_url": "https://example.atlassian.net"}
-    ):
+    ), patch("app.pm_sync.service.jira_adapter.discover_start_date_field", return_value=None):
         with pytest.raises(ValueError, match="sync mode"):
             create_binding(test_user, {"thread_id": "thread-1", "plan_key": "score-1", "project_key": "JST", "conflict_policy": "manual_review"})
         with pytest.raises(ValueError, match="conflict policy"):
@@ -139,6 +156,25 @@ def test_wbs_normalization_keeps_stable_id_lineage_owner_and_versions_changes():
     assert changed["tasks"][0]["id"] == "stable-1"
     assert changed["tasks"][0]["updated_at"] != "2026-10-10T10:00:00"
 
+
+def test_wbs_normalization_does_not_stamp_equivalent_empty_owner_fields():
+    from app.routes.strategy import _normalize_project_wbs
+
+    original = {"name": "Plan", "tasks": [{
+        "id": "stable-1", "title": "Do the work", "status": "todo",
+        "owner": "", "owner_email": None, "updated_at": "2026-10-10T10:00:00",
+        "field_updated_at": {"title": "2026-10-10T10:00:00"},
+    }]}
+    incoming = {"project_wbs": {"name": "Plan", "tasks": [{
+        "id": "stable-1", "title": "Do the work", "status": "todo",
+        "owner": "   ", "owner_email": "",
+    }]}}
+    normalized = _normalize_project_wbs(incoming, existing=original)
+    task = normalized["tasks"][0]
+    assert task["updated_at"] == "2026-10-10T10:00:00"
+    assert "owner" not in task["field_updated_at"]
+    assert "owner_email" not in task["field_updated_at"]
+
 def test_jira_status_uses_workflow_transition_category(test_user):
     from app.pm_sync.jira_adapter import sync_status
 
@@ -158,6 +194,47 @@ def test_jira_status_uses_workflow_transition_category(test_user):
     assert ("POST", "/rest/api/3/issue/JST-1/transitions", {"transition": {"id": "21"}}) in calls
 
 
+def test_jira_identity_uses_remote_link_post_with_global_id_in_body(test_user):
+    from app.pm_sync.jira_adapter import set_identity
+
+    binding = _binding(test_user)
+    with patch("app.pm_sync.jira_adapter.request") as request:
+        set_identity({}, binding, "JST-7", "task", "task-a")
+    remote = request.call_args_list[1]
+    assert remote.args[1] == "POST"
+    assert remote.args[2] == "/rest/api/3/issue/JST-7/remotelink"
+    assert remote.args[3]["globalId"] == f"system=jaspen&binding={binding.id}&entity=task:task-a"
+    assert "globalId=" not in remote.args[2]
+
+
+def test_start_date_field_discovery_requires_date_schema_not_name_alone():
+    from app.pm_sync.jira_adapter import discover_start_date_field
+
+    fields = [
+        {"id": "customfield_wrong", "name": "Start date", "schema": {"type": "string"}},
+        {"id": "customfield_10015", "name": "Start date", "schema": {
+            "type": "date", "custom": "com.atlassian.jira.plugin.system.customfieldtypes:datepicker",
+        }},
+    ]
+    with patch("app.pm_sync.jira_adapter.request", return_value=(fields, {})) as request:
+        assert discover_start_date_field({}) == "customfield_10015"
+    request.assert_called_once_with({}, "GET", "/rest/api/3/field", timeout=20)
+
+
+def test_task_and_epic_dates_use_discovered_start_field(test_user):
+    from app.pm_sync.jira_adapter import phase_fields, task_fields
+
+    binding = _binding(test_user)
+    task = {"title": "Prepare bid", "due_date": "2026-11-20", "timeline_days": 5}
+    assert task_fields(task, binding)["customfield_10015"] == "2026-11-15"
+    fields = phase_fields("Bid submission", binding, [
+        task,
+        {"title": "Submit", "start_date": "2026-11-18", "due_date": "2026-11-25"},
+    ])
+    assert fields["customfield_10015"] == "2026-11-15"
+    assert fields["duedate"] == "2026-11-25"
+
+
 class _Provider:
     def __init__(self, remote):
         self.remote = remote
@@ -172,6 +249,9 @@ class _Provider:
     def update_item(self, _config, _binding, external_id, changes, _task=None):
         self.updates.append((external_id, changes))
         return {"status_mapped": True}
+
+    def set_identity(self, _config, _binding, external_id, entity_type, jaspen_id):
+        self.identity = (external_id, entity_type, jaspen_id)
 
 
 def _linked_binding(test_user, base, mode="two_way", policy="latest_wins"):
@@ -203,6 +283,102 @@ def test_three_way_pull_and_push_are_field_scoped(test_user):
     assert save.called
     assert link.base_snapshot["title"] == "Local title"
     assert link.base_snapshot["status"] == "done"
+
+
+def test_empty_values_do_not_create_false_changes_and_one_edit_pushes_one_task(test_user):
+    base = {"title": "Task", "description": None, "owner": None, "owner_email": "",
+            "status": "todo", "start_date": None, "due_date": None}
+    binding, _ = _linked_binding(test_user, base)
+    plan = {"tasks": [{"id": "task-a", "title": "Task", "description": " ", "owner": "",
+                       "owner_email": None, "status": "todo", "start_date": "", "due_date": None}]}
+    provider = _Provider({"deleted": False, "values": {**base, "owner": " ", "owner_email": None},
+                          "changed_at": {}, "version": "2026-10-12T10:00:00"})
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=provider):
+        first = reconcile_binding(binding)
+        assert first["pulled"] == 0
+        assert first["pushed"] == 0
+        plan["tasks"][0]["status"] = "done"
+        plan["tasks"][0]["field_updated_at"] = {"status": "2026-10-12T11:00:00"}
+        second = reconcile_binding(binding)
+    assert second["pulled"] == 0
+    assert second["pushed"] == 1
+    assert provider.updates == [("JST-1", {"status": "done"})]
+
+
+def test_sync_retries_identity_for_existing_link_with_prior_remote_link_failure(test_user):
+    base = {"title": "Task", "description": None, "owner": None, "owner_email": None,
+            "status": "todo", "start_date": None, "due_date": None}
+    binding, link = _linked_binding(test_user, base)
+    link.last_error = "405 Method Not Allowed"; app_db.session.commit()
+    plan = {"tasks": [{**base, "id": "task-a"}]}
+    provider = _Provider({"deleted": False, "values": base, "changed_at": {}, "version": None})
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=provider):
+        result = reconcile_binding(binding)
+    assert result["success"] is True
+    assert provider.identity == ("JST-1", "task", "task-a")
+    assert link.last_error is None
+
+
+def test_existing_epic_is_updated_in_place_with_plan_title_and_dates(test_user):
+    binding = _binding(test_user)
+    binding.config = {**binding.config, "group_under_epics": True}
+    link = PmSyncLink(binding_id=binding.id, entity_type="phase", jaspen_id="Generated Plan",
+                      external_id="JST-9", base_snapshot={"title": "Generated Plan"}, state="active")
+    app_db.session.add(link); app_db.session.commit()
+    plan = {"name": "Denver Water Pump Station — RFP Pursuit and Submission WBS", "tasks": [
+        {"id": "a", "title": "A", "phase": "Generated Plan", "start_date": "2026-11-10", "due_date": "2026-11-20"},
+        {"id": "b", "title": "B", "phase": "Generated Plan", "start_date": "2026-11-12", "due_date": "2026-11-25"},
+    ]}
+    result = {"created": 0, "updated": 0, "failed": 0, "errors": []}
+    with patch("app.pm_sync.service.jira_adapter.request", return_value=({}, {})) as request, patch(
+        "app.pm_sync.service.jira_adapter.set_identity") as identity:
+        parents = _sync_phases(binding, plan, {}, {("phase", "Generated Plan"): link}, result)
+    assert result == {"created": 0, "updated": 1, "failed": 0, "errors": []}
+    assert parents == {"a": "JST-9", "b": "JST-9"}
+    identity.assert_not_called()
+    update = request.call_args.args
+    assert update[1:3] == ("PUT", "/rest/api/3/issue/JST-9")
+    assert update[3]["fields"]["summary"] == plan["name"]
+    assert update[3]["fields"]["customfield_10015"] == "2026-11-10"
+    assert update[3]["fields"]["duedate"] == "2026-11-25"
+    assert PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="phase").count() == 1
+
+
+def test_failed_epic_identity_is_saved_and_retried_without_duplicate(test_user):
+    binding = _binding(test_user)
+    binding.config = {**binding.config, "group_under_epics": True}
+    app_db.session.commit()
+    plan = {"name": "Launch plan", "tasks": [
+        {"id": "a", "title": "A", "phase": "Generated Plan", "due_date": "2026-11-20"},
+    ]}
+    first_result = {"created": 0, "updated": 0, "failed": 0, "errors": []}
+    with patch("app.pm_sync.service.jira_adapter.request", return_value=({"key": "JST-9"}, {})) as request, patch(
+        "app.pm_sync.service.jira_adapter.set_identity", side_effect=ValueError("405 Method Not Allowed")
+    ):
+        parents = _sync_phases(binding, plan, {}, {}, first_result)
+
+    assert parents == {"a": "JST-9"}
+    assert first_result["created"] == 1
+    assert first_result["failed"] == 1
+    assert sum(1 for call in request.call_args_list if call.args[1:3] == ("POST", "/rest/api/3/issue")) == 1
+    saved = PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="phase", jaspen_id="Generated Plan").one()
+    assert saved.external_id == "JST-9"
+    assert saved.last_error == "405 Method Not Allowed"
+
+    retry_result = {"created": 0, "updated": 0, "failed": 0, "errors": []}
+    with patch("app.pm_sync.service.jira_adapter.request") as request, patch(
+        "app.pm_sync.service.jira_adapter.set_identity"
+    ) as identity:
+        parents = _sync_phases(binding, plan, {}, {("phase", "Generated Plan"): saved}, retry_result)
+
+    assert parents == {"a": "JST-9"}
+    assert retry_result == {"created": 0, "updated": 0, "failed": 0, "errors": []}
+    request.assert_not_called()
+    identity.assert_called_once_with({}, binding, "JST-9", "phase", "phase:Generated Plan")
+    assert saved.last_error is None
+    assert PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="phase").count() == 1
 
 
 def test_both_changed_uses_changelog_time_and_missing_time_requires_review(test_user):

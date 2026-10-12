@@ -13,7 +13,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [] });
   Jaspen.listJiraProjects.mockResolvedValue({ projects: [{ key: 'JST', name: 'Jaspen Test' }] });
-  Jaspen.previewPmSync.mockResolvedValue({ preview: { epics: 2, issues: 3, dependencies: 1, unmapped_owners: 1 } });
+  Jaspen.previewPmSync.mockResolvedValue({ preview: {
+    epics: 1, issues: 4, dependencies: 3, unmapped_owners: 1, tasks_without_start_date: 2,
+    structure: "Creates epic 'Denver Water Pump Station — RFP Pursuit and Submission WBS' with 4 tasks, 3 'Blocks' links.",
+  } });
   Jaspen.syncPmBinding.mockResolvedValue({ result: { binding: { id:'bind-1', status:'active', mode:'two_way' } }, logs:[] });
   Jaspen.getPmSyncBinding.mockResolvedValue({ logs:[] });
 });
@@ -25,7 +28,8 @@ it('defaults to two-way and most-recent-wins after an explicit Jira destination'
   expect(Jaspen.listJiraProjects).not.toHaveBeenCalled();
   expect(screen.getByRole('button', { name: /Smartsheet/i })).toBeDisabled();
   fireEvent.click(screen.getByRole('button', { name: /Jira/i }));
-  expect(await screen.findByText(/Will create 2 epics, 3 issues, and 1 “Blocks” link/)).toBeInTheDocument();
+  expect(await screen.findByText(/Creates epic 'Denver Water Pump Station — RFP Pursuit and Submission WBS' with 4 tasks, 3 'Blocks' links/)).toBeInTheDocument();
+  expect(screen.getByText(/2 tasks have no start date and won't appear on Jira's timeline/)).toBeInTheDocument();
   const send = screen.getByRole('button', { name: /Link project/i });
   expect(send).toBeDisabled();
   fireEvent.change(screen.getByLabelText('Destination project'), { target: { value: 'JST' } });
@@ -64,6 +68,9 @@ it('tests credentials before saving them', async () => {
   expect(Jaspen.listJiraProjects).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: /Jira/i }));
   await screen.findByLabelText('Jira site URL');
+  expect(screen.getByRole('status')).toHaveTextContent(/Connect Jira to choose or create a project/);
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Jira site URL')).toHaveStyle({ borderRadius: '8px', padding: '10px 11px' });
   fireEvent.change(screen.getByLabelText('Jira site URL'), { target:{ value:'https://example.atlassian.net' } });
   fireEvent.change(screen.getByLabelText('Jira email'), { target:{ value:'user@example.com' } });
   fireEvent.change(screen.getByLabelText('Jira API token'), { target:{ value:'secret' } });
