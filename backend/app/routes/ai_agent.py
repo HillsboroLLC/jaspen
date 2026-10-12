@@ -2402,6 +2402,27 @@ def _connector_context_prompt_suffix(connector_snapshot):
     return "\n" + "\n".join(lines)
 
 
+def _jira_portfolio_prompt_suffix(user_id, data_context_connector_ids=None):
+    """Load aggregate-only Jira evidence when both account and thread opt in."""
+    selected = {
+        str(value or "").strip().lower()
+        for value in (data_context_connector_ids or [])
+        if str(value or "").strip()
+    }
+    if not user_id or "jira_sync" not in selected:
+        return ""
+    settings = get_connector_settings(user_id, "jira_sync")
+    if not bool(settings.get("jira_data_enabled")):
+        return ""
+    try:
+        from app.jira_portfolio import ai_prompt_text, refresh_portfolio
+        snapshot = refresh_portfolio(user_id)
+        return "\n\n[AUTHORIZED JIRA DATA & INSIGHTS]\n" + ai_prompt_text(snapshot)
+    except Exception:
+        current_app.logger.exception("Failed to load authorized Jira portfolio context")
+        return ""
+
+
 def _session_memory_snippet(session):
     if not isinstance(session, dict):
         return ""
@@ -2743,6 +2764,22 @@ def _sanitize_lever_defaults(raw_defaults):
     return cleaned
 
 
+def _sanitize_data_context_connector_ids(raw_ids):
+    allowed = {
+        "jira_sync", "smartsheet_sync", "salesforce_insights",
+        "snowflake_insights", "servicenow_insights", "netsuite_insights",
+        "oracle_fusion_insights",
+    }
+    if not isinstance(raw_ids, list):
+        return []
+    cleaned = []
+    for value in raw_ids:
+        connector_id = str(value or "").strip().lower()
+        if connector_id in allowed and connector_id not in cleaned:
+            cleaned.append(connector_id)
+    return cleaned
+
+
 # NOTE: the three definitions below are NOT part of the readiness engine —
 # they only lived in the middle of it. They were accidentally deleted during
 # the intake_readiness.py extraction (they sat inside the removed line
@@ -2823,6 +2860,7 @@ def _new_session(
         "view_context": _sanitize_view_context(view_context),
         "starter_lever_defaults": _sanitize_lever_defaults(starter_lever_defaults),
         "connector_context_snapshot": {},
+        "data_context_connector_ids": [],
         "context_summaries": [],
     }
 
@@ -3199,6 +3237,10 @@ def _conversation_request_payload():
             data["lever_defaults"] = _parse_json_field(data.get("lever_defaults"), default={})
         if "view_context" in data:
             data["view_context"] = _parse_json_field(data.get("view_context"), default={})
+        if "data_context_connector_ids" in data:
+            data["data_context_connector_ids"] = _parse_json_field(
+                data.get("data_context_connector_ids"), default=[]
+            )
         attachments = _extract_conversation_attachments()
         return data, attachments
     return request.get_json() or {}, []
@@ -3856,7 +3898,7 @@ def _decision_kit_prompt_suffix(user_id, thread_id):
         return ""
 
 
-def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id, chat_history=None, readiness=None):
+def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id, chat_history=None, readiness=None, data_context_connector_ids=None):
     return (
         f"{_SYSTEM_PROMPT_PREFIX}"
         f"{_original_intake_prompt_suffix(chat_history)}"
@@ -3864,6 +3906,7 @@ def _build_agent_system_prompt(*, context_summary_text, intake_context, view_con
         f"{_intake_context_prompt_suffix(intake_context)}"
         f"{_view_context_prompt_suffix(view_context)}"
         f"{_connector_context_prompt_suffix(connector_context_snapshot)}"
+        f"{_jira_portfolio_prompt_suffix(user_id, data_context_connector_ids)}"
         f"{_cross_session_memory_prompt_suffix(user_id, thread_id)}"
         f"{_organizational_memory_prompt_suffix(user_id, thread_id)}"
         f"{_batch_promotion_prompt_suffix(user_id, thread_id)}"
@@ -8853,6 +8896,7 @@ def _generate_assistant_reply_anthropic(
         thread_id=thread_id,
         chat_history=chat_history,
         readiness=readiness,
+        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
     )
     system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
     _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
@@ -9098,6 +9142,7 @@ def _stream_assistant_reply_events_anthropic(
         thread_id=thread_id,
         chat_history=chat_history,
         readiness=readiness,
+        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
     )
     system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
     _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
@@ -9377,6 +9422,7 @@ def _generate_assistant_reply_gemini(
         thread_id=thread_id,
         chat_history=chat_history,
         readiness=readiness,
+        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
     )
     system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
     active_exec_id = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
@@ -9590,6 +9636,7 @@ def _stream_assistant_reply_events_gemini(
         thread_id=thread_id,
         chat_history=chat_history,
         readiness=readiness,
+        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
     )
     system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
     active_exec_id = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
@@ -12128,6 +12175,12 @@ def conversation_start():
         session["starter_lever_defaults"] = starter_lever_defaults
     elif not isinstance(session.get("starter_lever_defaults"), dict):
         session["starter_lever_defaults"] = {}
+    if "data_context_connector_ids" in data:
+        session["data_context_connector_ids"] = _sanitize_data_context_connector_ids(
+            data.get("data_context_connector_ids")
+        )
+    elif not isinstance(session.get("data_context_connector_ids"), list):
+        session["data_context_connector_ids"] = []
     session["connector_context_snapshot"] = _build_connector_context_snapshot(
         user_id,
         thread_id=thread_id,
@@ -12842,6 +12895,12 @@ def conversation_continue():
         session["starter_lever_defaults"] = starter_lever_defaults
     elif not isinstance(session.get("starter_lever_defaults"), dict):
         session["starter_lever_defaults"] = {}
+    if "data_context_connector_ids" in data:
+        session["data_context_connector_ids"] = _sanitize_data_context_connector_ids(
+            data.get("data_context_connector_ids")
+        )
+    elif not isinstance(session.get("data_context_connector_ids"), list):
+        session["data_context_connector_ids"] = []
     session["connector_context_snapshot"] = _build_connector_context_snapshot(
         user_id,
         thread_id=thread_id,

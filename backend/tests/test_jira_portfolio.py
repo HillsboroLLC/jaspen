@@ -64,6 +64,71 @@ def test_story_points_remain_unavailable_when_field_not_detected():
     assert result["story_points"]["total"] is None
 
 
+def test_ai_prompt_payload_is_aggregate_only_and_respects_session_override(app, monkeypatch):
+    from app.routes import ai_agent
+    snapshot = {
+        "fetched_at": "2026-10-12T16:00:00Z",
+        "stale": False,
+        "provenance": {"window_days": 90, "site": "https://secret.atlassian.net"},
+        "portfolio": {
+            "project_count": 1, "at_risk_projects": 1, "total": 4,
+            "status_counts": {"to_do": 1, "in_progress": 1, "done": 2},
+            "completion_percent": 50.0, "overdue_count": 1, "blocked_count": 1,
+            "overloaded_assignee_count": 1,
+            "throughput": {"trailing_4_weekly": 0.5, "trailing_12_weekly": 0.25, "trend": "up"},
+            "cycle_time": {"median_days": 9.5, "sample_size": 2},
+            "health": {"status": "at_risk", "overdue_share": 0.25, "blocked_share": 0.25},
+        },
+        "projects": [{
+            "project_key": "ABC", "project_name": "Alpha", "total": 4,
+            "status_counts": {"to_do": 1, "in_progress": 1, "done": 2},
+            "completion_percent": 50.0, "overdue_count": 1, "blocked_count": 1,
+            "overloaded_assignee_count": 1,
+            "throughput": {"trailing_4_weekly": 0.5, "trailing_12_weekly": 0.25, "trend": "up"},
+            "cycle_time": {"median_days": 9.5, "p85_days": 11.0, "sample_size": 2},
+            "health": {"status": "at_risk", "overdue_share": 0.25, "blocked_share": 0.25},
+            "oldest_overdue": {"issue_key": "SECRET-99", "due_date": "2026-10-01"},
+            "overloaded_assignees": [{"assignee": "Private Person", "in_progress": 9}],
+            "jira_links": {"all": "https://secret.atlassian.net/issues/SECRET-99"},
+            "issue_title": "Confidential acquisition",
+            "comment": "Never send this",
+        }],
+    }
+    payload = portfolio.ai_prompt_payload(snapshot)
+    serialized = portfolio.ai_prompt_text(snapshot)
+
+    assert payload["projects"][0]["project_key"] == "ABC"
+    assert payload["projects"][0]["project_name"] == "Alpha"
+    assert payload["portfolio"]["overloaded_assignee_count"] == 1
+    for forbidden in ("SECRET-99", "Private Person", "Confidential acquisition", "Never send this", "secret.atlassian.net"):
+        assert forbidden not in serialized
+
+    monkeypatch.setattr(ai_agent, "get_connector_settings", lambda *_: {"jira_data_enabled": True})
+    monkeypatch.setattr(portfolio, "refresh_portfolio", lambda *_: snapshot)
+    assert ai_agent._jira_portfolio_prompt_suffix("user-1", []) == ""
+    included = ai_agent._jira_portfolio_prompt_suffix("user-1", ["jira_sync"])
+    assert "Jira computed portfolio metrics" in included
+    assert "SECRET-99" not in included
+    with app.test_request_context():
+        provider_prompt = ai_agent._build_agent_system_prompt(
+            context_summary_text=None,
+            intake_context=None,
+            view_context=None,
+            connector_context_snapshot=None,
+            user_id="user-1",
+            thread_id="thread-1",
+            chat_history=[],
+            readiness=None,
+            data_context_connector_ids=["jira_sync"],
+        )
+    assert "Jira computed portfolio metrics" in provider_prompt
+    for forbidden in ("SECRET-99", "Private Person", "Confidential acquisition", "Never send this", "secret.atlassian.net"):
+        assert forbidden not in provider_prompt
+
+    monkeypatch.setattr(ai_agent, "get_connector_settings", lambda *_: {"jira_data_enabled": False})
+    assert ai_agent._jira_portfolio_prompt_suffix("user-1", ["jira_sync"]) == ""
+
+
 def test_refresh_scopes_projects_paginates_caches_and_emits_provenance(monkeypatch):
     settings = {
         "jira_data_project_scope": "selected",

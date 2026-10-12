@@ -606,7 +606,7 @@ export const Jaspen = {
   },
 
   // ---------- Conversational intake (Claude via /api/v1/chat) ----------
-async convoStart({ description, project_id, model_type, strategy_objective, decision_kit, intake_context, view_context, lever_defaults, starter_id, attachments }) {
+async convoStart({ description, project_id, model_type, strategy_objective, decision_kit, intake_context, view_context, lever_defaults, starter_id, data_context_connector_ids, attachments }) {
     // Default project_id for testing - replace with real project selection later
     const pid = project_id || 'default-jas-project';
 
@@ -625,6 +625,7 @@ async convoStart({ description, project_id, model_type, strategy_objective, deci
           view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
           lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
           starter_id: starter_id || undefined,
+          data_context_connector_ids: Array.isArray(data_context_connector_ids) ? data_context_connector_ids : undefined,
         }, attachments),
         { withSid: true, retryable: true }
       )
@@ -641,6 +642,7 @@ async convoStart({ description, project_id, model_type, strategy_objective, deci
           view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
           lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
           starter_id: starter_id || undefined,
+          data_context_connector_ids: Array.isArray(data_context_connector_ids) ? data_context_connector_ids : undefined,
         },
         { withSid: true }
       );
@@ -659,7 +661,7 @@ async convoStart({ description, project_id, model_type, strategy_objective, deci
       status: data.status || 'gathering_info',
     };
   },
-async convoContinue({ session_id, user_message, conversation_history, model_type, strategy_objective, intake_context, view_context, attachments }) {
+async convoContinue({ session_id, user_message, conversation_history, model_type, strategy_objective, intake_context, view_context, data_context_connector_ids, attachments }) {
     const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
     const data = hasAttachments
       ? await postForm(
@@ -671,6 +673,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
           strategy_objective: strategy_objective || undefined,
           intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
           view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
+          data_context_connector_ids: Array.isArray(data_context_connector_ids) ? data_context_connector_ids : undefined,
         }, attachments),
         { withSid: true, retryable: true }
       )
@@ -683,6 +686,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
           strategy_objective: strategy_objective || undefined,
           intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
           view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
+          data_context_connector_ids: Array.isArray(data_context_connector_ids) ? data_context_connector_ids : undefined,
         },
         { withSid: true }
       );
@@ -706,6 +710,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     view_context,
     lever_defaults,
     starter_id,
+    data_context_connector_ids,
     attachments,
     onDelta,
     onToolUse,
@@ -729,6 +734,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
         lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
         starter_id: starter_id || undefined,
+        data_context_connector_ids: Array.isArray(data_context_connector_ids) ? data_context_connector_ids : undefined,
       }, attachments)
       : JSON.stringify({
         message: description,
@@ -741,6 +747,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
         lever_defaults: lever_defaults && typeof lever_defaults === 'object' ? lever_defaults : undefined,
         starter_id: starter_id || undefined,
+        data_context_connector_ids: Array.isArray(data_context_connector_ids) ? data_context_connector_ids : undefined,
       });
     const resp = await openRetriedStream(url, {
       sid: getSid(),
@@ -806,6 +813,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     strategy_objective,
     intake_context,
     view_context,
+    data_context_connector_ids,
     attachments,
     onDelta,
     onToolUse,
@@ -824,6 +832,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         strategy_objective: strategy_objective || undefined,
         intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
         view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
+        data_context_connector_ids: Array.isArray(data_context_connector_ids) ? data_context_connector_ids : undefined,
       }, attachments)
       : JSON.stringify({
         thread_id: session_id,
@@ -832,6 +841,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         strategy_objective: strategy_objective || undefined,
         intake_context: intake_context && typeof intake_context === 'object' ? intake_context : undefined,
         view_context: view_context && typeof view_context === 'object' ? view_context : undefined,
+        data_context_connector_ids: Array.isArray(data_context_connector_ids) ? data_context_connector_ids : undefined,
       });
     const resp = await openRetriedStream(url, {
       sid: getSid(),

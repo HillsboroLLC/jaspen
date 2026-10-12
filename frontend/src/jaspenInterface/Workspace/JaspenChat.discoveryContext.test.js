@@ -37,3 +37,9 @@ test('active objective and RFP kit render in the upper-right context', () => {
   expect(source).toContain('new Set([...usedContextSourceIds, ...activeContextSourceIds])');
   expect(source).toContain('connectedDataSources.filter((src) => usedIds.has(src.id))');
 });
+
+test('Jira analysis defaults on from account settings and the session chip controls prompt inclusion', () => {
+  expect(source).toContain("defaultActive: item.id === 'jira_sync' && Boolean(item?.jira?.data_enabled)");
+  expect(source).toContain('dataContextConnectorIds: [...activeContextSourceIds]');
+  expect(clientSource).toContain('data_context_connector_ids: Array.isArray(data_context_connector_ids)');
+});

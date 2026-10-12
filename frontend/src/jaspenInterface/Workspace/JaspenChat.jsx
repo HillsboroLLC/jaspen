@@ -7509,6 +7509,7 @@ useEffect(() => {
     objective,
     intakeContext,
     viewContext,
+    dataContextConnectorIds,
     attachments,
   }) => {
     setIsStreamingReply(true);
@@ -7528,6 +7529,7 @@ useEffect(() => {
         strategy_objective: objective,
         intake_context: intakeContext && typeof intakeContext === 'object' ? intakeContext : undefined,
         view_context: viewContext && typeof viewContext === 'object' ? viewContext : undefined,
+        data_context_connector_ids: Array.isArray(dataContextConnectorIds) ? dataContextConnectorIds : [],
         attachments,
         abortSignal: controller?.signal,
         onDelta: (text) => appendStreamingAssistantDelta(placeholderId, text),
@@ -7591,6 +7593,7 @@ useEffect(() => {
     viewContext,
     leverDefaults,
     starterId,
+    dataContextConnectorIds,
     attachments,
   }) => {
     setIsStreamingReply(true);
@@ -7606,6 +7609,7 @@ useEffect(() => {
         view_context: viewContext && typeof viewContext === 'object' ? viewContext : undefined,
         lever_defaults: leverDefaults,
         starter_id: starterId,
+        data_context_connector_ids: Array.isArray(dataContextConnectorIds) ? dataContextConnectorIds : [],
         attachments,
         onDelta: (text) => appendStreamingAssistantDelta(placeholderId, text),
         onToolUse: (event) => setStreamToolStatus(toolStatusLabel(event?.tool)),
@@ -7705,6 +7709,7 @@ useEffect(() => {
         viewContext: chatViewContext,
         leverDefaults,
         starterId: selectedStarter?.id || undefined,
+        dataContextConnectorIds: [...activeContextSourceIds],
         attachments: Array.isArray(options.attachments) ? options.attachments : [],
       });
 
@@ -7806,6 +7811,7 @@ async function continueConversation(userText, options = {}) {
       objective: strategyObjective,
       intakeContext: ongoingIntakeContext,
       viewContext: chatViewContext,
+      dataContextConnectorIds: [...activeContextSourceIds],
       attachments: Array.isArray(options.attachments) ? options.attachments : [],
     });
     syncCreditsFromPayload(data, { refresh: true });
@@ -7990,6 +7996,7 @@ const [preflightQuestions, setPreflightQuestions] = useState([]);
 const [preflightAnswers, setPreflightAnswers] = useState({});
 const [connectedDataSources, setConnectedDataSources] = useState([]);
 const [activeContextSourceIds, setActiveContextSourceIds] = useState(new Set());
+const dataContextDefaultsAppliedRef = useRef(false);
 const [usedContextSourceIds, setUsedContextSourceIds] = useState(new Set()); // persistent: accumulates all sources ever successfully sent to AI this session
 const [contextSourceData, setContextSourceData] = useState({});
 const [contextSourceMeta, setContextSourceMeta] = useState({});
@@ -8486,9 +8493,17 @@ useEffect(() => {
         .map((item) => ({
           id: item.id,
           label: item.label || item.id,
+          defaultActive: item.id === 'jira_sync' && Boolean(item?.jira?.data_enabled),
           defaultTable: Array.isArray(item?.snowflake?.table_allowlist) ? (item.snowflake.table_allowlist[0] || '') : '',
         }));
       setConnectedDataSources(connected);
+      if (!dataContextDefaultsAppliedRef.current) {
+        dataContextDefaultsAppliedRef.current = true;
+        const defaults = connected.filter((item) => item.defaultActive).map((item) => item.id);
+        if (defaults.length > 0) {
+          setActiveContextSourceIds((previous) => new Set([...previous, ...defaults]));
+        }
+      }
     } catch (error) {
       devWarn('[connectors/status] request failed', { message: error?.message || 'unknown error' });
     }
@@ -9261,10 +9276,11 @@ const handleSaveStarter = async () => {
     const selectedContextLabels = selectedContextIds
       .map((id) => connectedDataSources.find((item) => item.id === id)?.label || id)
       .filter(Boolean);
+    const backendManagedContextIds = new Set(['jira_sync']);
     const successfulContextIds = selectedContextIds.filter(
-      (id) => contextSourceData[id] && !String(contextSourceData[id]).startsWith('__error__')
+      (id) => backendManagedContextIds.has(id) || (contextSourceData[id] && !String(contextSourceData[id]).startsWith('__error__'))
     );
-    const activeContextParts = successfulContextIds.map((id) => {
+    const activeContextParts = successfulContextIds.filter((id) => !backendManagedContextIds.has(id)).map((id) => {
       const source = connectedDataSources.find((item) => item.id === id);
       return `[${source?.label || id} Context]\n${contextSourceData[id]}`;
     });

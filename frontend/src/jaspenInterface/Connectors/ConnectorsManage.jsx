@@ -1188,7 +1188,7 @@ export default function ConnectorsManage() {
             </div>
             <label className="connector-auto-sync">
               <input type="checkbox" checked={Boolean(draft.jira_data_enabled)} onChange={(event) => updateDraft('jira_data_enabled', event.target.checked)} />
-              <span>Use Jira data in analysis</span>
+              <span><strong>Use Jira data in analysis</strong><br />When on, Jaspen's AI uses summary metrics from your Jira projects (counts, rates, health — never issue content or names) when analyzing decisions.</span>
             </label>
             <fieldset className="connector-project-scope">
               <legend>Projects included</legend>

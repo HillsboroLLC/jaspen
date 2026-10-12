@@ -129,7 +129,8 @@ it('treats Jira as Data & Insights without requiring a default project', async (
   expect(screen.getByText('Data & Insights')).toBeInTheDocument();
   expect(Array.from(container.querySelectorAll('.connector-list-item-label')).filter((node) => node.textContent === 'Jira')).toHaveLength(2);
   expect(await screen.findByText('Using Jira: https://acme.atlassian.net · owner@acme.test')).toBeInTheDocument();
-  expect(screen.getByLabelText('Use Jira data in analysis')).toBeChecked();
+  expect(screen.getByLabelText(/^Use Jira data in analysis/)).toBeChecked();
+  expect(screen.getByText(/summary metrics from your Jira projects/)).toHaveTextContent('never issue content or names');
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
   expect(screen.queryByLabelText(/Project Key/i)).not.toBeInTheDocument();
   await waitFor(() => expect(authFetch.mock.calls.some(([url]) => String(url).includes('/api/v1/connectors/jira/projects'))).toBe(true));

@@ -6,6 +6,7 @@ aggregates only; raw Jira issues are never passed to the language model.
 
 from __future__ import annotations
 
+import json
 import math
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -336,6 +337,84 @@ def canonical_evidence(snapshot):
         }
         for key, value in values.items() if value is not None
     ]
+
+
+def ai_prompt_payload(snapshot):
+    """Return the strict aggregate-only Jira payload allowed into AI prompts.
+
+    This is intentionally rebuilt from an allowlist rather than filtering the
+    provider response. Raw issues, issue text/keys, comments, URLs, and people
+    can therefore never cross this boundary by accident.
+    """
+    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    portfolio = snapshot.get("portfolio") if isinstance(snapshot.get("portfolio"), dict) else {}
+    provenance = snapshot.get("provenance") if isinstance(snapshot.get("provenance"), dict) else {}
+
+    def aggregate(row):
+        row = row if isinstance(row, dict) else {}
+        status_counts = row.get("status_counts") if isinstance(row.get("status_counts"), dict) else {}
+        throughput = row.get("throughput") if isinstance(row.get("throughput"), dict) else {}
+        cycle_time = row.get("cycle_time") if isinstance(row.get("cycle_time"), dict) else {}
+        health = row.get("health") if isinstance(row.get("health"), dict) else {}
+        return {
+            "total_count": row.get("total"),
+            "status_counts": {
+                "to_do": status_counts.get("to_do"),
+                "in_progress": status_counts.get("in_progress"),
+                "done": status_counts.get("done"),
+            },
+            "completion_percent": row.get("completion_percent"),
+            "overdue_count": row.get("overdue_count"),
+            "blocked_count": row.get("blocked_count"),
+            "overloaded_assignee_count": row.get("overloaded_assignee_count"),
+            "throughput": {
+                "trailing_4_weekly": throughput.get("trailing_4_weekly"),
+                "trailing_12_weekly": throughput.get("trailing_12_weekly"),
+                "trend": throughput.get("trend"),
+            },
+            "cycle_time": {
+                "median_days": cycle_time.get("median_days"),
+                "p85_days": cycle_time.get("p85_days"),
+                "sample_size": cycle_time.get("sample_size"),
+            },
+            "health": {
+                "status": health.get("status"),
+                "overdue_share": health.get("overdue_share"),
+                "blocked_share": health.get("blocked_share"),
+            },
+        }
+
+    projects = []
+    for row in snapshot.get("projects") if isinstance(snapshot.get("projects"), list) else []:
+        if not isinstance(row, dict):
+            continue
+        projects.append({
+            "project_key": row.get("project_key"),
+            "project_name": row.get("project_name"),
+            **aggregate(row),
+        })
+
+    return {
+        "source": "jira_computed_portfolio_metrics",
+        "fetched_at": snapshot.get("fetched_at"),
+        "window_days": provenance.get("window_days"),
+        "stale": bool(snapshot.get("stale")),
+        "portfolio": {
+            "project_count": portfolio.get("project_count"),
+            "at_risk_project_count": portfolio.get("at_risk_projects"),
+            **aggregate(portfolio),
+        },
+        "projects": projects,
+    }
+
+
+def ai_prompt_text(snapshot):
+    payload = ai_prompt_payload(snapshot)
+    return (
+        "Jira computed portfolio metrics (aggregate evidence only; no issue content or people):\n"
+        + json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        + "\nTreat these as source-labeled evidence. Do not recompute the supplied values or treat them as user-approved criteria."
+    )
 
 
 def _fresh(snapshot, *, now=None):
