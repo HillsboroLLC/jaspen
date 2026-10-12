@@ -37,6 +37,7 @@ import EmailResultsButton from './EmailResultsButton';
 import ShareButton from '../Sharing/ShareButton';
 import OnePagerReport from '../Sharing/OnePagerReport';
 import { useExecutionPlanBuild } from './useExecutionPlanBuild';
+import PmSyncPanel from './PmSyncPanel';
 
 // Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
 // drag the corner to resize to ANY size (not 4 fixed widths). WidthProvider makes
@@ -2160,6 +2161,13 @@ export default function JaspenWorkspace() {
                 className="share-btn share-btn--primary"
               />
             )}
+            {isExecution && (
+              <PmSyncPanel
+                threadId={threadId}
+                planKey={execIdeaId || resolvedExecScorecardId || wbs?.scorecard_id || ''}
+                taskCount={Array.isArray(wbs?.tasks) ? wbs.tasks.length : 0}
+              />
+            )}
             {(isScorecard || isTradeoff || isExecution) && (() => {
               // One "Export" menu everywhere: Email (opens the same dialog the
               // old standalone "Email this to me" button used, and now also
@@ -2346,6 +2354,7 @@ export default function JaspenWorkspace() {
               onAskJaspen={(text) => {
                 setChatInput(text);
               }}
+              showPlanActions={false}
             />
           ) : (
           classicCanvas ? (

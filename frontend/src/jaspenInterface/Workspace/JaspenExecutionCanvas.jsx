@@ -1098,7 +1098,7 @@ export function TimelineView({ wbs, phases }) {
 
 // ── Main canvas ────────────────────────────────────────────────────────────
 
-export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bundle, wbs: wbsProp, displayTitle, score, isWinner = false, onAskJaspen }) {
+export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bundle, wbs: wbsProp, displayTitle, score, isWinner = false, onAskJaspen, showPlanActions = true }) {
   // Local working copy of the WBS. Prefer the explicit wbs prop (fetched
   // from /threads/:tid/wbs which is the authoritative source) over the
   // bundle's project_wbs (which can lag for older threads).
@@ -1573,16 +1573,16 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
                 <FontAwesomeIcon icon={faArrowRotateRight} style={{ fontSize: 12 }} />
               </button>
             </div>
-            <PmSyncPanel
+            {showPlanActions && <PmSyncPanel
               threadId={threadId}
               planKey={scorecardId || wbs?.scorecard_id || ''}
               taskCount={totalTasks}
-            />
-            <ExecutionPlanExportButton
+            />}
+            {showPlanActions && <ExecutionPlanExportButton
               threadId={threadId}
               scorecardId={scorecardId || wbs?.scorecard_id || ''}
               disabled={!totalTasks}
-            />
+            />}
             <ViewSwitcher value={view} onChange={setView} />
           </div>
         </div>
