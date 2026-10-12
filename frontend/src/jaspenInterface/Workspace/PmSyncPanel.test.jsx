@@ -20,8 +20,11 @@ beforeEach(() => {
 
 it('defaults to two-way and most-recent-wins after an explicit Jira destination', async () => {
   render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sync with…' }));
-  expect(await screen.findByRole('dialog', { name: /send execution plan to jira/i })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('checkbox', { name: /Sync execution plan/i }));
+  expect(await screen.findByRole('dialog', { name: /set up execution plan sync/i })).toBeInTheDocument();
+  expect(Jaspen.listJiraProjects).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: /Smartsheet/i })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: /Jira/i }));
   expect(await screen.findByText(/Will create 2 epics, 3 issues, and 1 “Blocks” link/)).toBeInTheDocument();
   const send = screen.getByRole('button', { name: /Link project/i });
   expect(send).toBeDisabled();
@@ -36,7 +39,8 @@ it('sends the explicit choices and shows durable synced controls', async () => {
     result: { success: true, errors: [] },
   });
   render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sync with…' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /Sync execution plan/i }));
+  fireEvent.click(screen.getByRole('button', { name: /Jira/i }));
   await screen.findByRole('option', { name: /JST · Jaspen Test/ });
   fireEvent.change(screen.getByLabelText('Destination project'), { target: { value: 'JST' } });
   expect(screen.getByRole('checkbox', { name: /Two-way sync/i })).toBeChecked();
@@ -56,7 +60,9 @@ it('tests credentials before saving them', async () => {
   Jaspen.testJiraConnection.mockResolvedValue({ ok: true });
   Jaspen.connectJira.mockResolvedValue({ success: true });
   render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Sync with…' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: /Sync execution plan/i }));
+  expect(Jaspen.listJiraProjects).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: /Jira/i }));
   await screen.findByLabelText('Jira site URL');
   fireEvent.change(screen.getByLabelText('Jira site URL'), { target:{ value:'https://example.atlassian.net' } });
   fireEvent.change(screen.getByLabelText('Jira email'), { target:{ value:'user@example.com' } });
@@ -67,4 +73,17 @@ it('tests credentials before saving them', async () => {
   await waitFor(() => expect(screen.getByRole('button', { name:'Save and continue' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name:'Save and continue' }));
   await waitFor(() => expect(Jaspen.connectJira).toHaveBeenCalled());
+});
+
+it('closing tool selection leaves sync off and never checks a connector', async () => {
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  const toggle = screen.getByRole('checkbox', { name: /Sync execution plan/i });
+  expect(toggle).not.toBeChecked();
+  fireEvent.click(toggle);
+  expect(await screen.findByText(/Choose where this plan should stay in sync/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(toggle).not.toBeChecked();
+  expect(Jaspen.listJiraProjects).not.toHaveBeenCalled();
+  expect(Jaspen.previewPmSync).not.toHaveBeenCalled();
 });

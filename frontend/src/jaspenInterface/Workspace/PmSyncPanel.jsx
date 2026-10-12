@@ -14,11 +14,12 @@ const buttonStyle = {
   padding: '8px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
 };
 
-function Choice({ checked, onClick, title, detail }) {
-  return <button type="button" onClick={onClick} aria-pressed={checked} style={{
+function Choice({ checked, onClick, title, detail, disabled = false }) {
+  return <button type="button" onClick={onClick} aria-pressed={checked} disabled={disabled} style={{
     textAlign: 'left', border: `1px solid ${checked ? COLOR.rose : COLOR.line}`,
     boxShadow: checked ? `0 0 0 2px ${COLOR.roseTint}` : 'none', borderRadius: 9,
-    background: checked ? COLOR.roseTint : '#fff', padding: '10px 12px', cursor: 'pointer',
+    background: checked ? COLOR.roseTint : '#fff', padding: '10px 12px',
+    cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.55 : 1,
   }}>
     <div style={{ color: COLOR.navy, fontSize: 12.5, fontWeight: 650 }}>{title}</div>
     {detail && <div style={{ color: COLOR.mute, fontSize: 11.5, marginTop: 3 }}>{detail}</div>}
@@ -28,6 +29,7 @@ function Choice({ checked, onClick, title, detail }) {
 export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact = false }) {
   const [binding, setBinding] = useState(null);
   const [open, setOpen] = useState(false);
+  const [tool, setTool] = useState('');
   const [projects, setProjects] = useState([]);
   const [projectKey, setProjectKey] = useState('');
   const [mode, setMode] = useState('two_way');
@@ -67,8 +69,14 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
 
   const selectedProject = useMemo(() => projects.find((p) => p.key === projectKey), [projects, projectKey]);
 
-  const begin = async () => {
-    setOpen(true); setBusy(true); setError('');
+  const begin = () => {
+    setOpen(true); setTool(''); setConnect(null); setConnectionTested(false);
+    setProjects([]); setProjectKey(''); setPreview(null); setError('');
+  };
+
+  const chooseTool = async (nextTool) => {
+    if (nextTool !== 'jira') return;
+    setTool(nextTool); setBusy(true); setError('');
     try {
       const [projectData, previewData] = await Promise.all([
         Jaspen.listJiraProjects(), Jaspen.previewPmSync(threadId, planKey, true),
@@ -174,26 +182,33 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     {logs.length > 0 && <details style={{ fontSize:11.5, color:COLOR.ink }}><summary style={{ cursor:'pointer' }}>Sync history</summary><div style={{ position:'absolute', zIndex:20, background:'#fff', border:`1px solid ${COLOR.line}`, borderRadius:8, padding:10, width:330, boxShadow:'0 10px 30px rgba(22,31,59,.12)' }}>{logs.slice(0, 5).map((log) => <div key={log.id} style={{ padding:'5px 0', borderBottom:`1px solid ${COLOR.line2}` }}><strong>{log.status}</strong> · {log.items_synced || 0} changes · {log.created_at ? new Date(log.created_at).toLocaleString() : 'just now'}{(log.sync_metadata?.conflicts || []).map((conflict) => <div key={`${conflict.task_id}-${conflict.field}`} style={{ color:'#9f1239' }}>{conflict.task_id}: choose the {conflict.field} value</div>)}{(log.sync_metadata?.errors || []).map((item, index) => <div key={index} style={{ color:'#9f1239' }}>{item.error}</div>)}</div>)}</div></details>}
   </div>;
 
+  const close = () => { setOpen(false); setTool(''); setConnect(null); setError(''); };
+
   return <>
-    <button type="button" onClick={begin} disabled={!taskCount || !planKey} style={buttonStyle}>Sync with…</button>
-    {open && <div role="dialog" aria-modal="true" aria-label="Send execution plan to Jira" style={{
+    <label style={{ ...buttonStyle, display:'inline-flex', gap:7, alignItems:'center', opacity: (!taskCount || !planKey) ? 0.55 : 1 }}>
+      <input type="checkbox" checked={false} onChange={(e) => { if (e.target.checked) begin(); }} disabled={!taskCount || !planKey} />
+      Sync execution plan
+    </label>
+    {open && <div role="dialog" aria-modal="true" aria-label="Set up execution plan sync" style={{
       position: 'fixed', inset: 0, zIndex: 10000, background: 'rgba(22,31,59,.42)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
     }}>
       <div style={{ width: 620, maxWidth: '100%', maxHeight: '88vh', overflow: 'auto', background: '#fff', borderRadius: 14, padding: 24, boxShadow: '0 24px 70px rgba(22,31,59,.25)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-          <div><h2 style={{ margin: 0, color: COLOR.navy, fontSize: 20 }}>Connect a project tool</h2><p style={{ margin: '6px 0 18px', color: COLOR.ink, fontSize: 13 }}>Jira is available now. Smartsheet is coming soon.</p></div>
-          <button type="button" aria-label="Close" onClick={() => setOpen(false)} style={{ ...buttonStyle, width: 34, height: 34 }}>×</button>
+          <div><h2 style={{ margin: 0, color: COLOR.navy, fontSize: 20 }}>Sync this execution plan</h2><p style={{ margin: '6px 0 18px', color: COLOR.ink, fontSize: 13 }}>{tool ? 'Connect this plan to a project.' : 'Choose where this plan should stay in sync.'}</p></div>
+          <button type="button" aria-label="Close" onClick={close} style={{ ...buttonStyle, width: 34, height: 34 }}>×</button>
         </div>
         {error && <div role="alert" style={{ padding: 10, borderRadius: 8, background: '#fff1f2', color: '#9f1239', fontSize: 12, marginBottom: 14 }}>{error}</div>}
-        {connect ? <div style={{ display: 'grid', gap: 10 }}>
+        {!tool ? <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+          <Choice checked={false} onClick={() => chooseTool('jira')} title="Jira" detail="Connect an existing project or create a new one" />
+          <Choice checked={false} disabled title="Smartsheet" detail="Coming soon" />
+        </div> : connect ? <div style={{ display: 'grid', gap: 10 }}>
           <strong style={{ color: COLOR.navy }}>Connect Jira</strong>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}><Choice checked title="Jira" detail="Available" /><Choice checked={false} title="Smartsheet" detail="Coming soon" /></div>
           <input aria-label="Jira site URL" placeholder="https://company.atlassian.net" value={connect.jira_base_url} onChange={(e) => setConnect({ ...connect, jira_base_url: e.target.value })} />
           <input aria-label="Jira email" placeholder="you@company.com" value={connect.jira_email} onChange={(e) => setConnect({ ...connect, jira_email: e.target.value })} />
           <input aria-label="Jira API token" type="password" placeholder="API token" value={connect.jira_api_token} onChange={(e) => setConnect({ ...connect, jira_api_token: e.target.value })} />
           <div style={{ color:COLOR.ink, fontSize:12 }}>Create an Atlassian API token, then paste it here. <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noreferrer">Open Atlassian API tokens</a></div>
-          <div style={{ display:'flex', gap:8 }}><button type="button" onClick={testConnection} disabled={busy || !connect.jira_base_url || !connect.jira_email || !connect.jira_api_token} style={buttonStyle}>{busy ? 'Testing…' : 'Test connection'}</button><button type="button" onClick={saveConnection} disabled={busy || !connectionTested} style={{ ...buttonStyle, border:`1px solid ${connectionTested ? COLOR.rose : COLOR.line}`, background:connectionTested ? COLOR.rose : '#fff', color:connectionTested ? '#fff' : COLOR.mute }}>Save and continue</button></div>
+          <div style={{ display:'flex', gap:8 }}><button type="button" onClick={() => { setTool(''); setConnect(null); setError(''); }} style={buttonStyle}>Back</button><button type="button" onClick={testConnection} disabled={busy || !connect.jira_base_url || !connect.jira_email || !connect.jira_api_token} style={buttonStyle}>{busy ? 'Testing…' : 'Test connection'}</button><button type="button" onClick={saveConnection} disabled={busy || !connectionTested} style={{ ...buttonStyle, border:`1px solid ${connectionTested ? COLOR.rose : COLOR.line}`, background:connectionTested ? COLOR.rose : '#fff', color:connectionTested ? '#fff' : COLOR.mute }}>Save and continue</button></div>
         </div> : <div style={{ display: 'grid', gap: 16 }}>
           <label style={{ display: 'grid', gap: 5, fontSize: 12, color: COLOR.navy, fontWeight: 650 }}>Destination project
             <select aria-label="Destination project" value={projectKey} onChange={(e) => setProjectKey(e.target.value)} style={{ padding: 9, border: `1px solid ${COLOR.line}`, borderRadius: 8 }}><option value="">Choose a Jira project…</option>{projects.map((p) => <option key={p.key} value={p.key}>{p.key} · {p.name}</option>)}</select>
@@ -206,7 +221,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
           <label style={{ display:'flex', alignItems:'center', gap:8, color:COLOR.navy, fontSize:12, fontWeight:650 }}><input type="checkbox" checked={mode === 'two_way'} onChange={(e) => setMode(e.target.checked ? 'two_way' : 'push_only')} />Two-way sync <span style={{ color:COLOR.mute, fontWeight:400 }}>(on by default; off is push only)</span></label>
           <details><summary style={{ color:COLOR.navy, fontSize:12, fontWeight:700, cursor:'pointer' }}>Advanced conflict handling</summary><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop:8 }}>{POLICIES.map(([value, label]) => <Choice key={value} checked={policy === value} onClick={() => setPolicy(value)} title={label} />)}</div></details>
           {preview && <div style={{ background: COLOR.line2, borderRadius: 9, padding: 12, color: COLOR.navy2, fontSize: 12.5 }}>Will create {preview.epics} epic{preview.epics === 1 ? '' : 's'}, {preview.issues} issue{preview.issues === 1 ? '' : 's'}, and {preview.dependencies} “Blocks” link{preview.dependencies === 1 ? '' : 's'}{selectedProject ? ` in ${selectedProject.key}` : ''}. {preview.unmapped_owners} owner{preview.unmapped_owners === 1 ? '' : 's'} will be left unassigned.</div>}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}><button type="button" onClick={() => setOpen(false)} style={buttonStyle}>Cancel</button><button type="button" onClick={send} disabled={busy || !projectKey} style={{ ...buttonStyle, border:`1px solid ${COLOR.rose}`, background: COLOR.rose, color: '#fff' }}>{busy ? 'Linking…' : 'Link project'}</button></div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><button type="button" onClick={() => { setTool(''); setError(''); }} style={buttonStyle}>Back</button><div style={{ display:'flex', gap:8 }}><button type="button" onClick={close} style={buttonStyle}>Cancel</button><button type="button" onClick={send} disabled={busy || !projectKey} style={{ ...buttonStyle, border:`1px solid ${COLOR.rose}`, background: COLOR.rose, color: '#fff' }}>{busy ? 'Linking…' : 'Link project'}</button></div></div>
         </div>}
       </div>
     </div>}
