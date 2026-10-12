@@ -1,3 +1,4 @@
+import hashlib
 import os
 from datetime import date, datetime, timedelta
 from urllib.parse import quote
@@ -125,6 +126,16 @@ def request(config, method, path, payload=None, timeout=30):
     return _jira_request(config, method, path, payload=payload, timeout=timeout)
 
 
+def plan_label(binding):
+    return f"jaspen_plan_{binding.id.replace('-', '')[:12]}"
+
+
+def entity_label(binding, entity_id):
+    """Searchable, stable Jira identity; entity properties are not JQL indexed."""
+    digest = hashlib.sha256(f"{binding.id}:{entity_id}".encode("utf-8")).hexdigest()[:24]
+    return f"jaspen_e_{digest}"
+
+
 def adf_document(task, jaspen_url):
     description = str(task.get("description") or "").strip()
     rationale = str(task.get("rationale") or "").strip()
@@ -170,7 +181,7 @@ def task_fields(task, binding, parent_key=None):
         "issuetype": {"name": str(config.get("task_issue_type") or "Task")},
         "summary": str(task.get("title") or "Untitled task")[:255],
         "description": adf_document(task, jaspen_url),
-        "labels": ["jaspen", f"jaspen_plan_{binding.id.replace('-', '')[:12]}"],
+        "labels": ["jaspen", plan_label(binding), entity_label(binding, task.get("id"))],
     }
     if not str(task.get("owner") or "").strip() and not str(task.get("owner_email") or "").strip():
         # Jira otherwise applies the project's default assignee. An explicit
@@ -191,12 +202,12 @@ def task_fields(task, binding, parent_key=None):
     return fields
 
 
-def phase_fields(phase_name, binding, tasks=None):
+def phase_fields(phase_name, binding, tasks=None, entity_id=None):
     fields = {
         "project": {"key": binding.external_container_id},
         "issuetype": {"name": "Epic"},
         "summary": str(phase_name)[:255],
-        "labels": ["jaspen", f"jaspen_plan_{binding.id.replace('-', '')[:12]}"],
+        "labels": ["jaspen", plan_label(binding), entity_label(binding, entity_id or f"phase:{phase_name}")],
     }
     tasks = [task for task in (tasks or []) if isinstance(task, dict)]
     starts = [effective_start_date(task) for task in tasks]
@@ -212,11 +223,11 @@ def phase_fields(phase_name, binding, tasks=None):
 
 
 def recover_issue(config, binding, entity_id):
-    label = f"jaspen_plan_{binding.id.replace('-', '')[:12]}"
-    safe_id = str(entity_id).replace('"', '\\"')
+    label = plan_label(binding)
+    identity_label = entity_label(binding, entity_id)
     jql = (
         f'project = "{binding.external_container_id}" AND labels = "{label}" '
-        f'AND issue.property[jaspen].task_id = "{safe_id}"'
+        f'AND labels = "{identity_label}"'
     )
     data, _ = request(config, "POST", "/rest/api/3/search/jql", {
         "jql": jql, "maxResults": 2, "fields": ["key", "updated"],
@@ -230,6 +241,7 @@ def update_fields(fields):
 
 
 def set_identity(config, binding, issue_key, entity_type, jaspen_id):
+    ensure_recovery_identity(config, binding, issue_key, jaspen_id)
     request(config, "PUT", f"/rest/api/3/issue/{quote(issue_key)}/properties/jaspen", {
         "binding_id": binding.id,
         "plan_key": binding.plan_key,
@@ -241,6 +253,13 @@ def set_identity(config, binding, issue_key, entity_type, jaspen_id):
     request(config, "POST", f"/rest/api/3/issue/{quote(issue_key)}/remotelink", {
         "globalId": global_id,
         "object": {"url": f"{frontend}/new?sid={quote(binding.thread_id)}", "title": "Open in Jaspen"}
+    })
+
+
+def ensure_recovery_identity(config, binding, issue_key, jaspen_id):
+    """Backfill the JQL-searchable identity label without replacing other labels."""
+    request(config, "PUT", f"/rest/api/3/issue/{quote(issue_key)}", {
+        "update": {"labels": [{"add": entity_label(binding, jaspen_id)}]},
     })
 
 
@@ -329,9 +348,12 @@ class JiraProvider(ProjectToolProvider):
     def set_identity(self, config, binding, external_id, entity_type, jaspen_id):
         return set_identity(config, binding, external_id, entity_type, jaspen_id)
 
+    def ensure_recovery_identity(self, config, binding, external_id, jaspen_id):
+        return ensure_recovery_identity(config, binding, external_id, jaspen_id)
+
     def create_items(self, config, binding, items):
         payload = {"issueUpdates": [
-            {"fields": phase_fields(row["title"], binding)} if row.get("entity_type") == "phase"
+            {"fields": phase_fields(row["title"], binding, entity_id=row.get("jaspen_id"))} if row.get("entity_type") == "phase"
             else {"fields": task_fields(row["task"], binding, row.get("parent_id"))}
             for row in items
         ]}

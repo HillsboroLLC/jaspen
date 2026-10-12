@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
@@ -128,6 +129,31 @@ def test_partial_failure_keeps_successful_task_link_for_retry(test_user):
     assert PmSyncLink.query.filter_by(binding_id=binding.id, jaspen_id="task-b", state="failed_create").one().external_id is None
 
 
+def test_missing_task_link_recovers_by_identity_without_creating_duplicate(test_user):
+    binding = _binding(test_user)
+    plan = {"name": "Plan", "tasks": [{
+        "id": "task-a", "title": "Existing Jira task", "status": "todo", "depends_on": [],
+    }]}
+    calls = []
+
+    def request(_config, method, path, payload=None, timeout=30):
+        calls.append((method, path, payload))
+        return {}, {}
+
+    with patch("app.pm_sync.service.jira_adapter.assert_connected", return_value={"base_url": "https://example.atlassian.net"}), patch(
+        "app.pm_sync.service.jira_adapter.request", side_effect=request
+    ), patch("app.pm_sync.service.jira_adapter.recover_issue", return_value={"key": "JST-1"}), patch(
+        "app.pm_sync.service.jira_adapter.set_identity"
+    ):
+        result = push_binding(binding, plan, trigger="sync_now")
+
+    assert result["created"] == 0
+    assert result["updated"] == 1
+    assert not any(path == "/rest/api/3/issue/bulk" for _method, path, _payload in calls)
+    saved = PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task", jaspen_id="task-a").one()
+    assert saved.external_id == "JST-1"
+
+
 def test_legacy_jira_sync_requires_exact_plan_binding(client, auth_headers):
     response = client.post("/api/v1/connectors/threads/thread-1/jira/sync", json={}, headers=auth_headers)
     assert response.status_code == 409
@@ -200,11 +226,28 @@ def test_jira_identity_uses_remote_link_post_with_global_id_in_body(test_user):
     binding = _binding(test_user)
     with patch("app.pm_sync.jira_adapter.request") as request:
         set_identity({}, binding, "JST-7", "task", "task-a")
-    remote = request.call_args_list[1]
+    # Searchable recovery label, entity property, then remote link.
+    label_call = request.call_args_list[0]
+    assert label_call.args[1:3] == ("PUT", "/rest/api/3/issue/JST-7")
+    assert label_call.args[3]["update"]["labels"][0]["add"].startswith("jaspen_e_")
+    remote = request.call_args_list[2]
     assert remote.args[1] == "POST"
     assert remote.args[2] == "/rest/api/3/issue/JST-7/remotelink"
     assert remote.args[3]["globalId"] == f"system=jaspen&binding={binding.id}&entity=task:task-a"
     assert "globalId=" not in remote.args[2]
+
+
+def test_jira_recovery_uses_searchable_entity_label_not_unindexed_property(test_user):
+    from app.pm_sync.jira_adapter import entity_label, plan_label, recover_issue
+
+    binding = _binding(test_user)
+    with patch("app.pm_sync.jira_adapter.request", return_value=({"issues": [{"key": "JST-7"}]}, {})) as request:
+        result = recover_issue({}, binding, "task-a")
+    assert result["key"] == "JST-7"
+    payload = request.call_args.args[3]
+    assert f'labels = "{plan_label(binding)}"' in payload["jql"]
+    assert f'labels = "{entity_label(binding, "task-a")}"' in payload["jql"]
+    assert "issue.property" not in payload["jql"]
 
 
 def test_start_date_field_discovery_requires_date_schema_not_name_alone():
@@ -239,6 +282,7 @@ class _Provider:
     def __init__(self, remote):
         self.remote = remote
         self.updates = []
+        self.recovery_identities = []
 
     def assert_connected(self, _user_id, _container_id):
         return {"base_url": "https://example.atlassian.net"}
@@ -252,6 +296,9 @@ class _Provider:
 
     def set_identity(self, _config, _binding, external_id, entity_type, jaspen_id):
         self.identity = (external_id, entity_type, jaspen_id)
+
+    def ensure_recovery_identity(self, _config, _binding, external_id, jaspen_id):
+        self.recovery_identities.append((external_id, jaspen_id))
 
 
 def _linked_binding(test_user, base, mode="two_way", policy="latest_wins"):
@@ -304,6 +351,47 @@ def test_empty_values_do_not_create_false_changes_and_one_edit_pushes_one_task(t
     assert second["pulled"] == 0
     assert second["pushed"] == 1
     assert provider.updates == [("JST-1", {"status": "done"})]
+
+
+def test_newly_supported_start_date_pushes_without_erasing_jaspen(test_user):
+    base = {"title": "Task", "description": None, "owner": None, "owner_email": None,
+            "status": "todo", "start_date": "2026-10-10", "due_date": "2026-10-20"}
+    binding, link = _linked_binding(test_user, base)
+    link.last_synced_at = datetime(2026, 10, 12, 10, 0, 0)
+    app_db.session.commit()
+    plan = {"tasks": [{**base, "id": "task-a"}]}
+    provider = _Provider({
+        "deleted": False,
+        "values": {**base, "start_date": None},
+        "changed_at": {},
+        "version": "2026-10-12T11:00:00",
+        "supported_fields": ["title", "description", "owner", "owner_email", "status", "start_date", "due_date"],
+    })
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=provider):
+        result = reconcile_binding(binding)
+    assert result["pulled"] == 0
+    assert result["pushed"] == 1
+    assert plan["tasks"][0]["start_date"] == "2026-10-10"
+    assert provider.updates == [("JST-1", {"start_date": "2026-10-10"})]
+    assert "start_date" in link.base_snapshot["_synced_fields"]
+
+
+def test_unverified_remote_empty_cannot_erase_nonempty_jaspen_value(test_user):
+    base = {"title": "Task", "description": None, "owner": None, "owner_email": None,
+            "status": "todo", "start_date": "2026-10-10", "due_date": None,
+            "_synced_fields": ["title", "description", "owner", "owner_email", "status", "start_date", "due_date"]}
+    binding, _ = _linked_binding(test_user, base)
+    plan = {"tasks": [{**base, "id": "task-a"}]}
+    provider = _Provider({"deleted": False, "values": {**base, "start_date": None},
+                          "changed_at": {}, "version": "2026-10-12T11:00:00"})
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=provider):
+        result = reconcile_binding(binding)
+    assert result["pulled"] == 0
+    assert plan["tasks"][0]["start_date"] == "2026-10-10"
+    assert result["conflicts"][0]["field"] == "start_date"
+    assert "verified post-sync clear" in result["conflicts"][0]["reason"]
 
 
 def test_jira_create_keeps_unowned_task_unassigned_and_absorbs_remote_default(test_user):
@@ -368,6 +456,7 @@ def test_sync_retries_identity_for_existing_link_with_prior_remote_link_failure(
         result = reconcile_binding(binding)
     assert result["success"] is True
     assert provider.identity == ("JST-1", "task", "task-a")
+    assert provider.recovery_identities == [("JST-1", "task-a")]
     assert link.last_error is None
 
 
@@ -383,7 +472,8 @@ def test_existing_epic_is_updated_in_place_with_plan_title_and_dates(test_user):
     ]}
     result = {"created": 0, "updated": 0, "failed": 0, "errors": []}
     with patch("app.pm_sync.service.jira_adapter.request", return_value=({}, {})) as request, patch(
-        "app.pm_sync.service.jira_adapter.set_identity") as identity:
+        "app.pm_sync.service.jira_adapter.set_identity") as identity, patch(
+        "app.pm_sync.service.jira_adapter.ensure_recovery_identity"):
         parents = _sync_phases(binding, plan, {}, {("phase", "Generated Plan"): link}, result)
     assert result == {"created": 0, "updated": 1, "failed": 0, "errors": []}
     assert parents == {"a": "JST-9", "b": "JST-9"}
@@ -420,7 +510,7 @@ def test_failed_epic_identity_is_saved_and_retried_without_duplicate(test_user):
     retry_result = {"created": 0, "updated": 0, "failed": 0, "errors": []}
     with patch("app.pm_sync.service.jira_adapter.request") as request, patch(
         "app.pm_sync.service.jira_adapter.set_identity"
-    ) as identity:
+    ) as identity, patch("app.pm_sync.service.jira_adapter.ensure_recovery_identity"):
         parents = _sync_phases(binding, plan, {}, {("phase", "Generated Plan"): saved}, retry_result)
 
     assert parents == {"a": "JST-9"}
@@ -429,6 +519,38 @@ def test_failed_epic_identity_is_saved_and_retried_without_duplicate(test_user):
     identity.assert_called_once_with({}, binding, "JST-9", "phase", "phase:Generated Plan")
     assert saved.last_error is None
     assert PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="phase").count() == 1
+
+
+def test_created_task_link_survives_identity_failure_and_retry_does_not_duplicate(test_user):
+    binding = _binding(test_user)
+    plan = {"name": "Plan", "tasks": [{
+        "id": "task-a", "title": "Task", "status": "todo", "depends_on": [],
+    }]}
+
+    def first_request(_config, _method, path, payload=None, timeout=30):
+        if path == "/rest/api/3/issue/bulk":
+            return {"issues": [{"key": "JST-1"}], "errors": []}, {}
+        return {}, {}
+
+    with patch("app.pm_sync.service.jira_adapter.assert_connected", return_value={"base_url": "https://example.atlassian.net"}), patch(
+        "app.pm_sync.service.jira_adapter.request", side_effect=first_request
+    ), patch("app.pm_sync.service.jira_adapter.recover_issue", return_value=None), patch(
+        "app.pm_sync.service.jira_adapter.set_identity", side_effect=ValueError("remote link failed")
+    ):
+        first = push_binding(binding, plan)
+
+    saved = PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task", jaspen_id="task-a").one()
+    assert saved.external_id == "JST-1"
+    assert saved.last_error == "remote link failed"
+    assert first["failed"] == 1
+
+    with patch("app.pm_sync.service.jira_adapter.assert_connected", return_value={"base_url": "https://example.atlassian.net"}), patch(
+        "app.pm_sync.service.jira_adapter.request", return_value=({}, {})
+    ) as request, patch("app.pm_sync.service.jira_adapter.set_identity"):
+        second = push_binding(binding, plan, trigger="sync_now")
+    assert second["created"] == 0
+    assert not any(call.args[2] == "/rest/api/3/issue/bulk" for call in request.call_args_list)
+    assert PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task").count() == 1
 
 
 def test_both_changed_uses_changelog_time_and_missing_time_requires_review(test_user):

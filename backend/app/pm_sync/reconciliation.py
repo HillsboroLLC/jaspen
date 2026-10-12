@@ -115,6 +115,7 @@ def reconcile_binding(binding, trigger="sync_now"):
         if not task or not link.external_id:
             continue
         try:
+            provider.ensure_recovery_identity(config, binding, link.external_id, link.jaspen_id)
             if link.last_error:
                 provider.set_identity(config, binding, link.external_id, "task", link.jaspen_id)
                 link.last_error = None
@@ -127,6 +128,13 @@ def reconcile_binding(binding, trigger="sync_now"):
             if remote.get("status_error"):
                 result["unknown_statuses"].append({"task_id": link.jaspen_id, "status": remote["status_error"]})
             base = link.base_snapshot if isinstance(link.base_snapshot, dict) else {}
+            if "_synced_fields" in base:
+                synced_fields = set(base.get("_synced_fields") or [])
+            else:
+                # Legacy snapshots predate field-delivery tracking. All old
+                # fields were supported except start_date, which may only just
+                # have become available after discovery.
+                synced_fields = set(FIELDS) - {"start_date"}
             preserve_local_empty = set(base.get("_preserve_local_empty_fields") or [])
             local, local_times = _snapshot(task, binding), _field_times(task)
             outside = remote.get("values") if isinstance(remote.get("values"), dict) else {}
@@ -138,6 +146,14 @@ def reconcile_binding(binding, trigger="sync_now"):
                 if field not in supported or (field == "status" and remote.get("status_error")):
                     continue
                 previous, here, there = _normalized(base.get(field)), local.get(field), _normalized(outside.get(field))
+                if field not in synced_fields:
+                    # Jira never received this field. The first supported sync
+                    # establishes Jaspen as source instead of treating Jira's
+                    # empty placeholder as a user-authored deletion.
+                    if here is not None:
+                        outgoing[field] = here
+                    synced_fields.add(field)
+                    continue
                 local_changed, remote_changed = here != previous, there != previous
                 if field in preserve_local_empty and here is None:
                     # A Jira project default applied during issue creation is
@@ -148,6 +164,16 @@ def reconcile_binding(binding, trigger="sync_now"):
                 if local_changed and not remote_changed:
                     outgoing[field] = here
                     continue
+                if there is None and here is not None and remote_changed:
+                    remote_changed_at = _dt(outside_times.get(field))
+                    last_synced_at = _dt(link.last_synced_at)
+                    if not remote_changed_at or (last_synced_at and remote_changed_at <= last_synced_at):
+                        conflict = {
+                            "task_id": link.jaspen_id, "field": field, "jaspen": here, "external": there,
+                            "reason": "Jira returned an empty value without a verified post-sync clear; Jaspen value preserved.",
+                        }
+                        result["conflicts"].append(conflict); task_conflicts.append(conflict)
+                        continue
                 policy = str((binding.field_policy_overrides or {}).get(field) or binding.conflict_policy or "manual_review")
                 winner = "remote" if remote_changed and not local_changed else resolve_conflict(policy, local_times.get(field), outside_times.get(field))
                 if winner == "remote":
@@ -174,6 +200,7 @@ def reconcile_binding(binding, trigger="sync_now"):
                         still_preserved.append(field)
                 if still_preserved:
                     next_base["_preserve_local_empty_fields"] = sorted(still_preserved)
+                next_base["_synced_fields"] = sorted(synced_fields)
                 link.base_snapshot = next_base; link.external_version = _iso(remote.get("version"))
                 link.jaspen_version = _iso(task.get("updated_at")); link.last_synced_at = datetime.utcnow()
                 link.state = "active"; link.last_error = None

@@ -61,7 +61,7 @@ def phase_groups(plan):
 
 
 def _phase_snapshot(group, binding):
-    fields = jira_adapter.phase_fields(group["title"], binding, group["tasks"])
+    fields = jira_adapter.phase_fields(group["title"], binding, group["tasks"], f"phase:{group['key']}")
     start_field = str((binding.config or {}).get("start_date_field_id") or "").strip()
     return {
         "title": fields.get("summary"),
@@ -179,10 +179,25 @@ def _snapshot(task):
     }
 
 
+def _task_synced_fields(task, binding):
+    """Fields Jira was actually sent, separate from values held by Jaspen."""
+    fields = {"title", "description", "status", "due_date"}
+    if (binding.config or {}).get("start_date_field_id") and jira_adapter.effective_start_date(task):
+        fields.add("start_date")
+    if not str(task.get("owner") or "").strip() and not str(task.get("owner_email") or "").strip():
+        fields.update({"owner", "owner_email"})
+    else:
+        user_map = binding.user_map if isinstance(binding.user_map, dict) else {}
+        if user_map.get(str(task.get("owner_email") or "")) or user_map.get(str(task.get("owner") or "")):
+            fields.update({"owner", "owner_email"})
+    return sorted(fields)
+
+
 def _created_task_snapshot(config, binding, issue_key, task):
     """Capture Jira's actual post-create state without adopting its defaults."""
     local = _snapshot(task)
     local["start_date"] = jira_adapter.effective_start_date(task)
+    local["_synced_fields"] = _task_synced_fields(task, binding)
     try:
         remote = jira_adapter.JiraProvider().get_item(config, binding, issue_key)
     except Exception:
@@ -191,6 +206,9 @@ def _created_task_snapshot(config, binding, issue_key, task):
     if remote.get("deleted") or (not remote.get("version") and not any(value not in (None, "", []) for value in values.values())):
         return local
     actual = _snapshot(values)
+    actual["_synced_fields"] = sorted(set(remote.get("supported_fields") or []) & {
+        "title", "description", "owner", "owner_email", "status", "start_date", "due_date",
+    })
     preserved = [
         field for field in ("owner", "owner_email")
         if local.get(field) is None and actual.get(field) is not None
@@ -210,6 +228,7 @@ def _sync_phases(binding, plan, config, existing, result):
         phase_key = group["key"]
         link = existing.get(("phase", phase_key))
         issue_key = str(link.external_id if link else "").strip()
+        entity_id = f"phase:{phase_key}"
         desired = _phase_snapshot(group, binding)
         try:
             if not issue_key:
@@ -219,19 +238,26 @@ def _sync_phases(binding, plan, config, existing, result):
                 else:
                     created, _ = jira_adapter.request(
                         config, "POST", "/rest/api/3/issue",
-                        {"fields": jira_adapter.phase_fields(group["title"], binding, group["tasks"])}
+                        {"fields": jira_adapter.phase_fields(group["title"], binding, group["tasks"], entity_id)}
                     )
                     issue_key = str(created.get("key") or "")
                     result["created"] += 1
-                jira_adapter.set_identity(config, binding, issue_key, "phase", f"phase:{phase_key}")
+                if not issue_key:
+                    raise ValueError("Jira did not return an epic key.")
+                # The Jira object now exists. Persist its key before optional
+                # property/remote-link calls so retry can never duplicate it.
+                _upsert_link(binding, "phase", phase_key, issue_key, snapshot=desired)
+                db.session.commit()
+                jira_adapter.set_identity(config, binding, issue_key, "phase", entity_id)
             else:
                 previous = link.base_snapshot if isinstance(link.base_snapshot, dict) else {}
                 if previous != desired:
-                    fields = jira_adapter.phase_fields(group["title"], binding, group["tasks"])
+                    fields = jira_adapter.phase_fields(group["title"], binding, group["tasks"], entity_id)
                     jira_adapter.request(config, "PUT", f"/rest/api/3/issue/{issue_key}", {"fields": jira_adapter.update_fields(fields)})
                     result["updated"] += 1
+                jira_adapter.ensure_recovery_identity(config, binding, issue_key, entity_id)
                 if link.last_error:
-                    jira_adapter.set_identity(config, binding, issue_key, "phase", f"phase:{phase_key}")
+                    jira_adapter.set_identity(config, binding, issue_key, "phase", entity_id)
             _upsert_link(binding, "phase", phase_key, issue_key, snapshot=desired)
             db.session.commit()
             for task in group["tasks"]:
@@ -331,6 +357,7 @@ def push_binding(binding, plan=None, trigger="send"):
                 jira_adapter.sync_status(config, binding, issue_key, task.get("status"))
                 task_snapshot = _snapshot(task)
                 task_snapshot["start_date"] = jira_adapter.effective_start_date(task)
+                task_snapshot["_synced_fields"] = _task_synced_fields(task, binding)
                 _upsert_link(binding, "task", task_id, issue_key, parent, task_snapshot)
                 db.session.commit()
                 result["updated"] += 1
@@ -375,6 +402,13 @@ def push_binding(binding, plan=None, trigger="send"):
                     db.session.commit()
                     continue
                 try:
+                    # Creation succeeded independently of optional Jira
+                    # metadata. Save the durable mapping first.
+                    initial_snapshot = _snapshot(task)
+                    initial_snapshot["start_date"] = jira_adapter.effective_start_date(task)
+                    initial_snapshot["_synced_fields"] = _task_synced_fields(task, binding)
+                    _upsert_link(binding, "task", task_id, issue_key, parent, initial_snapshot)
+                    db.session.commit()
                     jira_adapter.set_identity(config, binding, issue_key, "task", task_id)
                     jira_adapter.sync_status(config, binding, issue_key, task.get("status"))
                     task_snapshot = _created_task_snapshot(config, binding, issue_key, task)

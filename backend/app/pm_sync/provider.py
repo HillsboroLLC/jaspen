@@ -44,6 +44,11 @@ class ProjectToolProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def ensure_recovery_identity(self, config, binding, external_id, jaspen_id):
+        """Ensure the provider-side identity used to recover a missing link."""
+        raise NotImplementedError
+
+    @abstractmethod
     def create_dependency(self, config, binding, prerequisite_id, dependent_id):
         raise NotImplementedError
 
