@@ -17,6 +17,43 @@ const inputStyle = {
   width: '100%', boxSizing: 'border-box', border: `1px solid ${COLOR.line}`, borderRadius: 8,
   background: '#fff', color: COLOR.navy, padding: '10px 11px', fontSize: 13, outline: 'none',
 };
+const RECONNECT_MESSAGE = 'Your saved Jira connection no longer works. Enter a new API token to continue.';
+
+function connectionDraft(info = {}) {
+  return {
+    jira_base_url: String(info?.base_url || ''),
+    jira_email: String(info?.email || ''),
+    jira_api_token: '',
+  };
+}
+
+function isReconnectError(error) {
+  return error?.status === 401 || error?.status === 403 || error?.data?.code === 'JIRA_RECONNECT_REQUIRED';
+}
+
+function friendlyJiraError(error, fallback) {
+  if (isReconnectError(error)) return RECONNECT_MESSAGE;
+  return String(error?.data?.error || error?.message || error || fallback);
+}
+
+function suggestedProjectKey(name) {
+  const words = String(name || '').toUpperCase().match(/[A-Z0-9]+/g) || [];
+  if (!words.length) return '';
+  const initials = words.map((word) => word[0]).join('').slice(0, 10);
+  if (initials.length >= 2) return initials;
+  return words[0].slice(0, 10).padEnd(2, 'X');
+}
+
+function projectKeyError(key) {
+  const raw = String(key || '').trim();
+  if (raw.length > 10 || /[a-z]/.test(raw) || /^ATATT/i.test(raw)) {
+    return 'That looks like an API token. Enter it under Jira connection instead.';
+  }
+  if (!/^[A-Z][A-Z0-9]{1,9}$/.test(raw)) {
+    return 'Project key must be 2–10 uppercase letters or digits and start with a letter.';
+  }
+  return '';
+}
 
 function Choice({ checked, onClick, title, detail, disabled = false }) {
   return <button type="button" onClick={onClick} aria-pressed={checked} disabled={disabled} style={{
@@ -46,9 +83,12 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
   const [guidance, setGuidance] = useState('');
   const [syncNotice, setSyncNotice] = useState('');
   const [connect, setConnect] = useState(null);
+  const [connectionInfo, setConnectionInfo] = useState(null);
   const [connectionTested, setConnectionTested] = useState(false);
   const [logs, setLogs] = useState([]);
   const [newProject, setNewProject] = useState(null);
+  const [destinationMode, setDestinationMode] = useState('');
+  const [keyError, setKeyError] = useState('');
   const openedSync = useRef('');
 
   const applySyncResult = useCallback(async (data) => {
@@ -81,10 +121,16 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
   };
   useEffect(() => { refresh(); }, [threadId, planKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!binding?.id || binding.status === 'paused' || openedSync.current === binding.id) return;
+    if (!binding?.id || ['paused', 'reconnect_required'].includes(binding.status) || openedSync.current === binding.id) return;
     openedSync.current = binding.id;
     Jaspen.syncPmBinding(binding.id).then(applySyncResult)
-      .catch((e) => setError(String(e?.message || e || 'Automatic sync failed. Use Retry.')));
+      .catch((e) => {
+        if (isReconnectError(e)) {
+          setConnectionInfo(e?.data?.connection || null);
+          setBinding((current) => ({ ...(current || {}), ...(e?.data?.binding || {}), status:'reconnect_required' }));
+        }
+        setError(friendlyJiraError(e, 'Automatic sync failed. Use Retry.'));
+      });
   }, [binding, applySyncResult]);
 
   const selectedProject = useMemo(() => projects.find((p) => p.key === projectKey), [projects, projectKey]);
@@ -92,6 +138,22 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
   const begin = () => {
     setOpen(true); setTool(''); setConnect(null); setConnectionTested(false);
     setProjects([]); setProjectKey(''); setPreview(null); setError(''); setGuidance('');
+    setConnectionInfo(null); setDestinationMode(''); setNewProject(null); setKeyError('');
+  };
+
+  const openConnection = (info = connectionInfo, message = '') => {
+    setTool('jira'); setOpen(true); setConnect(connectionDraft(info)); setConnectionTested(false);
+    setGuidance(message); setError(''); setDestinationMode('');
+  };
+
+  const reconnectBinding = async () => {
+    setBusy(true);
+    try {
+      const data = await Jaspen.listJiraProjects();
+      openConnection(data?.connection || connectionInfo, RECONNECT_MESSAGE);
+    } catch (e) {
+      openConnection(e?.data?.connection || connectionInfo, RECONNECT_MESSAGE);
+    } finally { setBusy(false); }
   };
 
   const chooseTool = async (nextTool) => {
@@ -102,14 +164,19 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
         Jaspen.listJiraProjects(), Jaspen.previewPmSync(threadId, planKey, true),
       ]);
       setProjects(projectData?.projects || []);
+      setConnectionInfo(projectData?.connection || null);
+      setDestinationMode((projectData?.projects || []).length ? 'existing' : '');
+      if (!(projectData?.projects || []).length) setGuidance('No Jira projects were found. Choose Create new or use a different Jira account.');
       setPreview(previewData?.preview || null);
     } catch (e) {
-      const message = String(e?.message || e || 'Could not load Jira.');
-      if (/not connected|configuration is missing/i.test(message)) {
-        setGuidance('Connect Jira to choose or create a project for this execution plan.');
-        setConnect({ jira_base_url: '', jira_email: '', jira_api_token: '' });
+      const info = e?.data?.connection || null;
+      setConnectionInfo(info);
+      if (isReconnectError(e)) {
+        openConnection(info, RECONNECT_MESSAGE);
+      } else if (!info?.has_api_token) {
+        openConnection(info, 'Connect Jira to choose or create a project for this execution plan.');
       } else {
-        setError(message);
+        setError(friendlyJiraError(e, 'Jira projects could not be loaded. Try again or use a different account.'));
       }
     } finally { setBusy(false); }
   };
@@ -119,7 +186,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     try {
       await Jaspen.testJiraConnection(connect);
       setConnectionTested(true);
-    } catch (e) { setConnectionTested(false); setError(String(e?.message || e || 'Could not connect Jira.')); }
+    } catch (e) { setConnectionTested(false); setError(friendlyJiraError(e, 'Could not connect Jira.')); }
     finally { setBusy(false); }
   };
 
@@ -127,25 +194,42 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     setBusy(true); setError('');
     try {
       if (!connectionTested) throw new Error('Test the connection before saving it.');
-      await Jaspen.connectJira(connect);
+      const saved = await Jaspen.connectJira(connect);
+      setConnectionInfo({ base_url: saved?.base_url || connect.jira_base_url, email: connect.jira_email, has_api_token: true });
       setConnect(null);
+      setGuidance('');
+      if (binding) {
+        const restored = await Jaspen.updatePmSyncBinding(binding.id, { status:'active' });
+        setBinding(restored?.binding || { ...binding, status:'active' });
+        setOpen(false);
+        openedSync.current = '';
+        return;
+      }
       const data = await Jaspen.listJiraProjects();
       setProjects(data?.projects || []);
+      setConnectionInfo(data?.connection || { base_url: connect.jira_base_url, email: connect.jira_email, has_api_token: true });
+      setDestinationMode((data?.projects || []).length ? 'existing' : '');
       const p = await Jaspen.previewPmSync(threadId, planKey, groupEpics);
       setPreview(p?.preview || null);
-    } catch (e) { setError(String(e?.message || e || 'Could not connect Jira.')); }
+    } catch (e) { setError(friendlyJiraError(e, 'Could not connect Jira.')); }
     finally { setBusy(false); }
   };
 
   const createProject = async () => {
     setBusy(true); setError('');
     try {
+      const validation = projectKeyError(newProject?.key);
+      setKeyError(validation);
+      if (validation) throw new Error(validation);
       const data = await Jaspen.createJiraProject(newProject);
       const project = data?.project;
       if (!project?.key) throw new Error('Jira did not return the new project.');
       setProjects((current) => [...current.filter((row) => row.key !== project.key), project]);
-      setProjectKey(project.key); setNewProject(null);
-    } catch (e) { setError(String(e?.message || e || 'Could not create the Jira project.')); }
+      setProjectKey(project.key); setNewProject(null); setDestinationMode('existing');
+    } catch (e) {
+      if (isReconnectError(e)) openConnection(e?.data?.connection, RECONNECT_MESSAGE);
+      else setError(friendlyJiraError(e, 'Could not create the Jira project.'));
+    }
     finally { setBusy(false); }
   };
 
@@ -178,7 +262,13 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
       const data = await Jaspen.syncPmBinding(binding.id);
       await applySyncResult(data);
       if (data?.result?.errors?.length) setError(`${data.result.failed} item(s) failed. Retry will continue from saved links.`);
-    } catch (e) { setError(String(e?.message || e || 'Sync failed.')); }
+    } catch (e) {
+      if (isReconnectError(e)) {
+        setConnectionInfo(e?.data?.connection || null);
+        setBinding((current) => ({ ...(current || {}), ...(e?.data?.binding || {}), status:'reconnect_required' }));
+      }
+      setError(friendlyJiraError(e, 'Sync failed.'));
+    }
     finally { setBusy(false); }
   };
 
@@ -191,12 +281,13 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     finally { setBusy(false); }
   };
 
-  if (binding) return <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', maxWidth: compact ? 430 : 'none' }}>
-    <span style={{ ...buttonStyle, cursor: 'default', color: binding.status === 'error' ? '#b91c1c' : COLOR.greenInk }}>
-      ● {binding.status === 'active' ? 'Synced with Jira' : `Jira · ${binding.status}`}{binding.last_success_at ? ` · ${new Date(binding.last_success_at).toLocaleString()}` : ''}
+  if (binding && !open) return <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', maxWidth: compact ? 430 : 'none' }}>
+    <span style={{ ...buttonStyle, cursor: 'default', color: ['error', 'reconnect_required'].includes(binding.status) ? '#b91c1c' : COLOR.greenInk }}>
+      ● {binding.status === 'active' ? 'Synced with Jira' : binding.status === 'reconnect_required' ? 'Reconnect Jira' : `Jira · ${binding.status}`}{binding.last_success_at ? ` · ${new Date(binding.last_success_at).toLocaleString()}` : ''}
     </span>
     <label style={{ ...buttonStyle, display:'inline-flex', gap:6, alignItems:'center' }}><input type="checkbox" checked={binding.mode === 'two_way'} onChange={(e) => toggleTwoWay(e.target.checked)} />Two-way sync</label>
     <button type="button" onClick={syncNow} disabled={busy} style={buttonStyle}>{busy ? 'Syncing…' : 'Sync now'}</button>
+    {binding.status === 'reconnect_required' && <button type="button" onClick={reconnectBinding} disabled={busy} style={buttonStyle}>Reconnect Jira</button>}
     {binding.external_container_url && <a href={binding.external_container_url} target="_blank" rel="noreferrer" style={{ ...buttonStyle, textDecoration: 'none' }}>View in Jira</a>}
     {error && <span role="alert" style={{ color: '#b91c1c', fontSize: 11.5 }}>{error}</span>}
     {syncNotice && <span role="status" style={{ color: COLOR.greenInk, fontSize: 11.5 }}>{syncNotice}</span>}
@@ -233,10 +324,22 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
           <div style={{ color:COLOR.ink, fontSize:12 }}>Create an Atlassian API token, then paste it here. <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noreferrer">Open Atlassian API tokens</a></div>
           <div style={{ display:'flex', gap:8 }}><button type="button" onClick={() => { setTool(''); setConnect(null); setError(''); }} style={buttonStyle}>Back</button><button type="button" onClick={testConnection} disabled={busy || !connect.jira_base_url || !connect.jira_email || !connect.jira_api_token} style={buttonStyle}>{busy ? 'Testing…' : 'Test connection'}</button><button type="button" onClick={saveConnection} disabled={busy || !connectionTested} style={{ ...buttonStyle, border:`1px solid ${connectionTested ? COLOR.rose : COLOR.line}`, background:connectionTested ? COLOR.rose : '#fff', color:connectionTested ? '#fff' : COLOR.mute }}>Save and continue</button></div>
         </div> : <div style={{ display: 'grid', gap: 16 }}>
-          <label style={{ display: 'grid', gap: 5, fontSize: 12, color: COLOR.navy, fontWeight: 650 }}>Destination project
+          {connectionInfo && <div style={{ background:COLOR.line2, borderRadius:8, padding:10, color:COLOR.navy2, fontSize:12 }}>
+            Using Jira: {connectionInfo.base_url || 'saved site'} · {connectionInfo.email || 'saved email'} · <button type="button" onClick={() => openConnection(connectionInfo)} style={{ border:0, background:'transparent', color:COLOR.rose, fontWeight:700, cursor:'pointer', padding:0 }}>Use a different account</button>
+          </div>}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+            <Choice checked={destinationMode === 'existing'} disabled={!projects.length} onClick={() => { setDestinationMode('existing'); setNewProject(null); }} title="Choose existing" detail={projects.length ? `${projects.length} project${projects.length === 1 ? '' : 's'} available` : 'No projects available'} />
+            <Choice checked={destinationMode === 'create'} onClick={() => { setDestinationMode('create'); setProjectKey(''); setNewProject({ key:'', name:'' }); setKeyError(''); }} title="Create new" detail="Create a Jira project for this plan" />
+          </div>
+          {destinationMode === 'existing' && projects.length > 0 && <label style={{ display: 'grid', gap: 5, fontSize: 12, color: COLOR.navy, fontWeight: 650 }}>Destination project
             <select aria-label="Destination project" value={projectKey} onChange={(e) => setProjectKey(e.target.value)} style={{ padding: 9, border: `1px solid ${COLOR.line}`, borderRadius: 8 }}><option value="">Choose a Jira project…</option>{projects.map((p) => <option key={p.key} value={p.key}>{p.key} · {p.name}</option>)}</select>
-          </label>
-          {!newProject ? <button type="button" onClick={() => setNewProject({ key:'', name:'' })} style={buttonStyle}>Create a new Jira project</button> : <div style={{ display:'grid', gridTemplateColumns:'120px 1fr auto', gap:8 }}><input aria-label="New project key" placeholder="KEY" value={newProject.key} onChange={(e) => setNewProject({ ...newProject, key:e.target.value.toUpperCase() })} /><input aria-label="New project name" placeholder="Project name" value={newProject.name} onChange={(e) => setNewProject({ ...newProject, name:e.target.value })} /><button type="button" onClick={createProject} disabled={busy || !newProject.key || !newProject.name} style={buttonStyle}>Create</button></div>}
+          </label>}
+          {destinationMode === 'create' && newProject && <div style={{ display:'grid', gap:8 }}>
+            <label style={{ display:'grid', gap:5, fontSize:12, color:COLOR.navy, fontWeight:650 }}>Project name<input style={inputStyle} aria-label="Project name" placeholder="Jaspen Production Test" value={newProject.name} onChange={(e) => { const name=e.target.value; setNewProject({ ...newProject, name, key:suggestedProjectKey(name) }); setKeyError(''); }} /></label>
+            <label style={{ display:'grid', gap:5, fontSize:12, color:COLOR.navy, fontWeight:650 }}>Project key (e.g. JPT)<input style={inputStyle} aria-label="Project key (e.g. JPT)" placeholder="JPT" value={newProject.key} onChange={(e) => { const key=e.target.value; setNewProject({ ...newProject, key }); setKeyError(projectKeyError(key)); }} /></label>
+            <div style={{ color:keyError ? '#9f1239' : COLOR.mute, fontSize:11.5 }}>{keyError || 'Short code used in issue IDs, e.g. JPT-12'}</div>
+            <button type="button" onClick={createProject} disabled={busy || !newProject.key || !newProject.name || Boolean(keyError)} style={buttonStyle}>Create project</button>
+          </div>}
           <div style={{ display: 'flex', gap: 14 }}>
             <label style={{ flex: 1, display: 'grid', gap: 5, fontSize: 12, color: COLOR.navy, fontWeight: 650 }}>Issue type<select aria-label="Task issue type" value={issueType} onChange={(e) => setIssueType(e.target.value)} style={{ padding: 9, border: `1px solid ${COLOR.line}`, borderRadius: 8 }}><option>Task</option><option>Story</option></select></label>
             <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: COLOR.navy }}><input type="checkbox" checked={groupEpics} onChange={(e) => updatePreview(e.target.checked)} /> Group tasks under epics</label>

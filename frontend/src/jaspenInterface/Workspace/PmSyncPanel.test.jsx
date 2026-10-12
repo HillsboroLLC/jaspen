@@ -12,12 +12,16 @@ jest.mock('./JaspenClient', () => ({ Jaspen: {
 beforeEach(() => {
   jest.clearAllMocks();
   Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [] });
-  Jaspen.listJiraProjects.mockResolvedValue({ projects: [{ key: 'JST', name: 'Jaspen Test' }] });
+  Jaspen.listJiraProjects.mockResolvedValue({
+    projects: [{ key: 'JST', name: 'Jaspen Test' }],
+    connection: { base_url:'https://example.atlassian.net', email:'user@example.com', has_api_token:true },
+  });
   Jaspen.previewPmSync.mockResolvedValue({ preview: {
     epics: 1, issues: 4, dependencies: 3, unmapped_owners: 1, tasks_without_start_date: 2,
     structure: "Creates epic 'Denver Water Pump Station — RFP Pursuit and Submission WBS' with 4 tasks, 3 'Blocks' links.",
   } });
   Jaspen.syncPmBinding.mockResolvedValue({ result: { binding: { id:'bind-1', status:'active', mode:'two_way' } }, logs:[] });
+  Jaspen.updatePmSyncBinding.mockResolvedValue({ binding: { id:'bind-1', status:'active', mode:'two_way' } });
   Jaspen.getPmSyncBinding.mockResolvedValue({ logs:[] });
 });
 
@@ -80,6 +84,84 @@ it('tests credentials before saving them', async () => {
   await waitFor(() => expect(screen.getByRole('button', { name:'Save and continue' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name:'Save and continue' }));
   await waitFor(() => expect(Jaspen.connectJira).toHaveBeenCalled());
+});
+
+it('shows the saved account and lets the user replace it', async () => {
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /Sync execution plan/i }));
+  fireEvent.click(screen.getByRole('button', { name: /Jira Connect/i }));
+  expect(await screen.findByText(/Using Jira: https:\/\/example.atlassian.net · user@example.com/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /Use a different account/i }));
+  expect(screen.getByLabelText('Jira site URL')).toHaveValue('https://example.atlassian.net');
+  expect(screen.getByLabelText('Jira email')).toHaveValue('user@example.com');
+  expect(screen.getByLabelText('Jira API token')).toHaveValue('');
+});
+
+it('turns a revoked saved token into an explained prefilled reconnect form', async () => {
+  const error = Object.assign(new Error('raw provider failure'), {
+    status: 401,
+    data: {
+      code: 'JIRA_RECONNECT_REQUIRED',
+      error: 'Your saved Jira connection no longer works. Enter a new API token to continue.',
+      connection: { base_url:'https://old.atlassian.net', email:'old@example.com', has_api_token:true },
+    },
+  });
+  Jaspen.listJiraProjects.mockRejectedValueOnce(error);
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /Sync execution plan/i }));
+  fireEvent.click(screen.getByRole('button', { name: /Jira Connect/i }));
+  expect(await screen.findByRole('status')).toHaveTextContent('Your saved Jira connection no longer works');
+  expect(screen.getByLabelText('Jira site URL')).toHaveValue('https://old.atlassian.net');
+  expect(screen.getByLabelText('Jira email')).toHaveValue('old@example.com');
+  expect(screen.queryByText(/raw provider failure/i)).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Destination project')).not.toBeInTheDocument();
+});
+
+it('separates existing and new projects, suggests a key, and blocks token-shaped keys', async () => {
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /Sync execution plan/i }));
+  fireEvent.click(screen.getByRole('button', { name: /Jira Connect/i }));
+  await screen.findByRole('button', { name: /Create new/i });
+  fireEvent.click(screen.getByRole('button', { name: /Create new/i }));
+  expect(screen.queryByLabelText('Destination project')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Project name'), { target:{ value:'Jaspen Production Test' } });
+  expect(screen.getByLabelText('Project key (e.g. JPT)')).toHaveValue('JPT');
+  expect(screen.getByText(/Short code used in issue IDs, e.g. JPT-12/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Project key (e.g. JPT)'), { target:{ value:'ATATT-secret-token' } });
+  expect(screen.getByText(/That looks like an API token/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name:'Create project' })).toBeDisabled();
+  expect(Jaspen.createJiraProject).not.toHaveBeenCalled();
+});
+
+it('shows reconnect Jira and persists the repaired binding after replacing credentials', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
+    id:'bind-1', status:'reconnect_required', mode:'two_way',
+  }] });
+  const error = Object.assign(new Error('HTTP 401'), {
+    status:401,
+    data:{ code:'JIRA_RECONNECT_REQUIRED', connection:{
+      base_url:'https://old.atlassian.net', email:'old@example.com', has_api_token:true,
+    } },
+  });
+  Jaspen.listJiraProjects.mockRejectedValueOnce(error);
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  const reconnect = await screen.findByRole('button', { name:'Reconnect Jira' });
+  fireEvent.click(reconnect);
+  expect(await screen.findByLabelText('Jira site URL')).toHaveValue('https://old.atlassian.net');
+  expect(screen.getByLabelText('Jira email')).toHaveValue('old@example.com');
+  expect(Jaspen.syncPmBinding).not.toHaveBeenCalled();
+  Jaspen.testJiraConnection.mockResolvedValue({ ok:true });
+  Jaspen.connectJira.mockResolvedValue({
+    success:true, base_url:'https://old.atlassian.net', email:'old@example.com', has_api_token:true,
+  });
+  fireEvent.change(screen.getByLabelText('Jira API token'), { target:{ value:'replacement-token' } });
+  fireEvent.click(screen.getByRole('button', { name:'Test connection' }));
+  await waitFor(() => expect(screen.getByRole('button', { name:'Save and continue' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name:'Save and continue' }));
+  await waitFor(() => expect(Jaspen.connectJira).toHaveBeenCalledWith(expect.objectContaining({
+    jira_api_token:'replacement-token',
+  })));
+  await waitFor(() => expect(Jaspen.updatePmSyncBinding).toHaveBeenCalledWith('bind-1', { status:'active' }));
 });
 
 it('closing tool selection leaves sync off and never checks a connector', async () => {

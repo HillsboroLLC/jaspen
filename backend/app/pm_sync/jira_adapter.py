@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 from datetime import date, datetime, timedelta
 from urllib.parse import quote
 
@@ -102,11 +103,16 @@ def effective_start_date(task):
 
 
 def create_project(user_id, payload):
-    config = assert_connected(user_id)
-    key = str(payload.get("key") or "").strip().upper()
+    raw_key = str(payload.get("key") or "").strip()
+    if len(raw_key) > 10 or any(char.islower() for char in raw_key) or raw_key.upper().startswith("ATATT"):
+        raise ValueError("That looks like an API token. Enter it under Jira connection instead.")
+    key = raw_key.upper()
     name = str(payload.get("name") or "").strip()
     if not key or not name:
         raise ValueError("Project key and name are required.")
+    if not re.fullmatch(r"[A-Z][A-Z0-9]{1,9}", key):
+        raise ValueError("Project key must be 2–10 uppercase letters or digits and start with a letter.")
+    config = assert_connected(user_id)
     me, _ = request(config, "GET", "/rest/api/3/myself", timeout=20)
     account_id = str((me or {}).get("accountId") or "")
     if not account_id:

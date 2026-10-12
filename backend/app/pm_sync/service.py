@@ -9,7 +9,7 @@ from app.scenarios_store import load_scenarios_data
 
 MODES = {"two_way", "push_only"}
 POLICIES = {"latest_wins", "prefer_external", "prefer_jaspen", "manual_review"}
-STATUSES = {"active", "paused", "error", "partial", "disconnected"}
+STATUSES = {"active", "paused", "error", "partial", "disconnected", "reconnect_required"}
 GENERIC_PHASE_NAMES = {"", "unphased", "execution", "execution plan", "generated plan", "plan"}
 
 

@@ -706,7 +706,91 @@ def test_connection_is_validated_before_save_and_secret_is_not_returned(client, 
         connected = client.post("/api/v1/pm-sync/jira/connect", json=payload, headers=auth_headers)
         assert connected.status_code == 200
         save.assert_called_once()
+        saved_user_id, connector_id, saved_fields = save.call_args.args
+        assert saved_user_id
+        assert connector_id == "jira_sync"
+        assert saved_fields["jira_base_url"] == payload["jira_base_url"]
+        assert saved_fields["jira_email"] == payload["jira_email"]
+        assert saved_fields["jira_api_token"] == payload["jira_api_token"]
         assert "top-secret" not in connected.get_data(as_text=True)
+
+
+def test_replaced_pm_sync_credentials_are_the_shared_jira_data_source_credentials(test_user):
+    from app.jira_sync import _jira_runtime_config
+
+    replacement = {
+        "jira_base_url": "https://replacement.atlassian.net",
+        "jira_email": "new@example.com",
+        "jira_api_token": "new-token",
+    }
+    with patch("app.jira_sync.get_connector_settings", return_value=replacement) as load:
+        config = _jira_runtime_config(test_user.id)
+
+    load.assert_called_once_with(test_user.id, "jira_sync")
+    assert config["base_url"] == replacement["jira_base_url"]
+    assert config["email"] == replacement["jira_email"]
+    assert config["api_token"] == replacement["jira_api_token"]
+
+
+def test_saved_but_revoked_jira_connection_returns_reconnect_state(client, auth_headers):
+    connection = {"base_url": "https://example.atlassian.net", "email": "user@example.com", "has_api_token": True}
+    with patch("app.routes.pm_sync.list_projects", side_effect=RuntimeError("HTTP 401: unauthorized")), patch(
+        "app.routes.pm_sync._jira_connection", return_value=connection
+    ):
+        response = client.get("/api/v1/pm-sync/jira/projects", headers=auth_headers)
+    assert response.status_code == 401
+    payload = response.get_json()
+    assert payload["code"] == "JIRA_RECONNECT_REQUIRED"
+    assert payload["error"] == "Your saved Jira connection no longer works. Enter a new API token to continue."
+    assert payload["connection"] == connection
+    assert "HTTP 401" not in response.get_data(as_text=True)
+
+
+def test_valid_jira_connection_returns_projects_and_safe_account_identity(client, auth_headers):
+    connection = {"base_url": "https://example.atlassian.net", "email": "user@example.com", "has_api_token": True}
+    with patch("app.routes.pm_sync.list_projects", return_value=[{"key": "JST", "name": "Jaspen Test"}]), patch(
+        "app.routes.pm_sync._jira_connection", return_value=connection
+    ):
+        response = client.get("/api/v1/pm-sync/jira/projects", headers=auth_headers)
+    assert response.status_code == 200
+    assert response.get_json() == {"projects": [{"key": "JST", "name": "Jaspen Test"}], "connection": connection}
+    assert "api_token" not in response.get_data(as_text=True).replace("has_api_token", "")
+
+
+def test_project_key_rejects_token_before_any_jira_request(test_user):
+    from app.pm_sync.jira_adapter import create_project
+
+    with patch("app.pm_sync.jira_adapter.assert_connected") as connected, patch(
+        "app.pm_sync.jira_adapter.request"
+    ) as request:
+        with pytest.raises(ValueError, match="looks like an API token"):
+            create_project(test_user.id, {"key": "ATATT-long-secret-token", "name": "Wrong field"})
+    connected.assert_not_called()
+    request.assert_not_called()
+
+
+def test_project_key_requires_jira_key_format(test_user):
+    from app.pm_sync.jira_adapter import create_project
+
+    with pytest.raises(ValueError, match="2–10 uppercase"):
+        create_project(test_user.id, {"key": "1A", "name": "Invalid"})
+
+
+def test_linked_binding_auth_failure_requires_reconnect(client, auth_headers, test_user):
+    binding = _binding(test_user)
+    binding.mode = "two_way"
+    app_db.session.commit()
+    result = {"errors": [{"entity_type": "task", "jaspen_id": "task-a", "error": "HTTP 403: forbidden"}]}
+    with patch("app.routes.pm_sync.reconcile_binding", return_value=result), patch(
+        "app.routes.pm_sync._jira_connection", return_value={
+            "base_url": "https://example.atlassian.net", "email": "user@example.com", "has_api_token": True,
+        }
+    ):
+        response = client.post(f"/api/v1/pm-sync/bindings/{binding.id}/sync", json={}, headers=auth_headers)
+    assert response.status_code == 401
+    assert response.get_json()["code"] == "JIRA_RECONNECT_REQUIRED"
+    app_db.session.refresh(binding)
+    assert binding.status == "reconnect_required"
 
 
 def test_failed_connection_never_persists_credentials(client, auth_headers):
