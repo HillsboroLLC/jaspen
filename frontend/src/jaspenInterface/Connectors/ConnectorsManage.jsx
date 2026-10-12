@@ -456,10 +456,10 @@ export default function ConnectorsManage() {
       });
       return next;
     });
-    if (!selectedConnectorId && ordered.length) {
-      setSelectedConnectorId(ordered[0].id);
+    if (ordered.length) {
+      setSelectedConnectorId((current) => current || ordered[0].id);
     }
-  }, [selectedConnectorId]);
+  }, []);
 
   const waitForSalesforceConnected = useCallback(async () => {
     const maxAttempts = 8;
@@ -510,10 +510,10 @@ export default function ConnectorsManage() {
       }))
       .filter((item) => item.threadId);
     setThreads(rows);
-    if (!selectedThreadId && rows.length) {
-      setSelectedThreadId(rows[0].threadId);
+    if (rows.length) {
+      setSelectedThreadId((current) => current || rows[0].threadId);
     }
-  }, [selectedThreadId]);
+  }, []);
 
   const loadAudit = useCallback(async (connectorId) => {
     if (!connectorId) {
