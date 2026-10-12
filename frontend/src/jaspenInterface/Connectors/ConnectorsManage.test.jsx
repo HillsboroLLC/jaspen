@@ -1,11 +1,12 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import ConnectorsManage from './ConnectorsManage';
 import { authFetch } from '../../shared/auth/http';
 
+let mockUser = { subscription_plan: 'free' };
 jest.mock('../../shared/auth/AuthContext', () => ({
-  useAuth: () => ({ user: { subscription_plan: 'free' } }),
+  useAuth: () => ({ user: mockUser }),
 }));
 
 jest.mock('../../shared/auth/http', () => ({
@@ -24,6 +25,7 @@ const response = (body) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockUser = { subscription_plan: 'free' };
   authFetch.mockImplementation((url) => {
     if (String(url).includes('/api/v1/connectors/status')) {
       return Promise.resolve(response({
@@ -48,6 +50,42 @@ beforeEach(() => {
       return Promise.resolve(response({ events: [] }));
     }
     throw new Error(`Unexpected request: ${url}`);
+  });
+});
+
+it('shows the full connector catalog for the canonical Business plan key', async () => {
+  mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
+  const labels = [
+    ['jira_sync', 'Jira'],
+    ['smartsheet_sync', 'Smartsheet'],
+    ['salesforce_insights', 'Salesforce'],
+    ['snowflake_insights', 'Snowflake'],
+    ['oracle_fusion_insights', 'Oracle Fusion'],
+    ['servicenow_insights', 'ServiceNow'],
+    ['netsuite_insights', 'NetSuite'],
+  ];
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) {
+      return Promise.resolve(response({ connectors: labels.map(([id, label]) => ({
+        id, label, implementation_status:'implemented', lifecycle_status:'disconnected', connected:false,
+      })) }));
+    }
+    if (String(url).includes('/api/v1/ai-agent/threads')) {
+      return Promise.resolve(response({ success:true, sessions:[] }));
+    }
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events:[] }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+
+  expect(await screen.findByText('7 available on your business plan')).toBeInTheDocument();
+  ['Jira', 'Smartsheet', 'Salesforce', 'Snowflake'].forEach((label) => {
+    expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+  });
+  fireEvent.click(screen.getByRole('button', { name:/Enterprise Sources/i }));
+  ['Oracle Fusion', 'ServiceNow', 'NetSuite'].forEach((label) => {
+    expect(screen.getAllByText(label).length).toBeGreaterThan(0);
   });
 });
 

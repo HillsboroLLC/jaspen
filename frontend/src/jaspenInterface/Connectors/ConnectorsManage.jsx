@@ -32,12 +32,13 @@ const CONNECTOR_ORDER = [
   'netsuite_insights',
 ];
 
-const PLAN_CONNECTOR_IDS = {
-  free: CONNECTOR_ORDER,
-  essential: CONNECTOR_ORDER,
-  team: CONNECTOR_ORDER,
-  enterprise: CONNECTOR_ORDER,
-};
+// Connectors are intentionally available across every plan. Build this map
+// from the canonical plan list so plan renames cannot silently hide the
+// catalog. Keep the legacy/custom aliases accepted by persisted accounts.
+const PLAN_CONNECTOR_IDS = Object.fromEntries(
+  [...new Set([...PLAN_ORDER, 'enterprise', 'enterprise_custom'])]
+    .map((planKey) => [planKey, CONNECTOR_ORDER])
+);
 const EXECUTION_SYNC_CONNECTOR_IDS = ['jira_sync', 'smartsheet_sync'];
 
 const CONNECTOR_CATEGORIES = [
