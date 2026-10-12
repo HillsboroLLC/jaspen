@@ -12,9 +12,10 @@ describe('single RFP scorecard decision actions', () => {
     expect(source).toContain('decisionKit={result.decision_kit}');
   });
 
-  it('shows the server decision-required message and record action path', () => {
-    expect(source).toContain("err?.data?.code === 'recorded_advancing_decision_required'");
-    expect(source).toContain("err?.data?.action === 'record_decision'");
-    expect(source).toContain('opts.executionDecisionRequired.message');
+  it('routes plan builds through the shared universal decision confirmation', () => {
+    expect(source).toContain("import { useExecutionPlanBuild } from './useExecutionPlanBuild'");
+    expect(source).toContain('generateExecutionPlan(tid');
+    expect(source).toContain('{executionPlanDecisionDialog}');
+    expect(source).not.toContain('Jaspen.generateAiWbs');
   });
 });

@@ -88,6 +88,7 @@ from app.evaluation_telemetry import (
     evaluation_id_for_scorecard,
 )
 from app.decision_facts import (
+    attach_relative_reference,
     extract_candidate_facts,
     field_definitions,
     ground_option_user_evidence,
@@ -694,7 +695,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "BRAND COLOR: when the user asks for their brand color or a custom accent (e.g. 'use our brand blue #0A66C2', 'make the scorecard match our colors', 'change the accent to green'), call patch_scorecard with `accent_color` as a #RRGGBB hex. If they name a color without a hex, pick a sensible hex for it. This recolors the live scorecard and its exports; it never moves the score. "
     "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea (wording, title rename, or re-score) must use patch_scorecard or generate_scorecard(rescore_scorecard_id=<open id>) — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. A title rename or any wording/prose edit is cosmetic: use patch_scorecard and the score MUST NOT move. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
-    "When the user asks to build an execution plan, call generate_execution_plan. "
+    "When the user asks to build an execution plan, call generate_execution_plan. If it returns confirmation_required, ask its confirmation question conversationally and do not claim the plan exists yet. On the user's affirmative reply, call generate_execution_plan again with decision_acknowledged=true and the returned option_key. "
     "When the user asks to start the plan on a specific date or shift the whole schedule (e.g. 'start this plan July 1', 'push the kickoff back two weeks'), call set_execution_start_date with the new start_date (YYYY-MM-DD) — it slides every task by the same delta and preserves manual per-task adjustments. "
     "Use your judgment about when to score. A confirmation, an acknowledgment, or a pure question about an existing scorecard never warrants a tool call. "
     "POST-TOOL CONFIRMATION: After any tool call succeeds, your confirmation message must describe ONLY the action you just completed in this turn — derive it strictly from the tool result returned to you, not from the conversation history. Do not reference, repeat, or re-describe actions from previous turns. "
@@ -6006,7 +6007,7 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
             },
             {
                 "name": "set_option_attributes",
-                "description": "Semantically extract and store canonical structured facts for one option with provenance. Equivalent paraphrases must produce the same field/value/source; do not copy wording into identity. Use only values explicitly stated by the user, supported by a document, or clearly labeled as assumptions. This does not change scores; an existing scored option is marked for holistic re-score.",
+                "description": "Semantically extract and store canonical structured facts for one option with provenance. Equivalent paraphrases must produce the same field/value/source; do not copy wording into identity. Use only values explicitly stated by the user, supported by a document, or clearly labeled as assumptions. For a relative date, put structured data in value as {relative:{amount:<integer>,unit:<days|weeks|months|business_days>}} and quote the user's exact relative-date words in evidence; code resolves the date from that message's timestamp. This does not change scores; an existing scored option is marked for holistic re-score.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -6071,7 +6072,7 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                                     },
                                     "attributes": {
                                         "type": "object",
-                                        "description": "Canonical option facts keyed by field name. Every fact must include its normalized value, source classification, and exact evidence excerpt.",
+                                        "description": "Canonical option facts keyed by field name. Every fact must include its normalized value, source classification, and exact evidence excerpt. Relative dates use value {relative:{amount:<integer>,unit:<days|weeks|months|business_days>}}; code resolves the ISO date from the evidence message timestamp.",
                                         "additionalProperties": {
                                             "type": "object",
                                             "properties": {
@@ -6269,6 +6270,14 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                         "regenerate": {
                             "type": "boolean",
                             "description": "Set true only when the user explicitly asked to replace/rebuild an existing plan.",
+                        },
+                        "decision_acknowledged": {
+                            "type": "boolean",
+                            "description": "Set true only after the user confirms that building the plan records moving forward with this option.",
+                        },
+                        "option_key": {
+                            "type": "string",
+                            "description": "The option key returned by the confirmation-required result.",
                         },
                     },
                     "additionalProperties": False,
@@ -6877,7 +6886,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 rejected_fields.append({"field": str(field.get("key") or ""), "value": field.get("value"), "reason": "Evidence is required"})
                 continue
             try:
-                key, entry = normalize_fact_entry(field.get("key"), field, kit=kit)
+                prepared_field = attach_relative_reference(field, session)
+                key, entry = normalize_fact_entry(field.get("key"), prepared_field, kit=kit)
             except ValueError as exc:
                 rejected_fields.append({"field": str(field.get("key") or ""), "value": field.get("value"), "source": source, "evidence": evidence, "reason": str(exc)})
                 continue
@@ -6887,6 +6897,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     kit=kit,
                     current_option_names=current_option_names,
                     other_option_names=other_option_names,
+                    relative=entry.get("relative"),
                 )
                 if not grounded:
                     rejected_fields.append({
@@ -7062,6 +7073,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     extract_types={"date", "enum"},
                     option_name=name,
                     rejected_fields=rejected_attributes,
+                    session=_queue_session,
                 )
                 context_notes, rejected_attributes = _partition_unknown_fact_notes(rejected_attributes, scoped_corpus)
                 _store_option_context_notes(_queue_session, option_key, context_notes)
@@ -7075,6 +7087,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                             scoped_corpus, queue_corpus, kit=queue_kit,
                             current_option_names=current_option_names,
                             other_option_names=other_option_names,
+                            relative=entry.get("relative"),
                         )
                         if grounded:
                             entry["evidence"] = grounded
@@ -7288,6 +7301,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             extract_types={"date", "enum"},
             option_name=requested_name,
             rejected_fields=rejected_fields,
+            session=session,
         )
         current_option_names, other_option_names = option_evidence_identities(
             session, option_key, requested_name, known_option_names,
@@ -7306,6 +7320,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 scoped_evidence_corpus, evidence_corpus, kit=kit,
                 current_option_names=current_option_names,
                 other_option_names=other_option_names,
+                relative=entry.get("relative"),
             )
             if grounded:
                 entry["evidence"] = grounded
@@ -8224,21 +8239,59 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         from ..decision_lineage import build_lineage_sources
         decision_kit_key = session.get("decision_kit") if isinstance(session, dict) else None
         decision_kit = get_decision_kit(decision_kit_key, session.get("decision_kit_version")) if decision_kit_key else None
+        from ..decision_records import find_execution_plan_decision, record_execution_plan_decision
+        target_option_key = str(scorecard.get("option_key") or "")
+        recorded_row = find_execution_plan_decision(
+            user, thread_id, target_option_key, decision_kit=decision_kit,
+        )
         recorded_decision = None
-        if decision_kit:
-            from ..models_decision_record import DecisionRecord
-            target_option_key = str(scorecard.get("option_key") or "")
-            for candidate in DecisionRecord.query.filter_by(thread_id=str(thread_id)).order_by(DecisionRecord.updated_at.desc()).all():
-                record_json = candidate.record if isinstance(candidate.record, dict) else {}
-                verdict = record_json.get("kit_verdict") if isinstance(record_json.get("kit_verdict"), dict) else {}
-                if candidate.final_decision and verdict.get("verdict_key") in {"advance", "advance_with_conditions"} and str(verdict.get("option_key") or "") == target_option_key:
-                    recorded_decision = {"id": candidate.id, "final_decision": candidate.final_decision, "kit_verdict": verdict}
-                    break
-            if recorded_decision is None:
+        decision_recorded_now = False
+        if recorded_row is not None:
+            record_json = recorded_row.record if isinstance(recorded_row.record, dict) else {}
+            recorded_decision = {
+                "id": recorded_row.id,
+                "final_decision": recorded_row.final_decision,
+                "kit_verdict": record_json.get("kit_verdict") or {},
+            }
+        if recorded_decision is None:
+            acknowledged = bool(tool_input.get("decision_acknowledged"))
+            requested_option_key = str(tool_input.get("option_key") or "").strip()
+            if acknowledged and requested_option_key and requested_option_key != target_option_key:
                 return _tool_error(
-                    "Record a Bid or Bid with conditions decision for this option before building its execution plan.",
-                    code="recorded_advancing_decision_required",
+                    "The plan decision does not match this scorecard option.",
+                    code="decision_target_mismatch",
                 )
+            if not acknowledged:
+                option_name = str(
+                    scorecard.get("project_name") or scorecard.get("name")
+                    or scorecard.get("label") or "this option"
+                ).strip()
+                recommendation = scorecard.get("recommendation") if isinstance(scorecard.get("recommendation"), dict) else {}
+                verdict_label = str(
+                    recommendation.get("label") or recommendation.get("verdict") or "move forward"
+                ).strip()
+                return _tool_success({
+                    "tool": tool_name,
+                    "confirmation_required": True,
+                    "confirmation": (
+                        f"This records that you're moving forward with {option_name} "
+                        f"({verdict_label}) — go ahead?"
+                    ),
+                    "option_key": target_option_key or None,
+                    "option_name": option_name,
+                    "verdict": recommendation.get("verdict_key") or None,
+                    "verdict_label": verdict_label,
+                })
+            recorded_row = record_execution_plan_decision(
+                user, thread_id, scorecard, decision_kit=decision_kit,
+            )
+            record_json = recorded_row.record if isinstance(recorded_row.record, dict) else {}
+            recorded_decision = {
+                "id": recorded_row.id,
+                "final_decision": recorded_row.final_decision,
+                "kit_verdict": record_json.get("kit_verdict") or {},
+            }
+            decision_recorded_now = True
         lineage_sources = build_lineage_sources(scorecard, decision_kit, recorded_decision)
         attributes = scorecard.get("attributes") if isinstance(scorecard.get("attributes"), dict) else {}
         team_entry = attributes.get("team")
@@ -8393,6 +8446,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "Open the Execution view to review list, board, and timeline."
             ),
             "project_wbs": normalized_wbs,
+            "decision_recorded": decision_recorded_now,
+            "decision_record_id": recorded_decision.get("id") if recorded_decision else None,
             "sync_status": sync_status,
             "artifact": {
                 "type": "execution_plan",

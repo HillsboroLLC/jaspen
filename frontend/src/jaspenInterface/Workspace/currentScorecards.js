@@ -1,6 +1,11 @@
 // Resolve all scorecard displays against current persisted snapshots by stable ID.
 export const scorecardId = (card) => String(card?.id || card?.analysis_id || card?.analysisId || '').trim();
 
+export function weightedRubricCriteria(card) {
+  const criteria = (card?.scoring_rubric || card?.rubric)?.criteria;
+  return Array.isArray(criteria) ? criteria.filter((item) => item?.key && !item?.gate) : [];
+}
+
 export function refreshScorecardMessages(messages, cards) {
   const current = new Map((cards || []).map(card => [scorecardId(card), card]));
   return (messages || []).filter(message => !message?._isProactiveHint).map(message => {

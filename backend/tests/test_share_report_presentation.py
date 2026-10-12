@@ -1,12 +1,27 @@
 """One-pager report: decision content in the shared copy and owner presentation edits."""
 
 import pytest
-
 from app.models import SharedArtifact
 from app.routes.sessions import save_user_sessions
 from app.scorecards import upsert_scorecard
 from app.sharing import sanitize_presentation, sanitize_scorecard
 
+
+def test_exports_keep_gate_criteria_out_of_scored_dimension_rows(app):
+    from app.routes.export import _scorecard_component_rows
+
+    rows = _scorecard_component_rows({
+        'rubric': {'criteria': [
+            {'key': 'fit', 'label': 'Fit', 'weight': 1.0},
+            {'key': 'bonding', 'label': 'Bonding available', 'gate': True},
+        ]},
+        'dimensions': {
+            'fit': {'score': 72, 'label': 'Fit'},
+            'bonding': {'score': 0, 'label': 'Bonding available'},
+        },
+        'gates': [{'key': 'bonding', 'status': 'fail'}],
+    })
+    assert [row['key'] for row in rows] == ['fit']
 
 THREAD = 'report-thread'
 QUOTE = 'our surety has confirmed the bonding'

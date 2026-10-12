@@ -1838,6 +1838,13 @@ def update_current_user():
             else:
                 next_prefs['hide_thinking_power_meter'] = bool(val)
 
+        if 'skip_plan_decision_confirm' in incoming:
+            val = incoming.get('skip_plan_decision_confirm')
+            if val is None:
+                next_prefs.pop('skip_plan_decision_confirm', None)
+            else:
+                next_prefs['skip_plan_decision_confirm'] = bool(val)
+
         if 'timezone' in incoming:
             tz = incoming.get('timezone')
             if tz is None:

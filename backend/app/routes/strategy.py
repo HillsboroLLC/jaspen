@@ -3046,9 +3046,15 @@ def _generate_jaspen_scorecard(
         if isinstance(_raw_criteria, list):
             rubric_criteria = [
                 c for c in _raw_criteria
-                if isinstance(c, dict) and str(c.get("key") or "").strip()
+                if (
+                    isinstance(c, dict)
+                    and str(c.get("key") or "").strip()
+                    and not c.get("gate")
+                )
             ]
-    custom_mode = bool(rubric_criteria and len(rubric_criteria) >= 2)
+    # A rubric with one weighted criterion plus any number of gates is still a
+    # custom scoring contract. Gates do not count toward the dimension count.
+    custom_mode = bool(rubric_criteria)
 
     if custom_mode:
         # Weights come straight from the user's rubric. Renormalize to sum 1.0 if needed.
@@ -3324,6 +3330,20 @@ The executive_summary must read like a concise leadership briefing. It should ne
         raise
 
     parsed = _normalize_scorecard_payload(_extract_json_object(analysis_text))
+
+    # Gates are categorical constraints, never weighted 0-100 judgments.  A
+    # provider may still echo a gate in ``dimensions`` despite the schema; drop
+    # it before validation and arithmetic so it cannot affect any score.
+    gate_keys = {
+        str(item.get("key") or "").strip()
+        for item in (((gate_rubric or {}).get("criteria") or []))
+        if isinstance(item, dict) and item.get("gate")
+    }
+    if isinstance(parsed, dict) and isinstance(parsed.get("dimensions"), dict):
+        parsed["dimensions"] = {
+            key: value for key, value in parsed["dimensions"].items()
+            if str(key) not in gate_keys
+        }
 
     # In custom mode, attach the rubric and per-dimension labels so the frontend can
     # render the user's criteria without a hardcoded label map. Do this BEFORE the
@@ -7231,33 +7251,53 @@ def generate_ai_wbs(thread_id):
         from ..decision_lineage import build_lineage_sources
         decision_kit_key = session.get('decision_kit') if isinstance(session, dict) else None
         decision_kit = get_decision_kit(decision_kit_key, session.get('decision_kit_version')) if decision_kit_key else None
+        from ..decision_records import find_execution_plan_decision
+        target_option_key = str(current_scorecard.get('option_key') or '')
+        recorded_row = find_execution_plan_decision(
+            user, thread_id, target_option_key, decision_kit=decision_kit,
+        )
         recorded_decision = None
-        if decision_kit:
-            from ..models_decision_record import DecisionRecord
-            records = (
-                DecisionRecord.query
-                .filter_by(thread_id=str(thread_id))
-                .order_by(DecisionRecord.updated_at.desc())
-                .all()
-            )
-            target_option_key = str(current_scorecard.get('option_key') or '')
-            for candidate in records:
-                payload_json = candidate.record if isinstance(candidate.record, dict) else {}
-                verdict = payload_json.get('kit_verdict') if isinstance(payload_json.get('kit_verdict'), dict) else {}
-                if (
-                    candidate.final_decision
-                    and verdict.get('verdict_key') in {'advance', 'advance_with_conditions'}
-                    and str(verdict.get('option_key') or '') == target_option_key
-                ):
-                    recorded_decision = {'id': candidate.id, 'final_decision': candidate.final_decision, 'kit_verdict': verdict}
-                    break
-            if recorded_decision is None:
+        decision_recorded_now = False
+        if recorded_row is not None:
+            record_json = recorded_row.record if isinstance(recorded_row.record, dict) else {}
+            recorded_decision = {
+                'id': recorded_row.id,
+                'final_decision': recorded_row.final_decision,
+                'kit_verdict': record_json.get('kit_verdict') or {},
+            }
+
+        record_request = payload.get('record_decision') if isinstance(payload.get('record_decision'), dict) else {}
+        if commit and recorded_decision is None and not bool(record_request.get('acknowledged')):
+            recommendation = current_scorecard.get('recommendation') if isinstance(current_scorecard.get('recommendation'), dict) else {}
+            return jsonify({
+                'success': False,
+                'code': 'recorded_advancing_decision_required',
+                'error': 'Record that you are moving forward with this option before building its execution plan.',
+                'action': 'record_decision',
+                'option_key': target_option_key or None,
+                'option_name': str(current_scorecard.get('project_name') or current_scorecard.get('name') or current_scorecard.get('label') or 'this option'),
+                'verdict': recommendation.get('verdict_key') or None,
+                'verdict_label': recommendation.get('label') or recommendation.get('verdict') or 'move forward',
+            }), 409
+        if commit and recorded_decision is None:
+            requested_option_key = str(record_request.get('option_key') or '').strip()
+            if requested_option_key and requested_option_key != target_option_key:
                 return jsonify({
                     'success': False,
-                    'code': 'recorded_advancing_decision_required',
-                    'error': 'Record a Bid or Bid with conditions decision for this option before building its execution plan.',
-                    'action': 'record_decision',
+                    'code': 'decision_target_mismatch',
+                    'error': 'The plan decision does not match this scorecard option.',
                 }), 409
+            from ..decision_records import record_execution_plan_decision
+            decision_record = record_execution_plan_decision(
+                user, thread_id, current_scorecard, decision_kit=decision_kit,
+            )
+            record_json = decision_record.record if isinstance(decision_record.record, dict) else {}
+            recorded_decision = {
+                'id': decision_record.id,
+                'final_decision': decision_record.final_decision,
+                'kit_verdict': record_json.get('kit_verdict') or {},
+            }
+            decision_recorded_now = True
         lineage_sources = build_lineage_sources(current_scorecard, decision_kit, recorded_decision)
         attributes = current_scorecard.get('attributes') if isinstance(current_scorecard.get('attributes'), dict) else {}
         team_entry = attributes.get('team')
@@ -7530,6 +7570,8 @@ def generate_ai_wbs(thread_id):
             'project_wbs': normalized_wbs,
             'model_type': model_selection['model_type'],
             'limits': limits,
+            'decision_recorded': decision_recorded_now,
+            'decision_record_id': recorded_decision.get('id') if recorded_decision else None,
         }), 200
     except Exception as e:
         current_app.logger.error("[generate_ai_wbs] %s", e)
@@ -10351,8 +10393,9 @@ def scorecard_attributes(thread_id, scorecard_id):
         if source in {'document', 'connector'} and not evidence:
             return jsonify({'error': f'Evidence is required for {key}', 'code': 'missing_attribute_evidence'}), 400
         try:
-            from ..decision_facts import normalize_fact_entry
-            canonical_key, entry = normalize_fact_entry(key, raw, kit=kit)
+            from ..decision_facts import attach_relative_reference, normalize_fact_entry
+            prepared_raw = attach_relative_reference(raw, session)
+            canonical_key, entry = normalize_fact_entry(key, prepared_raw, kit=kit)
         except ValueError as exc:
             return jsonify({'error': str(exc), 'code': 'invalid_attribute'}), 400
         if source == 'user':
@@ -10361,6 +10404,7 @@ def scorecard_attributes(thread_id, scorecard_id):
                 scoped_corpus, corpus, kit=kit,
                 current_option_names=current_option_names,
                 other_option_names=other_option_names,
+                relative=entry.get('relative'),
             )
             if not grounded:
                 return jsonify({

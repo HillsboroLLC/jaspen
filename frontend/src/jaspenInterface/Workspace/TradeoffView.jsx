@@ -42,7 +42,7 @@ function resolveDimDefs(snapshots) {
     const rubric = s?.rubric || s?.scoring_rubric;
     const criteria = Array.isArray(rubric?.criteria) ? rubric.criteria : [];
     const definitions = criteria.length
-      ? criteria.map((c) => `${String(c?.key || '').trim()}:${String(c?.label || c?.key || '').trim().toLowerCase()}`).filter(Boolean)
+      ? criteria.filter((c) => c && !c.gate).map((c) => `${String(c?.key || '').trim()}:${String(c?.label || c?.key || '').trim().toLowerCase()}`).filter(Boolean)
       : Object.entries(s?.dimensions || {}).map(([key, value]) => `${key}:${String(value?.label || key).trim().toLowerCase()}`);
     return definitions.sort().join('|');
   }).filter(Boolean));

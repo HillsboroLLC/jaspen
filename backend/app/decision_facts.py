@@ -5,7 +5,8 @@ types, units, provenance, and null handling.  Decision Kits only describe the
 fields; they do not get a separate fact engine.
 """
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
+import calendar
 from decimal import Decimal, InvalidOperation
 import re
 
@@ -96,6 +97,76 @@ def _date(value):
         except ValueError:
             continue
     return None
+
+
+_RELATIVE_DATE_UNITS = {
+    "day": "days", "days": "days",
+    "week": "weeks", "weeks": "weeks",
+    "month": "months", "months": "months",
+    "business_day": "business_days", "business_days": "business_days",
+    "business day": "business_days", "business days": "business_days",
+}
+
+
+def _relative_date(relative, reference_date):
+    """Resolve provider-structured relative time using a fixed evidence date."""
+    if not isinstance(relative, dict):
+        return None, None
+    try:
+        amount = int(relative.get("amount"))
+    except (TypeError, ValueError):
+        return None, None
+    unit = _RELATIVE_DATE_UNITS.get(str(relative.get("unit") or "").strip().lower())
+    reference = _date(reference_date)
+    if amount < 0 or amount > 10000 or not unit or not reference:
+        return None, None
+    start = date.fromisoformat(reference)
+    if unit == "days":
+        resolved = start + timedelta(days=amount)
+    elif unit == "weeks":
+        resolved = start + timedelta(weeks=amount)
+    elif unit == "months":
+        month_index = start.month - 1 + amount
+        year = start.year + month_index // 12
+        month = month_index % 12 + 1
+        resolved = date(year, month, min(start.day, calendar.monthrange(year, month)[1]))
+    else:
+        resolved = start
+        remaining = amount
+        while remaining:
+            resolved += timedelta(days=1)
+            if resolved.weekday() < 5:
+                remaining -= 1
+    return resolved.isoformat(), {"amount": amount, "unit": unit}
+
+
+def evidence_reference_date(session, evidence):
+    """Return the date of the user message containing an exact evidence quote."""
+    needle = str(evidence or "").strip().casefold()
+    history = (session or {}).get("chat_history") if isinstance(session, dict) else None
+    for message in reversed(history or []):
+        if not isinstance(message, dict) or str(message.get("role") or "").lower() not in {"user", "human"}:
+            continue
+        content = str(message.get("content") or message.get("text") or "")
+        if needle and needle not in content.casefold():
+            continue
+        stamp = message.get("timestamp") or message.get("created_at") or message.get("createdAt")
+        parsed = _date(stamp)
+        if parsed:
+            return parsed
+    return None
+
+
+def attach_relative_reference(raw, session):
+    """Add the immutable message date to a structured relative date candidate."""
+    if not isinstance(raw, dict):
+        return raw
+    value = raw.get("value")
+    relative = raw.get("relative") or (value.get("relative") if isinstance(value, dict) else None)
+    if not isinstance(relative, dict) or raw.get("reference_date"):
+        return raw
+    reference = evidence_reference_date(session, raw.get("evidence"))
+    return {**raw, "reference_date": reference} if reference else raw
 
 
 def _list(value):
@@ -223,11 +294,24 @@ def normalize_fact_entry(key, raw, *, kit=None, default_source="user", default_e
     if source not in {"user", "document", "connector", "calculated", "assumed"}:
         raise ValueError(f"Invalid source for {canonical}")
     field_definition = definitions.get(canonical) or _COMMON_FIELD_DEFINITIONS.get(canonical, {})
-    value = normalize_value(entry.get("value"), field_definition)
+    raw_value = entry.get("value")
+    relative = entry.get("relative")
+    reference_date = entry.get("reference_date")
+    if isinstance(raw_value, dict):
+        relative = relative or raw_value.get("relative")
+        reference_date = reference_date or raw_value.get("reference_date")
+    if str(field_definition.get("type") or "").lower() == "date" and relative:
+        value, normalized_relative = _relative_date(relative, reference_date)
+    else:
+        value = normalize_value(raw_value, field_definition)
+        normalized_relative = None
     if entry.get("value") not in (None, "") and value is None:
         raise ValueError(f"Invalid value for {canonical}")
     evidence = str(entry.get("evidence") or default_evidence or "").strip()
     result = {"value": value, "source": source, "evidence": evidence}
+    if normalized_relative:
+        result["relative"] = normalized_relative
+        result["reference_date"] = _date(reference_date)
     for provenance_key in ("source_id", "locator"):
         if entry.get(provenance_key) not in (None, ""):
             result[provenance_key] = entry.get(provenance_key)
@@ -249,7 +333,7 @@ _GENERIC_EVIDENCE_TERMS = {
 }
 
 
-def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None):
+def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None, relative=None):
     """Return an exact user excerpt supporting a canonical field/value pair.
 
     A provider may paraphrase an excerpt, but stored provenance must remain the
@@ -295,6 +379,10 @@ def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None)
 
     numeric_kind = str(definition.get("type") or "").lower() in {"money", "number", "percentage"}
     date_kind = str(definition.get("type") or "").lower() == "date"
+    # Relative dates are accepted only from the provider's exact cited words;
+    # code verifies amount/unit but never searches prose to infer the phrase.
+    if date_kind and isinstance(relative, dict) and not claimed_excerpt:
+        return None
     corpus_candidates = [
         part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", corpus) if part.strip()
     ]
@@ -318,6 +406,23 @@ def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None)
                 # label appears in the same clause as that exact value.
                 if not other_field_terms.intersection(clause_terms) and not is_claimed_fragment:
                     return sentence
+        elif date_kind and isinstance(relative, dict):
+            try:
+                amount = str(int(relative.get("amount")))
+            except (TypeError, ValueError):
+                continue
+            unit = _RELATIVE_DATE_UNITS.get(str(relative.get("unit") or "").strip().lower())
+            if not unit:
+                continue
+            unit_words = {
+                "days": ("day", "days"), "weeks": ("week", "weeks"),
+                "months": ("month", "months"),
+                "business_days": ("business day", "business days"),
+            }[unit]
+            has_amount = re.search(rf"(?<![0-9]){re.escape(amount)}(?![0-9])", sentence)
+            has_unit = any(re.search(rf"(?<![A-Za-z]){re.escape(word)}(?![A-Za-z])", sentence, re.I) for word in unit_words)
+            if has_amount and has_unit:
+                return sentence
         elif date_kind:
             for clause in re.split(r";|,(?!\s*\d)", sentence):
                 raw_dates = re.findall(
@@ -388,6 +493,7 @@ def ground_option_user_evidence(
     kit=None,
     current_option_names=None,
     other_option_names=None,
+    relative=None,
 ):
     """Ground an AI-assigned option fact without expanding option semantics.
 
@@ -413,7 +519,7 @@ def ground_option_user_evidence(
         )
 
     grounded = ground_user_evidence(
-        key, value, claimed_evidence, option_source_text, kit=kit,
+        key, value, claimed_evidence, option_source_text, kit=kit, relative=relative,
     )
     if grounded and not names_different_option(grounded):
         return grounded
@@ -427,7 +533,7 @@ def ground_option_user_evidence(
     excerpt = corpus[start:start + len(claimed)]
     if names_different_option(excerpt):
         return None
-    return ground_user_evidence(key, value, excerpt, excerpt, kit=kit)
+    return ground_user_evidence(key, value, excerpt, excerpt, kit=kit, relative=relative)
 
 
 def _candidate(pattern, text, key, *, flags=re.I, group=1):
@@ -544,6 +650,7 @@ def normalize_option_facts(
     extract_types=None,
     option_name=None,
     rejected_fields=None,
+    session=None,
 ):
     """Normalize recognizable facts without letting one bad field abort.
 
@@ -555,7 +662,9 @@ def normalize_option_facts(
     normalized = {}
     for key, raw in (attributes or {}).items():
         try:
-            canonical, entry = normalize_fact_entry(key, raw, kit=kit)
+            canonical, entry = normalize_fact_entry(
+                key, attach_relative_reference(raw, session), kit=kit,
+            )
         except ValueError as exc:
             if isinstance(rejected_fields, list):
                 raw_entry = dict(raw) if isinstance(raw, dict) else {"value": raw}

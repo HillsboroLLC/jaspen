@@ -558,6 +558,87 @@ def record_final_decision(record, final_decision_text, decided_by_user_id=None):
     return record
 
 
+def find_execution_plan_decision(user, thread_id, option_key, *, decision_kit=None):
+    """Return the option-scoped recorded decision that authorizes a plan build."""
+    _row, organization_id, attribution_user_id = canonical_context(user, thread_id)
+    query = DecisionRecord.query.filter_by(thread_id=str(thread_id))
+    query = (
+        query.filter_by(organization_id=organization_id)
+        if organization_id is not None
+        else query.filter_by(user_id=str(attribution_user_id or user.id))
+    )
+    wanted_key = str(option_key or '').strip()
+    for candidate in query.order_by(DecisionRecord.updated_at.desc()).all():
+        if not candidate.final_decision:
+            continue
+        record_json = candidate.record if isinstance(candidate.record, dict) else {}
+        verdict = record_json.get('kit_verdict') if isinstance(record_json.get('kit_verdict'), dict) else {}
+        recorded_key = str(
+            verdict.get('option_key')
+            or record_json.get('execution_option_key')
+            or ''
+        ).strip()
+        if recorded_key and recorded_key != wanted_key:
+            continue
+        if decision_kit and verdict.get('verdict_key') not in {'advance', 'advance_with_conditions'}:
+            continue
+        return candidate
+    return None
+
+
+def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=None):
+    """Record the user's explicit Build-plan choice through the shared writer.
+
+    Clicking the acknowledged Build action is a human decision signal.  This
+    helper deliberately composes ``create_or_refresh_record`` and
+    ``record_final_decision`` so execution planning cannot grow a second,
+    incompatible decision-record implementation.
+    """
+    card = scorecard if isinstance(scorecard, dict) else {}
+    option_name = str(
+        card.get('project_name') or card.get('name') or card.get('label') or 'this option'
+    ).strip()
+    option_key = str(card.get('option_key') or '').strip()
+    scorecard_id = str(card.get('id') or card.get('analysis_id') or '').strip()
+    recommendation = card.get('recommendation') if isinstance(card.get('recommendation'), dict) else {}
+
+    record, _created = create_or_refresh_record(user, thread_id)
+    record_final_decision(
+        record,
+        f'Moving forward with {option_name} — execution plan built.',
+        decided_by_user_id=user.id,
+    )
+
+    record_json = {**(record.record if isinstance(record.record, dict) else {})}
+    if decision_kit:
+        recommended_key = str(recommendation.get('verdict_key') or '').strip()
+        verdict_key = recommended_key if recommended_key in {'advance', 'advance_with_conditions'} else 'advance'
+        vocabulary = decision_kit.get('verdict_vocabulary') or {}
+        kit_verdict = {
+            'verdict_key': verdict_key,
+            'label': vocabulary.get(verdict_key) or verdict_key,
+            'option_key': option_key,
+            'scorecard_id': scorecard_id,
+            'recommendation_snapshot': recommendation,
+            'conditions_accepted': [],
+            'source': 'build_execution_plan',
+            'override_of': 'decline' if recommended_key == 'decline' else None,
+            'override_reason': (
+                'User explicitly chose Build execution plan.'
+                if recommended_key == 'decline' else None
+            ),
+        }
+        record_json['kit_verdict'] = kit_verdict
+        record.decision_type = record_json.get('decision_kit') or record.decision_type
+    record_json['decision_source'] = 'build_execution_plan'
+    record_json['execution_option_key'] = option_key or None
+    record_json['execution_scorecard_id'] = scorecard_id or None
+    record.record = record_json
+    flag_modified(record, 'record')
+    db.session.commit()
+    return record
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Outcomes and lessons (Phase 6)
 #

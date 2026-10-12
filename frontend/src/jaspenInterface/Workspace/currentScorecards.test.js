@@ -1,4 +1,12 @@
-import { refreshScorecardMessages, selectCurrentScorecard } from './currentScorecards';
+import { refreshScorecardMessages, selectCurrentScorecard, weightedRubricCriteria } from './currentScorecards';
+
+test('gate criteria never enter the scored dimension list', () => {
+  const card = { rubric: { criteria: [
+    { key: 'fit', label: 'Fit', weight: 1 },
+    { key: 'bonding', label: 'Bonding available', gate: true },
+  ] } };
+  expect(weightedRubricCriteria(card).map((item) => item.key)).toEqual(['fit']);
+});
 
 test('re-score updates existing inline artifact by stable ID without mutating history', () => {
   const old = { id: 'city', jaspen_score: 59, top_risks: ['old'] };

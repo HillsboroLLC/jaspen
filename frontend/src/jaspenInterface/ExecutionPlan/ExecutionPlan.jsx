@@ -5,6 +5,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheck, faCopy, faFileExcel, faRotate, faSpinner, faThumbsDown, faThumbsUp, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import AppMenu from '../shared/AppMenu';
 import { Jaspen } from '../Workspace/JaspenClient';
+import { useExecutionPlanBuild } from '../Workspace/useExecutionPlanBuild';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import ExecutionPanel from '../Workspace/components/ExecutionPanel';
 import { parseUIActions, ChatActionTypes } from '../../shared/hooks/useChatCommands';
@@ -112,6 +113,7 @@ export default function ExecutionPlan() {
   const location = useLocation();
   const navigate = useNavigate();
   const { toasts, showToast, dismissToast } = useToast();
+  const { generateExecutionPlan, executionPlanDecisionDialog } = useExecutionPlanBuild();
 
   const [threadId, setThreadId] = useState(() => getThreadIdFromSearch(window.location.search));
   const [threadBundle, setThreadBundle] = useState(null);
@@ -371,7 +373,8 @@ export default function ExecutionPlan() {
         await handleExecutionDependencyAdd(payload.task_id || payload.taskId || payload.id, payload.depends_on || payload.dependsOn);
         return true;
       case ChatActionTypes.PROJECT_BEGIN:
-        await Jaspen.generateAiWbs(threadId, { commit: true });
+        const generated = await generateExecutionPlan(threadId, { commit: true });
+        if (generated?.cancelled) return false;
         await refreshThreadWbs(threadId);
         return true;
       default:
@@ -382,6 +385,7 @@ export default function ExecutionPlan() {
     handleExecutionTaskAdd,
     handleExecutionTaskRemove,
     handleExecutionTaskUpdate,
+    generateExecutionPlan,
     refreshThreadWbs,
     threadId,
   ]);
@@ -400,7 +404,8 @@ export default function ExecutionPlan() {
     }
     setPlanBusy(true);
     try {
-      const response = await Jaspen.generateAiWbs(tid, { commit: true, prompt: instruction });
+      const response = await generateExecutionPlan(tid, { commit: true, prompt: instruction, force: Boolean(confirmRegenerate && hasExistingPlan) });
+      if (response?.cancelled) return 'cancelled';
       const count = Array.isArray(response?.project_wbs?.tasks) ? response.project_wbs.tasks.length : null;
       await refreshThreadWbs(tid);
       showToast(count != null ? `Execution plan generated (${count} tasks)` : 'Execution plan generated', 'success');
@@ -411,7 +416,7 @@ export default function ExecutionPlan() {
     } finally {
       setPlanBusy(false);
     }
-  }, [hasExistingPlan, planBusy, refreshThreadWbs, showToast, threadId]);
+  }, [generateExecutionPlan, hasExistingPlan, planBusy, refreshThreadWbs, showToast, threadId]);
 
   const sendAssistantMessage = useCallback(async (overrideText = '', options = {}) => {
     const text = String(overrideText || assistantInput || '').trim();
@@ -636,6 +641,7 @@ export default function ExecutionPlan() {
   return (
     <div className={`execution-plan-page int-page ${assistantOpen ? 'execution-ai-open' : ''}`}>
       <AppMenu />
+      {executionPlanDecisionDialog}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       <section className="execution-plan-main int-page-inner">

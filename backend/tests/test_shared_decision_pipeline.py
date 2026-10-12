@@ -3,6 +3,62 @@ import pytest
 from datetime import date, timedelta
 
 
+def test_relative_deadline_uses_message_date_and_keeps_provenance(app):
+    from app.decision_facts import attach_relative_reference, ground_user_evidence, normalize_fact_entry
+    from app.decision_kits import get_decision_kit
+
+    evidence = "submission is due in 5 weeks"
+    session = {"chat_history": [{
+        "role": "user", "content": f"Denver Water: {evidence}.",
+        "timestamp": "2026-10-11T14:30:00Z",
+    }]}
+    raw = attach_relative_reference({
+        "value": {"relative": {"amount": 5, "unit": "weeks"}},
+        "source": "user", "evidence": evidence,
+    }, session)
+    key, fact = normalize_fact_entry("submission_due", raw, kit=get_decision_kit("rfp_bid"))
+
+    assert key == "submission_due"
+    assert fact["value"] == "2026-11-15"
+    assert fact["reference_date"] == "2026-10-11"
+    assert fact["relative"] == {"amount": 5, "unit": "weeks"}
+    assert ground_user_evidence(
+        key, fact["value"], evidence, session["chat_history"][0]["content"],
+        kit=get_decision_kit("rfp_bid"), relative=fact["relative"],
+    ) == evidence
+    from app.decision_processing import _structured_gate_result
+    gate = {"key": "submission_deadline", "fact_key": "submission_due", "resolver": "future_date"}
+    assert _structured_gate_result(gate, {"submission_due": fact})["status"] == "pass"
+
+
+def test_relative_deadline_grounding_rejects_wrong_amount_or_unit(app):
+    from app.decision_facts import ground_user_evidence
+    from app.decision_kits import get_decision_kit
+
+    kit = get_decision_kit("rfp_bid")
+    assert ground_user_evidence(
+        "submission_due", "2026-11-15", "due in 5 weeks", "due in 5 weeks",
+        kit=kit, relative={"amount": 4, "unit": "weeks"},
+    ) is None
+    assert ground_user_evidence(
+        "submission_due", "2026-11-15", "due in 5 weeks", "due in 5 weeks",
+        kit=kit, relative={"amount": 5, "unit": "months"},
+    ) is None
+
+
+def test_gate_dimensions_never_change_weighted_score(app):
+    from app.routes.strategy import _recompute_jaspen_score
+
+    without_gate = {"dimensions": {"fit": {"score": 72, "confidence": "high"}}}
+    with_gate = {"dimensions": {
+        "fit": {"score": 72, "confidence": "high"},
+        "must_have": {"score": 0, "confidence": "high"},
+    }}
+    _recompute_jaspen_score(without_gate, {"fit": 1.0})
+    _recompute_jaspen_score(with_gate, {"fit": 1.0})
+    assert with_gate["jaspen_score"] == without_gate["jaspen_score"] == 72
+
+
 def test_governed_extraction_candidates_normalize_types_units_and_provenance(app):
     from app.decision_facts import normalize_option_facts
     from app.decision_kits import get_decision_kit
@@ -1079,3 +1135,45 @@ def test_batch_reuses_the_org_judgment_for_identical_canonical_state(app, monkey
     assert cards[0]["jaspen_score"] == 63
     assert cards[0]["reused_stored_result"] is True
     assert cards[0]["decision_fingerprint"] == expected
+
+
+def test_one_weighted_criterion_is_a_complete_custom_scoring_contract(app, monkeypatch):
+    from app.routes import strategy
+
+    captured = {}
+    def reply(messages, **kwargs):
+        captured['prompt'] = messages[0]['content']
+        return json.dumps({
+            'name': 'Focused option',
+            'dimensions': {
+                'delivery_fit': {
+                    'score': 72,
+                    'confidence': 'medium',
+                    'source': 'conversation',
+                    'rationale': 'The team stated the delivery evidence.',
+                    'evidence': ['delivery evidence'],
+                    'what_would_improve': None,
+                },
+            },
+            'gates': [],
+            'key_insights': [],
+            'top_risks': [],
+            'recommendations': [],
+            'assumptions': [],
+        }), {'provider': 'test'}
+
+    monkeypatch.setattr(strategy, '_strategy_generate_reply', reply)
+    result = strategy._generate_jaspen_scorecard(
+        None,
+        'Focused option',
+        'ignored',
+        rubric={'criteria': [
+            {'key': 'delivery_fit', 'label': 'Delivery fit', 'weight': 1.0},
+        ]},
+        evidence_corpus='delivery evidence',
+    )
+
+    assert result['rubric']['criteria'][0]['key'] == 'delivery_fit'
+    assert set(result['dimensions']) == {'delivery_fit'}
+    assert 'Scoring mode: CUSTOM RUBRIC' in captured['prompt']
+    assert 'Delivery fit (100%)' in captured['prompt']

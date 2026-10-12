@@ -2168,6 +2168,7 @@ def test_live_general_scoring_creates_decision_record(client, db, test_user, mon
 
 
 def test_execution_route_persists_ai_generated_plan(client, db, test_user, auth_headers, monkeypatch):
+    from app.models_decision_record import DecisionRecord
     strategy, _ = modules()
     tid = 'planner-route-success'
     card = {'id': 'planner-card', 'project_name': 'Proposal', 'jaspen_score': 61, 'recommendations': [{'id': 'rec-1', 'text': 'Resolve the compliance response'}]}
@@ -2177,13 +2178,26 @@ def test_execution_route_persists_ai_generated_plan(client, db, test_user, auth_
     mock_accounting(monkeypatch)
     monkeypatch.setattr(
         strategy,
-        '_strategy_generate_reply',
+        '_generate_ai_wbs_suggestion',
         lambda *args, **kwargs: (
-            json.dumps({'tasks': [{'id': '1', 'title': 'Resolve the Proposal compliance response', 'estimated_days': 1, 'lineage': [{'type': 'recommendation', 'ref': 'rec-1'}]}]}),
+            {'tasks': [{'id': '1', 'title': 'Resolve the Proposal compliance response', 'estimated_days': 1, 'lineage': [
+                {'type': item['type'], 'ref': item['ref']} for item in kwargs.get('lineage_sources', []) if item.get('required')
+            ]}]},
             {'provider': 'anthropic', 'model': 'claude-test', 'input_tokens': 12, 'output_tokens': 15, 'total_tokens': 27},
+            True,
+            None,
         ),
     )
-    response = client.post(f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers, json={'commit': True, 'scorecard_id': 'planner-card'})
+    blocked = client.post(
+        f'/api/v1/strategy/threads/{tid}/ai-wbs',
+        headers=auth_headers,
+        json={'commit': True, 'scorecard_id': 'planner-card'},
+    )
+    assert blocked.status_code == 409
+    assert blocked.get_json()['code'] == 'recorded_advancing_decision_required'
+    assert blocked.get_json()['option_name'] == 'Proposal'
+    assert blocked.get_json()['action'] == 'record_decision'
+    response = client.post(f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers, json={'commit': True, 'scorecard_id': 'planner-card', 'record_decision': {'acknowledged': True}})
     assert response.status_code == 200, response.get_json()
     plan = response.get_json()['project_wbs']
     assert plan['ai_generated'] is True
@@ -2192,6 +2206,9 @@ def test_execution_route_persists_ai_generated_plan(client, db, test_user, auth_
     assert row.status == 'succeeded'
     stored = strategy._load_scenarios(test_user.id)[tid]
     assert strategy._resolve_thread_wbs(stored, 'planner-card')['generation_status'] == 'ai_generated'
+    decision = DecisionRecord.query.filter_by(thread_id=tid).one()
+    assert decision.final_decision == 'Moving forward with Proposal — execution plan built.'
+    assert decision.record['decision_source'] == 'build_execution_plan'
 
 
 @pytest.mark.parametrize('has_existing_plan', [False, True])
@@ -2218,7 +2235,7 @@ def test_execution_provider_failure_cannot_create_or_overwrite_plan(client, db, 
     monkeypatch.setattr(strategy, '_strategy_generate_reply', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('provider unavailable')))
 
     initial_credits = test_user.credits_remaining
-    response = client.post(f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers, json={'commit': True, 'force': True, 'scorecard_id': 'planner-card'})
+    response = client.post(f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers, json={'commit': True, 'force': True, 'scorecard_id': 'planner-card', 'record_decision': {'acknowledged': True}})
 
     assert response.status_code == 503, response.get_json()
     assert response.get_json() == {
@@ -2228,7 +2245,7 @@ def test_execution_provider_failure_cannot_create_or_overwrite_plan(client, db, 
         'retryable': True,
         'generation_status': 'failed',
         'provider_error': 'RuntimeError',
-        'source_item_count': 0,
+        'source_item_count': 1,
     }
     after = strategy._resolve_thread_wbs(strategy._load_scenarios(test_user.id)[tid], 'planner-card')
     if has_existing_plan:
@@ -2454,3 +2471,77 @@ def test_option_edits_are_not_criteria_changes():
         assert _message_directs_rubric_change(message) is False, message
     for message in ("Price matters most.", "Make delivery 30%.", "Drop strategic fit.", "Add a criterion for safety record."):
         assert _message_directs_rubric_change(message) is True, message
+
+
+def test_chat_execution_plan_confirms_records_and_does_not_reprompt_for_regenerate(app, db, test_user, monkeypatch):
+    from app.models_decision_record import DecisionRecord
+
+    strategy, agent = modules()
+    tid = 'chat-plan-universal-decision'
+    card = {
+        'id': 'chat-plan-card',
+        'option_key': 'option-general',
+        'project_name': 'General expansion',
+        'jaspen_score': 68,
+        'recommendation': {'verdict_key': 'advance_with_conditions', 'label': 'Proceed with conditions'},
+        'recommendations': [{'id': 'rec-1', 'text': 'Validate staffing before launch'}],
+    }
+    seed_thread(test_user, tid, [card])
+    upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=card)
+    db.session.commit()
+
+    provider_calls = []
+    monkeypatch.setattr(strategy, 'get_llm_client', lambda: object())
+
+    def fake_plan(*args, **kwargs):
+        provider_calls.append(kwargs)
+        required = [item for item in kwargs.get('lineage_sources', []) if item.get('required')]
+        return ({
+            'tasks': [{
+                'id': 'task-1',
+                'title': 'Validate staffing for General expansion',
+                'estimated_days': 2,
+                'lineage': [{'type': item['type'], 'ref': item['ref']} for item in required],
+            }],
+        }, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1}, True, None)
+
+    monkeypatch.setattr(strategy, '_generate_ai_wbs_suggestion', fake_plan)
+
+    def fake_operation(_user, *, generate, **kwargs):
+        generated, usage = generate()
+        return generated, usage, {'charged_credits': 0, 'reserved_credits': 0}
+
+    monkeypatch.setattr(agent, 'execute_customer_operation', fake_operation)
+
+    confirmation = agent._execute_mutation_tool(
+        'generate_execution_plan', {}, user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert confirmation['ok'] is True
+    assert confirmation['confirmation_required'] is True
+    assert confirmation['option_key'] == 'option-general'
+    assert confirmation['confirmation'] == (
+        "This records that you're moving forward with General expansion "
+        '(Proceed with conditions) — go ahead?'
+    )
+    assert provider_calls == []
+    assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
+
+    built = agent._execute_mutation_tool(
+        'generate_execution_plan',
+        {'decision_acknowledged': True, 'option_key': 'option-general'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert built['ok'] is True
+    assert built['decision_recorded'] is True
+    assert built['project_wbs']['tasks'][0]['title'] == 'Validate staffing for General expansion'
+    record = DecisionRecord.query.filter_by(thread_id=tid).one()
+    assert record.final_decision == 'Moving forward with General expansion — execution plan built.'
+    assert record.record['execution_option_key'] == 'option-general'
+
+    regenerated = agent._execute_mutation_tool(
+        'generate_execution_plan', {'regenerate': True},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert regenerated['ok'] is True
+    assert regenerated.get('confirmation_required') is not True
+    assert len(provider_calls) == 2

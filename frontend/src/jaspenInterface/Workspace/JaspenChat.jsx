@@ -5,7 +5,7 @@
 //          to free that name for the new canvas-style Workspace editor.
 // ============================================================================
 
-import { refreshScorecardMessages, selectCurrentScorecard, scorecardId } from './currentScorecards';
+import { refreshScorecardMessages, selectCurrentScorecard, scorecardId, weightedRubricCriteria } from './currentScorecards';
 import { decisionKitForConversationStart, isRfpDecision, RFP_DECISION_INTENT } from './decisionTypeSelection';
 import { streamFailurePresentation } from './messageFormatting';
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useReducer, useCallback } from 'react';
@@ -54,6 +54,7 @@ import {
   isRevisionConflict,
   REVISION_CONFLICT_MESSAGE,
 } from './JaspenClient';
+import { useExecutionPlanBuild } from './useExecutionPlanBuild';
 import EmailResultsButton from './EmailResultsButton';
 import ShareButton from '../Sharing/ShareButton';
 import IntakeReceipt from './IntakeReceipt';
@@ -1591,6 +1592,7 @@ export default function JaspenChat() {
     isOrgCreator,
   } = useAuth();
   const { toasts, showToast, dismissToast } = useToast();
+  const { generateExecutionPlan, executionPlanDecisionDialog } = useExecutionPlanBuild();
 
   // Imperative control for scenario modeling (used by interactive chat actions)
   const scenarioModelerRef = useRef(null);
@@ -2860,7 +2862,7 @@ const renderScorecardCard = (result, opts = {}) => {
 
   // Custom rubric: render the user's own criteria (label + is_risk straight from
   // the payload). Otherwise fall back to Jaspen's built-in 6 dimensions.
-  const rubricCriteria = (result?.scoring_rubric || result?.rubric)?.criteria || null;
+  const rubricCriteria = weightedRubricCriteria(result);
   let primaryDims;
   let secondaryDims;
   if (Array.isArray(rubricCriteria) && rubricCriteria.length > 0) {
@@ -3002,6 +3004,24 @@ const renderScorecardCard = (result, opts = {}) => {
           recommendation={kitRecommendation}
           decisionKitVersion={result?.decision_kit_version}
         />
+      )}
+
+      {Array.isArray(result?.gates) && result.gates.length > 0 && (
+        <div className="jas-scorecard-bottom-cols" aria-label="Must-haves">
+          <div>
+            <p className="jas-scorecard-bottom-col-label">Must-haves</p>
+            {result.gates.map((gate) => {
+              const status = String(gate?.status || 'unknown').toLowerCase();
+              const label = status === 'pass' ? 'Passed' : status === 'fail' ? 'Failed' : 'Not confirmed';
+              return (
+                <details key={gate?.key || gate?.label} className="jas-scorecard-risk-item">
+                  <summary>{gate?.label || gate?.key || 'Requirement'} · {label}</summary>
+                  {(gate?.basis || gate?.evidence?.[0]) && <p>{gate?.basis || gate.evidence[0]}</p>}
+                </details>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {opts.threadId && result?.decision_kit && (
@@ -8684,16 +8704,6 @@ async function onBeginProject(extraAnswers = null) {
     console.warn('[Begin Project] PM tool pre-bind check failed', syncErr);
   }
 
-  const activeScenarioName = activeScenarioProjectLabel;
-  const sourceLabel = activeScenarioName
-    ? `${activeScenarioName} (Active)`
-    : 'Current scorecard';
-  const ok = window.confirm(
-    `Build an execution plan based on: ${sourceLabel}?\n\n` +
-    `Jaspen will generate a full project WBS from this scorecard context and open it on the Execution page.`
-  );
-  if (!ok) return;
-
   setBeginBusy(true);
   setBeginMsg('Building your project plan…');
 
@@ -8704,17 +8714,7 @@ async function onBeginProject(extraAnswers = null) {
     if (extraAnswers && Object.keys(extraAnswers).length > 0) {
       body.preflight_answers = extraAnswers;
     }
-    const resp = await fetch(
-      `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(tid)}/ai-wbs`,
-      {
-        method: 'POST',
-        headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-        credentials: 'include',
-        body: JSON.stringify(body),
-      }
-    );
-
-    const json = await resp.json().catch(() => ({}));
+    const json = await generateExecutionPlan(tid, body);
 
     if (json?.needs_preflight === true) {
       setBeginBusy(false);
@@ -8735,19 +8735,9 @@ async function onBeginProject(extraAnswers = null) {
           setBeginBusy(true);
           setBeginMsg('Building your project plan…');
           try {
-            const forcedResp = await fetch(
-              `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(tid)}/ai-wbs`,
-              {
-                method: 'POST',
-                headers: buildAuthHeaders({ 'Content-Type': 'application/json' }, 'POST'),
-                credentials: 'include',
-                body: JSON.stringify({ ...body, force: true }),
-              }
-            );
-            const forcedJson = await forcedResp.json().catch(() => ({}));
-            if (!forcedResp.ok) {
-              setBeginMsg(`Could not generate plan: ${forcedJson?.error || forcedJson?.detail || `HTTP ${forcedResp.status}`}`);
-              setTimeout(() => setBeginBusy(false), 2000);
+            const forcedJson = await generateExecutionPlan(tid, { ...body, force: true });
+            if (forcedJson?.cancelled) {
+              setBeginBusy(false);
               return;
             }
             setBeginMsg('Plan ready — opening Execution page…');
@@ -8762,10 +8752,8 @@ async function onBeginProject(extraAnswers = null) {
       return;
     }
 
-    if (!resp.ok) {
-      const detail = json?.error || json?.detail || `HTTP ${resp.status}`;
-      setBeginMsg(`Could not generate plan: ${detail}`);
-      setTimeout(() => setBeginBusy(false), 2000);
+    if (json?.cancelled) {
+      setBeginBusy(false);
       return;
     }
 
@@ -10387,12 +10375,13 @@ const sendAIMessage = async () => {
       }
       if (isAffirmativeConfirmation) {
         try {
-          const aiWbs = await Jaspen.generateAiWbs(aiThreadId, {
+          const aiWbs = await generateExecutionPlan(aiThreadId, {
             instruction: pendingWbsConfirmation.instruction || 'Generate a recommended project WBS from this scorecard.',
             commit: true,
             model_type: selectedModelType,
             scenario_id: pendingWbsConfirmation.scorecardId || null,
             scorecard_id: pendingWbsConfirmation.scorecardId || null,
+            record_decision: { acknowledged: true, option_key: pendingWbsConfirmation.optionKey || null },
           });
           if (aiWbs?.plan_exists) {
             const existsReply = `${aiWbs.scorecard_name || 'This idea'} already has an execution plan${aiWbs.task_count ? ` (${aiWbs.task_count} task${Number(aiWbs.task_count) === 1 ? '' : 's'})` : ''}. Open the current plan or generate a new one?`;
@@ -10488,7 +10477,7 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
   setBuildingExecutionPlanFor(scorecardId || tid);
   setExecutionDecisionRequired(null);
   try {
-    const resp = await Jaspen.generateAiWbs(tid, {
+    const resp = await generateExecutionPlan(tid, {
       scenario_id: scenarioId,
       scorecard_id: scorecardId || null,
       commit: true,
@@ -10496,6 +10485,7 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
       prompt: 'Generate a recommended project WBS from this scorecard.',
       model_type: selectedModelType,
     });
+    if (resp?.cancelled) return false;
     // A plan already exists for this idea — offer a choice instead of clobbering.
     if (resp?.plan_exists) {
       setPlanExistsPrompt({
@@ -10530,26 +10520,23 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
       },
     ]);
     showToast('Execution plan built · open Execution tab', 'success');
+    if (resp?.decision_recorded) showToast('Recorded in decision history.', 'success');
     // Also unlock and switch to the Execution pill for immediate feedback.
     setActivePill('execution');
+    return true;
   } catch (err) {
     console.error('[handleGenerateAiWbsFromScorecard] failed', err);
     if (err?.status === 403) setBillingModalOpen(true);
-    if (err?.data?.code === 'recorded_advancing_decision_required' || err?.data?.action === 'record_decision') {
-      setExecutionDecisionRequired({
-        scorecardId: scorecardId || null,
-        message: err?.data?.error || err?.message || 'Record a Bid or Bid with conditions decision for this option before building its execution plan.',
-      });
-    }
     showToast(err?.message || 'Failed to build execution plan. Your existing plan was not changed.', 'error', {
       actionLabel: 'Retry',
       onAction: () => void handleGenerateAiWbsFromScorecard({ threadBundleId, scorecardId, force }),
     });
+    return false;
   } finally {
     setAiWbsBusy(false);
     setBuildingExecutionPlanFor(null);
   }
-}, [aiWbsBusy, baselineScorecardId, currentSessionId, selectedModelType, sessionId, showToast]);
+}, [aiWbsBusy, baselineScorecardId, currentSessionId, generateExecutionPlan, selectedModelType, sessionId, showToast]);
 
 const renderPostAdoptWbsPrompt = () => {
   if (!postAdoptWbsPrompt) return null;
@@ -12072,6 +12059,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       {renderEmbeddedCheckout()}
       {renderPostAdoptWbsPrompt()}
       {renderPlanExistsPrompt()}
+      {executionPlanDecisionDialog}
 
       {/* Scorecard lightbox: dark backdrop with the same real PDF/PPTX actions
           as the inline scorecard. */}
@@ -13641,6 +13629,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       />
       {renderPostAdoptWbsPrompt()}
       {renderPlanExistsPrompt()}
+      {executionPlanDecisionDialog}
       <Onboarding
         open={showOnboarding}
         canGoBack={!displayName}
@@ -14356,7 +14345,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                 const scoreRubricCriteria = (scoreSource?.scoring_rubric || scoreSource?.rubric)?.criteria || null;
                 const dimensionDefs = (Array.isArray(scoreRubricCriteria) && scoreRubricCriteria.length > 0)
                   ? scoreRubricCriteria
-                      .filter((c) => c && c.key)
+                      .filter((c) => c && c.key && !c.gate)
                       .map((c) => ({
                         key: c.key,
                         label: c.label || dimensions[c.key]?.label || c.key,

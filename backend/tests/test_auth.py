@@ -564,3 +564,14 @@ def test_password_change_invalidates_old_sessions(app, auth_headers, test_user):
         headers={"Authorization": f"Bearer {new_token}"},
     )
     assert fresh_resp.status_code == 200
+
+
+def test_plan_decision_confirmation_preference_persists_on_account(client, db, test_user, auth_headers):
+    response = client.patch(
+        "/api/v1/auth/me",
+        headers=auth_headers,
+        json={"ui_preferences": {"skip_plan_decision_confirm": True}},
+    )
+    assert response.status_code == 200
+    db.session.refresh(test_user)
+    assert test_user.ui_preferences["skip_plan_decision_confirm"] is True

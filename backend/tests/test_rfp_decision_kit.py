@@ -263,6 +263,41 @@ def test_only_human_recorded_bid_unlocks_rfp_execution_plan(client, db, test_use
     assert allowed.get_json()["project_wbs"]["tasks"][0]["lineage"][0]["ref"] == record.id
 
 
+def test_build_plan_decision_uses_shared_record_and_exposes_decline_override(db, test_user):
+    from app.decision_records import record_execution_plan_decision
+    from app.routes.sessions import save_user_sessions
+
+    thread_id = "rfp-plan-decline-override"
+    card = {
+        "id": "decline-card", "analysis_id": "decline-card", "option_key": "opt-decline",
+        "project_name": "CDOT Bridge", "jaspen_score": 20, "dimensions": {},
+        "decision_kit": "rfp_bid", "decision_kit_version": 1,
+        "recommendation": {"verdict_key": "decline", "label": "No-Bid"},
+    }
+    session = {
+        "session_id": thread_id, "user_id": test_user.id, "name": "CDOT RFP",
+        "status": "completed", "decision_kit": "rfp_bid", "decision_kit_version": 1,
+        "result": card, "chat_history": [], "scorecard_queue": [],
+    }
+    assert save_user_sessions(test_user.id, {thread_id: session})
+    upsert_scorecard(user_id=test_user.id, thread_id=thread_id, payload=card)
+    db.session.commit()
+
+    first = record_execution_plan_decision(
+        test_user, thread_id, card, decision_kit=get_decision_kit("rfp_bid"),
+    )
+    second = record_execution_plan_decision(
+        test_user, thread_id, card, decision_kit=get_decision_kit("rfp_bid"),
+    )
+
+    assert first.id == second.id
+    assert DecisionRecord.query.filter_by(thread_id=thread_id).count() == 1
+    verdict = second.record["kit_verdict"]
+    assert verdict["verdict_key"] == "advance"
+    assert verdict["override_of"] == "decline"
+    assert verdict["source"] == "build_execution_plan"
+
+
 def test_live_rfp_record_keeps_option_and_accepts_human_verdict(client, db, test_user, auth_headers):
     from app.decision_records import create_or_refresh_record
     from app.routes.sessions import save_user_sessions

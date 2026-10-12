@@ -128,7 +128,13 @@ export default function ScoreDashboard({
   // scorecards written before it existed, which is what keeps the old
   // confidence bar reachable as a fallback rather than leaving a blank space.
   const evidenceProfile = result.evidence_profile || null;
-  const componentScores = useMemo(() => result.component_scores || {}, [result.component_scores]);
+  const componentScores = useMemo(() => {
+    const criteria = (result?.rubric?.criteria || result?.scoring_rubric?.criteria || []);
+    const gateKeys = new Set(criteria.filter((item) => item?.gate).map((item) => String(item.key)));
+    return Object.fromEntries(
+      Object.entries(result.component_scores || {}).filter(([key]) => !gateKeys.has(String(key))),
+    );
+  }, [result.component_scores, result?.rubric?.criteria, result?.scoring_rubric?.criteria]);
   const componentRationale = useMemo(() => result.component_rationale || {}, [result.component_rationale]);
   const sectionProvenance = useMemo(() => result.section_provenance || {}, [result.section_provenance]);
   const financialImpact = useMemo(() => result.financial_impact || {}, [result.financial_impact]);

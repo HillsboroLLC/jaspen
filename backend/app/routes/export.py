@@ -293,12 +293,19 @@ def _scorecard_component_rows(scorecard):
         for item in criteria
         if isinstance(item, dict) and item.get("key")
     }
+    gate_keys = {
+        str(item.get("key")) for item in criteria
+        if isinstance(item, dict) and item.get("key") and item.get("gate")
+    }
 
-    source_keys = list(dimensions) if dimensions else list(component_scores)
+    source_keys = [
+        key for key in (list(dimensions) if dimensions else list(component_scores))
+        if str(key) not in gate_keys
+    ]
     ordered_keys = [
         str(item.get("key"))
         for item in criteria
-        if isinstance(item, dict) and str(item.get("key") or "") in source_keys
+        if isinstance(item, dict) and not item.get("gate") and str(item.get("key") or "") in source_keys
     ]
     ordered_keys.extend(str(key) for key in source_keys if str(key) not in ordered_keys)
 
@@ -1645,8 +1652,10 @@ def _wbs_xlsx_bytes(project_wbs, *, project_name=None, workspace_name=None):
 def _scorecard_dim_keys(scorecard):
     dims = scorecard.get("dimensions") if isinstance(scorecard.get("dimensions"), dict) else {}
     rubric = scorecard.get("rubric") if isinstance(scorecard.get("rubric"), dict) else {}
-    ordered = [c.get("key") for c in (rubric.get("criteria") or []) if isinstance(c, dict) and c.get("key")]
-    keys = [k for k in ordered if k in dims] or list(dims.keys())
+    criteria = [c for c in (rubric.get("criteria") or []) if isinstance(c, dict)]
+    gate_keys = {str(c.get("key")) for c in criteria if c.get("key") and c.get("gate")}
+    ordered = [c.get("key") for c in criteria if c.get("key") and not c.get("gate")]
+    keys = [k for k in ordered if k in dims] or [k for k in dims.keys() if str(k) not in gate_keys]
     return dims, keys
 
 

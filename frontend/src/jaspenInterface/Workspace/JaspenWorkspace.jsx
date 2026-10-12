@@ -36,6 +36,7 @@ import { downloadRenderedWorkspacePdf } from './scorecardPdf';
 import EmailResultsButton from './EmailResultsButton';
 import ShareButton from '../Sharing/ShareButton';
 import OnePagerReport from '../Sharing/OnePagerReport';
+import { useExecutionPlanBuild } from './useExecutionPlanBuild';
 
 // Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
 // drag the corner to resize to ANY size (not 4 fixed widths). WidthProvider makes
@@ -350,6 +351,7 @@ function _originContextFromBundle(bundle, { limit = 24, maxLen = 4000 } = {}) {
 export default function JaspenWorkspace() {
   const { threadId, scorecardId } = useParams();
   const navigate = useNavigate();
+  const { generateExecutionPlan, executionPlanDecisionDialog } = useExecutionPlanBuild();
 
   // View kind + which idea's execution plan is open. Every idea (scorecard)
   // has its OWN execution plan, so the execution canvas is scoped by
@@ -457,7 +459,8 @@ export default function JaspenWorkspace() {
       if (scorecard_id) payload.scorecard_id = scorecard_id;
       if (scenario_id) payload.scenario_id = scenario_id;
       if (force) payload.force = true;
-      const resp = await Jaspen.generateAiWbs(threadId, payload);
+      const resp = await generateExecutionPlan(threadId, payload);
+      if (resp?.cancelled) return;
       // A plan already exists for this idea — let the user choose rather than
       // silently overwriting it.
       if (resp?.plan_exists) {
@@ -514,7 +517,12 @@ export default function JaspenWorkspace() {
     });
 
     try {
-      const resp = await Jaspen.generateAiWbs(threadId, { ...seed, commit: true }, { abortSignal });
+      const resp = await generateExecutionPlan(threadId, { ...seed, commit: true }, { abortSignal });
+      if (resp?.cancelled) {
+        setChatHistory(nextHistory);
+        _writeWorkspaceChat(chatKey, nextHistory);
+        return;
+      }
       if (resp?.plan_exists) {
         const planExistsHistory = [...nextHistory, {
           role: 'ai',
@@ -529,7 +537,8 @@ export default function JaspenWorkspace() {
           onGenerateNew: async () => {
             setChatBusy(true);
             try {
-              const forced = await Jaspen.generateAiWbs(threadId, { ...seed, commit: true, force: true });
+              const forced = await generateExecutionPlan(threadId, { ...seed, commit: true, force: true });
+              if (forced?.cancelled) return;
               const fWbs = forced?.project_wbs || forced?.wbs || forced || {};
               const fTasks = Array.isArray(fWbs?.tasks) ? fWbs.tasks : [];
               setChatHistory((prev) => {
@@ -1689,6 +1698,7 @@ export default function JaspenWorkspace() {
       `}</style>
 
       {/* === "Plan already exists" choice modal === */}
+      {executionPlanDecisionDialog}
       {planExistsPrompt && (
         <div
           role="presentation"
@@ -2666,10 +2676,11 @@ export default function JaspenWorkspace() {
                       {section.key === 'dimensions' && (
                         <DimensionBars
                           dims={rendered?.dimensions || {}}
+                          gateKeys={(rendered?.rubric?.criteria || []).filter((c) => c?.gate).map((c) => c.key)}
                           cols={section.dimCols ?? 2}
                           dimOrder={section.dimOrder
                             ?? (Array.isArray(rendered?.rubric?.criteria)
-                              ? rendered.rubric.criteria.map((c) => c?.key).filter(Boolean)
+                              ? rendered.rubric.criteria.filter((c) => c && !c.gate).map((c) => c?.key).filter(Boolean)
                               : null)}
                           onReorder={(newOrder) => setSectionLayout(prev =>
                             prev.map((s) => s.key === 'dimensions' ? { ...s, dimOrder: newOrder } : s)
@@ -2904,15 +2915,16 @@ const _DIMENSION_ORDER = [
 ];
 const _RISK_DIMENSIONS = new Set(['risk_profile']);
 
-function DimensionBars({ dims, cols = 2, dimOrder, onReorder }) {
+function DimensionBars({ dims, cols = 2, dimOrder, onReorder, gateKeys = [] }) {
   const dragDimRef = useRef(null);
+  const gateKeySet = new Set((gateKeys || []).map(String));
 
   if (!dims || typeof dims !== 'object') return null;
   let ordered = _DIMENSION_ORDER
     .map((key) => ({ key, dim: dims[key] }))
-    .filter(({ dim }) => dim && typeof dim === 'object');
+    .filter(({ key, dim }) => !gateKeySet.has(String(key)) && dim && typeof dim === 'object');
   for (const [key, dim] of Object.entries(dims)) {
-    if (!_DIMENSION_LABELS[key] && dim && typeof dim === 'object') {
+    if (!gateKeySet.has(String(key)) && !_DIMENSION_LABELS[key] && dim && typeof dim === 'object') {
       ordered.push({ key, dim });
     }
   }
