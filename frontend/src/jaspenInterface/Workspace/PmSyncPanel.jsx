@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Jaspen } from './JaspenClient';
 const COLOR = { navy:'#161f3b', navy2:'#2c3656', ink:'#5a6585', mute:'#8a93ad', line:'#e4e8f0', line2:'#f1f3f8', rose:'#a0036c', roseTint:'#fbeaf3', greenInk:'#0e6b3f' };
 
@@ -30,7 +30,7 @@ function Choice({ checked, onClick, title, detail, disabled = false }) {
   </button>;
 }
 
-export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact = false }) {
+export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact = false, onPlanUpdated }) {
   const [binding, setBinding] = useState(null);
   const [open, setOpen] = useState(false);
   const [tool, setTool] = useState('');
@@ -44,11 +44,28 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [guidance, setGuidance] = useState('');
+  const [syncNotice, setSyncNotice] = useState('');
   const [connect, setConnect] = useState(null);
   const [connectionTested, setConnectionTested] = useState(false);
   const [logs, setLogs] = useState([]);
   const [newProject, setNewProject] = useState(null);
   const openedSync = useRef('');
+
+  const applySyncResult = useCallback(async (data) => {
+    setBinding((current) => ({ ...(current || {}), ...(data?.result?.binding || data?.binding || {}) }));
+    setLogs(data?.logs || []);
+    const pulled = Number(data?.result?.pulled || 0);
+    const deleted = Number(data?.result?.deleted || 0);
+    const changed = pulled + deleted;
+    if (changed > 0) {
+      try {
+        await onPlanUpdated?.({ result: data?.result || {}, data });
+        setSyncNotice(`Updated from Jira: ${changed} change${changed === 1 ? '' : 's'}`);
+      } catch (refreshError) {
+        setError(String(refreshError?.message || refreshError || 'Jira changes were saved, but the plan could not refresh.'));
+      }
+    }
+  }, [onPlanUpdated]);
 
   const refresh = async () => {
     if (!threadId || !planKey) return;
@@ -66,11 +83,9 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
   useEffect(() => {
     if (!binding?.id || binding.status === 'paused' || openedSync.current === binding.id) return;
     openedSync.current = binding.id;
-    Jaspen.syncPmBinding(binding.id).then((data) => {
-      setBinding((current) => ({ ...(current || {}), ...(data?.result?.binding || data?.binding || {}) }));
-      setLogs(data?.logs || []);
-    }).catch((e) => setError(String(e?.message || e || 'Automatic sync failed. Use Retry.')));
-  }, [binding]);
+    Jaspen.syncPmBinding(binding.id).then(applySyncResult)
+      .catch((e) => setError(String(e?.message || e || 'Automatic sync failed. Use Retry.')));
+  }, [binding, applySyncResult]);
 
   const selectedProject = useMemo(() => projects.find((p) => p.key === projectKey), [projects, projectKey]);
 
@@ -158,11 +173,10 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
   };
 
   const syncNow = async () => {
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setSyncNotice('');
     try {
       const data = await Jaspen.syncPmBinding(binding.id);
-      setBinding((current) => ({ ...(current || {}), ...(data?.result?.binding || data?.binding || {}) }));
-      setLogs(data?.logs || []);
+      await applySyncResult(data);
       if (data?.result?.errors?.length) setError(`${data.result.failed} item(s) failed. Retry will continue from saved links.`);
     } catch (e) { setError(String(e?.message || e || 'Sync failed.')); }
     finally { setBusy(false); }
@@ -185,6 +199,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     <button type="button" onClick={syncNow} disabled={busy} style={buttonStyle}>{busy ? 'Syncing…' : 'Sync now'}</button>
     {binding.external_container_url && <a href={binding.external_container_url} target="_blank" rel="noreferrer" style={{ ...buttonStyle, textDecoration: 'none' }}>View in Jira</a>}
     {error && <span role="alert" style={{ color: '#b91c1c', fontSize: 11.5 }}>{error}</span>}
+    {syncNotice && <span role="status" style={{ color: COLOR.greenInk, fontSize: 11.5 }}>{syncNotice}</span>}
     {logs[0] && <span style={{ color: COLOR.mute, fontSize: 11.5 }}>Last sync: {logs[0].status} · {logs[0].items_synced || 0} changes{(logs[0].sync_metadata?.conflicts || []).length ? ` · ${logs[0].sync_metadata.conflicts.length} need review` : ''}</span>}
     {logs.length > 0 && <details style={{ fontSize:11.5, color:COLOR.ink }}><summary style={{ cursor:'pointer' }}>Sync history</summary><div style={{ position:'absolute', zIndex:20, background:'#fff', border:`1px solid ${COLOR.line}`, borderRadius:8, padding:10, width:330, boxShadow:'0 10px 30px rgba(22,31,59,.12)' }}>{logs.slice(0, 5).map((log) => <div key={log.id} style={{ padding:'5px 0', borderBottom:`1px solid ${COLOR.line2}` }}><strong>{log.status}</strong> · {log.items_synced || 0} changes · {log.created_at ? new Date(log.created_at).toLocaleString() : 'just now'}{(log.sync_metadata?.conflicts || []).map((conflict) => <div key={`${conflict.task_id}-${conflict.field}`} style={{ color:'#9f1239' }}>{conflict.task_id}: choose the {conflict.field} value</div>)}{(log.sync_metadata?.errors || []).map((item, index) => <div key={index} style={{ color:'#9f1239' }}>{item.error}</div>)}</div>)}</div></details>}
   </div>;

@@ -3315,18 +3315,25 @@ const renderInlineTradeoffArtifact = (data, opts = {}) => {
 // Compact summary: phase / task counts + progress bar + first 3 task names.
 // Full canvas (List / Board / Timeline) lives in Workspace.
 const renderInlineExecutionArtifact = (wbs, opts = {}) => {
-  if (wbs?.generation_status === 'heuristic_fallback') {
+  const artifactScorecardId = String(wbs?.scorecard_id || '').trim();
+  const liveScorecardId = String(opts.liveWbs?.scorecard_id || '').trim();
+  const liveMatches = opts.liveWbs && (
+    (artifactScorecardId && liveScorecardId && artifactScorecardId === liveScorecardId)
+    || (!artifactScorecardId && !liveScorecardId)
+  );
+  const activeWbs = liveMatches ? opts.liveWbs : wbs;
+  if (activeWbs?.generation_status === 'heuristic_fallback') {
     return (
       <div role="alert" style={{ background:'#fff', border:'1px solid #fecaca', borderRadius:14, padding:'18px 20px', maxWidth:720 }}>
         <div style={{ fontWeight:700, color:'#991b1b' }}>Execution plan generation failed</div>
         <p style={{ margin:'8px 0 14px', color:'#5a6585' }}>No template plan is available. Retry to generate an initiative-specific plan.</p>
         {opts.onRegenerateExecutionPlan && (
-          <button type="button" onClick={() => opts.onRegenerateExecutionPlan(wbs?.scorecard_id || null)}>Retry</button>
+          <button type="button" onClick={() => opts.onRegenerateExecutionPlan(activeWbs?.scorecard_id || null)}>Retry</button>
         )}
       </div>
     );
   }
-  const tasks = Array.isArray(wbs?.tasks) ? wbs.tasks : [];
+  const tasks = Array.isArray(activeWbs?.tasks) ? activeWbs.tasks : [];
   if (tasks.length === 0) return null;
   const phases = new Set(tasks.map((t) => String(t?.phase || 'Execution').trim() || 'Execution'));
   const statusCount = { todo: 0, in_progress: 0, blocked: 0, done: 0 };
@@ -3342,15 +3349,15 @@ const renderInlineExecutionArtifact = (wbs, opts = {}) => {
   // Name the idea this plan belongs to (stamped by the backend) so every plan
   // in the artifacts list shows which idea it came from — not a bare label.
   const _genericPlanNames = new Set(['', 'execution wbs', 'execution plan', 'ai generated project plan', 'ai generated program plan']);
-  const _planName = String(wbs?.name || '').trim();
+  const _planName = String(activeWbs?.name || '').trim();
   const ideaName = String(
-    wbs?.scorecard_name || wbs?.idea_name
+    activeWbs?.scorecard_name || activeWbs?.idea_name
     || (_genericPlanNames.has(_planName.toLowerCase()) ? '' : _planName)
     || ''
   ).trim();
   // Open the plan scoped to its originating idea (?idea=) so the workspace
   // header names it; fall back to the legacy route only when we have no id.
-  const execScorecardId = String(wbs?.scorecard_id || '').trim();
+  const execScorecardId = String(activeWbs?.scorecard_id || '').trim();
   const execRoute = execScorecardId
     ? `__execution__?idea=${encodeURIComponent(execScorecardId)}`
     : '__execution__';
@@ -3377,7 +3384,7 @@ const renderInlineExecutionArtifact = (wbs, opts = {}) => {
         </div>
         <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', justifyContent:'flex-end' }}>
         <ExecutionPlanExportButton threadId={opts.threadId} scorecardId={execScorecardId} compact />
-        <PmSyncPanel threadId={opts.threadId} planKey={execScorecardId} taskCount={tasks.length} compact />
+        <PmSyncPanel threadId={opts.threadId} planKey={execScorecardId} taskCount={tasks.length} compact onPlanUpdated={opts.onPlanUpdated} />
         {wsHref && (
           <button
             type="button"
@@ -12256,6 +12263,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       executionDecisionRequired,
       onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
       onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
+      liveWbs: threadWbs,
+      onPlanUpdated: () => refreshThreadWbs(sessionId || currentSessionId),
       exportBusyType,
       onExportScorecardPdf: handleExportScorecardPdf,
       onExportScorecardPptx: handleExportScorecardPptx,
@@ -13933,6 +13942,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 	                    executionDecisionRequired,
 	                    onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
 	                    onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
+	                    liveWbs: threadWbs,
+	                    onPlanUpdated: () => refreshThreadWbs(sessionId || currentSessionId),
 	                    exportBusyType,
 	                    onExportScorecardPdf: handleExportScorecardPdf,
 	                    onExportScorecardPptx: handleExportScorecardPptx,

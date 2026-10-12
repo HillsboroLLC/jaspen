@@ -306,6 +306,56 @@ def test_empty_values_do_not_create_false_changes_and_one_edit_pushes_one_task(t
     assert provider.updates == [("JST-1", {"status": "done"})]
 
 
+def test_jira_create_keeps_unowned_task_unassigned_and_absorbs_remote_default(test_user):
+    binding = _binding(test_user)
+    binding.mode = "two_way"
+    app_db.session.commit()
+    plan = {"name": "Plan", "tasks": [{
+        "id": "task-a", "title": "Unowned task", "status": "todo",
+        "owner": None, "owner_email": "", "depends_on": [],
+    }]}
+    calls = []
+
+    def request(_config, method, path, payload=None, timeout=30):
+        calls.append((method, path, payload))
+        if path == "/rest/api/3/search/jql":
+            return {"issues": []}, {}
+        if path == "/rest/api/3/issue/bulk":
+            return {"issues": [{"key": "JST-1"}], "errors": []}, {}
+        if path.startswith("/rest/api/3/issue/JST-1?"):
+            return {
+                "fields": {
+                    "summary": "Unowned task", "description": None,
+                    "assignee": {"displayName": "Project Lead", "emailAddress": "lead@example.com"},
+                    "status": {"name": "To Do", "statusCategory": {"key": "new"}},
+                    "duedate": None, "updated": "2026-10-12T12:00:00Z",
+                    "customfield_10015": None,
+                },
+                "changelog": {"histories": []},
+            }, {}
+        if "/transitions" in path and method == "GET":
+            return {"transitions": []}, {}
+        return {}, {}
+
+    with patch("app.pm_sync.jira_adapter.assert_connected", return_value={"base_url": "https://example.atlassian.net"}), patch(
+        "app.pm_sync.jira_adapter.request", side_effect=request
+    ), patch("app.pm_sync.service.jira_adapter.recover_issue", return_value=None):
+        pushed = push_binding(binding, plan, trigger="send")
+        with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")):
+            synced = reconcile_binding(binding)
+
+    create_payload = next(payload for method, path, payload in calls if path == "/rest/api/3/issue/bulk")
+    assert create_payload["issueUpdates"][0]["fields"]["assignee"] is None
+    link = PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task", jaspen_id="task-a").one()
+    assert link.base_snapshot["owner"] == "Project Lead"
+    assert set(link.base_snapshot["_preserve_local_empty_fields"]) == {"owner", "owner_email"}
+    assert pushed["created"] == 1
+    assert synced["pulled"] == 0
+    assert synced["pushed"] == 0
+    assert plan["tasks"][0]["owner"] is None
+    assert plan["tasks"][0]["owner_email"] == ""
+
+
 def test_sync_retries_identity_for_existing_link_with_prior_remote_link_failure(test_user):
     base = {"title": "Task", "description": None, "owner": None, "owner_email": None,
             "status": "todo", "start_date": None, "due_date": None}

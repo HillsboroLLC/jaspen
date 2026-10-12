@@ -2166,6 +2166,15 @@ export default function JaspenWorkspace() {
                 threadId={threadId}
                 planKey={execIdeaId || resolvedExecScorecardId || wbs?.scorecard_id || ''}
                 taskCount={Array.isArray(wbs?.tasks) ? wbs.tasks.length : 0}
+                onPlanUpdated={async () => {
+                  const response = await Jaspen.getThreadWbs(
+                    threadId,
+                    execIdeaId || resolvedExecScorecardId || wbs?.scorecard_id || null,
+                  );
+                  const next = response?.project_wbs;
+                  if (next && Array.isArray(next.tasks)) setWbs(next);
+                  return next || null;
+                }}
               />
             )}
             {(isScorecard || isTradeoff || isExecution) && (() => {

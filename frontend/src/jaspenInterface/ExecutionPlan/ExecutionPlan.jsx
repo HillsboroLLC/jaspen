@@ -594,6 +594,7 @@ export default function ExecutionPlan() {
         threadId={threadId}
         planKey={threadWbs?.scorecard_id || ''}
         taskCount={Array.isArray(threadWbs?.tasks) ? threadWbs.tasks.length : 0}
+        onPlanUpdated={() => Promise.all([refreshThreadWbs(threadId), loadThreadBundle(threadId)])}
       />
       <button
         type="button"

@@ -172,6 +172,10 @@ def task_fields(task, binding, parent_key=None):
         "description": adf_document(task, jaspen_url),
         "labels": ["jaspen", f"jaspen_plan_{binding.id.replace('-', '')[:12]}"],
     }
+    if not str(task.get("owner") or "").strip() and not str(task.get("owner_email") or "").strip():
+        # Jira otherwise applies the project's default assignee. An explicit
+        # null keeps an unowned Jaspen task unassigned when the site permits it.
+        fields["assignee"] = None
     if parent_key:
         fields["parent"] = {"key": parent_key}
     if task.get("due_date"):
@@ -352,6 +356,8 @@ class JiraProvider(ProjectToolProvider):
             account_id = user_map.get(str(changes.get("owner_email") or task.get("owner_email") or "")) or user_map.get(str(changes.get("owner") or task.get("owner") or ""))
             if account_id:
                 fields["assignee"] = {"accountId": account_id}
+            elif not str(changes.get("owner") or "").strip() and not str(changes.get("owner_email") or "").strip():
+                fields["assignee"] = None
         if fields:
             request(config, "PUT", f"/rest/api/3/issue/{quote(external_id)}", {"fields": fields})
         status_ok = True

@@ -1191,6 +1191,16 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
     setWbs(next);
   }, []);
 
+  const refreshAfterPmSync = useCallback(async () => {
+    const response = await Jaspen.getThreadWbs(threadId, scorecardId || wbsRef.current?.scorecard_id || null);
+    const next = response?.project_wbs;
+    if (next && Array.isArray(next.tasks)) {
+      skipNextSave.current = true;
+      setWbs(next);
+    }
+    return next || null;
+  }, [threadId, scorecardId]);
+
   const canUndo = undoStack.current.length > 0;
   const canRedo = redoStack.current.length > 0;
 
@@ -1578,6 +1588,7 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
               threadId={threadId}
               planKey={scorecardId || wbs?.scorecard_id || ''}
               taskCount={totalTasks}
+              onPlanUpdated={refreshAfterPmSync}
             />}
             {showPlanActions && <ExecutionPlanExportButton
               threadId={threadId}

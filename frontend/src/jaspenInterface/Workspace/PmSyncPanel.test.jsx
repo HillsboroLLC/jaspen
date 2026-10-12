@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import PmSyncPanel from './PmSyncPanel';
 import { Jaspen } from './JaspenClient';
@@ -93,4 +93,35 @@ it('closing tool selection leaves sync off and never checks a connector', async 
   expect(toggle).not.toBeChecked();
   expect(Jaspen.listJiraProjects).not.toHaveBeenCalled();
   expect(Jaspen.previewPmSync).not.toHaveBeenCalled();
+});
+
+it('refreshes the rendered plan after sync-on-open pulls Jira changes', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
+    id: 'bind-1', status: 'active', mode: 'two_way',
+  }] });
+  Jaspen.syncPmBinding.mockResolvedValue({
+    result: {
+      binding: { id: 'bind-1', status: 'active', mode: 'two_way' },
+      pulled: 2, deleted: 0,
+    },
+    logs: [],
+  });
+
+  function Harness() {
+    const [task, setTask] = useState({ status: 'To Do', due_date: '2026-11-20' });
+    return <>
+      <div>{task.status} · {task.due_date}</div>
+      <PmSyncPanel
+        threadId="thread-1"
+        planKey="score-1"
+        taskCount={1}
+        onPlanUpdated={() => setTask({ status: 'Done', due_date: '2026-11-25' })}
+      />
+    </>;
+  }
+
+  render(<Harness />);
+  expect(screen.getByText(/To Do · 2026-11-20/)).toBeInTheDocument();
+  expect(await screen.findByText(/Done · 2026-11-25/)).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Updated from Jira: 2 changes');
 });

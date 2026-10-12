@@ -179,6 +179,29 @@ def _snapshot(task):
     }
 
 
+def _created_task_snapshot(config, binding, issue_key, task):
+    """Capture Jira's actual post-create state without adopting its defaults."""
+    local = _snapshot(task)
+    local["start_date"] = jira_adapter.effective_start_date(task)
+    try:
+        remote = jira_adapter.JiraProvider().get_item(config, binding, issue_key)
+    except Exception:
+        return local
+    values = remote.get("values") if isinstance(remote, dict) and isinstance(remote.get("values"), dict) else {}
+    if remote.get("deleted") or (not remote.get("version") and not any(value not in (None, "", []) for value in values.values())):
+        return local
+    actual = _snapshot(values)
+    preserved = [
+        field for field in ("owner", "owner_email")
+        if local.get(field) is None and actual.get(field) is not None
+    ]
+    if preserved:
+        # Top-level values are the actual Jira baseline. The marker tells the
+        # three-way comparer that Jaspen intentionally remains unassigned.
+        actual["_preserve_local_empty_fields"] = preserved
+    return actual
+
+
 def _sync_phases(binding, plan, config, existing, result):
     if not bool((binding.config or {}).get("group_under_epics", True)):
         return {}
@@ -354,15 +377,15 @@ def push_binding(binding, plan=None, trigger="send"):
                 try:
                     jira_adapter.set_identity(config, binding, issue_key, "task", task_id)
                     jira_adapter.sync_status(config, binding, issue_key, task.get("status"))
-                    task_snapshot = _snapshot(task)
-                    task_snapshot["start_date"] = jira_adapter.effective_start_date(task)
+                    task_snapshot = _created_task_snapshot(config, binding, issue_key, task)
                     _upsert_link(binding, "task", task_id, issue_key, parent, task_snapshot)
                     db.session.commit()
                     result["created"] += 1
                 except Exception as exc:
                     db.session.rollback()
                     # The issue exists; persist the key so Retry updates instead of duplicating.
-                    _upsert_link(binding, "task", task_id, issue_key, parent, _snapshot(task), state="active", error=exc)
+                    task_snapshot = _created_task_snapshot(config, binding, issue_key, task)
+                    _upsert_link(binding, "task", task_id, issue_key, parent, task_snapshot, state="active", error=exc)
                     db.session.commit()
                     result["failed"] += 1
                     result["errors"].append({"entity_type": "task", "jaspen_id": task_id, "error": str(exc)})

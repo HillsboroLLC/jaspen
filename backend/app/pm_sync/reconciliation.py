@@ -127,6 +127,7 @@ def reconcile_binding(binding, trigger="sync_now"):
             if remote.get("status_error"):
                 result["unknown_statuses"].append({"task_id": link.jaspen_id, "status": remote["status_error"]})
             base = link.base_snapshot if isinstance(link.base_snapshot, dict) else {}
+            preserve_local_empty = set(base.get("_preserve_local_empty_fields") or [])
             local, local_times = _snapshot(task, binding), _field_times(task)
             outside = remote.get("values") if isinstance(remote.get("values"), dict) else {}
             outside_times = remote.get("changed_at") if isinstance(remote.get("changed_at"), dict) else {}
@@ -138,6 +139,10 @@ def reconcile_binding(binding, trigger="sync_now"):
                     continue
                 previous, here, there = _normalized(base.get(field)), local.get(field), _normalized(outside.get(field))
                 local_changed, remote_changed = here != previous, there != previous
+                if field in preserve_local_empty and here is None:
+                    # A Jira project default applied during issue creation is
+                    # an accepted baseline divergence, not a later Jaspen edit.
+                    local_changed = False
                 if not local_changed and not remote_changed:
                     continue
                 if local_changed and not remote_changed:
@@ -161,7 +166,15 @@ def reconcile_binding(binding, trigger="sync_now"):
                     result["unknown_statuses"].append({"task_id": link.jaspen_id, "status": outgoing.get("status")})
                 result["pushed"] += 1
             if not task_conflicts:
-                link.base_snapshot = _snapshot(task, binding); link.external_version = _iso(remote.get("version"))
+                next_base = _snapshot(task, binding)
+                still_preserved = []
+                for field in preserve_local_empty:
+                    if local.get(field) is None and _normalized(outside.get(field)) == _normalized(base.get(field)):
+                        next_base[field] = _normalized(base.get(field))
+                        still_preserved.append(field)
+                if still_preserved:
+                    next_base["_preserve_local_empty_fields"] = sorted(still_preserved)
+                link.base_snapshot = next_base; link.external_version = _iso(remote.get("version"))
                 link.jaspen_version = _iso(task.get("updated_at")); link.last_synced_at = datetime.utcnow()
                 link.state = "active"; link.last_error = None
         except Exception as exc:
