@@ -104,3 +104,33 @@ it('loads connector and thread data once when initial selections are established
   expect(requested('/api/v1/connectors/status')).toHaveLength(1);
   expect(requested('/api/v1/ai-agent/threads')).toHaveLength(1);
 });
+
+it('treats Jira as Data & Insights without requiring a default project', async () => {
+  mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) {
+      return Promise.resolve(response({ connectors: [{
+        id: 'jira_sync', label: 'Jira', implementation_status: 'implemented', lifecycle_status: 'connected', connected: true,
+        available_sync_modes: ['import', 'push', 'two_way'], available_conflict_policies: ['latest_wins'],
+        jira: { base_url: 'https://acme.atlassian.net', email: 'owner@acme.test', has_api_token: true, data_enabled: true, data_project_scope: 'all' },
+      }] }));
+    }
+    if (String(url).includes('/api/v1/connectors/jira/projects')) {
+      return Promise.resolve(response({ success: true, projects: [{ key: 'ABC', name: 'Alpha' }] }));
+    }
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success: true, sessions: [] }));
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events: [] }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+
+  expect(await screen.findByText('Data & Insights')).toBeInTheDocument();
+  expect(await screen.findByText('Using Jira: https://acme.atlassian.net · owner@acme.test')).toBeInTheDocument();
+  expect(screen.getByLabelText('Use Jira data in analysis')).toBeChecked();
+  expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+  expect(screen.queryByLabelText(/Project Key/i)).not.toBeInTheDocument();
+  await waitFor(() => expect(authFetch.mock.calls.some(([url]) => String(url).includes('/api/v1/connectors/jira/projects'))).toBe(true));
+  fireEvent.click(screen.getByLabelText('Selected projects'));
+  expect(await screen.findByRole('option', { name: 'ABC · Alpha' })).toBeInTheDocument();
+});

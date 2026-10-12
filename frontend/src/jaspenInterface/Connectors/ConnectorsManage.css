@@ -941,6 +941,28 @@ body.jaspen-sidebar-open .jas-sidebar-tab {
   }
 }
 
+.connector-field-full,
+.connector-data-source-settings { grid-column: 1 / -1; }
+
+.connector-data-source-settings {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
+  padding: 16px;
+  background: #f8faff;
+}
+
+.connector-account-summary { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: #31456f; }
+.connector-project-scope { display: grid; gap: 8px; border: 0; padding: 0; margin: 0; }
+.connector-project-scope label { display: flex; align-items: center; gap: 8px; }
+.connector-project-scope select { min-height: 130px; }
+.connector-metric-settings { display: grid; grid-template-columns: repeat(2, minmax(150px, 220px)) minmax(180px, max-content); gap: 12px; align-items: end; }
+.connector-portfolio-table-wrap { overflow-x: auto; }
+.connector-portfolio-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+.connector-portfolio-table th, .connector-portfolio-table td { border-bottom: 1px solid var(--int-border); padding: 9px 8px; text-align: left; white-space: nowrap; }
+.connector-portfolio-summary { font-weight: 700; background: #eef3fd; }
+
 @media (max-width: 900px) {
   .connectors-manage-page {
     padding: 16px 12px 22px;
@@ -975,4 +997,5 @@ body.jaspen-sidebar-open .jas-sidebar-tab {
     flex-direction: column;
     align-items: flex-start;
   }
+  .connector-metric-settings { grid-template-columns: 1fr; }
 }

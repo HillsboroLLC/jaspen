@@ -1,0 +1,185 @@
+from datetime import datetime, timedelta, timezone
+
+from app import jira_portfolio as portfolio
+from app import connector_runtime
+from app.decision_facts import normalize_fact_entry
+
+
+NOW = datetime(2026, 10, 12, 16, 0, tzinfo=timezone.utc)
+
+
+def _history(days_ago_start, days_ago_done):
+    return {"histories": [
+        {"created": (NOW - timedelta(days=days_ago_start)).isoformat(), "items": [{"field": "status", "toString": "In Progress", "to": "4"}]},
+        {"created": (NOW - timedelta(days=days_ago_done)).isoformat(), "items": [{"field": "status", "toString": "Custom Completed", "to": "3"}]},
+    ]}
+
+
+def _issue(key, category, *, due=None, resolved=None, points=None, assignee=None, changelog=None, flagged=False):
+    fields = {
+        "status": {"name": f"Custom {category}", "statusCategory": {"key": category}},
+        "duedate": due,
+        "resolutiondate": resolved,
+        "created": (NOW - timedelta(days=30)).isoformat(),
+        "assignee": {"displayName": assignee} if assignee else None,
+        "issuelinks": [],
+        "customfield_flagged": ["Impediment"] if flagged else [],
+        "customfield_10016": points,
+    }
+    return {"key": key, "fields": fields, "changelog": changelog or {"histories": []}}
+
+
+def test_metric_math_uses_status_category_and_deterministic_rules():
+    issues = [
+        _issue("ABC-1", "new", due="2026-10-01", points=3),
+        _issue("ABC-2", "indeterminate", points=5, assignee="Avery", flagged=True),
+        _issue("ABC-3", "done", resolved=(NOW - timedelta(days=2)).isoformat(), points=8, changelog=_history(10, 2)),
+        _issue("ABC-4", "done", resolved=(NOW - timedelta(days=9)).isoformat(), points=5, changelog=_history(20, 9)),
+    ]
+    result = portfolio.compute_project_metrics(
+        {"key": "ABC", "name": "Alpha"}, issues,
+        story_points_field="customfield_10016", flagged_field="customfield_flagged", now=NOW, workload_threshold=0,
+    )
+
+    assert result["status_counts"] == {"to_do": 1, "in_progress": 1, "done": 2}
+    assert result["completion_percent"] == 50.0
+    assert result["story_points"] == {
+        "available": True, "field_id": "customfield_10016", "total": 21.0,
+        "done": 13.0, "completion_percent": 61.9,
+    }
+    assert result["overdue_count"] == 1
+    assert result["oldest_overdue"] == {"issue_key": "ABC-1", "due_date": "2026-10-01"}
+    assert result["cycle_time"] == {"median_days": 9.5, "p85_days": 11.0, "sample_size": 2}
+    assert result["blocked_count"] == 1
+    assert result["overloaded_assignees"] == [{"assignee": "Avery", "in_progress": 1}]
+    assert result["health"]["status"] == "at_risk"
+    assert result["throughput"]["trailing_4_weekly"] == 0.5
+
+
+def test_story_points_remain_unavailable_when_field_not_detected():
+    result = portfolio.compute_project_metrics(
+        {"key": "ABC"}, [_issue("ABC-1", "done", points=99)], now=NOW,
+    )
+    assert result["story_points"]["available"] is False
+    assert result["story_points"]["total"] is None
+
+
+def test_refresh_scopes_projects_paginates_caches_and_emits_provenance(monkeypatch):
+    settings = {
+        "jira_data_project_scope": "selected",
+        "jira_data_selected_projects": ["A"],
+        "jira_data_window_days": 90,
+        "jira_data_workload_threshold": 8,
+    }
+    saved = []
+    calls = []
+
+    monkeypatch.setattr(portfolio, "get_connector_settings", lambda *_: settings)
+    monkeypatch.setattr(portfolio, "update_connector_settings", lambda *args: saved.append(args[-1]))
+    monkeypatch.setattr(portfolio, "_jira_runtime_config", lambda *_: {"base_url": "https://acme.atlassian.net", "email": "a@b.com", "api_token": "x"})
+
+    def request(_config, method, path, payload=None, timeout=20):
+        calls.append((method, path, payload))
+        if path.startswith("/rest/api/3/project/search"):
+            return ({"values": [{"key": "A", "name": "Alpha"}, {"key": "B", "name": "Beta"}, {"key": "OLD", "name": "Old", "archived": True}], "isLast": True}, {})
+        if path == "/rest/api/3/field":
+            return ([{"id": "customfield_10016", "name": "Points", "schema": {"custom": "com.pyxis.greenhopper.jira:jsw-story-points"}}], {})
+        assert path == "/rest/api/3/search/jql"
+        return ({"issues": [_issue("A-1", "done", points=3)], "nextPageToken": None}, {})
+
+    monkeypatch.setattr(portfolio, "_jira_request", request)
+    snapshot = portfolio.refresh_portfolio("user-1", force=True, now=NOW)
+
+    assert [row["project_key"] for row in snapshot["projects"]] == ["A"]
+    assert snapshot["provenance"] == {
+        "source": "connector", "connector": "jira_sync", "site": "https://acme.atlassian.net",
+        "projects": ["A"], "window_days": 90, "fetched_at": "2026-10-12T16:00:00Z",
+    }
+    assert snapshot["evidence"][0]["source"] == "connector"
+    assert all(row["confidence"] == 0.85 for row in snapshot["evidence"])
+    assert {row["fact_key"] for row in snapshot["evidence"]} >= {"jira_throughput_per_week", "jira_overdue_share"}
+    assert len([row for row in calls if row[1] == "/rest/api/3/search/jql"]) == 1
+    assert saved[-1]["jira_portfolio_snapshot"]["portfolio"]["project_count"] == 1
+
+    settings["jira_portfolio_snapshot"] = snapshot
+    calls.clear()
+    assert portfolio.refresh_portfolio("user-1", now=NOW + timedelta(hours=1)) == snapshot
+    assert calls == []
+
+    key, normalized = normalize_fact_entry(snapshot["evidence"][0]["key"], snapshot["evidence"][0])
+    assert key == snapshot["evidence"][0]["fact_key"]
+    assert normalized["value"] == snapshot["evidence"][0]["normalized_value"]
+    assert normalized["source"] == "connector"
+    assert normalized["source_id"] == "jira_sync"
+
+
+def test_failed_refresh_uses_stale_cache_with_lower_confidence(monkeypatch):
+    cached = {"fetched_at": "2026-10-11T00:00:00Z", "portfolio": {"project_count": 1}, "provenance": {"source": "connector"}}
+    monkeypatch.setattr(portfolio, "get_connector_settings", lambda *_: {"jira_portfolio_snapshot": cached})
+    monkeypatch.setattr(portfolio, "update_connector_settings", lambda *_: None)
+    monkeypatch.setattr(portfolio, "_jira_runtime_config", lambda *_: {"base_url": "https://x", "email": "e", "api_token": "t"})
+    monkeypatch.setattr(portfolio, "_list_projects", lambda *_: (_ for _ in ()).throw(RuntimeError("HTTP 429")))
+    result = portfolio.refresh_portfolio("user", force=True, now=NOW)
+    assert result["stale"] is True
+    assert result["refresh_failed"] is True
+    assert all(row["confidence"] == 0.55 for row in result["evidence"])
+
+
+def test_no_default_project_is_required(monkeypatch):
+    monkeypatch.setattr(portfolio, "get_connector_settings", lambda *_: {})
+    monkeypatch.setattr(portfolio, "_jira_runtime_config", lambda *_: {"base_url": "https://x", "email": "e", "api_token": "t", "project_key": ""})
+    monkeypatch.setattr(portfolio, "_list_projects", lambda *_: [])
+    monkeypatch.setattr(portfolio, "_discover_fields", lambda *_: {"story_points": None, "flagged": None, "sprint": None})
+    monkeypatch.setattr(portfolio, "update_connector_settings", lambda *_: None)
+    result = portfolio.refresh_portfolio("user", force=True, now=NOW)
+    assert result["portfolio"]["project_count"] == 0
+
+
+def test_last_three_closed_sprints_are_computed_from_detected_sprint_field():
+    issues = []
+    for index in range(4):
+        issue = _issue(f"ABC-{index}", "done" if index != 1 else "indeterminate")
+        issue["fields"]["customfield_10020"] = [{
+            "id": index + 1, "name": f"Sprint {index + 1}", "state": "closed",
+            "completeDate": (NOW - timedelta(days=index * 14)).isoformat(),
+        }]
+        issues.append(issue)
+    result = portfolio.compute_project_metrics(
+        {"key": "ABC"}, issues, sprint_field="customfield_10020", now=NOW,
+    )
+    assert result["sprint_health"]["available"] is True
+    assert len(result["sprint_health"]["closed_sprints"]) == 3
+    assert result["sprint_health"]["closed_sprints"][0]["name"] == "Sprint 1"
+
+
+def test_one_no_access_project_does_not_fail_portfolio(monkeypatch):
+    monkeypatch.setattr(portfolio, "get_connector_settings", lambda *_: {})
+    monkeypatch.setattr(portfolio, "update_connector_settings", lambda *_: None)
+    monkeypatch.setattr(portfolio, "_jira_runtime_config", lambda *_: {"base_url": "https://x", "email": "e", "api_token": "t"})
+    monkeypatch.setattr(portfolio, "_list_projects", lambda *_: [{"key": "YES"}, {"key": "NO"}])
+    monkeypatch.setattr(portfolio, "_discover_fields", lambda *_: {"story_points": None, "flagged": None, "sprint": None})
+    def search(_config, key, _fields, _cap, window_days=90):
+        if key == "NO":
+            raise RuntimeError("HTTP 403")
+        return [_issue("YES-1", "new")]
+    monkeypatch.setattr(portfolio, "_search_project", search)
+    result = portfolio.refresh_portfolio("user", force=True, now=NOW)
+    assert result["portfolio"]["project_count"] == 1
+    assert result["no_access_projects"] == [{"project_key": "NO", "project_name": "NO", "status": "no_access"}]
+
+
+def test_http_429_honors_retry_and_recovers(monkeypatch):
+    class Response:
+        def __init__(self, status, body, headers=None):
+            self.status_code = status
+            self._body = body
+            self.text = "body"
+            self.headers = headers or {}
+        def json(self):
+            return self._body
+    responses = iter([Response(429, {"error": "rate limited"}, {"Retry-After": "0"}), Response(200, {"issues": []})])
+    monkeypatch.setattr(connector_runtime.requests, "request", lambda **_kwargs: next(responses))
+    monkeypatch.setattr(connector_runtime.time, "sleep", lambda *_: None)
+    result = connector_runtime.request_json_with_backoff("GET", "https://jira.test/search", max_attempts=2)
+    assert result["attempt_count"] == 2
+    assert result["data"] == {"issues": []}

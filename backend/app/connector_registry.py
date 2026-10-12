@@ -16,8 +16,8 @@ CONNECTOR_REGISTRY = {
     "jira_sync": {
         "id": "jira_sync",
         "label": "Jira",
-        "group": "execution",
-        "description": "Sync epics, stories, assignees, and sprint status with Jaspen WBS plans.",
+        "group": "data",
+        "description": "Use read-only portfolio evidence in decisions and sync execution plans with Jira.",
         "supports_pm_sync": True,
         "required_min_tier": "free",
         "implementation_status": "implemented",
@@ -25,8 +25,8 @@ CONNECTOR_REGISTRY = {
     "smartsheet_sync": {
         "id": "smartsheet_sync",
         "label": "Smartsheet",
-        "group": "execution",
-        "description": "Sync task rows, dates, and delivery statuses with Jaspen execution plans.",
+        "group": "data",
+        "description": "Use Smartsheet as a Data & Insights source and sync execution-plan rows and dates.",
         "supports_pm_sync": True,
         "required_min_tier": "free",
         "implementation_status": "implemented",

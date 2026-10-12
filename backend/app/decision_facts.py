@@ -45,6 +45,17 @@ _COMMON_FIELD_DEFINITIONS = {
         "type": "money",
         "unit": "USD",
     },
+    # Governed connector metrics use the same canonical fact/provenance path as
+    # user and document facts. Their values are computed before the model sees
+    # them; the model may cite them but cannot redefine the arithmetic.
+    "jira_active_project_count": {"type": "number", "unit": "projects"},
+    "jira_completion_percent": {"type": "percentage", "unit": "percent_points"},
+    "jira_throughput_per_week": {"type": "number", "unit": "issues_per_week"},
+    "jira_overdue_share": {"type": "number", "unit": "ratio"},
+    "jira_overdue_count": {"type": "number", "unit": "issues"},
+    "jira_at_risk_project_count": {"type": "number", "unit": "projects"},
+    "jira_blocked_count": {"type": "number", "unit": "issues"},
+    "jira_overloaded_assignee_count": {"type": "number", "unit": "people"},
 }
 
 _MONTHS = {

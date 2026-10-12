@@ -42,12 +42,11 @@ const PLAN_CONNECTOR_IDS = Object.fromEntries(
 const EXECUTION_SYNC_CONNECTOR_IDS = ['jira_sync', 'smartsheet_sync'];
 
 const CONNECTOR_CATEGORIES = [
-  { id: 'execution', label: 'Execution Sync', connectorIds: ['jira_sync', 'smartsheet_sync'] },
-  { id: 'data', label: 'Data & Insights', connectorIds: ['salesforce_insights', 'snowflake_insights'] },
+  { id: 'data', label: 'Data & Insights', connectorIds: ['jira_sync', 'smartsheet_sync', 'salesforce_insights', 'snowflake_insights'] },
   { id: 'enterprise', label: 'Enterprise Sources', connectorIds: ['oracle_fusion_insights', 'servicenow_insights', 'netsuite_insights'] },
 ];
 const REQUIRED_FIELDS_BY_CONNECTOR = {
-  jira_sync: ['jira_base_url', 'jira_project_key', 'jira_email', 'jira_api_token'],
+  jira_sync: ['jira_base_url', 'jira_email', 'jira_api_token'],
   smartsheet_sync: ['smartsheet_base_url', 'smartsheet_sheet_id', 'smartsheet_api_token'],
   salesforce_insights: [
     'salesforce_auth_base_url',
@@ -142,10 +141,16 @@ function normalizeDraft(connector) {
     jira_issue_type: String(connector?.jira?.issue_type || 'Task'),
     jira_api_token: '',
     jira_field_mapping: JSON.stringify(connector?.jira?.field_mapping || {}, null, 2),
+    jira_data_enabled: Boolean(connector?.jira?.data_enabled),
+    jira_data_project_scope: String(connector?.jira?.data_project_scope || 'all'),
+    jira_data_selected_projects: Array.isArray(connector?.jira?.data_selected_projects) ? connector.jira.data_selected_projects : [],
+    jira_data_window_days: Number(connector?.jira?.data_window_days || 90),
+    jira_data_workload_threshold: Number(connector?.jira?.data_workload_threshold || 8),
     smartsheet_base_url: String(connector?.smartsheet?.base_url || 'https://api.smartsheet.com'),
     smartsheet_sheet_id: String(connector?.smartsheet?.sheet_id || ''),
     smartsheet_api_token: '',
     smartsheet_field_mapping: JSON.stringify(connector?.smartsheet?.field_mapping || {}, null, 2),
+    smartsheet_data_enabled: Boolean(connector?.smartsheet?.data_enabled),
     salesforce_auth_base_url: String(connector?.salesforce?.auth_base_url || ''),
     salesforce_instance_url: String(connector?.salesforce?.instance_url || ''),
     salesforce_client_id: String(connector?.salesforce?.client_id || ''),
@@ -211,9 +216,15 @@ function connectorDraftChanged(connector, draft) {
     'jira_email',
     'jira_issue_type',
     'jira_field_mapping',
+    'jira_data_enabled',
+    'jira_data_project_scope',
+    'jira_data_selected_projects',
+    'jira_data_window_days',
+    'jira_data_workload_threshold',
     'smartsheet_base_url',
     'smartsheet_sheet_id',
     'smartsheet_field_mapping',
+    'smartsheet_data_enabled',
     'salesforce_auth_base_url',
     'salesforce_instance_url',
     'salesforce_client_id',
@@ -320,11 +331,17 @@ function buildUpdatePayload(connectorId, draft) {
     payload.jira_email = draft.jira_email;
     payload.jira_issue_type = draft.jira_issue_type;
     payload.jira_field_mapping = parseObject(draft.jira_field_mapping);
+    payload.jira_data_enabled = Boolean(draft.jira_data_enabled);
+    payload.jira_data_project_scope = draft.jira_data_project_scope;
+    payload.jira_data_selected_projects = draft.jira_data_selected_projects;
+    payload.jira_data_window_days = Number(draft.jira_data_window_days || 90);
+    payload.jira_data_workload_threshold = Number(draft.jira_data_workload_threshold || 8);
     if (String(draft.jira_api_token || '').trim()) payload.jira_api_token = draft.jira_api_token.trim();
   } else if (connectorId === 'smartsheet_sync') {
     payload.smartsheet_base_url = draft.smartsheet_base_url;
     payload.smartsheet_sheet_id = draft.smartsheet_sheet_id;
     payload.smartsheet_field_mapping = parseObject(draft.smartsheet_field_mapping);
+    payload.smartsheet_data_enabled = Boolean(draft.smartsheet_data_enabled);
     if (String(draft.smartsheet_api_token || '').trim()) payload.smartsheet_api_token = draft.smartsheet_api_token.trim();
   } else if (connectorId === 'salesforce_insights') {
     payload.salesforce_auth_base_url = draft.salesforce_auth_base_url;
@@ -382,6 +399,9 @@ export default function ConnectorsManage() {
   const [discardDialog, setDiscardDialog] = useState(null);
   const [snowflakeProbeBusy, setSnowflakeProbeBusy] = useState(false);
   const [snowflakeProbeResult, setSnowflakeProbeResult] = useState(null);
+  const [jiraProjects, setJiraProjects] = useState([]);
+  const [jiraProjectsBusy, setJiraProjectsBusy] = useState(false);
+  const [jiraPortfolioBusy, setJiraPortfolioBusy] = useState(false);
   const [setupModeByConnector, setSetupModeByConnector] = useState({});
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(['enterprise']));
 
@@ -573,6 +593,49 @@ export default function ConnectorsManage() {
     () => connectorDraftChanged(selectedConnector, selectedDraft),
     [selectedConnector, selectedDraft]
   );
+
+  const loadJiraProjects = useCallback(async () => {
+    setJiraProjectsBusy(true);
+    try {
+      const res = await authFetch(`${API_BASE}/api/v1/connectors/jira/projects`, {
+        credentials: 'include',
+        headers: authHeaders(false, 'GET'),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Could not load Jira projects.');
+      setJiraProjects(Array.isArray(data?.projects) ? data.projects : []);
+    } catch (err) {
+      setJiraProjects([]);
+      setError(err?.message || 'Could not load Jira projects.');
+    } finally {
+      setJiraProjectsBusy(false);
+    }
+  }, []);
+
+  const refreshJiraPortfolio = useCallback(async () => {
+    setJiraPortfolioBusy(true);
+    setError('');
+    try {
+      const res = await authFetch(`${API_BASE}/api/v1/connectors/jira/context/summary?refresh=true`, {
+        credentials: 'include',
+        headers: authHeaders(false, 'GET'),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Could not refresh Jira portfolio.');
+      setMessage('Jira portfolio evidence refreshed.');
+      await loadConnectors();
+    } catch (err) {
+      setError(err?.message || 'Could not refresh Jira portfolio.');
+    } finally {
+      setJiraPortfolioBusy(false);
+    }
+  }, [loadConnectors]);
+
+  useEffect(() => {
+    if (selectedConnectorId === 'jira_sync' && connectors.find((item) => item.id === 'jira_sync')?.connected) {
+      loadJiraProjects();
+    }
+  }, [connectors, loadJiraProjects, selectedConnectorId]);
   const hasUnsavedChanges = useMemo(
     () => connectors.some((connector) => connectorDraftChanged(connector, drafts[connector.id] || normalizeDraft(connector))),
     [connectors, drafts]
@@ -1105,14 +1168,71 @@ export default function ConnectorsManage() {
     };
 
     if (connectorId === 'jira_sync') {
+      const snapshot = selectedConnector?.jira?.portfolio_snapshot || {};
+      const projectRows = Array.isArray(snapshot?.projects) ? snapshot.projects : [];
       return (
         <>
           {renderRequiredField('jira_base_url', 'Jira Base URL', { placeholder: 'https://yourcompany.atlassian.net' })}
-          {renderRequiredField('jira_project_key', 'Project Key', { placeholder: 'e.g. PROJ' })}
           {renderRequiredField('jira_email', 'Email', { placeholder: 'you@yourcompany.com' })}
           <label>Issue Type<input value={draft.jira_issue_type} onChange={(event) => updateDraft('jira_issue_type', event.target.value)} placeholder="Task" /></label>
           {renderRequiredField('jira_api_token', 'API Token', { type: 'password', placeholder: 'Enter token to set or rotate' })}
           <label>Field Mapping JSON<textarea value={draft.jira_field_mapping} onChange={(event) => updateDraft('jira_field_mapping', event.target.value)} /></label>
+          <div className="connector-data-source-settings connector-field-full">
+            <div className="connector-account-summary">
+              <div><strong>Using Jira: {draft.jira_base_url || 'site not set'} · {draft.jira_email || 'email not set'}</strong><br /><span>{snapshot?.fetched_at ? `Last refreshed ${new Date(snapshot.fetched_at).toLocaleString()}` : 'Not refreshed yet'}</span></div>
+              <button type="button" className="int-btn int-btn-ghost" onClick={() => {
+                setSetupModeByConnector((prev) => ({ ...prev, jira_sync: 'manual' }));
+                setTimeout(() => document.querySelector('input[type="password"]')?.focus(), 0);
+              }}>Reconnect</button>
+            </div>
+            <label className="connector-auto-sync">
+              <input type="checkbox" checked={Boolean(draft.jira_data_enabled)} onChange={(event) => updateDraft('jira_data_enabled', event.target.checked)} />
+              <span>Use Jira data in analysis</span>
+            </label>
+            <fieldset className="connector-project-scope">
+              <legend>Projects included</legend>
+              <label><input type="radio" name="jira-project-scope" checked={draft.jira_data_project_scope === 'all'} onChange={() => updateDraft('jira_data_project_scope', 'all')} /> All projects I can access</label>
+              <label><input type="radio" name="jira-project-scope" checked={draft.jira_data_project_scope === 'selected'} onChange={() => updateDraft('jira_data_project_scope', 'selected')} /> Selected projects</label>
+              {draft.jira_data_project_scope === 'selected' && (
+                <select
+                  multiple
+                  aria-label="Selected Jira projects"
+                  value={draft.jira_data_selected_projects}
+                  onChange={(event) => updateDraft('jira_data_selected_projects', Array.from(event.target.selectedOptions).map((option) => option.value))}
+                >
+                  {jiraProjects.map((project) => <option key={project.key} value={project.key}>{project.key} · {project.name}</option>)}
+                </select>
+              )}
+              <small>Archived projects are excluded. {jiraProjectsBusy ? 'Loading projects…' : `${jiraProjects.length} available.`}</small>
+            </fieldset>
+            <div className="connector-metric-settings">
+              <label>Analysis window (days)<input type="number" min="14" max="365" value={draft.jira_data_window_days} onChange={(event) => updateDraft('jira_data_window_days', event.target.value)} /></label>
+              <label>Workload threshold<input type="number" min="1" max="100" value={draft.jira_data_workload_threshold} onChange={(event) => updateDraft('jira_data_workload_threshold', event.target.value)} /></label>
+              <button type="button" className="int-btn int-btn-ghost" onClick={refreshJiraPortfolio} disabled={jiraPortfolioBusy || !selectedConnector?.connected}>{jiraPortfolioBusy ? 'Refreshing…' : 'Refresh portfolio evidence'}</button>
+            </div>
+            {projectRows.length > 0 && (
+              <div className="connector-portfolio-table-wrap">
+                <h3>Portfolio evidence</h3>
+                <table className="connector-portfolio-table">
+                  <thead><tr><th>Project</th><th>Health</th><th>Complete</th><th>Open</th><th>Overdue</th><th>Trend</th><th>Cycle time</th></tr></thead>
+                  <tbody>
+                    {projectRows.map((row) => (
+                      <tr key={row.project_key}>
+                        <td><a href={row.jira_url} target="_blank" rel="noreferrer">{row.project_key} · {row.project_name}</a></td>
+                        <td>{String(row.health?.status || 'unknown').replace('_', ' ')}</td>
+                        <td><a href={row.jira_links?.done || row.jira_url} target="_blank" rel="noreferrer">{row.completion_percent == null ? '—' : `${row.completion_percent}%`}</a></td>
+                        <td><a href={row.jira_links?.open || row.jira_url} target="_blank" rel="noreferrer">{Number(row.status_counts?.to_do || 0) + Number(row.status_counts?.in_progress || 0)}</a></td>
+                        <td><a href={row.jira_links?.overdue || row.jira_url} target="_blank" rel="noreferrer">{row.overdue_count}</a></td>
+                        <td>{row.throughput?.trend || 'flat'}</td>
+                        <td>{row.cycle_time?.median_days == null ? '—' : `${row.cycle_time.median_days}d (n=${row.cycle_time.sample_size})`}</td>
+                      </tr>
+                    ))}
+                    <tr className="connector-portfolio-summary"><td>Portfolio</td><td>{String(snapshot?.portfolio?.health?.status || 'unknown').replace('_', ' ')}</td><td>{snapshot?.portfolio?.completion_percent == null ? '—' : `${snapshot.portfolio.completion_percent}%`}</td><td>{Number(snapshot?.portfolio?.status_counts?.to_do || 0) + Number(snapshot?.portfolio?.status_counts?.in_progress || 0)}</td><td>{snapshot?.portfolio?.overdue_count || 0}</td><td>{snapshot?.portfolio?.throughput?.trend || 'flat'}</td><td>{snapshot?.portfolio?.cycle_time?.median_days == null ? '—' : `${snapshot.portfolio.cycle_time.median_days}d`}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </>
       );
     }
@@ -1124,6 +1244,7 @@ export default function ConnectorsManage() {
           {renderRequiredField('smartsheet_sheet_id', 'Sheet ID')}
           {renderRequiredField('smartsheet_api_token', 'API Token', { type: 'password', placeholder: 'Enter token to set or rotate' })}
           <label>Field Mapping JSON<textarea value={draft.smartsheet_field_mapping} onChange={(event) => updateDraft('smartsheet_field_mapping', event.target.value)} /></label>
+          <label className="connector-auto-sync connector-field-full"><input type="checkbox" checked={Boolean(draft.smartsheet_data_enabled)} onChange={(event) => updateDraft('smartsheet_data_enabled', event.target.checked)} /><span>Use Smartsheet data in analysis</span></label>
         </>
       );
     }

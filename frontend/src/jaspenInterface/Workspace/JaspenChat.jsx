@@ -125,6 +125,7 @@ const BASELINE_INTERNAL_LABEL = 'Baseline';
 const BASELINE_DISPLAY_LABEL = 'Original';
 const DISCOVERY_DATA_CONTEXTS = [
   { id: 'jira_sync', label: 'Jira' },
+  { id: 'smartsheet_sync', label: 'Smartsheet' },
   { id: 'salesforce_insights', label: 'Salesforce' },
   { id: 'snowflake_insights', label: 'Snowflake' },
 ];
@@ -7991,6 +7992,7 @@ const [connectedDataSources, setConnectedDataSources] = useState([]);
 const [activeContextSourceIds, setActiveContextSourceIds] = useState(new Set());
 const [usedContextSourceIds, setUsedContextSourceIds] = useState(new Set()); // persistent: accumulates all sources ever successfully sent to AI this session
 const [contextSourceData, setContextSourceData] = useState({});
+const [contextSourceMeta, setContextSourceMeta] = useState({});
 const [contextSourceLoading, setContextSourceLoading] = useState(false);
 
 // Confidence: AI-driven when available (from knowledgeSignals), falls back to local formula.
@@ -8473,9 +8475,14 @@ useEffect(() => {
         return;
       }
       const data = await response.json().catch(() => ({}));
-      const allowed = ['jira_sync', 'salesforce_insights', 'snowflake_insights', 'servicenow_insights', 'netsuite_insights', 'oracle_fusion_insights'];
+      const allowed = ['jira_sync', 'smartsheet_sync', 'salesforce_insights', 'snowflake_insights', 'servicenow_insights', 'netsuite_insights', 'oracle_fusion_insights'];
       const connected = (Array.isArray(data?.connectors) ? data.connectors : [])
-        .filter((item) => item?.connected && allowed.includes(item?.id))
+        .filter((item) => {
+          if (!item?.connected || !allowed.includes(item?.id)) return false;
+          if (item.id === 'jira_sync') return Boolean(item?.jira?.data_enabled);
+          if (item.id === 'smartsheet_sync') return Boolean(item?.smartsheet?.data_enabled);
+          return true;
+        })
         .map((item) => ({
           id: item.id,
           label: item.label || item.id,
@@ -8497,11 +8504,10 @@ function formatConnectorContextForAgent(data, connectorType) {
     }
     const s = (data && typeof data.summary === 'object') ? data.summary : {};
     return (
-      `Jira Project: ${s.project_key || 'unknown'}\n` +
-      `Active sprint: ${s.sprint_issue_count || 0} issues | ` +
-      `Blocked: ${s.blocked_count || 0} | ` +
-      `Completed last 14d: ${s.done_last_14d || 0} | ` +
-      `High-priority backlog: ${s.high_priority_backlog || 0}`
+      `Jira delivery capacity: ${s.project_count || 0} projects | ` +
+      `At risk: ${s.at_risk_projects || 0} | ` +
+      `Complete: ${s.completion_percent ?? 'unknown'}% | ` +
+      `Overdue: ${s.overdue_count || 0} | Blocked: ${s.blocked_count || 0}`
     );
   }
   if (connectorType === 'snowflake' && Array.isArray(data?.rows)) {
@@ -8565,7 +8571,7 @@ const handleToggleContextSource = useCallback(async (connectorId, label) => {
     let body = null;
     const sourceMeta = connectedDataSources.find((item) => item.id === connectorId);
     if (connectorId === 'jira_sync') {
-      url = `${API_BASE}/api/v1/connectors/jira/context/summary?limit=60`;
+      url = `${API_BASE}/api/v1/connectors/jira/context/summary`;
     } else if (connectorId === 'salesforce_insights') {
       url = `${API_BASE}/api/v1/connectors/salesforce/pipeline/summary?days=90&limit=100`;
     } else if (connectorId === 'snowflake_insights') {
@@ -8609,6 +8615,9 @@ const handleToggleContextSource = useCallback(async (connectorId, label) => {
     const summary = formatConnectorContextForAgent(data, sourceType).slice(0, MAX_CONNECTOR_CONTEXT_CHARS).trim();
     if (!summary) throw new Error(`No ${label} context available.`);
     setContextSourceData((prev) => ({ ...prev, [connectorId]: summary }));
+    if (connectorId === 'jira_sync' && data?.snapshot) {
+      setContextSourceMeta((prev) => ({ ...prev, [connectorId]: data.snapshot }));
+    }
     showToast(`${label} data loaded as context.`, 'success');
   } catch (err) {
     // Keep the pill visible — don't silently remove it. Store an error marker
@@ -14322,6 +14331,20 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
             {/* ── Dynamic content per pill (driven by header stage pills) ── */}
             <div className="jas-insights-body">
+
+              {activeContextSourceIds.has('jira_sync') && contextSourceMeta?.jira_sync?.portfolio && (() => {
+                const jira = contextSourceMeta.jira_sync;
+                const metrics = jira.portfolio || {};
+                return (
+                  <div className="jas-insights-tip" style={{ marginBottom: 12 }}>
+                    <p className="jas-insights-tip-title">Delivery capacity (from Jira)</p>
+                    <p className="jas-insights-tip-body">
+                      {metrics.project_count || 0} projects · {metrics.at_risk_projects || 0} at risk · {metrics.overdue_count || 0} overdue · {metrics.blocked_count || 0} blocked · {metrics.overloaded_assignee_count || 0} overloaded
+                    </p>
+                    <p className="jas-insights-tip-body">As of {jira.fetched_at ? new Date(jira.fetched_at).toLocaleString() : 'unknown'}{jira.stale ? ' · stale' : ''}</p>
+                  </div>
+                );
+              })()}
 
               {/* Discovery: What Jaspen knows checklist + improvement coaching */}
               {activePill === 'discovery' && sessionId && (

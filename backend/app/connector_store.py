@@ -128,12 +128,22 @@ def _default_connector_settings(connector_id):
         "jira_api_token": "",
         "jira_issue_type": "",
         "jira_field_mapping": {},
+        # Read-only Jira Data & Insights settings. These intentionally share
+        # credentials with execution sync but have independent scope/enabling.
+        "jira_data_enabled": False,
+        "jira_data_project_scope": "all",
+        "jira_data_selected_projects": [],
+        "jira_data_window_days": 90,
+        "jira_data_workload_threshold": 8,
+        "jira_portfolio_snapshot": {},
+        "jira_data_last_refresh_failed": False,
 
         # Smartsheet
         "smartsheet_base_url": "",
         "smartsheet_sheet_id": "",
         "smartsheet_api_token": "",
         "smartsheet_field_mapping": {},
+        "smartsheet_data_enabled": False,
 
         # Salesforce (enterprise data)
         "salesforce_auth_base_url": "",

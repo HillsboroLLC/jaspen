@@ -36,11 +36,11 @@ from app.connector_store import (
 )
 from app.jira_sync import (
     apply_jira_webhook_to_wbs,
-    fetch_jira_context_summary,
     import_tasks_from_jira,
     jira_check_connection,
     sync_wbs_to_jira,
 )
+from app.jira_portfolio import list_accessible_projects, portfolio_context_text, refresh_portfolio
 from app.models import User
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
 from app.salesforce_sync import (
@@ -411,6 +411,12 @@ def _merge_connector_view(connector_id, entitlement, settings):
             "configuration_complete": len(missing_fields) == 0,
             "missing_required_fields": missing_fields,
             "field_mapping": settings.get("jira_field_mapping") if isinstance(settings.get("jira_field_mapping"), dict) else {},
+            "data_enabled": _to_bool(settings.get("jira_data_enabled"), default=False),
+            "data_project_scope": settings.get("jira_data_project_scope") or "all",
+            "data_selected_projects": settings.get("jira_data_selected_projects") if isinstance(settings.get("jira_data_selected_projects"), list) else [],
+            "data_window_days": int(settings.get("jira_data_window_days") or 90),
+            "data_workload_threshold": int(settings.get("jira_data_workload_threshold") or 8),
+            "portfolio_snapshot": settings.get("jira_portfolio_snapshot") if isinstance(settings.get("jira_portfolio_snapshot"), dict) else {},
         }
     elif connector_id == "smartsheet_sync":
         missing_fields = _missing_required_fields(connector_id, settings)
@@ -421,6 +427,7 @@ def _merge_connector_view(connector_id, entitlement, settings):
             "configuration_complete": len(missing_fields) == 0,
             "missing_required_fields": missing_fields,
             "field_mapping": settings.get("smartsheet_field_mapping") if isinstance(settings.get("smartsheet_field_mapping"), dict) else {},
+            "data_enabled": _to_bool(settings.get("smartsheet_data_enabled"), default=False),
         }
     elif connector_id == "salesforce_insights":
         missing_fields = _missing_required_fields(connector_id, settings)
@@ -953,6 +960,18 @@ def update_connector(connector_id):
         if "jira_api_token" in payload:
             updates["jira_api_token"] = _text(payload.get("jira_api_token"))
         updates["jira_field_mapping"] = jira_mapping if isinstance(jira_mapping, dict) else (persisted_settings.get("jira_field_mapping") or {})
+        if "jira_data_enabled" in payload:
+            updates["jira_data_enabled"] = _to_bool(payload.get("jira_data_enabled"), default=False)
+        if "jira_data_project_scope" in payload:
+            scope = _text(payload.get("jira_data_project_scope")).lower()
+            updates["jira_data_project_scope"] = scope if scope in {"all", "selected"} else "all"
+        if "jira_data_selected_projects" in payload:
+            values = payload.get("jira_data_selected_projects")
+            updates["jira_data_selected_projects"] = [str(value).strip() for value in values if str(value).strip()] if isinstance(values, list) else []
+        if "jira_data_window_days" in payload:
+            updates["jira_data_window_days"] = max(14, min(365, int(payload.get("jira_data_window_days") or 90)))
+        if "jira_data_workload_threshold" in payload:
+            updates["jira_data_workload_threshold"] = max(1, min(100, int(payload.get("jira_data_workload_threshold") or 8)))
 
     elif connector_id == "smartsheet_sync":
         mapping = payload.get("smartsheet_field_mapping")
@@ -961,6 +980,8 @@ def update_connector(connector_id):
         if "smartsheet_api_token" in payload:
             updates["smartsheet_api_token"] = _text(payload.get("smartsheet_api_token"))
         updates["smartsheet_field_mapping"] = mapping if isinstance(mapping, dict) else (persisted_settings.get("smartsheet_field_mapping") or {})
+        if "smartsheet_data_enabled" in payload:
+            updates["smartsheet_data_enabled"] = _to_bool(payload.get("smartsheet_data_enabled"), default=False)
 
     elif connector_id == "salesforce_insights":
         for field in ("salesforce_auth_base_url", "salesforce_instance_url", "salesforce_client_id"):
@@ -1535,9 +1556,15 @@ def jira_context_summary():
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    max_issues = request.args.get("limit", 60)
     try:
-        result = fetch_jira_context_summary(user.id, max_issues=int(max_issues))
+        force = _to_bool(request.args.get("refresh"), default=False)
+        snapshot = refresh_portfolio(user.id, force=force)
+        result = {
+            "summary": snapshot.get("portfolio") or {},
+            "snapshot": snapshot,
+            "evidence": snapshot.get("evidence") or [],
+            "context_text": portfolio_context_text(snapshot),
+        }
         mark_connector_sync_result(user.id, "jira_sync", "success")
         append_sync_audit_event(
             user.id,
@@ -1545,17 +1572,35 @@ def jira_context_summary():
             action="context_summary",
             status="success",
             metadata={
-                "sprint_issue_count": (result.get("summary") or {}).get("sprint_issue_count", 0),
+                "project_count": (result.get("summary") or {}).get("project_count", 0),
                 "blocked_count": (result.get("summary") or {}).get("blocked_count", 0),
             },
         )
         return jsonify({"success": True, **result}), 200
     except Exception as exc:
-        mark_connector_sync_result(user.id, "jira_sync", "failed", error_message=str(exc))
+        raw = str(exc)
+        reconnect = "HTTP 401" in raw or "HTTP 403" in raw
+        public_message = "Your saved Jira connection no longer works. Reconnect Jira to continue." if reconnect else "Jira portfolio data could not be refreshed. Try again."
+        mark_connector_sync_result(user.id, "jira_sync", "failed", error_message=public_message)
         append_sync_audit_event(
-            user.id, "jira_sync", action="context_summary", status="failed", message=str(exc)
+            user.id, "jira_sync", action="context_summary", status="failed", message=public_message
         )
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": public_message, "reconnect_required": reconnect}), 400
+
+
+@connectors_bp.route("/jira/projects", methods=["GET"])
+@jwt_required()
+def jira_data_projects():
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    try:
+        return jsonify({"success": True, "projects": list_accessible_projects(user.id)}), 200
+    except Exception as exc:
+        raw = str(exc)
+        reconnect = "HTTP 401" in raw or "HTTP 403" in raw
+        message = "Your saved Jira connection no longer works. Reconnect Jira to continue." if reconnect else raw
+        return jsonify({"error": message, "reconnect_required": reconnect}), 400
 
 
 @connectors_bp.route("/snowflake/query", methods=["POST"])
