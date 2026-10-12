@@ -1,8 +1,10 @@
 import os
+from datetime import datetime
 from urllib.parse import quote
 
 from app.connector_store import get_connector_settings
 from app.jira_sync import _jira_request, _jira_runtime_config, _normalize_jira_base_url
+from app.pm_sync.provider import ProjectToolProvider
 
 
 def runtime_config(user_id, project_key=None):
@@ -38,6 +40,40 @@ def list_projects(user_id):
         }
         for item in (values or []) if item.get("key")
     ]
+
+
+def test_connection(settings):
+    """Validate transient credentials without persisting or logging a token."""
+    config = {
+        "base_url": _normalize_jira_base_url(settings.get("jira_base_url")),
+        "email": str(settings.get("jira_email") or "").strip(),
+        "api_token": str(settings.get("jira_api_token") or "").strip(),
+    }
+    if not all(config.values()):
+        raise ValueError("Jira site URL, email, and API token are required.")
+    data, _ = _jira_request(config, "GET", "/rest/api/3/myself", timeout=20)
+    return {"ok": True, "account_id": str((data or {}).get("accountId") or ""), "base_url": config["base_url"]}
+
+
+def create_project(user_id, payload):
+    config = assert_connected(user_id)
+    key = str(payload.get("key") or "").strip().upper()
+    name = str(payload.get("name") or "").strip()
+    if not key or not name:
+        raise ValueError("Project key and name are required.")
+    me, _ = request(config, "GET", "/rest/api/3/myself", timeout=20)
+    account_id = str((me or {}).get("accountId") or "")
+    if not account_id:
+        raise ValueError("Jira did not return an account for the project lead.")
+    body = {
+        "key": key,
+        "name": name,
+        "projectTypeKey": str(payload.get("project_type") or "software"),
+        "projectTemplateKey": str(payload.get("template") or "com.pyxis.greenhopper.jira:gh-scrum-template"),
+        "leadAccountId": account_id,
+    }
+    data, _ = request(config, "POST", "/rest/api/3/project", body, timeout=30)
+    return {"id": str((data or {}).get("id") or ""), "key": key, "name": name, "url": f"{config['base_url']}/browse/{key}"}
 
 
 def request(config, method, path, payload=None, timeout=30):
@@ -167,3 +203,152 @@ def sync_status(config, binding, issue_key, jaspen_status):
     if transition_id:
         request(config, "POST", f"/rest/api/3/issue/{quote(issue_key)}/transitions", {"transition": {"id": transition_id}})
     return bool(transition_id)
+
+
+def _adf_text(value):
+    parts = []
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("type") == "text" and node.get("text"):
+                parts.append(str(node["text"]))
+            for child in node.get("content") or []:
+                walk(child)
+            if node.get("type") in {"paragraph", "heading"}:
+                parts.append("\n")
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+    walk(value)
+    text = "".join(parts).strip()
+    if text.startswith("From Jaspen"):
+        text = text[len("From Jaspen"):].lstrip()
+    for marker in ("\nWhy this task\n", "\nDerived from\n", "\nSuggested owner:", "\nOpen in Jaspen:"):
+        if marker in text:
+            text = text.split(marker, 1)[0]
+    return text.strip()
+
+
+def _parse_iso(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        return text
+
+
+def _status_from_jira(status):
+    category = str((((status or {}).get("statusCategory") or {}).get("key")) or "").lower()
+    name = str((status or {}).get("name") or "").strip()
+    if category == "done":
+        return "done", None
+    if category == "indeterminate":
+        return ("blocked" if name.lower() == "blocked" else "in_progress"), None
+    if category in {"new", "undefined"}:
+        return "todo", None
+    return None, name or "Unknown Jira status"
+
+
+class JiraProvider(ProjectToolProvider):
+    connector_id = "jira_sync"
+
+    def assert_connected(self, user_id, container_id=None):
+        return assert_connected(user_id, container_id)
+
+    def list_containers(self, user_id):
+        return list_projects(user_id)
+
+    def create_container(self, user_id, payload):
+        return create_project(user_id, payload)
+
+    def recover_item(self, config, binding, entity_id):
+        return recover_issue(config, binding, entity_id)
+
+    def set_identity(self, config, binding, external_id, entity_type, jaspen_id):
+        return set_identity(config, binding, external_id, entity_type, jaspen_id)
+
+    def create_items(self, config, binding, items):
+        payload = {"issueUpdates": [
+            {"fields": phase_fields(row["title"], binding)} if row.get("entity_type") == "phase"
+            else {"fields": task_fields(row["task"], binding, row.get("parent_id"))}
+            for row in items
+        ]}
+        data, _ = request(config, "POST", "/rest/api/3/issue/bulk", payload, timeout=45)
+        return data or {}
+
+    def update_item(self, config, binding, external_id, changes, task=None):
+        task = dict(task or {})
+        task.update(changes or {})
+        fields = {}
+        if "title" in changes:
+            fields["summary"] = str(changes.get("title") or "Untitled task")[:255]
+        if "description" in changes:
+            fields["description"] = adf_document(task, f"{os.getenv('FRONTEND_BASE_URL', 'https://jaspen.ai').rstrip('/')}/new?sid={quote(binding.thread_id)}")
+        if "due_date" in changes:
+            fields["duedate"] = str(changes.get("due_date") or "")[:10] or None
+        start_field = str((binding.config or {}).get("start_date_field_id") or "").strip()
+        if "start_date" in changes and start_field:
+            fields[start_field] = str(changes.get("start_date") or "")[:10] or None
+        if "owner_email" in changes or "owner" in changes:
+            user_map = binding.user_map if isinstance(binding.user_map, dict) else {}
+            account_id = user_map.get(str(changes.get("owner_email") or task.get("owner_email") or "")) or user_map.get(str(changes.get("owner") or task.get("owner") or ""))
+            if account_id:
+                fields["assignee"] = {"accountId": account_id}
+        if fields:
+            request(config, "PUT", f"/rest/api/3/issue/{quote(external_id)}", {"fields": fields})
+        status_ok = True
+        if "status" in changes:
+            status_ok = sync_status(config, binding, external_id, changes.get("status"))
+        return {"status_mapped": status_ok}
+
+    def create_dependency(self, config, binding, prerequisite_id, dependent_id):
+        data, _ = request(config, "POST", "/rest/api/3/issueLink", {
+            "type": {"name": "Blocks"}, "inwardIssue": {"key": prerequisite_id}, "outwardIssue": {"key": dependent_id},
+        })
+        return str((data or {}).get("id") or f"{prerequisite_id}->{dependent_id}")
+
+    def get_item(self, config, binding, external_id):
+        start_field = str((binding.config or {}).get("start_date_field_id") or "").strip()
+        fields = ["summary", "description", "assignee", "status", "duedate", "updated"]
+        if start_field:
+            fields.append(start_field)
+        try:
+            data, _ = request(config, "GET", f"/rest/api/3/issue/{quote(external_id)}?expand=changelog&fields={','.join(fields)}", timeout=30)
+        except Exception as exc:
+            response = getattr(exc, "response", None)
+            if getattr(response, "status_code", None) == 404:
+                return {"deleted": True, "values": {}, "changed_at": {}, "version": None}
+            raise
+        row = data if isinstance(data, dict) else {}
+        remote = row.get("fields") if isinstance(row.get("fields"), dict) else {}
+        status, status_error = _status_from_jira(remote.get("status"))
+        assignee = remote.get("assignee") if isinstance(remote.get("assignee"), dict) else {}
+        values = {
+            "title": remote.get("summary") or "",
+            "description": _adf_text(remote.get("description")),
+            "owner": assignee.get("displayName") or "",
+            "owner_email": assignee.get("emailAddress") or "",
+            "status": status,
+            "start_date": remote.get(start_field) if start_field else None,
+            "due_date": remote.get("duedate"),
+        }
+        field_map = {"summary": "title", "description": "description", "assignee": "owner", "status": "status", "duedate": "due_date"}
+        if start_field:
+            field_map[start_field] = "start_date"
+        changed_at = {}
+        histories = ((row.get("changelog") or {}).get("histories") or []) if isinstance(row.get("changelog"), dict) else []
+        for history in histories:
+            created = _parse_iso(history.get("created"))
+            for item in history.get("items") or []:
+                key = field_map.get(str(item.get("fieldId") or "")) or field_map.get(str(item.get("field") or "").lower())
+                if key and created and (not changed_at.get(key) or created > changed_at[key]):
+                    changed_at[key] = created
+                    if key == "owner":
+                        changed_at["owner_email"] = created
+        return {
+            "deleted": False, "values": values, "changed_at": changed_at,
+            "version": _parse_iso(remote.get("updated")), "status_error": status_error,
+            "supported_fields": ["title", "description", "owner", "owner_email", "status", "due_date"] + (["start_date"] if start_field else []),
+            "url": f"{config['base_url']}/browse/{external_id}",
+        }

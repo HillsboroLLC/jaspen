@@ -2,11 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import BackToJaspen from '../../shared/components/BackToJaspen';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCheck, faCopy, faFileExcel, faRotate, faSpinner, faThumbsDown, faThumbsUp, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
+import { faCheck, faCopy, faRotate, faSpinner, faThumbsDown, faThumbsUp, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import AppMenu from '../shared/AppMenu';
 import { Jaspen } from '../Workspace/JaspenClient';
 import { useExecutionPlanBuild } from '../Workspace/useExecutionPlanBuild';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
+import ExecutionPlanExportButton from '../Workspace/ExecutionPlanExportButton';
+import PmSyncPanel from '../Workspace/PmSyncPanel';
 import ExecutionPanel from '../Workspace/components/ExecutionPanel';
 import { parseUIActions, ChatActionTypes } from '../../shared/hooks/useChatCommands';
 import { useToast, ToastContainer } from '../../shared/components/Toast';
@@ -128,7 +130,6 @@ export default function ExecutionPlan() {
   const [copiedMessageKey, setCopiedMessageKey] = useState(null);
   const [feedbackByMessageKey, setFeedbackByMessageKey] = useState({});
   const [planBusy, setPlanBusy] = useState(false);
-  const [exportBusyType, setExportBusyType] = useState(null);
   const assistantMessagesEndRef = useRef(null);
   const copyResetTimeoutRef = useRef(null);
 
@@ -581,50 +582,19 @@ export default function ExecutionPlan() {
     setAssistantInput(prefill);
   }, []);
 
-  const triggerDownload = useCallback((blob, filename) => {
-    if (!(blob instanceof Blob)) throw new Error('The export did not return a file.');
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.download = filename || 'jaspen-execution-plan';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
-  }, []);
-
-  const handleExportPlan = useCallback(async () => {
-    const tid = String(threadId || '').trim();
-    if (!tid || exportBusyType) return;
-    const scorecardId = String(threadWbs?.scorecard_id || '').trim() || undefined;
-    setExportBusyType('xlsx');
-    try {
-      const result = await Jaspen.downloadWbsXlsx(tid, { scorecardId });
-      triggerDownload(
-        result?.blob,
-        result?.filename || 'jaspen-execution-plan.xlsx',
-      );
-      showToast('Exported execution plan Excel workbook', 'success');
-    } catch (error) {
-      showToast(error?.message || 'Could not export the execution plan as Excel.', 'error');
-    } finally {
-      setExportBusyType(null);
-    }
-  }, [exportBusyType, showToast, threadId, threadWbs?.scorecard_id, triggerDownload]);
-
   const pageActions = (
     <div className="execution-plan-actions">
       <BackToJaspen to={threadId ? `/new?sid=${encodeURIComponent(threadId)}` : '/new'} />
-      <button
-        type="button"
-        className="int-btn int-btn-ghost"
-        onClick={() => { void handleExportPlan(); }}
-        disabled={!hasExistingPlan || Boolean(exportBusyType)}
-        aria-disabled={!hasExistingPlan || Boolean(exportBusyType)}
-      >
-        <FontAwesomeIcon icon={exportBusyType === 'xlsx' ? faSpinner : faFileExcel} spin={exportBusyType === 'xlsx'} />
-        <span>{exportBusyType === 'xlsx' ? 'Downloading…' : 'Download Excel'}</span>
-      </button>
+      <ExecutionPlanExportButton
+        threadId={threadId}
+        scorecardId={threadWbs?.scorecard_id || ''}
+        disabled={!hasExistingPlan}
+      />
+      <PmSyncPanel
+        threadId={threadId}
+        planKey={threadWbs?.scorecard_id || ''}
+        taskCount={Array.isArray(threadWbs?.tasks) ? threadWbs.tasks.length : 0}
+      />
       <button
         type="button"
         className="int-btn int-btn-primary"

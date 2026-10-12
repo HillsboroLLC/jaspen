@@ -5808,6 +5808,13 @@ def _normalize_wbs_task(raw_task):
         task['owner_user_id'] = owner_user_id
     if raw_task.get('updated_at'):
         task['updated_at'] = str(raw_task.get('updated_at'))
+    if isinstance(raw_task.get('field_updated_at'), dict):
+        task['field_updated_at'] = {
+            str(key): str(value) for key, value in raw_task['field_updated_at'].items()
+            if str(key).strip() and str(value or '').strip()
+        }
+    if isinstance(raw_task.get('pm_sync_state'), dict):
+        task['pm_sync_state'] = dict(raw_task['pm_sync_state'])
     if priority:
         task['priority'] = priority
     if timeline_days:
@@ -5867,6 +5874,11 @@ def _normalize_project_wbs(payload, existing=None):
             task['updated_at'] = str(prior.get('updated_at') or task.get('updated_at') or now)
         else:
             task['updated_at'] = now
+        field_times = dict((prior or {}).get('field_updated_at') or {})
+        for field in ('title', 'description', 'owner', 'owner_email', 'status', 'start_date', 'due_date'):
+            if not prior_normalized or task.get(field) != prior_normalized.get(field):
+                field_times[field] = now
+        task['field_updated_at'] = field_times
         tasks.append(task)
 
     # Ensure dependency ids refer to tasks in this WBS.

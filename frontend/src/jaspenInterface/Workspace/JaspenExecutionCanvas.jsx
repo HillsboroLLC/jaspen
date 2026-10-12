@@ -34,6 +34,7 @@ import {
 
 import { Jaspen } from './JaspenClient';
 import PmSyncPanel from './PmSyncPanel';
+import ExecutionPlanExportButton from './ExecutionPlanExportButton';
 
 // ── Palette (matches Claude Design + existing Jaspen chrome) ───────────────
 export const COLOR = {
@@ -1576,6 +1577,11 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
               threadId={threadId}
               planKey={scorecardId || wbs?.scorecard_id || ''}
               taskCount={totalTasks}
+            />
+            <ExecutionPlanExportButton
+              threadId={threadId}
+              scorecardId={scorecardId || wbs?.scorecard_id || ''}
+              disabled={!totalTasks}
             />
             <ViewSwitcher value={view} onChange={setView} />
           </div>

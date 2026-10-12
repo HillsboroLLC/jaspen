@@ -31,6 +31,8 @@ import {
   GuidedDecisionModal,
   Walkthrough,
 } from '../GuidedDecision';
+import ExecutionPlanExportButton from './ExecutionPlanExportButton';
+import PmSyncPanel from './PmSyncPanel';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -3373,6 +3375,9 @@ const renderInlineExecutionArtifact = (wbs, opts = {}) => {
             {phases.size} phase{phases.size === 1 ? '' : 's'} · {tasks.length} task{tasks.length === 1 ? '' : 's'} · <strong style={{ color: '#161f3b' }}>{donePct}% done</strong>
           </div>
         </div>
+        <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', justifyContent:'flex-end' }}>
+        <ExecutionPlanExportButton threadId={opts.threadId} scorecardId={execScorecardId} compact />
+        <PmSyncPanel threadId={opts.threadId} planKey={execScorecardId} taskCount={tasks.length} compact />
         {wsHref && (
           <button
             type="button"
@@ -3390,6 +3395,7 @@ const renderInlineExecutionArtifact = (wbs, opts = {}) => {
             }}
           >Open in Workspace ↗</button>
         )}
+        </div>
       </div>
       {/* Progress bar: green=done, navy=in-progress, light gray=todo */}
       <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden', background: '#f1f3f5', marginBottom: 12 }}>

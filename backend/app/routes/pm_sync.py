@@ -2,10 +2,12 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app import db
+from app.connector_store import encrypt_token, update_connector_settings
 from app.models import User
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
-from app.pm_sync.jira_adapter import list_projects
-from app.pm_sync.service import POLICIES, STATUSES, create_binding, get_plan, preview, push_binding
+from app.pm_sync.jira_adapter import create_project, list_projects, test_connection
+from app.pm_sync.reconciliation import list_logs, reconcile_binding
+from app.pm_sync.service import MODES, POLICIES, STATUSES, create_binding, get_plan, preview, push_binding
 
 pm_sync_bp = Blueprint("pm_sync", __name__)
 
@@ -30,6 +32,52 @@ def jira_projects():
         return _error("User not found", 404)
     try:
         return jsonify({"projects": list_projects(user.id)})
+    except Exception as exc:
+        return _error(exc)
+
+
+@pm_sync_bp.route("/jira/test-connection", methods=["POST"])
+@jwt_required()
+def jira_test_connection():
+    """Probe transient credentials. Nothing is persisted by this endpoint."""
+    try:
+        return jsonify(test_connection(request.get_json(silent=True) or {}))
+    except Exception as exc:
+        return _error(f"Could not connect to Jira. Check the site URL, email, and API token. {exc}")
+
+
+@pm_sync_bp.route("/jira/connect", methods=["POST"])
+@jwt_required()
+def jira_connect():
+    user = _user()
+    if not user:
+        return _error("User not found", 404)
+    payload = request.get_json(silent=True) or {}
+    try:
+        probe = test_connection(payload)
+        token = str(payload.get("jira_api_token") or "").strip()
+        if token and not encrypt_token(token).startswith("enc::"):
+            raise ValueError("Connector credential encryption is not configured. Set CONNECTOR_ENCRYPTION_KEY before saving Jira credentials.")
+        saved = update_connector_settings(user.id, "jira_sync", {
+            "jira_base_url": str(payload.get("jira_base_url") or "").strip(),
+            "jira_email": str(payload.get("jira_email") or "").strip(),
+            "jira_api_token": token,
+            "connection_status": "connected", "lifecycle_status": "connected",
+            "last_verified_at": __import__("datetime").datetime.utcnow().isoformat(),
+        })
+        return jsonify({"success": True, "base_url": probe["base_url"], "has_api_token": bool(saved.get("jira_api_token"))})
+    except Exception as exc:
+        return _error(f"Could not connect to Jira. Nothing was saved. {exc}")
+
+
+@pm_sync_bp.route("/jira/projects", methods=["POST"])
+@jwt_required()
+def jira_create_project():
+    user = _user()
+    if not user:
+        return _error("User not found", 404)
+    try:
+        return jsonify({"project": create_project(user.id, request.get_json(silent=True) or {})}), 201
     except Exception as exc:
         return _error(exc)
 
@@ -93,7 +141,7 @@ def get_binding(binding_id):
     if not binding:
         return _error("Binding not found", 404)
     links = PmSyncLink.query.filter_by(binding_id=binding.id).all()
-    return jsonify({"binding": binding.to_dict(), "links": [link.to_dict() for link in links]})
+    return jsonify({"binding": binding.to_dict(), "links": [link.to_dict() for link in links], "logs": list_logs(binding)})
 
 
 @pm_sync_bp.route("/bindings/<binding_id>", methods=["PATCH"])
@@ -106,6 +154,7 @@ def update_binding(binding_id):
     data = request.get_json(silent=True) or {}
     status = str(data.get("status") or "").strip().lower()
     policy = str(data.get("conflict_policy") or "").strip().lower()
+    mode = str(data.get("mode") or "").strip().lower()
     if status:
         if status not in STATUSES:
             return _error("Invalid binding status")
@@ -117,6 +166,10 @@ def update_binding(binding_id):
         binding.policy_set_by_user_id = user.id
         from datetime import datetime
         binding.policy_set_at = datetime.utcnow()
+    if mode:
+        if mode not in MODES:
+            return _error("Invalid sync mode")
+        binding.mode = mode
     if "field_policy_overrides" in data:
         if not isinstance(data["field_policy_overrides"], dict):
             return _error("field_policy_overrides must be an object")
@@ -135,7 +188,7 @@ def sync_binding(binding_id):
     if not binding:
         return _error("Binding not found", 404)
     try:
-        return jsonify({"binding": binding.to_dict(), "result": push_binding(binding, trigger="sync_now")})
+        return jsonify({"binding": binding.to_dict(), "result": reconcile_binding(binding, trigger="sync_now"), "logs": list_logs(binding)})
     except Exception as exc:
         db.session.rollback()
         return _error(exc, 502)

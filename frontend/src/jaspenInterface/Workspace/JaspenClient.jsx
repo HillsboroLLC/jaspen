@@ -174,6 +174,8 @@ export const endpoints = {
   pmSyncNow: (bindingId) => `${API_BASE}/api/v1/pm-sync/bindings/${encodeURIComponent(bindingId)}/sync`,
   pmSyncPreview: (threadId, planKey, groupUnderEpics = true) => `${API_BASE}/api/v1/pm-sync/preview?thread_id=${encodeURIComponent(threadId)}&plan_key=${encodeURIComponent(planKey || '')}&group_under_epics=${groupUnderEpics ? 'true' : 'false'}`,
   jiraProjects: `${API_BASE}/api/v1/pm-sync/jira/projects`,
+  jiraTestConnection: `${API_BASE}/api/v1/pm-sync/jira/test-connection`,
+  jiraConnect: `${API_BASE}/api/v1/pm-sync/jira/connect`,
   connectorHealth: (connectorId) => `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/health`,
   connectorAudit: (connectorId) => `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/audit`,
   salesforceOauthStart: `${API_BASE}/api/v1/connectors/salesforce/oauth/start`,
@@ -1563,6 +1565,18 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
     getJSON(`${endpoints.pmSyncBindings}?thread_id=${encodeURIComponent(threadId)}&plan_key=${encodeURIComponent(planKey || '')}`, { withSid: true }),
 
   listJiraProjects: async () => getJSON(endpoints.jiraProjects, { withSid: true }),
+
+  testJiraConnection: async (payload) =>
+    postJSON(endpoints.jiraTestConnection, payload, { withSid: true }),
+
+  connectJira: async (payload) =>
+    postJSON(endpoints.jiraConnect, payload, { withSid: true }),
+
+  createJiraProject: async (payload) =>
+    postJSON(endpoints.jiraProjects, payload, { withSid: true }),
+
+  getPmSyncBinding: async (bindingId) =>
+    getJSON(endpoints.pmSyncBinding(bindingId), { withSid: true }),
 
   previewPmSync: async (threadId, planKey, groupUnderEpics = true) =>
     getJSON(endpoints.pmSyncPreview(threadId, planKey, groupUnderEpics), { withSid: true }),
