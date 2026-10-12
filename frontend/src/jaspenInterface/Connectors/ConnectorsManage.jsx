@@ -42,6 +42,7 @@ const PLAN_CONNECTOR_IDS = Object.fromEntries(
 const EXECUTION_SYNC_CONNECTOR_IDS = ['jira_sync', 'smartsheet_sync'];
 
 const CONNECTOR_CATEGORIES = [
+  { id: 'execution', label: 'Execution Sync', connectorIds: ['jira_sync', 'smartsheet_sync'] },
   { id: 'data', label: 'Data & Insights', connectorIds: ['jira_sync', 'smartsheet_sync', 'salesforce_insights', 'snowflake_insights'] },
   { id: 'enterprise', label: 'Enterprise Sources', connectorIds: ['oracle_fusion_insights', 'servicenow_insights', 'netsuite_insights'] },
 ];

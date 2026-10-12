@@ -123,9 +123,11 @@ it('treats Jira as Data & Insights without requiring a default project', async (
     throw new Error(`Unexpected request: ${url}`);
   });
 
-  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+  const { container } = render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
 
-  expect(await screen.findByText('Data & Insights')).toBeInTheDocument();
+  expect(await screen.findByText('Execution Sync')).toBeInTheDocument();
+  expect(screen.getByText('Data & Insights')).toBeInTheDocument();
+  expect(Array.from(container.querySelectorAll('.connector-list-item-label')).filter((node) => node.textContent === 'Jira')).toHaveLength(2);
   expect(await screen.findByText('Using Jira: https://acme.atlassian.net · owner@acme.test')).toBeInTheDocument();
   expect(screen.getByLabelText('Use Jira data in analysis')).toBeChecked();
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
