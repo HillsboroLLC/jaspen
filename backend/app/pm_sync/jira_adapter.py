@@ -240,6 +240,21 @@ def update_fields(fields):
     return {key: value for key, value in fields.items() if key not in {"project", "issuetype"}}
 
 
+def get_parent(config, issue_key):
+    data, _ = request(
+        config, "GET", f"/rest/api/3/issue/{quote(issue_key)}?fields=parent", timeout=20,
+    )
+    fields = data.get("fields") if isinstance(data, dict) and isinstance(data.get("fields"), dict) else {}
+    parent = fields.get("parent") if isinstance(fields.get("parent"), dict) else {}
+    return str(parent.get("key") or "").strip() or None
+
+
+def set_parent(config, issue_key, parent_key):
+    request(config, "PUT", f"/rest/api/3/issue/{quote(issue_key)}", {
+        "fields": {"parent": {"key": str(parent_key)}},
+    })
+
+
 def set_identity(config, binding, issue_key, entity_type, jaspen_id):
     ensure_recovery_identity(config, binding, issue_key, jaspen_id)
     request(config, "PUT", f"/rest/api/3/issue/{quote(issue_key)}/properties/jaspen", {
@@ -395,7 +410,7 @@ class JiraProvider(ProjectToolProvider):
 
     def get_item(self, config, binding, external_id):
         start_field = str((binding.config or {}).get("start_date_field_id") or "").strip()
-        fields = ["summary", "description", "assignee", "status", "duedate", "updated"]
+        fields = ["summary", "description", "assignee", "status", "parent", "duedate", "updated"]
         if start_field:
             fields.append(start_field)
         try:
@@ -409,6 +424,7 @@ class JiraProvider(ProjectToolProvider):
         remote = row.get("fields") if isinstance(row.get("fields"), dict) else {}
         status, status_error = _status_from_jira(remote.get("status"))
         assignee = remote.get("assignee") if isinstance(remote.get("assignee"), dict) else {}
+        parent = remote.get("parent") if isinstance(remote.get("parent"), dict) else {}
         values = {
             "title": remote.get("summary") or "",
             "description": _adf_text(remote.get("description")),
@@ -434,6 +450,7 @@ class JiraProvider(ProjectToolProvider):
         return {
             "deleted": False, "values": values, "changed_at": changed_at,
             "version": _parse_iso(remote.get("updated")), "status_error": status_error,
+            "parent_id": str(parent.get("key") or "").strip() or None,
             "supported_fields": ["title", "description", "owner", "owner_email", "status", "due_date"] + (["start_date"] if start_field else []),
             "url": f"{config['base_url']}/browse/{external_id}",
         }

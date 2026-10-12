@@ -324,6 +324,33 @@ def _recover_or_none(config, binding, entity_id):
         return None
 
 
+_PARENT_UNKNOWN = object()
+
+
+def ensure_task_parent(
+    config, binding, issue_key, expected_parent, *, current_parent=_PARENT_UNKNOWN,
+    linked_parent_ids=None,
+):
+    """Repair binding-owned Jira structure without touching unrelated issues.
+
+    A move to another epic linked to this same binding is accepted. Missing
+    parents and parents outside the binding are restored to the plan's epic.
+    """
+    expected = str(expected_parent or "").strip() or None
+    if not expected:
+        return False, None
+    if current_parent is _PARENT_UNKNOWN:
+        current = jira_adapter.get_parent(config, issue_key)
+    else:
+        current = str(current_parent or "").strip() or None
+    allowed = {str(value).strip() for value in (linked_parent_ids or []) if str(value or "").strip()}
+    allowed.add(expected)
+    if current == expected or (current is not None and current in allowed):
+        return False, current
+    jira_adapter.set_parent(config, issue_key, expected)
+    return True, expected
+
+
 def push_binding(binding, plan=None, trigger="send"):
     if binding.status == "paused":
         raise ValueError("This Jira sync is paused.")
@@ -338,6 +365,11 @@ def push_binding(binding, plan=None, trigger="send"):
     }
     result = {"created": 0, "updated": 0, "dependencies": 0, "failed": 0, "errors": []}
     task_parents = _sync_phases(binding, plan, config, existing, result)
+    linked_parent_ids = {
+        *task_parents.values(),
+        *(link.external_id for (entity_type, _), link in existing.items()
+          if entity_type == "phase" and link.external_id),
+    }
 
     pending = []
     for task in tasks:
@@ -352,6 +384,16 @@ def push_binding(binding, plan=None, trigger="send"):
                 issue_key = str(recovered.get("key") or "")
         if issue_key:
             try:
+                parent_repaired, effective_parent = ensure_task_parent(
+                    config, binding, issue_key, parent, linked_parent_ids=linked_parent_ids,
+                )
+                if parent_repaired:
+                    result["updated"] += 1
+                elif effective_parent:
+                    parent = effective_parent
+                # Parent structure is reconciled separately from editable task
+                # fields so its repair is explicit and auditable.
+                fields.pop("parent", None)
                 jira_adapter.request(config, "PUT", f"/rest/api/3/issue/{issue_key}", {"fields": jira_adapter.update_fields(fields)})
                 jira_adapter.set_identity(config, binding, issue_key, "task", task_id)
                 jira_adapter.sync_status(config, binding, issue_key, task.get("status"))

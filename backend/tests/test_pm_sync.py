@@ -1,5 +1,5 @@
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -250,6 +250,22 @@ def test_jira_recovery_uses_searchable_entity_label_not_unindexed_property(test_
     assert "issue.property" not in payload["jql"]
 
 
+def test_jira_parent_read_and_repair_use_issue_fields(test_user):
+    from app.pm_sync.jira_adapter import get_parent, set_parent
+
+    with patch("app.pm_sync.jira_adapter.request", return_value=({
+        "fields": {"parent": {"key": "JST-9"}},
+    }, {})) as request:
+        assert get_parent({}, "JST-2") == "JST-9"
+    request.assert_called_once_with({}, "GET", "/rest/api/3/issue/JST-2?fields=parent", timeout=20)
+
+    with patch("app.pm_sync.jira_adapter.request") as request:
+        set_parent({}, "JST-2", "JST-10")
+    request.assert_called_once_with({}, "PUT", "/rest/api/3/issue/JST-2", {
+        "fields": {"parent": {"key": "JST-10"}},
+    })
+
+
 def test_start_date_field_discovery_requires_date_schema_not_name_alone():
     from app.pm_sync.jira_adapter import discover_start_date_field
 
@@ -283,11 +299,13 @@ class _Provider:
         self.remote = remote
         self.updates = []
         self.recovery_identities = []
+        self.get_calls = []
 
     def assert_connected(self, _user_id, _container_id):
         return {"base_url": "https://example.atlassian.net"}
 
     def get_item(self, _config, _binding, _external_id):
+        self.get_calls.append(_external_id)
         return self.remote
 
     def update_item(self, _config, _binding, external_id, changes, _task=None):
@@ -551,6 +569,89 @@ def test_created_task_link_survives_identity_failure_and_retry_does_not_duplicat
     assert second["created"] == 0
     assert not any(call.args[2] == "/rest/api/3/issue/bulk" for call in request.call_args_list)
     assert PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task").count() == 1
+
+
+def test_push_repairs_missing_parent_from_existing_phase_link(test_user):
+    binding = _binding(test_user)
+    binding.config = {**binding.config, "group_under_epics": True}
+    phase = PmSyncLink(binding_id=binding.id, entity_type="phase", jaspen_id="Prepare",
+                       external_id="JST-9", base_snapshot={"title": "Prepare"}, state="active")
+    task_link = PmSyncLink(binding_id=binding.id, entity_type="task", jaspen_id="task-a",
+                           external_id="JST-2", base_snapshot={}, state="active")
+    task_link_b = PmSyncLink(binding_id=binding.id, entity_type="task", jaspen_id="task-b",
+                             external_id="JST-3", base_snapshot={}, state="active")
+    app_db.session.add_all([phase, task_link, task_link_b]); app_db.session.commit()
+    plan = {"name": "Plan", "tasks": [{
+        "id": "task-a", "title": "Task", "phase": "Prepare", "status": "todo", "depends_on": [],
+    }, {
+        "id": "task-b", "title": "Second task", "phase": "Prepare", "status": "todo", "depends_on": [],
+    }]}
+    result = {"created": 0, "updated": 0, "failed": 0, "errors": []}
+    with patch("app.pm_sync.service.jira_adapter.assert_connected", return_value={"base_url": "https://example.atlassian.net"}), patch(
+        "app.pm_sync.service._sync_phases", return_value={"task-a": "JST-9", "task-b": "JST-9"}
+    ), patch("app.pm_sync.service.jira_adapter.get_parent", return_value=None), patch(
+        "app.pm_sync.service.jira_adapter.set_parent"
+    ) as set_parent, patch("app.pm_sync.service.jira_adapter.request", return_value=({}, {})), patch(
+        "app.pm_sync.service.jira_adapter.set_identity"
+    ), patch("app.pm_sync.service.jira_adapter.sync_status"):
+        result = push_binding(binding, plan, trigger="sync_now")
+    assert set_parent.call_args_list == [
+        call({"base_url": "https://example.atlassian.net"}, "JST-2", "JST-9"),
+        call({"base_url": "https://example.atlassian.net"}, "JST-3", "JST-9"),
+    ]
+    assert result["updated"] == 4  # two task updates plus two structural repairs
+    assert task_link.external_parent_id == "JST-9"
+    assert task_link_b.external_parent_id == "JST-9"
+
+
+def test_reconcile_restores_removed_parent_and_does_not_touch_unlinked_issue(test_user):
+    base = {"title": "Task", "description": None, "owner": None, "owner_email": None,
+            "status": "todo", "start_date": None, "due_date": None,
+            "_synced_fields": ["title", "description", "owner", "owner_email", "status", "due_date"]}
+    binding, link = _linked_binding(test_user, base)
+    binding.config = {**binding.config, "group_under_epics": True}
+    phase = PmSyncLink(binding_id=binding.id, entity_type="phase", jaspen_id="Prepare",
+                       external_id="JST-9", base_snapshot={"title": "Prepare"}, state="active")
+    app_db.session.add(phase); app_db.session.commit()
+    plan = {"tasks": [{**base, "id": "task-a", "phase": "Prepare"}]}
+    provider = _Provider({"deleted": False, "values": base, "changed_at": {}, "version": None,
+                          "parent_id": None})
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=provider), patch(
+        "app.pm_sync.reconciliation._sync_phases", return_value={"task-a": "JST-9"}
+    ), patch("app.pm_sync.service.jira_adapter.set_parent") as set_parent:
+        result = reconcile_binding(binding)
+    set_parent.assert_called_once_with({"base_url": "https://example.atlassian.net"}, "JST-1", "JST-9")
+    assert result["pushed"] == 1
+    assert link.external_parent_id == "JST-9"
+    assert provider.recovery_identities == [("JST-1", "task-a")]
+    assert provider.get_calls == ["JST-1"]
+
+
+def test_reconcile_respects_parent_moved_to_another_linked_epic(test_user):
+    base = {"title": "Task", "description": None, "owner": None, "owner_email": None,
+            "status": "todo", "start_date": None, "due_date": None,
+            "_synced_fields": ["title", "description", "owner", "owner_email", "status", "due_date"]}
+    binding, link = _linked_binding(test_user, base)
+    binding.config = {**binding.config, "group_under_epics": True}
+    app_db.session.add_all([
+        PmSyncLink(binding_id=binding.id, entity_type="phase", jaspen_id="Prepare",
+                   external_id="JST-10", base_snapshot={}, state="active"),
+        PmSyncLink(binding_id=binding.id, entity_type="phase", jaspen_id="Deliver",
+                   external_id="JST-11", base_snapshot={}, state="active"),
+    ])
+    app_db.session.commit()
+    plan = {"tasks": [{**base, "id": "task-a", "phase": "Prepare"}]}
+    provider = _Provider({"deleted": False, "values": base, "changed_at": {}, "version": None,
+                          "parent_id": "JST-11"})
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=provider), patch(
+        "app.pm_sync.reconciliation._sync_phases", return_value={"task-a": "JST-10"}
+    ), patch("app.pm_sync.service.jira_adapter.set_parent") as set_parent:
+        result = reconcile_binding(binding)
+    set_parent.assert_not_called()
+    assert result["pushed"] == 0
+    assert link.external_parent_id == "JST-11"
 
 
 def test_both_changed_uses_changelog_time_and_missing_time_requires_review(test_user):

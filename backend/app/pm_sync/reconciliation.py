@@ -5,7 +5,7 @@ from app import db
 from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncLink
 from app.pm_sync.provider import get_provider
-from app.pm_sync.service import _sync_phases, ensure_start_date_field, get_plan, push_binding
+from app.pm_sync.service import _sync_phases, ensure_start_date_field, ensure_task_parent, get_plan, push_binding
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
 
 FIELDS = ("title", "description", "owner", "owner_email", "status", "start_date", "due_date")
@@ -101,7 +101,13 @@ def reconcile_binding(binding, trigger="sync_now"):
     tasks = {str(row.get("id")): row for row in (plan.get("tasks") or []) if isinstance(row, dict) and row.get("id")}
     all_links = PmSyncLink.query.filter_by(binding_id=binding.id).all()
     phase_result = {"created": 0, "updated": 0, "failed": 0, "errors": []}
-    _sync_phases(binding, plan, config, {(link.entity_type, link.jaspen_id): link for link in all_links}, phase_result)
+    task_parents = _sync_phases(
+        binding, plan, config, {(link.entity_type, link.jaspen_id): link for link in all_links}, phase_result,
+    )
+    linked_parent_ids = {
+        *task_parents.values(),
+        *(link.external_id for link in all_links if link.entity_type == "phase" and link.external_id),
+    }
     links = [link for link in all_links if link.entity_type == "task"]
     result = {"created": 0, "pulled": 0, "pushed": 0, "deleted": 0, "failed": 0,
               "conflicts": [], "unknown_statuses": [], "errors": []}
@@ -127,6 +133,15 @@ def reconcile_binding(binding, trigger="sync_now"):
                 continue
             if remote.get("status_error"):
                 result["unknown_statuses"].append({"task_id": link.jaspen_id, "status": remote["status_error"]})
+            expected_parent = task_parents.get(link.jaspen_id)
+            parent_repaired, effective_parent = ensure_task_parent(
+                config, binding, link.external_id, expected_parent,
+                current_parent=remote.get("parent_id"), linked_parent_ids=linked_parent_ids,
+            )
+            if parent_repaired:
+                result["pushed"] += 1
+            if effective_parent:
+                link.external_parent_id = effective_parent
             base = link.base_snapshot if isinstance(link.base_snapshot, dict) else {}
             if "_synced_fields" in base:
                 synced_fields = set(base.get("_synced_fields") or [])
