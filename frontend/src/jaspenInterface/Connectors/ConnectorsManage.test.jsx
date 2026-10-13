@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import ConnectorsManage from './ConnectorsManage';
 import { authFetch } from '../../shared/auth/http';
@@ -137,7 +137,8 @@ it('treats Jira as Data & Insights without requiring a default project', async (
   expect(await screen.findByText('Connected as owner@acme.test on acme.atlassian.net')).toBeInTheDocument();
   expect(screen.getByLabelText(/^Use Jira data in analysis/)).toBeChecked();
   expect(screen.getByText(/summary metrics from your Jira projects/)).toHaveTextContent('never issue content or names');
-  expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
+  expect(screen.getByLabelText(/Jira site URL/i)).toHaveValue('https://acme.atlassian.net');
+  expect(screen.getByRole('button', { name: /Test connection/i })).toBeInTheDocument();
   expect(screen.queryByLabelText(/Project Key/i)).not.toBeInTheDocument();
   ['Sync Mode', 'Conflict Policy', 'External Workspace', 'Sync Thread', 'Auto-sync', 'Issue Type', 'Field Mapping JSON', 'Automatic', 'Manual', 'Run Setup Check', 'Revert Draft'].forEach((label) => {
     expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
@@ -189,7 +190,7 @@ it('keeps the last Jira portfolio visible when refresh fails', async () => {
 });
 
 
-it('shows credentials only during reconnect and tests Jira credentials before saving', async () => {
+it('shows Jira connection fields immediately and tests changed credentials before saving', async () => {
   mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
   authFetch.mockImplementation((url, options = {}) => {
     if (String(url).includes('/api/v1/connectors/status')) return Promise.resolve(response({ connectors: [{
@@ -208,12 +209,11 @@ it('shows credentials only during reconnect and tests Jira credentials before sa
 
   render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
   expect(await screen.findByText('Connected as owner@acme.test on acme.atlassian.net')).toBeInTheDocument();
-  expect(screen.queryByLabelText(/Jira site URL/i)).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /Test connection/i })).not.toBeInTheDocument();
-
-  fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
   expect(screen.getByLabelText(/Jira site URL/i)).toHaveValue('https://acme.atlassian.net');
   expect(screen.getByLabelText(/^Email/i)).toHaveValue('owner@acme.test');
+  expect(screen.getByRole('button', { name: /Test connection/i })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Connect|Reconnect/ })).not.toBeInTheDocument();
+
   const save = screen.getByRole('button', { name: /^Save$/i });
   expect(save).toBeDisabled();
   fireEvent.change(screen.getByLabelText(/API token/i), { target: { value: 'new-token' } });
@@ -250,7 +250,7 @@ it('renders connector activity newest first with readable names', async () => {
 });
 
 
-it('uses the same collapsed credential pattern for Jira, Smartsheet, Salesforce, and Snowflake', async () => {
+it('shows connection fields immediately for Jira, Smartsheet, Salesforce, and Snowflake', async () => {
   mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
   const connectors = [
     { id: 'jira_sync', label: 'Jira', jira: { data_project_scope: 'all' } },
@@ -277,14 +277,68 @@ it('uses the same collapsed credential pattern for Jira, Smartsheet, Salesforce,
   for (const [label, credentialLabel] of cases) {
     const button = Array.from(container.querySelectorAll('.connector-list-item')).find((node) => node.textContent.includes(label));
     fireEvent.click(button);
-    expect(screen.queryByLabelText(credentialLabel)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Test connection/i })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
     expect(screen.getByLabelText(credentialLabel)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Test connection/i })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+    expect(screen.queryByRole('button', { name: /^Connect$/i })).not.toBeInTheDocument();
   }
   ['Automatic', 'Manual', 'Run Setup Check', 'Revert Draft'].forEach((label) => {
     expect(screen.queryByText(label)).not.toBeInTheDocument();
   });
+});
+
+it('renders naive UTC connector timestamps consistently in browser local time', async () => {
+  mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
+  const storedUtc = '2026-10-13T01:26:45';
+  const expectedLocal = new Date(`${storedUtc}Z`).toLocaleString();
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) return Promise.resolve(response({ connectors: [{
+      id: 'jira_sync', label: 'Jira', implementation_status: 'implemented', lifecycle_status: 'disconnected', connected: false,
+      last_verified_at: storedUtc, jira: { data_project_scope: 'all' },
+    }] }));
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success: true, sessions: [] }));
+    if (String(url).includes('/api/v1/pm-sync/bindings')) return Promise.resolve(response({ bindings: [] }));
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events: [{
+      id: 'same-check', timestamp: storedUtc, action: 'health_check', status: 'success', message: '',
+    }] }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+
+  expect(await screen.findByText(`Last checked ${expectedLocal}`)).toBeInTheDocument();
+  expect(await screen.findByText(expectedLocal, { selector: 'time' })).toBeInTheDocument();
+});
+
+it('hides raw provider errors behind Details and shows activity 10 at a time', async () => {
+  mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
+  const events = Array.from({ length: 12 }, (_, index) => ({
+    id: `event-${index}`,
+    timestamp: `2026-10-13T${String(23 - index).padStart(2, '0')}:00:00Z`,
+    action: 'pm_sync',
+    status: index === 0 ? 'failed' : 'success',
+    message: index === 0 ? "HTTP 405: {'type': 'about:blank', 'title': 'Method Not Allowed'}" : '',
+  }));
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) return Promise.resolve(response({ connectors: [{
+      id: 'jira_sync', label: 'Jira', implementation_status: 'implemented', lifecycle_status: 'disconnected', connected: false,
+      jira: { data_project_scope: 'all' },
+    }] }));
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success: true, sessions: [] }));
+    if (String(url).includes('/api/v1/pm-sync/bindings')) return Promise.resolve(response({ bindings: [] }));
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  const { container } = render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+  await waitFor(() => expect(container.querySelectorAll('.connector-activity-list li')).toHaveLength(10));
+  expect(screen.getByText("Some Jira links couldn't be added — fixed in a later sync")).toBeInTheDocument();
+  expect(screen.queryByText(/about:blank/)).not.toBeInTheDocument();
+
+  const firstActivity = container.querySelector('.connector-activity-list li');
+  fireEvent.click(within(firstActivity).getByRole('button', { name: 'Details' }));
+  expect(within(firstActivity).getByText(/about:blank/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+  expect(container.querySelectorAll('.connector-activity-list li')).toHaveLength(12);
+  expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
 });

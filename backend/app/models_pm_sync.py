@@ -1,7 +1,15 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app import db
+
+
+def _utc_iso(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class PmSyncBinding(db.Model):
@@ -51,17 +59,17 @@ class PmSyncBinding(db.Model):
             "conflict_policy": self.conflict_policy,
             "field_policy_overrides": self.field_policy_overrides or {},
             "policy_set_by_user_id": self.policy_set_by_user_id,
-            "policy_set_at": self.policy_set_at.isoformat() if self.policy_set_at else None,
+            "policy_set_at": _utc_iso(self.policy_set_at),
             "config": self.config or {},
             "user_map": self.user_map or {},
             "status": self.status,
-            "last_pull_at": self.last_pull_at.isoformat() if self.last_pull_at else None,
-            "last_push_at": self.last_push_at.isoformat() if self.last_push_at else None,
-            "last_success_at": self.last_success_at.isoformat() if self.last_success_at else None,
+            "last_pull_at": _utc_iso(self.last_pull_at),
+            "last_push_at": _utc_iso(self.last_push_at),
+            "last_success_at": _utc_iso(self.last_success_at),
             "failure_count": int(self.failure_count or 0),
-            "next_retry_at": self.next_retry_at.isoformat() if self.next_retry_at else None,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "next_retry_at": _utc_iso(self.next_retry_at),
+            "created_at": _utc_iso(self.created_at),
+            "updated_at": _utc_iso(self.updated_at),
         }
 
 
@@ -99,5 +107,5 @@ class PmSyncLink(db.Model):
             "jaspen_version": self.jaspen_version,
             "state": self.state,
             "last_error": self.last_error,
-            "last_synced_at": self.last_synced_at.isoformat() if self.last_synced_at else None,
+            "last_synced_at": _utc_iso(self.last_synced_at),
         }

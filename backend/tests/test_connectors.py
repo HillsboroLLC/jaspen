@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from app.connector_store import append_sync_audit_event
+from app.connector_store import append_sync_audit_event, update_connector_settings
 from app.models import ConnectorSyncLog
 
 def test_connector_status_returns_catalog(client, auth_headers):
@@ -48,6 +48,7 @@ def test_connector_activity_combines_portfolio_and_plan_sync_events(client, auth
     assert [event["action"] for event in events[:2]] == ["context_summary", "pm_sync"]
     assert events[0]["items_synced"] == 3
     assert events[1]["thread_id"] == "thread-1"
+    assert all(event["timestamp"].endswith("Z") for event in events[:2])
 
 
 def test_connector_activity_deduplicates_store_and_persisted_log(client, auth_headers, test_user):
@@ -61,3 +62,17 @@ def test_connector_activity_deduplicates_store_and_persisted_log(client, auth_he
     assert response.status_code == 200
     matching = [event for event in response.get_json()["events"] if event["action"] == "config_update"]
     assert len(matching) == 1
+
+
+def test_connector_status_normalizes_naive_utc_timestamps(client, auth_headers, test_user):
+    update_connector_settings(test_user.id, "jira_sync", {
+        "last_verified_at": "2026-10-13T01:26:45",
+        "last_sync_at": "2026-10-13T01:20:00",
+    })
+
+    response = client.get("/api/v1/connectors/status", headers=auth_headers)
+
+    assert response.status_code == 200
+    jira = next(item for item in response.get_json()["connectors"] if item["id"] == "jira_sync")
+    assert jira["last_verified_at"] == "2026-10-13T01:26:45Z"
+    assert jira["last_sync_at"] == "2026-10-13T01:20:00Z"

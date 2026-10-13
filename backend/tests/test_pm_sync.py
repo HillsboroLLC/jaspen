@@ -40,6 +40,17 @@ def _binding(user):
     return row
 
 
+
+def test_binding_timestamps_are_serialized_as_utc(test_user):
+    binding = _binding(test_user)
+    binding.last_success_at = datetime(2026, 10, 13, 1, 26, 45)
+    app_db.session.commit()
+
+    payload = binding.to_dict()
+
+    assert payload["last_success_at"] == "2026-10-13T01:26:45Z"
+    assert payload["created_at"].endswith("Z")
+
 def test_preview_is_deterministic_and_counts_dependencies():
     assert preview(PLAN, group_under_epics=True) == {
         "epics": 2, "issues": 2, "dependencies": 1, "unmapped_owners": 1,

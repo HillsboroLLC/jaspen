@@ -2,7 +2,7 @@ import hmac
 import json
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 from flask import Blueprint, current_app, jsonify, redirect, request
@@ -111,7 +111,24 @@ def _text(value):
 
 
 def _iso_now():
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _utc_iso(value):
+    """Serialize persisted UTC timestamps with an explicit timezone."""
+    if value in (None, ""):
+        return None
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return value
+    if not isinstance(parsed, datetime):
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 
@@ -170,7 +187,7 @@ def _salesforce_token_expires_at_iso(token_payload):
         expires_in = 0
     if expires_in <= 0:
         return None
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
     return (datetime.now(timezone.utc) + timedelta(seconds=max(0, expires_in - 60))).isoformat()
 
 
@@ -387,10 +404,10 @@ def _merge_connector_view(connector_id, entitlement, settings):
         "available_conflict_policies": list(CONFLICT_POLICIES),
         "auto_sync": _to_bool(settings.get("auto_sync"), default=True),
         "external_workspace": settings.get("external_workspace") or "",
-        "last_sync_at": settings.get("last_sync_at"),
+        "last_sync_at": _utc_iso(settings.get("last_sync_at")),
         "last_sync_result": settings.get("last_sync_result") or "never",
-        "updated_at": settings.get("updated_at"),
-        "last_verified_at": settings.get("last_verified_at"),
+        "updated_at": _utc_iso(settings.get("updated_at")),
+        "last_verified_at": _utc_iso(settings.get("last_verified_at")),
         "health": {
             "status": settings.get("health_status") or "unknown",
             "consecutive_failures": int(settings.get("consecutive_failures") or 0),
@@ -1355,7 +1372,7 @@ def get_connector_audit(connector_id):
     rows = [
         {
             "id": row.id,
-            "timestamp": row.created_at.isoformat() if row.created_at else None,
+            "timestamp": _utc_iso(row.created_at),
             "connector_id": row.connector_id,
             "thread_id": row.thread_id,
             "action": row.action,
@@ -1389,8 +1406,10 @@ def get_connector_audit(connector_id):
         return False
 
     for row in get_sync_audit_events(user.id, connector_id=connector_id, thread_id=thread_id or None, limit=safe_limit):
-        if not same_persisted_event(row):
-            rows.append(row)
+        normalized_row = dict(row)
+        normalized_row["timestamp"] = _utc_iso(row.get("timestamp"))
+        if not same_persisted_event(normalized_row):
+            rows.append(normalized_row)
     rows.sort(key=lambda row: str(row.get("timestamp") or row.get("created_at") or ""), reverse=True)
     rows = rows[:safe_limit]
 
