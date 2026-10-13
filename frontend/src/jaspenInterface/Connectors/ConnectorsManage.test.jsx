@@ -1,7 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import ConnectorsManage from './ConnectorsManage';
+import ConnectorsManage, { fitCredentialHelpToViewport } from './ConnectorsManage';
 import { authFetch } from '../../shared/auth/http';
 
 let mockUser = { subscription_plan: 'free' };
@@ -53,6 +53,19 @@ beforeEach(() => {
     if (String(url).includes('/health')) return Promise.resolve(response({ live_status: { status: 'healthy', message: 'Connection successful' } }));
     throw new Error(`Unexpected request: ${url}`);
   });
+});
+
+it('keeps credential help inside narrow and wide viewports and flips left when needed', () => {
+  const narrow = fitCredentialHelpToViewport({ left: 280, right: 300 }, 320);
+  expect(narrow).toEqual({ left: 16, width: 288, placement: 'left' });
+  expect(narrow.left + narrow.width).toBeLessThanOrEqual(320 - 16);
+
+  const wideRightEdge = fitCredentialHelpToViewport({ left: 1120, right: 1140 }, 1200);
+  expect(wideRightEdge.placement).toBe('left');
+  expect(wideRightEdge.left + wideRightEdge.width).toBeLessThanOrEqual(1200 - 16);
+
+  const wideWithRoom = fitCredentialHelpToViewport({ left: 180, right: 200 }, 1200);
+  expect(wideWithRoom).toEqual({ left: 180, width: 360, placement: 'right' });
 });
 
 it('shows the full connector catalog for the canonical Business plan key', async () => {
@@ -244,7 +257,7 @@ it('marks missing credentials as required and exposes Jira credential help to ke
   help.focus();
   expect(help).toHaveFocus();
   fireEvent.click(help);
-  const note = screen.getByRole('note');
+  const note = await screen.findByRole('note');
   expect(note).toHaveTextContent("Jaspen uses this token to sign in to Jira");
   expect(within(note).getByRole('link', { name: 'Create a Jira API token' })).toHaveAttribute(
     'href',

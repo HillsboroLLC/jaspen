@@ -306,11 +306,73 @@ function fieldLabel(text, required = false) {
   );
 }
 
+export function fitCredentialHelpToViewport(anchorRect, viewportWidth, desiredWidth = 360, gutter = 16) {
+  const safeViewportWidth = Math.max(0, Number(viewportWidth) || 0);
+  const availableWidth = Math.max(0, safeViewportWidth - (gutter * 2));
+  const width = Math.min(desiredWidth, availableWidth);
+  const anchorLeft = Number(anchorRect?.left) || 0;
+  const anchorRight = Number(anchorRect?.right) || anchorLeft;
+  const opensRight = anchorLeft + width <= safeViewportWidth - gutter;
+  const preferredLeft = opensRight ? anchorLeft : anchorRight - width;
+  const furthestLeft = Math.max(gutter, safeViewportWidth - gutter - width);
+  const left = Math.min(Math.max(gutter, preferredLeft), furthestLeft);
+  return { left, width, placement: opensRight ? 'right' : 'left' };
+}
+
 function CredentialHelp({ id, ariaLabel, children, href, linkLabel }) {
+  const summaryRef = useRef(null);
+  const popoverRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState(null);
+
+  const positionPopover = useCallback(() => {
+    const anchor = summaryRef.current?.getBoundingClientRect();
+    if (!anchor || typeof window === 'undefined') return;
+    const gutter = 16;
+    const gap = 6;
+    const horizontal = fitCredentialHelpToViewport(anchor, window.innerWidth, 360, gutter);
+    const availableHeight = Math.max(80, window.innerHeight - (gutter * 2));
+    const contentHeight = Math.min(popoverRef.current?.scrollHeight || 220, availableHeight);
+    const opensBelow = anchor.bottom + gap + contentHeight <= window.innerHeight - gutter;
+    const top = opensBelow
+      ? anchor.bottom + gap
+      : Math.max(gutter, anchor.top - gap - contentHeight);
+    setPopoverStyle({
+      left: `${horizontal.left}px`,
+      top: `${top}px`,
+      width: `${horizontal.width}px`,
+      maxHeight: `${availableHeight}px`,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    positionPopover();
+    window.addEventListener('resize', positionPopover);
+    window.addEventListener('scroll', positionPopover, true);
+    return () => {
+      window.removeEventListener('resize', positionPopover);
+      window.removeEventListener('scroll', positionPopover, true);
+    };
+  }, [open, positionPopover]);
+
   return (
-    <details className="connector-credential-help">
-      <summary aria-label={ariaLabel} aria-describedby={id}>(i)</summary>
-      <div className="connector-credential-help-popover" id={id} role="note">
+    <details
+      className="connector-credential-help"
+      onToggle={(event) => {
+        const nextOpen = event.currentTarget.open;
+        setOpen(nextOpen);
+        if (!nextOpen) setPopoverStyle(null);
+      }}
+    >
+      <summary ref={summaryRef} aria-label={ariaLabel} aria-describedby={id}>(i)</summary>
+      <div
+        className="connector-credential-help-popover"
+        id={id}
+        role="note"
+        ref={popoverRef}
+        style={popoverStyle || { visibility: 'hidden' }}
+      >
         <p>{children}</p>
         <a href={href} target="_blank" rel="noreferrer">{linkLabel}</a>
       </div>

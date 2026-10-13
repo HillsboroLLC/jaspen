@@ -692,12 +692,14 @@ body.jaspen-sidebar-open .jas-sidebar-tab {
 }
 
 .connector-credential-help-popover {
-  position: absolute;
-  z-index: 20;
-  top: 26px;
-  left: -8px;
-  width: min(360px, 75vw);
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
   padding: 12px 14px;
+  overflow: auto;
+  overflow-wrap: anywhere;
   border: 1px solid var(--int-border-md);
   border-radius: 10px;
   background: var(--int-surface);
@@ -707,6 +709,7 @@ body.jaspen-sidebar-open .jas-sidebar-tab {
   font-weight: 400;
   line-height: 1.45;
   text-transform: none;
+  white-space: normal;
 }
 
 .connector-credential-help-popover p { margin: 0 0 8px; }
