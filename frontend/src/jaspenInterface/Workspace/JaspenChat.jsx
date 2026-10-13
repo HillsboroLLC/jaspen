@@ -9295,7 +9295,12 @@ const handleSaveStarter = async () => {
     const erroredSources = selectedContextIds.filter(
       (id) => typeof contextSourceData[id] === 'string' && contextSourceData[id].startsWith('__error__')
     );
-    if (selectedContextIds.length > 0 && activeContextParts.length === 0 && erroredSources.length === 0) {
+    // Backend-managed sources (Jira) are attached server-side, so they never
+    // load here. Only browser-loaded sources can still be pending.
+    const pendingContextIds = selectedContextIds.filter(
+      (id) => !backendManagedContextIds.has(id) && !contextSourceData[id]
+    );
+    if (pendingContextIds.length > 0 && activeContextParts.length === 0 && erroredSources.length === 0) {
       showToast('Selected data context is still loading. Please wait a moment, then send again.', 'info');
       return;
     }
