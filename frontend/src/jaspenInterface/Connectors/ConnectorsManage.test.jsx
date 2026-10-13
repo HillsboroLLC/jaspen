@@ -211,6 +211,9 @@ it('shows Jira connection fields immediately and tests changed credentials befor
   expect(await screen.findByText('Connected as owner@acme.test on acme.atlassian.net')).toBeInTheDocument();
   expect(screen.getByLabelText(/Jira site URL/i)).toHaveValue('https://acme.atlassian.net');
   expect(screen.getByLabelText(/^Email/i)).toHaveValue('owner@acme.test');
+  expect(screen.getByLabelText(/^API token$/i)).toHaveAttribute('placeholder', 'Token saved · enter a new one only to replace it');
+  expect(screen.queryByText('Required to connect')).not.toBeInTheDocument();
+  expect(document.querySelectorAll('.connector-required-marker')).toHaveLength(0);
   expect(screen.getByRole('button', { name: /Test connection/i })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /Connect|Reconnect/ })).not.toBeInTheDocument();
 
@@ -223,6 +226,57 @@ it('shows Jira connection fields immediately and tests changed credentials befor
   await waitFor(() => expect(save).toBeEnabled());
   fireEvent.click(save);
   await waitFor(() => expect(authFetch.mock.calls.some(([url]) => String(url).includes('/api/v1/pm-sync/jira/connect'))).toBe(true));
+});
+
+it('marks missing credentials as required and exposes Jira credential help to keyboard and touch users', async () => {
+  mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
+
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+
+  expect(await screen.findByText('Jira is not connected')).toBeInTheDocument();
+  expect(screen.getAllByText('Required to connect').length).toBeGreaterThanOrEqual(3);
+  expect(document.querySelectorAll('.connector-required-marker').length).toBeGreaterThanOrEqual(3);
+  expect(screen.getByLabelText(/API token/i)).toHaveAttribute('placeholder', 'Paste your API token');
+
+  const help = screen.getByText('(i)').closest('summary');
+  expect(help).toHaveAttribute('aria-label', 'About Jira credentials');
+  expect(help).toHaveAttribute('aria-describedby');
+  help.focus();
+  expect(help).toHaveFocus();
+  fireEvent.click(help);
+  const note = screen.getByRole('note');
+  expect(note).toHaveTextContent("Jaspen uses this token to sign in to Jira");
+  expect(within(note).getByRole('link', { name: 'Create a Jira API token' })).toHaveAttribute(
+    'href',
+    'https://id.atlassian.com/manage-profile/security/api-tokens'
+  );
+  expect(within(note).getByRole('link', { name: 'Create a Jira API token' })).toHaveAttribute('target', '_blank');
+});
+
+it('returns connected credentials to the required state when the live connection check fails', async () => {
+  mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) return Promise.resolve(response({ connectors: [{
+      id: 'jira_sync', label: 'Jira', implementation_status: 'implemented', lifecycle_status: 'connected', connected: true,
+      jira: { base_url: 'https://acme.atlassian.net', email: 'owner@acme.test', has_api_token: true, data_project_scope: 'all' },
+    }] }));
+    if (String(url).includes('/api/v1/connectors/jira/projects')) return Promise.resolve(response({ projects: [] }));
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success: true, sessions: [] }));
+    if (String(url).includes('/api/v1/pm-sync/bindings')) return Promise.resolve(response({ bindings: [] }));
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events: [] }));
+    if (String(url).includes('/health')) return Promise.resolve({
+      ok: false,
+      status: 401,
+      json: jest.fn().mockResolvedValue({ error: 'Unauthorized' }),
+    });
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('The saved connection could not be verified. Reconnect and check the credentials.');
+  expect(screen.getAllByText('Required to connect').length).toBeGreaterThanOrEqual(3);
+  expect(screen.getByLabelText(/API token/i)).toHaveAttribute('placeholder', 'Token saved · enter a new one only to replace it');
 });
 
 it('renders connector activity newest first with readable names', async () => {
@@ -269,17 +323,19 @@ it('shows connection fields immediately for Jira, Smartsheet, Salesforce, and Sn
   const { container } = render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
   expect(await screen.findByText('4 available on your business plan')).toBeInTheDocument();
   const cases = [
-    ['Jira', /Jira site URL/i],
-    ['Smartsheet', /Smartsheet Base URL/i],
-    ['Salesforce', /Auth Base URL/i],
-    ['Snowflake', /Account Identifier/i],
+    ['Jira', /Jira site URL/i, 'About Jira credentials', 'id.atlassian.com'],
+    ['Smartsheet', /Smartsheet Base URL/i, 'About Smartsheet credentials', 'help.smartsheet.com'],
+    ['Salesforce', /Auth Base URL/i, 'About Salesforce credentials', 'help.salesforce.com'],
+    ['Snowflake', /Account Identifier/i, 'About Snowflake credentials', 'docs.snowflake.com'],
   ];
-  for (const [label, credentialLabel] of cases) {
+  for (const [label, credentialLabel, helpLabel, helpHost] of cases) {
     const button = Array.from(container.querySelectorAll('.connector-list-item')).find((node) => node.textContent.includes(label));
     fireEvent.click(button);
     expect(screen.getByLabelText(credentialLabel)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Test connection/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Connect$/i })).not.toBeInTheDocument();
+    const help = screen.getByLabelText(helpLabel);
+    expect(help.closest('details').querySelector('a')).toHaveAttribute('href', expect.stringContaining(helpHost));
   }
   ['Automatic', 'Manual', 'Run Setup Check', 'Revert Draft'].forEach((label) => {
     expect(screen.queryByText(label)).not.toBeInTheDocument();

@@ -301,7 +301,20 @@ function fieldLabel(text, required = false) {
     <>
       {text}
       {required && <span className="connector-required-marker" aria-hidden="true"> *</span>}
+      {required && <span className="connector-required-copy">Required to connect</span>}
     </>
+  );
+}
+
+function CredentialHelp({ id, ariaLabel, children, href, linkLabel }) {
+  return (
+    <details className="connector-credential-help">
+      <summary aria-label={ariaLabel} aria-describedby={id}>(i)</summary>
+      <div className="connector-credential-help-popover" id={id} role="note">
+        <p>{children}</p>
+        <a href={href} target="_blank" rel="noreferrer">{linkLabel}</a>
+      </div>
+    </details>
   );
 }
 
@@ -1109,24 +1122,45 @@ export default function ConnectorsManage() {
   function renderConnectorSpecificFields(connectorId, draft, section = 'data') {
     if (!draft) return null;
     const fieldError = (field) => selectedDraftErrors?.[field] || '';
-    const describedBy = (field) => (fieldError(field) ? `connector-field-error-${connectorId}-${field}` : undefined);
+    const credentialsRequired = !selectedConnector?.connected || selectedConnectionCheck?.status === 'error';
+    const savedSecret = (field) => Boolean(SAVED_SECRET_FLAG[field]?.(selectedConnector));
+    const savedSecretPlaceholder = (field) => {
+      if (!savedSecret(field)) return null;
+      if (field.includes('token')) return 'Token saved · enter a new one only to replace it';
+      if (field.includes('private_key')) return 'Private key saved · enter a new one only to replace it';
+      if (field.includes('password')) return 'Password saved · enter a new one only to replace it';
+      return 'Secret saved · enter a new one only to replace it';
+    };
+    const describedBy = (field, helpId) => [
+      fieldError(field) ? `connector-field-error-${connectorId}-${field}` : '',
+      helpId || '',
+    ].filter(Boolean).join(' ') || undefined;
     const inputClassName = (field) => (fieldError(field) ? 'connector-input-invalid' : '');
     const renderRequiredField = (field, label, options = {}) => {
       const type = options.type || 'text';
+      const inputId = `connector-field-${connectorId}-${field}`;
+      const helpId = options.help ? `connector-field-help-${connectorId}-${field}` : undefined;
+      const placeholder = type === 'password'
+        ? (savedSecretPlaceholder(field) || options.emptyPlaceholder || options.placeholder)
+        : options.placeholder;
       return (
-        <label>
-          {fieldLabel(label, true)}
+        <div className="connector-form-field">
+          <div className="connector-field-label-row">
+            <label htmlFor={inputId}>{fieldLabel(label, credentialsRequired)}</label>
+            {options.help && <CredentialHelp id={helpId} {...options.help} />}
+          </div>
           <input
+            id={inputId}
             type={type}
             value={draft[field]}
             onChange={(event) => updateDraft(field, event.target.value)}
-            placeholder={options.placeholder}
+            placeholder={placeholder}
             className={inputClassName(field)}
             aria-invalid={Boolean(fieldError(field))}
-            aria-describedby={describedBy(field)}
+            aria-describedby={describedBy(field, helpId)}
           />
           <FieldError id={`connector-field-error-${connectorId}-${field}`} message={fieldError(field)} />
-        </label>
+        </div>
       );
     };
 
@@ -1135,7 +1169,16 @@ export default function ConnectorsManage() {
         return <>
           {renderRequiredField('jira_base_url', 'Jira site URL', { placeholder: 'https://yourcompany.atlassian.net' })}
           {renderRequiredField('jira_email', 'Email', { placeholder: 'you@yourcompany.com' })}
-          {renderRequiredField('jira_api_token', 'API token', { type: 'password', placeholder: 'Enter a new token' })}
+          {renderRequiredField('jira_api_token', 'API token', {
+            type: 'password',
+            emptyPlaceholder: 'Paste your API token',
+            help: {
+              ariaLabel: 'About Jira credentials',
+              href: 'https://id.atlassian.com/manage-profile/security/api-tokens',
+              linkLabel: 'Create a Jira API token',
+              children: "Jaspen uses this token to sign in to Jira. It's shared by Data & Insights (reading project health) and execution plan sync (writing tasks). You only need to enter it to connect, or if it expires. Create one at id.atlassian.com → Security → API tokens.",
+            },
+          })}
         </>;
       }
       const snapshot = selectedConnector?.jira?.portfolio_snapshot || {};
@@ -1218,7 +1261,16 @@ export default function ConnectorsManage() {
       return (
         <>
           {renderRequiredField('smartsheet_base_url', 'Smartsheet Base URL')}
-          {renderRequiredField('smartsheet_api_token', 'API Token', { type: 'password', placeholder: 'Enter token to set or rotate' })}
+          {renderRequiredField('smartsheet_api_token', 'API Token', {
+            type: 'password',
+            emptyPlaceholder: 'Paste your API token',
+            help: {
+              ariaLabel: 'About Smartsheet credentials',
+              href: 'https://help.smartsheet.com/articles/2482389-generate-API-key',
+              linkLabel: 'Create a Smartsheet API token',
+              children: "Jaspen uses this token to sign in to Smartsheet for execution plan sync. You only need to enter it to connect, replace it, or if it expires. Create one in Smartsheet under Personal Settings → API Access.",
+            },
+          })}
         </>
       );
     }
@@ -1232,14 +1284,23 @@ export default function ConnectorsManage() {
           {renderRequiredField('salesforce_auth_base_url', 'Auth Base URL')}
           {renderRequiredField('salesforce_instance_url', 'Instance URL')}
           {renderRequiredField('salesforce_client_id', 'Client ID')}
-          {renderRequiredField('salesforce_client_secret', 'Client Secret', { type: 'password', placeholder: 'Enter secret to set or rotate' })}
+          {renderRequiredField('salesforce_client_secret', 'Client Secret', {
+            type: 'password',
+            emptyPlaceholder: 'Paste your client secret',
+            help: {
+              ariaLabel: 'About Salesforce credentials',
+              href: 'https://help.salesforce.com/s/articleView?id=connected_app_create_api_integration.htm&type=5',
+              linkLabel: 'Set up Salesforce API credentials',
+              children: 'Jaspen uses the client ID and client secret from your Salesforce External Client App or Connected App to authorize access. Enter the secret when connecting or rotating the app credentials.',
+            },
+          })}
           <label>
             Refresh Token <span className="connector-field-optional">(auto-populated after OAuth)</span>
             <input
               type="password"
               value={draft.salesforce_refresh_token}
               onChange={(event) => updateDraft('salesforce_refresh_token', event.target.value)}
-              placeholder="Auto-populated after connecting via OAuth"
+              placeholder={savedSecretPlaceholder('salesforce_refresh_token') || 'Auto-populated after connecting via OAuth'}
             />
           </label>
           <div className="connector-oauth-row">
@@ -1300,14 +1361,23 @@ export default function ConnectorsManage() {
 
           {/* Credentials section */}
           <p className="connector-sf-section">Credentials — password or private key required</p>
-          {renderRequiredField('snowflake_password', 'Password', { type: 'password', placeholder: 'Enter to set or rotate' })}
+          {renderRequiredField('snowflake_password', 'Password', {
+            type: 'password',
+            emptyPlaceholder: 'Enter your Snowflake password',
+            help: {
+              ariaLabel: 'About Snowflake credentials',
+              href: 'https://docs.snowflake.com/en/user-guide/key-pair-auth',
+              linkLabel: 'Set up Snowflake authentication',
+              children: 'Jaspen uses either this password or a private key to sign in to Snowflake. Enter a credential when connecting, replacing it, or after it expires. Snowflake recommends key-pair authentication for service connections.',
+            },
+          })}
           <label>
             Private Key (alternative)
             <input
               type="password"
               value={draft.snowflake_private_key}
               onChange={(event) => updateDraft('snowflake_private_key', event.target.value)}
-              placeholder="Paste PEM key to set or rotate"
+              placeholder={savedSecretPlaceholder('snowflake_private_key') || 'Paste your PEM private key'}
               className={inputClassName('snowflake_private_key')}
               aria-invalid={Boolean(fieldError('snowflake_private_key'))}
               aria-describedby={describedBy('snowflake_private_key')}
