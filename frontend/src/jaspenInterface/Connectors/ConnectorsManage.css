@@ -672,20 +672,20 @@ body.jaspen-sidebar-open .jas-sidebar-tab {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: 1px solid var(--int-border-md);
+  width: 24px;
+  height: 24px;
+  border: 0;
   border-radius: 50%;
-  background: var(--int-surface);
+  background: transparent;
   color: #3157a4;
   cursor: pointer;
-  font-size: 0.68rem;
-  font-weight: 700;
+  font-size: 0.95rem;
   list-style: none;
   user-select: none;
 }
 
 .connector-credential-help > summary::-webkit-details-marker { display: none; }
+.connector-credential-help > summary:hover { background: rgba(49, 87, 164, 0.08); }
 .connector-credential-help > summary:focus-visible {
   outline: 2px solid #3157a4;
   outline-offset: 2px;

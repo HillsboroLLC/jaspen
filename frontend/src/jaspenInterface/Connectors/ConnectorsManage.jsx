@@ -5,6 +5,7 @@ import {
   faArrowRightArrowLeft,
   faChevronDown,
   faChevronRight,
+  faCircleInfo,
   faFlask,
   faPlugCircleCheck,
   faRotate,
@@ -365,7 +366,9 @@ function CredentialHelp({ id, ariaLabel, children, href, linkLabel }) {
         if (!nextOpen) setPopoverStyle(null);
       }}
     >
-      <summary ref={summaryRef} aria-label={ariaLabel} aria-describedby={id}>(i)</summary>
+      <summary ref={summaryRef} aria-label={ariaLabel} aria-describedby={id}>
+        <FontAwesomeIcon icon={faCircleInfo} aria-hidden="true" />
+      </summary>
       <div
         className="connector-credential-help-popover"
         id={id}

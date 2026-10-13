@@ -251,7 +251,9 @@ it('marks missing credentials as required and exposes Jira credential help to ke
   expect(document.querySelectorAll('.connector-required-marker').length).toBeGreaterThanOrEqual(3);
   expect(screen.getByLabelText(/API token/i)).toHaveAttribute('placeholder', 'Paste your API token');
 
-  const help = screen.getByText('(i)').closest('summary');
+  const help = screen.getByLabelText('About Jira credentials');
+  expect(help.querySelector('svg')).toBeInTheDocument();
+  expect(help).not.toHaveTextContent('(i)');
   expect(help).toHaveAttribute('aria-label', 'About Jira credentials');
   expect(help).toHaveAttribute('aria-describedby');
   help.focus();
