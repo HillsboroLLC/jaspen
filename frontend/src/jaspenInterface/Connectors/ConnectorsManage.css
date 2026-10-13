@@ -952,6 +952,51 @@ body.jaspen-sidebar-open .jas-sidebar-tab {
   padding: 16px;
   background: #f8faff;
 }
+.connector-connection-card,
+.connector-execution-sync-section {
+  border: 1px solid var(--int-border);
+  border-radius: var(--int-radius-md);
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 16px;
+}
+.connector-connection-card { background: #fff; position: relative; }
+.connector-connection-summary,
+.connector-connection-actions,
+.connector-connect-form-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+.connector-connection-summary { flex: 1; }
+.connector-connection-summary p { color: var(--int-text-sub); margin: 3px 0 0; }
+.connector-connection-actions { position: absolute; right: 28px; }
+.connector-status-dot,
+.connector-activity-status {
+  background: #98a2b3;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 9px;
+  width: 9px;
+}
+.connector-status-dot.is-connected,
+.connector-activity-status.is-success { background: #259653; }
+.connector-activity-status.is-failed { background: #c53b32; }
+.connector-activity-status.is-partial { background: #e49b18; }
+.connector-connect-form { border-top: 1px solid var(--int-border); display: grid; gap: 12px; padding-top: 14px; }
+.connector-connect-form-actions,
+.connector-settings-save { justify-content: flex-end; }
+.connector-settings-save { display: flex; margin-top: 12px; }
+.connector-execution-sync-section { background: #f8faff; }
+.connector-execution-sync-section h3,
+.connector-data-source-settings h3 { margin: 0; }
+.connector-linked-plans,
+.connector-activity-list { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.connector-linked-plans li { align-items: center; border-top: 1px solid var(--int-border); display: grid; gap: 8px; grid-template-columns: minmax(180px, 2fr) 0.7fr 1.3fr 0.6fr; padding: 10px 0; }
+.connector-activity-list li { align-items: start; border-top: 1px solid var(--int-border); display: grid; gap: 10px; grid-template-columns: auto 1fr auto; padding: 12px 0; }
+.connector-activity-list p { margin: 3px 0 0; }
+.connector-activity-list time { color: var(--int-text-sub); font-size: 0.78rem; white-space: nowrap; }
 .connector-inline-notice {
   align-items: center;
   background: color-mix(in srgb, var(--int-accent) 7%, white);

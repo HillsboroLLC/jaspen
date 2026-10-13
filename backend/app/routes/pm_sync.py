@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app import db
-from app.connector_store import encrypt_token, get_connector_settings, update_connector_settings
+from app.connector_store import append_sync_audit_event, encrypt_token, get_connector_settings, update_connector_settings
 from app.models import User
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync.jira_adapter import create_project, list_projects, test_connection
@@ -104,6 +104,10 @@ def jira_connect():
             "connection_status": "connected", "lifecycle_status": "connected",
             "last_verified_at": __import__("datetime").datetime.utcnow().isoformat(),
         })
+        append_sync_audit_event(
+            user.id, "jira_sync", action="config_update", status="success",
+            message="Jira connection saved", metadata={"connected": True},
+        )
         return jsonify({
             "success": True, "base_url": probe["base_url"],
             "email": str(payload.get("jira_email") or "").strip(),
@@ -177,10 +181,13 @@ def list_bindings():
     query = PmSyncBinding.query.filter_by(user_id=user.id)
     thread_id = str(request.args.get("thread_id") or "").strip()
     plan_key = str(request.args.get("plan_key") or "").strip()
+    connector_id = str(request.args.get("connector_id") or "").strip().lower()
     if thread_id:
         query = query.filter_by(thread_id=thread_id)
     if plan_key:
         query = query.filter_by(plan_key=plan_key)
+    if connector_id:
+        query = query.filter_by(connector_id=connector_id)
     return jsonify({"bindings": [row.to_dict() for row in query.order_by(PmSyncBinding.created_at.desc()).all()]})
 
 

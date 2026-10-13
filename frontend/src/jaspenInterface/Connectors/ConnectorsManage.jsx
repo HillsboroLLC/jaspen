@@ -113,20 +113,26 @@ function normalizeLifecycleStatus(connector) {
   return String(connector?.lifecycle_status || (connector?.connected ? 'connected' : 'disconnected')).trim().toLowerCase();
 }
 
-function connectorLifecycleLabel(connector) {
-  const lifecycle = normalizeLifecycleStatus(connector);
-  if (lifecycle === 'connected') return 'Connected';
-  if (lifecycle === 'configured') return 'Verify';
-  if (lifecycle === 'verifying') return 'Connecting…';
-  if (lifecycle === 'degraded') return 'Connection issue';
-  return 'Set up';
+function connectorAccountLabel(connector) {
+  if (connector?.id === 'jira_sync') {
+    const site = String(connector?.jira?.base_url || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
+    return `${connector?.jira?.email || 'unknown account'} on ${site || 'Jira'}`;
+  }
+  if (connector?.id === 'smartsheet_sync') return 'Smartsheet account';
+  if (connector?.id === 'salesforce_insights') return String(connector?.salesforce?.instance_url || 'Salesforce account').replace(/^https?:\/\//, '').replace(/\/$/, '');
+  if (connector?.id === 'snowflake_insights') return `${connector?.snowflake?.user || 'unknown user'} on ${connector?.snowflake?.account || 'Snowflake'}`;
+  return connector?.label || 'connector';
 }
 
-function connectorLifecycleBadgeClass(connector) {
-  const lifecycle = normalizeLifecycleStatus(connector);
-  if (lifecycle === 'connected') return 'is-on int-badge-success';
-  if (lifecycle === 'degraded') return 'is-off int-badge-danger';
-  return '';
+function activityDescription(row) {
+  const action = String(row?.action || '').toLowerCase();
+  const count = Number(row?.items_synced || row?.metadata?.items_synced || 0);
+  if (action === 'context_summary') return row?.status === 'success' ? 'Portfolio evidence refreshed' : 'Portfolio refresh failed';
+  if (action === 'pm_sync' || action === 'pm_sync_push') return count ? `Execution plan synced · ${count} item${count === 1 ? '' : 's'}` : 'Execution plan sync completed';
+  if (action === 'config_update') return row?.metadata?.connected === false ? 'Connector disconnected' : 'Connection or settings saved';
+  if (action === 'health_check') return row?.status === 'success' ? 'Connection checked' : 'Connection check failed';
+  if (action === 'import') return 'Updates imported from the connected tool';
+  return row?.message || 'Connector activity';
 }
 
 function normalizeDraft(connector) {
@@ -391,7 +397,6 @@ export default function ConnectorsManage() {
   const [selectedConnectorId, setSelectedConnectorId] = useState('');
   const [auditRows, setAuditRows] = useState([]);
   const [threads, setThreads] = useState([]);
-  const [selectedThreadId, setSelectedThreadId] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -404,8 +409,12 @@ export default function ConnectorsManage() {
   const [jiraProjectsBusy, setJiraProjectsBusy] = useState(false);
   const [jiraPortfolioBusy, setJiraPortfolioBusy] = useState(false);
   const [jiraPortfolioError, setJiraPortfolioError] = useState(null);
-  const [setupModeByConnector, setSetupModeByConnector] = useState({});
+  const [connectionFormByConnector, setConnectionFormByConnector] = useState({});
+  const [connectionCheckByConnector, setConnectionCheckByConnector] = useState({});
+  const [testedConnectionByConnector, setTestedConnectionByConnector] = useState({});
+  const [planBindings, setPlanBindings] = useState([]);
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(['enterprise']));
+  const autoCheckedConnectionsRef = useRef(new Set());
 
   // Jaspen AI drawer
   const [jaspenOpen, setJaspenOpen] = useState(false);
@@ -533,9 +542,6 @@ export default function ConnectorsManage() {
       }))
       .filter((item) => item.threadId);
     setThreads(rows);
-    if (rows.length) {
-      setSelectedThreadId((current) => current || rows[0].threadId);
-    }
   }, []);
 
   const loadAudit = useCallback(async (connectorId) => {
@@ -552,20 +558,29 @@ export default function ConnectorsManage() {
       setAuditRows([]);
       return;
     }
-    setAuditRows(Array.isArray(data?.events) ? data.events : []);
+    setAuditRows((Array.isArray(data?.events) ? data.events : []).sort((a, b) => String(b?.timestamp || '').localeCompare(String(a?.timestamp || ''))));
+  }, []);
+
+  const loadPlanBindings = useCallback(async () => {
+    const res = await authFetch(`${API_BASE}/api/v1/pm-sync/bindings`, {
+      credentials: 'include',
+      headers: authHeaders(false, 'GET'),
+    });
+    const data = await res.json().catch(() => ({}));
+    setPlanBindings(res.ok && Array.isArray(data?.bindings) ? data.bindings : []);
   }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      await Promise.all([loadConnectors(), loadThreads()]);
+      await Promise.all([loadConnectors(), loadThreads(), loadPlanBindings()]);
     } catch (err) {
       setError(err?.message || 'Failed to load connector management data.');
     } finally {
       setLoading(false);
     }
-  }, [loadConnectors, loadThreads]);
+  }, [loadConnectors, loadPlanBindings, loadThreads]);
 
   useEffect(() => {
     refresh();
@@ -587,14 +602,19 @@ export default function ConnectorsManage() {
 
   const selectedDraft = selectedConnector ? drafts[selectedConnector.id] || normalizeDraft(selectedConnector) : null;
   const selectedDraftErrors = selectedConnector ? draftErrors[selectedConnector.id] || {} : {};
-  const selectedSetupMode = selectedConnector
-    ? (setupModeByConnector[selectedConnector.id] || 'automatic')
-    : 'automatic';
+  const connectionFormOpen = selectedConnector ? Boolean(connectionFormByConnector[selectedConnector.id]) : false;
   const selectedConnectorImplemented = connectorIsImplemented(selectedConnector);
   const selectedConnectorDirty = useMemo(
     () => connectorDraftChanged(selectedConnector, selectedDraft),
     [selectedConnector, selectedDraft]
   );
+  const threadNameById = useMemo(() => Object.fromEntries(threads.map((thread) => [thread.threadId, thread.name || thread.threadId])), [threads]);
+  const selectedConnectorBindings = useMemo(
+    () => planBindings.filter((binding) => binding.connector_id === selectedConnector?.id),
+    [planBindings, selectedConnector?.id]
+  );
+  const selectedConnectionCheck = selectedConnector ? connectionCheckByConnector[selectedConnector.id] : null;
+  const selectedLastCheckedAt = selectedConnectionCheck?.checkedAt || selectedConnector?.last_verified_at || null;
 
   const loadJiraProjects = useCallback(async () => {
     setJiraProjectsBusy(true);
@@ -648,6 +668,16 @@ export default function ConnectorsManage() {
       loadJiraProjects();
     }
   }, [connectors, loadJiraProjects, selectedConnectorId]);
+
+  useEffect(() => {
+    if (!selectedConnector?.connected) return;
+    const key = `${selectedConnector.id}:${selectedConnector.updated_at || selectedConnector.last_sync_at || 'saved'}`;
+    if (autoCheckedConnectionsRef.current.has(key)) return;
+    autoCheckedConnectionsRef.current.add(key);
+    testConnection(selectedConnector, false);
+    // The connection identity above intentionally controls when the live probe repeats.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConnector?.connected, selectedConnector?.id, selectedConnector?.last_sync_at, selectedConnector?.updated_at]);
   const hasUnsavedChanges = useMemo(
     () => connectors.some((connector) => connectorDraftChanged(connector, drafts[connector.id] || normalizeDraft(connector))),
     [connectors, drafts]
@@ -706,6 +736,17 @@ export default function ConnectorsManage() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [hasUnsavedChanges]);
 
+  function connectionDraftSignature(connectorId, draft) {
+    if (connectorId === 'jira_sync') {
+      return JSON.stringify([
+        String(draft?.jira_base_url || '').trim(),
+        String(draft?.jira_email || '').trim().toLowerCase(),
+        String(draft?.jira_api_token || '').trim(),
+      ]);
+    }
+    return '';
+  }
+
   function updateDraft(field, value) {
     if (!selectedConnector) return;
     setDrafts((prev) => ({
@@ -722,6 +763,9 @@ export default function ConnectorsManage() {
         [field]: '',
       },
     }));
+    if (selectedConnector.id === 'jira_sync' && ['jira_base_url', 'jira_email', 'jira_api_token'].includes(field)) {
+      setTestedConnectionByConnector((prev) => ({ ...prev, jira_sync: '' }));
+    }
   }
 
   async function saveConnector() {
@@ -736,6 +780,12 @@ export default function ConnectorsManage() {
       setMessage('');
       return;
     }
+    const isJiraConnectionSave = selectedConnector.id === 'jira_sync' && connectionFormOpen;
+    if (isJiraConnectionSave && testedConnectionByConnector.jira_sync !== connectionDraftSignature('jira_sync', selectedDraft)) {
+      setError('Test the Jira connection before saving.');
+      setMessage('');
+      return;
+    }
     setBusy(true);
     setError('');
     setMessage('');
@@ -744,10 +794,12 @@ export default function ConnectorsManage() {
         ...buildUpdatePayload(selectedConnector.id, selectedDraft),
         connection_status: 'connected',
       };
-      const res = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
-        method: 'PATCH',
+      const res = await authFetch(isJiraConnectionSave
+        ? `${API_BASE}/api/v1/pm-sync/jira/connect`
+        : `${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
+        method: isJiraConnectionSave ? 'POST' : 'PATCH',
         credentials: 'include',
-        headers: authHeaders(true, 'PATCH'),
+        headers: authHeaders(true, isJiraConnectionSave ? 'POST' : 'PATCH'),
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
@@ -756,6 +808,7 @@ export default function ConnectorsManage() {
       setMessage(`${selectedConnector.label} saved.`);
       await loadConnectors();
       await loadAudit(selectedConnector.id);
+      setConnectionFormByConnector((prev) => ({ ...prev, [selectedConnector.id]: false }));
     } catch (err) {
       setError(err?.message || 'Failed to save connector.');
     } finally {
@@ -763,158 +816,68 @@ export default function ConnectorsManage() {
     }
   }
 
-  function revertSelectedDraft() {
-    if (!selectedConnector) return;
-    setDrafts((prev) => ({
-      ...prev,
-      [selectedConnector.id]: normalizeDraft(selectedConnector),
-    }));
-    setMessage(`Reverted unsaved changes for ${selectedConnector.label}.`);
-    setError('');
-  }
-
-  async function testConnection() {
+  async function disconnectConnector() {
     if (!selectedConnector) return;
     setBusy(true);
     setError('');
-    setMessage('');
     try {
-      const res = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}/health`, {
-        credentials: 'include',
-        headers: authHeaders(false, 'GET'),
+      const res = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
+        method: 'PATCH', credentials: 'include', headers: authHeaders(true, 'PATCH'),
+        body: JSON.stringify({ connection_status: 'disconnected' }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Test failed (${res.status})`);
-      const live = data?.live_status;
-      if (live) {
-        if (live.status === 'error') {
-          setError(`Connection failed: ${live.message || 'Unknown error'}`);
-        } else {
-          if (selectedConnector.id === 'snowflake_insights') {
-            setMessage(`Connectivity test passed: ${live.message || live.status}. Next, run "Validate Data Access" to confirm table permissions.`);
-          } else {
-            setMessage(`Connection test passed: ${live.message || live.status}`);
-          }
-        }
-      } else {
-        const storedStatus = data?.health?.status || 'unknown';
-        setMessage(`Health check complete: ${storedStatus}`);
-      }
-      await loadAudit(selectedConnector.id);
+      if (!res.ok) throw new Error(data?.error || 'Could not disconnect this account.');
+      setMessage(`${selectedConnector.label} disconnected.`);
+      setConnectionCheckByConnector((prev) => ({ ...prev, [selectedConnector.id]: { status: 'disconnected', checkedAt: new Date().toISOString(), message: 'Disconnected' } }));
+      await Promise.all([loadConnectors(), loadAudit(selectedConnector.id)]);
     } catch (err) {
-      setError(err?.message || 'Health check failed.');
+      setError(err?.message || 'Could not disconnect this account.');
     } finally {
       setBusy(false);
     }
   }
 
-  async function runSetupCheck() {
-    if (!selectedConnector || !selectedDraft) return;
-    const validationErrors = validateRequiredFields(selectedConnector.id, selectedDraft, selectedConnector);
-    if (Object.keys(validationErrors).length > 0) {
-      setDraftErrors((prev) => ({
-        ...prev,
-        [selectedConnector.id]: validationErrors,
-      }));
-      setError('Please fix the highlighted required fields.');
+  async function testConnection(connector = selectedConnector, announce = true) {
+    if (!connector) return;
+    if (announce) {
+      setBusy(true);
+      setError('');
       setMessage('');
-      return;
     }
-
-    setBusy(true);
-    setSnowflakeProbeResult(null);
-    setError('');
-    setMessage('');
-
+    setConnectionCheckByConnector((prev) => ({ ...prev, [connector.id]: { status: 'checking', checkedAt: null, message: 'Checking connection…' } }));
     try {
-      const payload = {
-        ...buildUpdatePayload(selectedConnector.id, selectedDraft),
-        connection_status: 'connected',
-      };
-      const saveRes = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}`, {
-        method: 'PATCH',
+      const testDraft = drafts[connector.id] || normalizeDraft(connector);
+      const isJiraCandidate = connector.id === 'jira_sync' && Boolean(connectionFormByConnector[connector.id]);
+      const res = await authFetch(isJiraCandidate
+        ? `${API_BASE}/api/v1/pm-sync/jira/test-connection`
+        : `${API_BASE}/api/v1/connectors/${encodeURIComponent(connector.id)}/health`, {
+        method: isJiraCandidate ? 'POST' : 'GET',
         credentials: 'include',
-        headers: authHeaders(true, 'PATCH'),
-        body: JSON.stringify(payload),
+        headers: authHeaders(isJiraCandidate, isJiraCandidate ? 'POST' : 'GET'),
+        ...(isJiraCandidate ? { body: JSON.stringify({
+          jira_base_url: testDraft.jira_base_url,
+          jira_email: testDraft.jira_email,
+          jira_api_token: testDraft.jira_api_token,
+        }) } : {}),
       });
-      const saveData = await saveRes.json().catch(() => ({}));
-      if (!saveRes.ok) throw new Error(saveData?.error || `Save failed (${saveRes.status})`);
-
-      const healthRes = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}/health`, {
-        credentials: 'include',
-        headers: authHeaders(false, 'GET'),
-      });
-      const healthData = await healthRes.json().catch(() => ({}));
-      if (!healthRes.ok) throw new Error(healthData?.error || `Connection test failed (${healthRes.status})`);
-      const checkRes = await authFetch(`${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}/check`, {
-        credentials: 'include',
-        headers: authHeaders(false, 'GET'),
-      });
-      const checkData = await checkRes.json().catch(() => ({}));
-      if (!checkRes.ok) {
-        let checkErr = checkData?.error || `Setup check failed (${checkRes.status})`;
-        // Provide actionable guidance for common Jira errors
-        if (selectedConnector.id === 'jira_sync') {
-          if (checkErr.includes('401') || checkErr.toLowerCase().includes('unauthorized')) {
-            checkErr = `Jira authentication failed (401). Verify your email and API token are correct. ${checkErr}`;
-          } else if (checkErr.includes('403')) {
-            checkErr = `Jira access denied (403). Ensure your account has API access and the token has the right scopes. ${checkErr}`;
-          } else if (checkErr.includes('404') || checkErr.includes('Not Found')) {
-            checkErr = `Jira URL not found (404). Check that your Base URL is in the format https://yourcompany.atlassian.net with no /jira suffix. ${checkErr}`;
-          } else if (checkErr.includes('missing') || checkErr.toLowerCase().includes('config')) {
-            checkErr = `Jira configuration incomplete. Ensure all fields (Base URL, Project Key, Email, API Token) are filled in. ${checkErr}`;
-          } else if (checkErr.includes('timed out') || checkErr.includes('timeout') || checkErr.includes('ConnectTimeout')) {
-            checkErr = `Could not reach Jira (connection timed out). Check that your Base URL is correct: https://yourcompany.atlassian.net. ${checkErr}`;
-          } else if (checkErr.includes('attempts')) {
-            checkErr = `Could not reach Jira after multiple attempts. Verify the Base URL is correct (e.g. https://yourcompany.atlassian.net). ${checkErr}`;
-          }
-        }
-        throw new Error(checkErr);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error('The saved connection could not be verified. Reconnect and check the credentials.');
+      const live = data?.live_status;
+      const healthy = !live || live.status !== 'error';
+      if (!healthy) throw new Error('The saved connection could not be verified. Reconnect and check the credentials.');
+      const checkedAt = new Date().toISOString();
+      if (isJiraCandidate) {
+        setTestedConnectionByConnector((prev) => ({ ...prev, jira_sync: connectionDraftSignature('jira_sync', testDraft) }));
       }
-
-      if (selectedConnector.id === 'snowflake_insights') {
-        const tables = parseList(selectedDraft.snowflake_table_allowlist).slice(0, 10);
-        const results = [];
-        for (const table of tables) {
-          const response = await authFetch(`${API_BASE}/api/v1/connectors/snowflake/query`, {
-            method: 'POST',
-            credentials: 'include',
-            headers: authHeaders(true, 'POST'),
-            body: JSON.stringify({ table, limit: 1 }),
-          });
-          const data = await response.json().catch(() => ({}));
-          if (!response.ok) {
-            results.push({ table, ok: false, message: data?.error || `HTTP ${response.status}` });
-          } else {
-            results.push({
-              table,
-              ok: true,
-              message: `Readable (${Array.isArray(data?.rows) ? data.rows.length : 0} row sampled)`,
-            });
-          }
-        }
-        const okCount = results.filter((row) => row.ok).length;
-        const failCount = results.length - okCount;
-        setSnowflakeProbeResult({
-          checkedAt: Date.now(),
-          rows: results,
-          okCount,
-          failCount,
-        });
-        if (failCount > 0) {
-          throw new Error(`Snowflake validation failed for ${failCount}/${results.length} table(s).`);
-        }
-      }
-
-      // Setup check verifies credentials only — actual syncing is done via "Sync Now"
-
-      await loadConnectors();
-      await loadAudit(selectedConnector.id);
-      setMessage('Setup check passed. Connector is ready to use.');
+      setConnectionCheckByConnector((prev) => ({ ...prev, [connector.id]: { status: 'connected', checkedAt, message: 'Connection verified' } }));
+      if (announce) setMessage('Connection verified.');
+      await loadAudit(connector.id);
     } catch (err) {
-      setError(err?.message || 'Setup check failed.');
+      const plainMessage = err?.message || 'The saved connection could not be verified. Reconnect and check the credentials.';
+      setConnectionCheckByConnector((prev) => ({ ...prev, [connector.id]: { status: 'error', checkedAt: new Date().toISOString(), message: plainMessage } }));
+      if (announce) setError(plainMessage);
     } finally {
-      setBusy(false);
+      if (announce) setBusy(false);
     }
   }
 
@@ -972,78 +935,6 @@ export default function ConnectorsManage() {
       setError(err?.message || 'Snowflake data validation failed.');
     } finally {
       setSnowflakeProbeBusy(false);
-    }
-  }
-
-  async function syncNow() {
-    if (!selectedConnector) return;
-    setBusy(true);
-    setError('');
-    setMessage('');
-    try {
-      let endpoint = '';
-      let method = 'POST';
-      let body = null;
-
-      if (selectedConnector.id === 'jira_sync') {
-        if (!selectedThreadId) throw new Error('Select a thread for Jira sync.');
-        endpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/jira/sync`;
-      } else if (selectedConnector.id === 'smartsheet_sync') {
-        if (!selectedThreadId) throw new Error('Select a thread for Smartsheet sync.');
-        endpoint = `${API_BASE}/api/v1/connectors/threads/${encodeURIComponent(selectedThreadId)}/smartsheet/sync`;
-      } else if (selectedConnector.id === 'salesforce_insights') {
-        endpoint = `${API_BASE}/api/v1/connectors/salesforce/pipeline/summary?days=30&limit=200`;
-        method = 'GET';
-      } else if (selectedConnector.id === 'snowflake_insights') {
-        const tables = parseList(selectedDraft?.snowflake_table_allowlist || '');
-        if (!tables.length) {
-          throw new Error('Add at least one table in Table Allowlist to run Snowflake sync.');
-        }
-        endpoint = `${API_BASE}/api/v1/connectors/snowflake/query`;
-        method = 'POST';
-        body = {
-          table: tables[0],
-          limit: 200,
-        };
-      } else {
-        endpoint = `${API_BASE}/api/v1/connectors/${encodeURIComponent(selectedConnector.id)}/health`;
-        method = 'GET';
-      }
-
-      const res = await authFetch(endpoint, {
-        method,
-        credentials: 'include',
-        headers: authHeaders(Boolean(body), method),
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || `Sync failed (${res.status})`);
-
-      if (selectedConnector.id === 'snowflake_insights') {
-        const rowCount = Array.isArray(data?.rows) ? data.rows.length : 0;
-        const tableName = String(data?.summary?.table || body?.table || '').trim();
-        setMessage(`Snowflake sync completed: read ${rowCount} row(s) from ${tableName || 'allowlisted table'}.`);
-      } else if (selectedConnector.id === 'salesforce_insights') {
-        const oppCount = Number(data?.summary?.opportunity_count || 0);
-        setMessage(`Salesforce sync completed: ${oppCount} opportunities summarized.`);
-      } else {
-        setMessage('Sync completed successfully.');
-      }
-      await loadConnectors();
-      await loadAudit(selectedConnector.id);
-    } catch (err) {
-      const syncError = err?.message || 'Sync failed.';
-      const syncCode = String(err?.data?.code || '').trim().toUpperCase();
-      if (
-        EXECUTION_SYNC_CONNECTOR_IDS.includes(selectedConnector?.id)
-        && (syncCode === 'THREAD_NOT_FOUND' || syncCode === 'WBS_NOT_FOUND' || isMissingThreadSyncContextError(syncError))
-      ) {
-        setError('Connector is connected, but the selected sync thread is not available for WBS sync yet. Select another thread or generate an execution plan first.');
-      } else {
-        setError(syncError);
-      }
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -1155,7 +1046,7 @@ export default function ConnectorsManage() {
     setJaspenBusy(false);
   }
 
-  function renderConnectorSpecificFields(connectorId, draft) {
+  function renderConnectorSpecificFields(connectorId, draft, section = 'data') {
     if (!draft) return null;
     const fieldError = (field) => selectedDraftErrors?.[field] || '';
     const describedBy = (field) => (fieldError(field) ? `connector-field-error-${connectorId}-${field}` : undefined);
@@ -1180,23 +1071,20 @@ export default function ConnectorsManage() {
     };
 
     if (connectorId === 'jira_sync') {
+      if (section === 'connection') {
+        return <>
+          {renderRequiredField('jira_base_url', 'Jira site URL', { placeholder: 'https://yourcompany.atlassian.net' })}
+          {renderRequiredField('jira_email', 'Email', { placeholder: 'you@yourcompany.com' })}
+          {renderRequiredField('jira_api_token', 'API token', { type: 'password', placeholder: 'Enter a new token' })}
+        </>;
+      }
       const snapshot = selectedConnector?.jira?.portfolio_snapshot || {};
       const projectRows = Array.isArray(snapshot?.projects) ? snapshot.projects : [];
       const refreshError = jiraPortfolioError || snapshot?.refresh_error || null;
       const noAccessProjects = Array.isArray(snapshot?.no_access_projects) ? snapshot.no_access_projects : [];
       return (
-        <>
-          {renderRequiredField('jira_base_url', 'Jira Base URL', { placeholder: 'https://yourcompany.atlassian.net' })}
-          {renderRequiredField('jira_email', 'Email', { placeholder: 'you@yourcompany.com' })}
-          {renderRequiredField('jira_api_token', 'API Token', { type: 'password', placeholder: 'Enter token to set or rotate' })}
-          <div className="connector-data-source-settings connector-field-full">
-            <div className="connector-account-summary">
-              <div><strong>Using Jira: {draft.jira_base_url || 'site not set'} · {draft.jira_email || 'email not set'}</strong><br /><span>{snapshot?.fetched_at ? `Last refreshed ${new Date(snapshot.fetched_at).toLocaleString()}` : 'Not refreshed yet'}</span></div>
-              <button type="button" className="int-btn int-btn-ghost" onClick={() => {
-                setSetupModeByConnector((prev) => ({ ...prev, jira_sync: 'manual' }));
-                setTimeout(() => document.querySelector('input[type="password"]')?.focus(), 0);
-              }}>Reconnect</button>
-            </div>
+        <section className="connector-data-source-settings connector-field-full">
+            <h3>Data &amp; Insights</h3>
             <label className="connector-auto-sync">
               <input type="checkbox" checked={Boolean(draft.jira_data_enabled)} onChange={(event) => updateDraft('jira_data_enabled', event.target.checked)} />
               <span><strong>Use Jira data in analysis</strong><br />When on, Jaspen's AI uses summary metrics from your Jira projects (counts, rates, health — never issue content or names) when analyzing decisions.</span>
@@ -1227,7 +1115,7 @@ export default function ConnectorsManage() {
                 <strong>{snapshot?.stale ? 'Showing the last successful snapshot. ' : ''}{refreshError.message}</strong>
                 {refreshError.reconnect_required && (
                   <button type="button" className="int-btn int-btn-ghost" onClick={() => {
-                    setSetupModeByConnector((prev) => ({ ...prev, jira_sync: 'manual' }));
+                    setConnectionFormByConnector((prev) => ({ ...prev, jira_sync: true }));
                     setTimeout(() => document.querySelector('input[type="password"]')?.focus(), 0);
                   }}>Reconnect Jira</button>
                 )}
@@ -1260,24 +1148,26 @@ export default function ConnectorsManage() {
                 </table>
               </div>
             )}
-          </div>
-        </>
+        </section>
       );
     }
 
     if (connectorId === 'smartsheet_sync') {
+      if (section === 'data') {
+        return <section className="connector-data-source-settings connector-field-full"><h3>Data &amp; Insights</h3><p>Portfolio evidence from Smartsheet is coming soon.</p></section>;
+      }
       return (
         <>
           {renderRequiredField('smartsheet_base_url', 'Smartsheet Base URL')}
-          {renderRequiredField('smartsheet_sheet_id', 'Sheet ID')}
           {renderRequiredField('smartsheet_api_token', 'API Token', { type: 'password', placeholder: 'Enter token to set or rotate' })}
-          <label>Field Mapping JSON<textarea value={draft.smartsheet_field_mapping} onChange={(event) => updateDraft('smartsheet_field_mapping', event.target.value)} /></label>
-          <label className="connector-auto-sync connector-field-full"><input type="checkbox" checked={Boolean(draft.smartsheet_data_enabled)} onChange={(event) => updateDraft('smartsheet_data_enabled', event.target.checked)} /><span>Use Smartsheet data in analysis</span></label>
         </>
       );
     }
 
     if (connectorId === 'salesforce_insights') {
+      if (section === 'data') {
+        return <section className="connector-data-source-settings connector-field-full"><h3>Data &amp; Insights</h3><p>Salesforce pipeline summaries are available to decision analysis when this connection is active.</p></section>;
+      }
       return (
         <>
           {renderRequiredField('salesforce_auth_base_url', 'Auth Base URL')}
@@ -1318,6 +1208,15 @@ export default function ConnectorsManage() {
     }
 
     if (connectorId === 'snowflake_insights') {
+      if (section === 'data') {
+        return (
+          <section className="connector-data-source-settings connector-field-full">
+            <h3>Data &amp; Insights</h3>
+            <label>Table allowlist<input value={draft.snowflake_table_allowlist} onChange={(event) => updateDraft('snowflake_table_allowlist', event.target.value)} placeholder="e.g. analytics.projects, analytics.capacity" /></label>
+            <button type="button" className="int-btn int-btn-ghost" onClick={validateSnowflakeDataAccess} disabled={snowflakeProbeBusy}>{snowflakeProbeBusy ? 'Validating…' : 'Validate data access'}</button>
+          </section>
+        );
+      }
       // Snowflake renders its own grid — caller must NOT wrap in connector-field-grid
       return (
         <div className="connector-sf-grid">
@@ -1360,21 +1259,12 @@ export default function ConnectorsManage() {
             <p className="connector-sf-error-text">{fieldError('snowflake_password')}</p>
           )}
 
-          {/* Data access */}
-          <p className="connector-sf-section">Data Access</p>
-          <label className="connector-sf-full">
-            Table Allowlist <span className="connector-required-marker" aria-hidden="true"> *</span>
-            <input
-              value={draft.snowflake_table_allowlist}
-              onChange={(event) => updateDraft('snowflake_table_allowlist', event.target.value)}
-              placeholder="e.g. tpch_sf1.lineitem, tpch_sf1.orders, tpch_sf1.customer"
-            />
-          </label>
         </div>
       );
     }
 
     if (connectorId === 'oracle_fusion_insights') {
+      if (section === 'data') return null;
       return (
         <>
           {renderRequiredField('oracle_fusion_base_url', 'Oracle Fusion URL')}
@@ -1386,6 +1276,7 @@ export default function ConnectorsManage() {
     }
 
     if (connectorId === 'servicenow_insights') {
+      if (section === 'data') return null;
       return (
         <>
           {renderRequiredField('servicenow_instance_url', 'Instance URL')}
@@ -1397,6 +1288,7 @@ export default function ConnectorsManage() {
     }
 
     if (connectorId === 'netsuite_insights') {
+      if (section === 'data') return null;
       return (
         <>
           {renderRequiredField('netsuite_account_id', 'Account ID')}
@@ -1581,65 +1473,6 @@ export default function ConnectorsManage() {
                     <div>
                       <h2>{selectedConnector.label}</h2>
                       <p>{selectedConnector.description}</p>
-                      {selectedConnectorImplemented && selectedConnectorDirty && (
-                        <p className="connector-unsaved-note" role="status" aria-live="polite">
-                          You have unsaved changes for this connector.
-                        </p>
-                      )}
-                    </div>
-                    <div className="connector-detail-actions">
-                      {selectedConnectorImplemented ? (
-                        <>
-                          <div className="connector-setup-mode">
-                            <button
-                              type="button"
-                              className={selectedSetupMode === 'automatic' ? 'is-active' : ''}
-                              onClick={() => setSetupModeByConnector((prev) => ({ ...prev, [selectedConnector.id]: 'automatic' }))}
-                            >
-                              Automatic
-                            </button>
-                            <button
-                              type="button"
-                              className={selectedSetupMode === 'manual' ? 'is-active' : ''}
-                              onClick={() => setSetupModeByConnector((prev) => ({ ...prev, [selectedConnector.id]: 'manual' }))}
-                            >
-                              Manual
-                            </button>
-                          </div>
-                          {selectedSetupMode === 'automatic' ? (
-                            <button type="button" onClick={runSetupCheck} disabled={busy} aria-disabled={busy}>
-                              <FontAwesomeIcon icon={faPlugCircleCheck} /> Run Setup Check
-                            </button>
-                          ) : (
-                            <>
-                              <button type="button" onClick={testConnection} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faFlask} /> Test Connection</button>
-                              {selectedConnector.id === 'snowflake_insights' && (
-                                <button
-                                  type="button"
-                                  onClick={validateSnowflakeDataAccess}
-                                  disabled={busy || snowflakeProbeBusy}
-                                  aria-disabled={busy || snowflakeProbeBusy}
-                                >
-                                  <FontAwesomeIcon icon={faPlugCircleCheck} />
-                                  {snowflakeProbeBusy ? 'Validating data…' : 'Validate Data Access'}
-                                </button>
-                              )}
-                              <button type="button" onClick={syncNow} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faRotate} /> Sync Now</button>
-                              <button type="button" onClick={saveConnector} disabled={busy} aria-disabled={busy}><FontAwesomeIcon icon={faServer} /> Save Settings</button>
-                            </>
-                          )}
-                          <button
-                            type="button"
-                            onClick={revertSelectedDraft}
-                            disabled={busy || !selectedConnectorDirty}
-                            aria-disabled={busy || !selectedConnectorDirty}
-                          >
-                            Revert Draft
-                          </button>
-                        </>
-                      ) : (
-                        <span className="int-badge">Coming soon</span>
-                      )}
                     </div>
                   </header>
                   {!selectedConnectorImplemented ? (
@@ -1648,76 +1481,49 @@ export default function ConnectorsManage() {
                     </div>
                   ) : (
                     <>
-                  <p className="connector-required-legend"><span aria-hidden="true">*</span> Required</p>
-
-                  <div className="connector-core-controls">
-                    <label>
-                      Connection Status
-                      <div className="connector-status-readonly">
-                        <span className={`int-badge ${connectorLifecycleBadgeClass(selectedConnector)}`}>
-                          {connectorLifecycleLabel(selectedConnector)}
-                        </span>
+                  <section className="connector-connection-card">
+                    <div className="connector-connection-summary">
+                      <span className={`connector-status-dot ${selectedConnector.connected && selectedConnectionCheck?.status !== 'error' ? 'is-connected' : ''}`} />
+                      <div>
+                        <strong>{selectedConnector.connected ? `Connected as ${connectorAccountLabel(selectedConnector)}` : `${selectedConnector.label} is not connected`}</strong>
+                        <p>{selectedConnectionCheck?.status === 'checking' ? 'Checking connection…' : selectedConnectionCheck?.status === 'error' ? selectedConnectionCheck.message : `Last checked ${selectedLastCheckedAt ? new Date(selectedLastCheckedAt).toLocaleString() : 'not yet'}`}</p>
                       </div>
-                    </label>
-                    {selectedConnector.id !== 'jira_sync' && <>
-                    <label>
-                      Sync Mode
-                      <select value={selectedDraft.sync_mode} onChange={(event) => updateDraft('sync_mode', event.target.value)}>
-                        {(selectedConnector.available_sync_modes || ['import']).map((mode) => (
-                          <option key={mode} value={mode}>{mode}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Conflict Policy
-                      <select value={selectedDraft.conflict_policy} onChange={(event) => updateDraft('conflict_policy', event.target.value)}>
-                        {(selectedConnector.available_conflict_policies || ['prefer_external']).map((policy) => (
-                          <option key={policy} value={policy}>{policy}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      External Workspace
-                      <input value={selectedDraft.external_workspace} onChange={(event) => updateDraft('external_workspace', event.target.value)} />
-                    </label>
-                    {(selectedConnector.id === 'smartsheet_sync') && (
-                      <label>
-                        Sync Thread
-                        <select value={selectedThreadId} onChange={(event) => setSelectedThreadId(event.target.value)}>
-                          <option value="">Select thread...</option>
-                          {threads.map((thread) => (
-                            <option key={thread.threadId} value={thread.threadId}>{thread.name || thread.threadId}</option>
-                          ))}
-                        </select>
-                      </label>
+                    </div>
+                    <div className="connector-connection-actions">
+                      <button type="button" className="int-btn int-btn-ghost" onClick={() => setConnectionFormByConnector((prev) => ({ ...prev, [selectedConnector.id]: !connectionFormOpen }))}>{selectedConnector.connected ? 'Reconnect' : 'Connect'}</button>
+                      {selectedConnector.connected && <button type="button" className="int-btn int-btn-ghost" onClick={disconnectConnector} disabled={busy}>Disconnect</button>}
+                    </div>
+                    {selectedConnectionCheck?.status === 'error' && <div className="connector-inline-notice connector-inline-notice-error" role="alert">{selectedConnectionCheck.message} <button type="button" className="int-btn int-btn-ghost" onClick={() => setConnectionFormByConnector((prev) => ({ ...prev, [selectedConnector.id]: true }))}>Reconnect</button></div>}
+                    {connectionFormOpen && (
+                      <div className="connector-connect-form">
+                        <div className={selectedConnector.id === 'snowflake_insights' ? '' : 'connector-field-grid'}>{renderConnectorSpecificFields(selectedConnector.id, selectedDraft, 'connection')}</div>
+                        <div className="connector-connect-form-actions">
+                          <button type="button" className="int-btn int-btn-ghost" onClick={() => testConnection(selectedConnector, true)} disabled={busy}><FontAwesomeIcon icon={faFlask} /> Test connection</button>
+                          <button type="button" className="int-btn int-btn-primary" onClick={saveConnector} disabled={busy || !selectedConnectorDirty || (selectedConnector.id === 'jira_sync' && testedConnectionByConnector.jira_sync !== connectionDraftSignature('jira_sync', selectedDraft))}><FontAwesomeIcon icon={faServer} /> Save</button>
+                        </div>
+                      </div>
                     )}
-                    </>}
-                  </div>
-                  {selectedConnector.id !== 'jira_sync' && (
-                  <div className="connector-auto-sync-row">
-                    <label className="connector-auto-sync">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(selectedDraft.auto_sync)}
-                        onChange={(event) => updateDraft('auto_sync', event.target.checked)}
-                      />
-                      <span>Auto-sync</span>
-                    </label>
-                    <p className="connector-auto-sync-help">
-                      Auto-sync runs scheduled refreshes for this connector when supported.
-                    </p>
-                  </div>
-                  )}
+                  </section>
 
-                  {/* Snowflake renders its own grid to avoid auto-fit column breaks */}
-                  {selectedConnector.id === 'snowflake_insights'
-                    ? renderConnectorSpecificFields(selectedConnector.id, selectedDraft)
-                    : (
-                      <div className="connector-field-grid">
-                        {renderConnectorSpecificFields(selectedConnector.id, selectedDraft)}
-                      </div>
-                    )
-                  }
+                  {renderConnectorSpecificFields(selectedConnector.id, selectedDraft, 'data')}
+                  {selectedConnectorDirty && !connectionFormOpen && <div className="connector-settings-save"><button type="button" className="int-btn int-btn-primary" onClick={saveConnector} disabled={busy || !selectedConnectorDirty}>Save changes</button></div>}
+
+                  {EXECUTION_SYNC_CONNECTOR_IDS.includes(selectedConnector.id) && (
+                    <section className="connector-execution-sync-section">
+                      <h3>Execution plan sync</h3>
+                      <p>Sync is turned on per execution plan.</p>
+                      {selectedConnectorBindings.length === 0 ? <p>No execution plans are linked to {selectedConnector.label}.</p> : (
+                        <ul className="connector-linked-plans">
+                          {selectedConnectorBindings.map((binding) => <li key={binding.id}>
+                            <a href={`/workspace/${encodeURIComponent(binding.thread_id)}/__execution__?idea=${encodeURIComponent(binding.plan_key)}`}>{threadNameById[binding.thread_id] || 'Execution plan'}</a>
+                            <span>{binding.external_container_id}</span>
+                            <span>{binding.last_success_at ? `Last synced ${new Date(binding.last_success_at).toLocaleString()}` : 'Not synced yet'}</span>
+                            <span>{String(binding.status || 'active').replace('_', ' ')}</span>
+                          </li>)}
+                        </ul>
+                      )}
+                    </section>
+                  )}
                   {selectedConnector.id === 'snowflake_insights' && snowflakeProbeResult && (
                     <section className="connector-diagnostics">
                       <h3>Snowflake Diagnostics</h3>
@@ -1748,34 +1554,19 @@ export default function ConnectorsManage() {
                   )}
 
                   <section className="connector-audit-history">
-                    <h3>Sync History</h3>
+                    <h3>Activity</h3>
                     {auditRows.length === 0 ? (
-                      <p>No sync events yet.</p>
+                      <p>No activity yet.</p>
                     ) : (
-                      <div className="connector-audit-table-wrap">
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>Timestamp</th>
-                              <th>Action</th>
-                              <th>Status</th>
-                              <th>Thread</th>
-                              <th>Message</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {auditRows.map((row) => (
-                              <tr key={row.id || `${row.timestamp}-${row.action}`}>
-                                <td>{row.timestamp ? new Date(row.timestamp).toLocaleString() : 'N/A'}</td>
-                                <td>{row.action || 'sync'}</td>
-                                <td>{row.status || 'unknown'}</td>
-                                <td>{row.thread_id || '—'}</td>
-                                <td>{row.message || '—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                      <ul className="connector-activity-list">
+                        {auditRows.map((row) => (
+                          <li key={row.id || `${row.timestamp}-${row.action}`}>
+                            <span className={`connector-activity-status is-${row.status || 'unknown'}`} />
+                            <div><strong>{activityDescription(row)}</strong>{row.message && row.message !== activityDescription(row) ? <p>{row.message}</p> : null}</div>
+                            <time>{row.timestamp ? new Date(row.timestamp).toLocaleString() : 'Time unavailable'}</time>
+                          </li>
+                        ))}
+                      </ul>
                     )}
                   </section>
                     </>

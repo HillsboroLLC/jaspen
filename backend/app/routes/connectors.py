@@ -41,7 +41,7 @@ from app.jira_sync import (
     sync_wbs_to_jira,
 )
 from app.jira_portfolio import classify_refresh_error, list_accessible_projects, portfolio_context_text, refresh_portfolio
-from app.models import User
+from app.models import ConnectorSyncLog, User
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
 from app.salesforce_sync import (
     BadSignature as SalesforceBadSignature,
@@ -390,6 +390,7 @@ def _merge_connector_view(connector_id, entitlement, settings):
         "last_sync_at": settings.get("last_sync_at"),
         "last_sync_result": settings.get("last_sync_result") or "never",
         "updated_at": settings.get("updated_at"),
+        "last_verified_at": settings.get("last_verified_at"),
         "health": {
             "status": settings.get("health_status") or "unknown",
             "consecutive_failures": int(settings.get("consecutive_failures") or 0),
@@ -1343,7 +1344,55 @@ def get_connector_audit(connector_id):
 
     thread_id = _text(request.args.get("thread_id"))
     limit = request.args.get("limit")
-    rows = get_sync_audit_events(user.id, connector_id=connector_id, thread_id=thread_id or None, limit=limit)
+    try:
+        safe_limit = max(1, min(int(limit or 20), 100))
+    except (TypeError, ValueError):
+        safe_limit = 20
+    query = ConnectorSyncLog.query.filter_by(user_id=user.id, connector_id=connector_id)
+    if thread_id:
+        query = query.filter_by(thread_id=thread_id)
+    persisted = query.order_by(ConnectorSyncLog.created_at.desc()).limit(safe_limit).all()
+    rows = [
+        {
+            "id": row.id,
+            "timestamp": row.created_at.isoformat() if row.created_at else None,
+            "connector_id": row.connector_id,
+            "thread_id": row.thread_id,
+            "action": row.action,
+            "status": row.status,
+            "message": row.error_message or "",
+            "items_synced": int(row.items_synced or 0),
+            "metadata": row.sync_metadata if isinstance(row.sync_metadata, dict) else {},
+        }
+        for row in persisted
+    ]
+
+    # Older installations may have audit-store entries that predate the
+    # persisted sync log. Include only entries not already represented, then
+    # sort the combined activity stream newest first.
+    def same_persisted_event(candidate):
+        candidate_identity = (candidate.get("action"), candidate.get("thread_id"), candidate.get("status"))
+        try:
+            candidate_time = datetime.fromisoformat(str(candidate.get("timestamp") or "").replace("Z", "+00:00")).replace(tzinfo=None)
+        except (TypeError, ValueError):
+            candidate_time = None
+        for persisted_row in rows:
+            persisted_identity = (persisted_row.get("action"), persisted_row.get("thread_id"), persisted_row.get("status"))
+            if candidate_identity != persisted_identity:
+                continue
+            try:
+                persisted_time = datetime.fromisoformat(str(persisted_row.get("timestamp") or "").replace("Z", "+00:00")).replace(tzinfo=None)
+            except (TypeError, ValueError):
+                persisted_time = None
+            if candidate_time and persisted_time and abs((candidate_time - persisted_time).total_seconds()) <= 5:
+                return True
+        return False
+
+    for row in get_sync_audit_events(user.id, connector_id=connector_id, thread_id=thread_id or None, limit=safe_limit):
+        if not same_persisted_event(row):
+            rows.append(row)
+    rows.sort(key=lambda row: str(row.get("timestamp") or row.get("created_at") or ""), reverse=True)
+    rows = rows[:safe_limit]
 
     return jsonify({
         "success": True,
