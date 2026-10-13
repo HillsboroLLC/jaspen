@@ -40,7 +40,7 @@ from app.jira_sync import (
     jira_check_connection,
     sync_wbs_to_jira,
 )
-from app.jira_portfolio import list_accessible_projects, portfolio_context_text, refresh_portfolio
+from app.jira_portfolio import classify_refresh_error, list_accessible_projects, portfolio_context_text, refresh_portfolio
 from app.models import User
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
 from app.salesforce_sync import (
@@ -1565,12 +1565,20 @@ def jira_context_summary():
             "evidence": snapshot.get("evidence") or [],
             "context_text": portfolio_context_text(snapshot),
         }
-        mark_connector_sync_result(user.id, "jira_sync", "success")
+        refresh_failed = bool(snapshot.get("refresh_failed"))
+        refresh_error = snapshot.get("refresh_error") or {}
+        mark_connector_sync_result(
+            user.id,
+            "jira_sync",
+            "failed" if refresh_failed else "success",
+            error_message=refresh_error.get("message") if refresh_failed else None,
+        )
         append_sync_audit_event(
             user.id,
             "jira_sync",
             action="context_summary",
-            status="success",
+            status="failed" if refresh_failed else "success",
+            message=refresh_error.get("message") if refresh_failed else None,
             metadata={
                 "project_count": (result.get("summary") or {}).get("project_count", 0),
                 "blocked_count": (result.get("summary") or {}).get("blocked_count", 0),
@@ -1578,14 +1586,14 @@ def jira_context_summary():
         )
         return jsonify({"success": True, **result}), 200
     except Exception as exc:
-        raw = str(exc)
-        reconnect = "HTTP 401" in raw or "HTTP 403" in raw
-        public_message = "Your saved Jira connection no longer works. Reconnect Jira to continue." if reconnect else "Jira portfolio data could not be refreshed. Try again."
+        current_app.logger.exception("Jira portfolio context refresh failed for user %s", user.id)
+        refresh_error = classify_refresh_error(exc)
+        public_message = refresh_error["message"]
         mark_connector_sync_result(user.id, "jira_sync", "failed", error_message=public_message)
         append_sync_audit_event(
             user.id, "jira_sync", action="context_summary", status="failed", message=public_message
         )
-        return jsonify({"error": public_message, "reconnect_required": reconnect}), 400
+        return jsonify({"error": public_message, **refresh_error}), 400
 
 
 @connectors_bp.route("/jira/projects", methods=["GET"])

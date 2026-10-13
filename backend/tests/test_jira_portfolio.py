@@ -15,14 +15,16 @@ def _history(days_ago_start, days_ago_done):
     ]}
 
 
-def _issue(key, category, *, due=None, resolved=None, points=None, assignee=None, changelog=None, flagged=False):
+def _issue(key, category, *, due=None, resolved=None, points=None, assignee=None, changelog=None, flagged=False, start=None, links=None, hierarchy_level=0):
     fields = {
         "status": {"name": f"Custom {category}", "statusCategory": {"key": category}},
         "duedate": due,
         "resolutiondate": resolved,
         "created": (NOW - timedelta(days=30)).isoformat(),
         "assignee": {"displayName": assignee} if assignee else None,
-        "issuelinks": [],
+        "issuelinks": links or [],
+        "issuetype": {"name": "Epic" if hierarchy_level >= 1 else "Task", "hierarchyLevel": hierarchy_level},
+        "customfield_start": start,
         "customfield_flagged": ["Impediment"] if flagged else [],
         "customfield_10016": points,
     }
@@ -164,6 +166,8 @@ def test_refresh_scopes_projects_paginates_caches_and_emits_provenance(monkeypat
     assert all(row["confidence"] == 0.85 for row in snapshot["evidence"])
     assert {row["fact_key"] for row in snapshot["evidence"]} >= {"jira_throughput_per_week", "jira_overdue_share"}
     assert len([row for row in calls if row[1] == "/rest/api/3/search/jql"]) == 1
+    search_payload = next(row[2] for row in calls if row[1] == "/rest/api/3/search/jql")
+    assert search_payload["expand"] == "changelog"
     assert saved[-1]["jira_portfolio_snapshot"]["portfolio"]["project_count"] == 1
 
     settings["jira_portfolio_snapshot"] = snapshot
@@ -179,7 +183,7 @@ def test_refresh_scopes_projects_paginates_caches_and_emits_provenance(monkeypat
 
 
 def test_failed_refresh_uses_stale_cache_with_lower_confidence(monkeypatch):
-    cached = {"fetched_at": "2026-10-11T00:00:00Z", "portfolio": {"project_count": 1}, "provenance": {"source": "connector"}}
+    cached = {"fetched_at": "2026-10-11T00:00:00Z", "portfolio": {"project_count": 1}, "projects": [{"project_key": "ABC"}], "provenance": {"source": "connector"}}
     monkeypatch.setattr(portfolio, "get_connector_settings", lambda *_: {"jira_portfolio_snapshot": cached})
     monkeypatch.setattr(portfolio, "update_connector_settings", lambda *_: None)
     monkeypatch.setattr(portfolio, "_jira_runtime_config", lambda *_: {"base_url": "https://x", "email": "e", "api_token": "t"})
@@ -187,6 +191,12 @@ def test_failed_refresh_uses_stale_cache_with_lower_confidence(monkeypatch):
     result = portfolio.refresh_portfolio("user", force=True, now=NOW)
     assert result["stale"] is True
     assert result["refresh_failed"] is True
+    assert result["projects"] == [{"project_key": "ABC"}]
+    assert result["refresh_error"] == {
+        "category": "provider",
+        "message": "Jaspen couldn't read Jira data — we've logged the details.",
+        "reconnect_required": False,
+    }
     assert all(row["confidence"] == 0.55 for row in result["evidence"])
 
 
@@ -231,6 +241,75 @@ def test_one_no_access_project_does_not_fail_portfolio(monkeypatch):
     result = portfolio.refresh_portfolio("user", force=True, now=NOW)
     assert result["portfolio"]["project_count"] == 1
     assert result["no_access_projects"] == [{"project_key": "NO", "project_name": "NO", "status": "no_access"}]
+
+
+def test_all_projects_forbidden_preserves_cached_snapshot_and_names_projects(monkeypatch):
+    cached = {
+        "fetched_at": "2026-10-11T00:00:00Z", "projects": [{"project_key": "ABC"}],
+        "portfolio": {"project_count": 1}, "provenance": {"source": "connector"},
+    }
+    monkeypatch.setattr(portfolio, "get_connector_settings", lambda *_: {"jira_portfolio_snapshot": cached})
+    monkeypatch.setattr(portfolio, "update_connector_settings", lambda *_: None)
+    monkeypatch.setattr(portfolio, "_jira_runtime_config", lambda *_: {"base_url": "https://x", "email": "e", "api_token": "t"})
+    monkeypatch.setattr(portfolio, "_list_projects", lambda *_: [{"key": "SCRUM"}, {"key": "JST"}])
+    monkeypatch.setattr(portfolio, "_discover_fields", lambda *_: {"story_points": None, "flagged": None, "sprint": None, "start_date": None})
+    monkeypatch.setattr(portfolio, "_search_project", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("HTTP 403")))
+    result = portfolio.refresh_portfolio("user", force=True, now=NOW)
+    assert result["projects"] == [{"project_key": "ABC"}]
+    assert result["stale"] is True
+    assert result["refresh_error"]["category"] == "permission"
+    assert result["refresh_error"]["projects"] == ["SCRUM", "JST"]
+
+
+def _open_blocker_link(key="ABC-99"):
+    return {
+        "type": {"inward": "is blocked by", "outward": "blocks"},
+        "inwardIssue": {"key": key, "fields": {"status": {"statusCategory": {"key": "new"}}}},
+    }
+
+
+def test_normal_sequencing_is_not_blocked_until_work_has_started():
+    future_todo = _issue("ABC-1", "new", start="2026-10-20", links=[_open_blocker_link()])
+    result = portfolio.compute_project_metrics(
+        {"key": "ABC"}, [future_todo], start_date_field="customfield_start", now=NOW,
+    )
+    assert result["blocked_count"] == 0
+    assert result["health"]["status"] == "healthy"
+
+
+def test_flagged_or_active_work_with_open_blocker_is_blocked():
+    issues = [
+        _issue("ABC-1", "new", flagged=True),
+        _issue("ABC-2", "indeterminate", links=[_open_blocker_link()]),
+        _issue("ABC-3", "new", start="2026-10-01", links=[_open_blocker_link()]),
+    ]
+    result = portfolio.compute_project_metrics(
+        {"key": "ABC"}, issues, flagged_field="customfield_flagged", start_date_field="customfield_start", now=NOW,
+    )
+    assert result["blocked_count"] == 3
+
+
+def test_no_completed_work_has_no_cycle_time_sample():
+    issue = _issue("ABC-1", "indeterminate", changelog={"histories": [
+        {"created": (NOW - timedelta(days=5)).isoformat(), "items": [{"field": "status", "toString": "In Progress"}]},
+    ]})
+    result = portfolio.compute_project_metrics({"key": "ABC"}, [issue], now=NOW)
+    assert result["cycle_time"] == {"median_days": None, "p85_days": None, "sample_size": 0}
+    assert result["throughput"]["trailing_4_weekly"] == 0.0
+
+
+def test_container_issue_types_are_reported_but_excluded_from_work_metrics():
+    epic = _issue(
+        "ABC-EPIC", "done", due="2026-10-01", resolved=(NOW - timedelta(days=1)).isoformat(),
+        changelog=_history(10, 1), hierarchy_level=1,
+    )
+    task = _issue("ABC-1", "new")
+    result = portfolio.compute_project_metrics({"key": "ABC"}, [epic, task], now=NOW)
+    assert result["epic_count"] == 1
+    assert result["total"] == 1
+    assert result["status_counts"] == {"to_do": 1, "in_progress": 0, "done": 0}
+    assert result["cycle_time"]["sample_size"] == 0
+    assert result["throughput"]["trailing_4_weekly"] == 0.0
 
 
 def test_http_429_honors_retry_and_recovers(monkeypatch):

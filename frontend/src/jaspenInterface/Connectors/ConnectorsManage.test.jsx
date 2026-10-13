@@ -133,7 +133,49 @@ it('treats Jira as Data & Insights without requiring a default project', async (
   expect(screen.getByText(/summary metrics from your Jira projects/)).toHaveTextContent('never issue content or names');
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeInTheDocument();
   expect(screen.queryByLabelText(/Project Key/i)).not.toBeInTheDocument();
+  ['Sync Mode', 'Conflict Policy', 'External Workspace', 'Sync Thread', 'Auto-sync', 'Issue Type', 'Field Mapping JSON'].forEach((label) => {
+    expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+  });
   await waitFor(() => expect(authFetch.mock.calls.some(([url]) => String(url).includes('/api/v1/connectors/jira/projects'))).toBe(true));
   fireEvent.click(screen.getByLabelText('Selected projects'));
   expect(await screen.findByRole('option', { name: 'ABC · Alpha' })).toBeInTheDocument();
+});
+
+it('keeps the last Jira portfolio visible when refresh fails', async () => {
+  mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
+  const snapshot = {
+    fetched_at: '2026-10-12T16:00:00Z',
+    projects: [{
+      project_key: 'ABC', project_name: 'Alpha', completion_percent: 50, overdue_count: 1,
+      status_counts: { to_do: 1, in_progress: 0, done: 1 },
+      throughput: { trend: 'flat' }, cycle_time: { median_days: null, sample_size: 0 },
+      health: { status: 'healthy' }, jira_url: 'https://acme.atlassian.net/browse/ABC', jira_links: {},
+    }],
+    portfolio: {
+      completion_percent: 50, overdue_count: 1, status_counts: { to_do: 1, in_progress: 0, done: 1 },
+      throughput: { trend: 'flat' }, cycle_time: { median_days: null, sample_size: 0 }, health: { status: 'healthy' },
+    },
+  };
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) return Promise.resolve(response({ connectors: [{
+      id: 'jira_sync', label: 'Jira', implementation_status: 'implemented', lifecycle_status: 'connected', connected: true,
+      jira: { base_url: 'https://acme.atlassian.net', email: 'owner@acme.test', has_api_token: true, data_enabled: true, data_project_scope: 'all', portfolio_snapshot: snapshot },
+    }] }));
+    if (String(url).includes('/api/v1/connectors/jira/projects')) return Promise.resolve(response({ success: true, projects: [] }));
+    if (String(url).includes('/api/v1/connectors/jira/context/summary')) return Promise.resolve({
+      ok: false, status: 400, json: jest.fn().mockResolvedValue({
+        error: "Jaspen couldn't read Jira data — we've logged the details.", category: 'request_format', reconnect_required: false,
+      }),
+    });
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success: true, sessions: [] }));
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events: [] }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+  expect(await screen.findByText('ABC · Alpha')).toBeInTheDocument();
+  expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh portfolio evidence' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent("Jaspen couldn't read Jira data — we've logged the details.");
+  expect(screen.getByText('ABC · Alpha')).toBeInTheDocument();
 });

@@ -7,6 +7,7 @@ aggregates only; raw Jira issues are never passed to the language model.
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -17,12 +18,14 @@ from app.connector_store import get_connector_settings, update_connector_setting
 from app.jira_sync import _jira_request, _jira_runtime_config
 
 
-RULES_VERSION = "jira-portfolio-health-v1"
+RULES_VERSION = "jira-portfolio-health-v2"
 CACHE_TTL_HOURS = 6
 DEFAULT_WINDOW_DAYS = 90
 DEFAULT_WORKLOAD_THRESHOLD = 8
 MAX_ISSUES_PER_REFRESH = 1000
 MAX_CHANGELOG_SAMPLES = 200
+
+logger = logging.getLogger(__name__)
 
 HEALTH_THRESHOLDS = {
     "at_risk_overdue_share": 0.20,
@@ -30,6 +33,12 @@ HEALTH_THRESHOLDS = {
     "at_risk_blocked_share": 0.10,
     "watch_blocked_share": 0.05,
 }
+
+
+class JiraPortfolioPermissionError(RuntimeError):
+    def __init__(self, project_keys):
+        self.project_keys = [str(key) for key in project_keys if str(key).strip()]
+        super().__init__(f"HTTP 403: Jira project access denied for {', '.join(self.project_keys)}")
 
 
 def _utcnow():
@@ -102,7 +111,7 @@ def throughput_trend(resolved_dates, *, now=None):
     }
 
 
-def _cycle_days(issue):
+def _cycle_transition(issue):
     histories = ((issue.get("changelog") or {}).get("histories") or []) if isinstance(issue, dict) else []
     first_in_progress = None
     first_done = None
@@ -113,18 +122,17 @@ def _cycle_days(issue):
         for item in history.get("items") or []:
             if str(item.get("field") or "").lower() != "status":
                 continue
-            category = str(item.get("toString") or "").strip().lower()
-            category_id = str(item.get("to") or "").strip()
-            if first_in_progress is None and ("progress" in category or category_id == "4"):
+            status_name = str(item.get("toString") or "").strip().lower()
+            if first_in_progress is None and "progress" in status_name:
                 first_in_progress = changed
-            if first_in_progress is not None and (category in {"done", "closed", "resolved"} or category_id == "3"):
+            if first_in_progress is not None and any(word in status_name for word in ("done", "closed", "resolved", "complete")):
                 first_done = changed
                 break
         if first_done:
             break
     if not first_in_progress or not first_done or first_done < first_in_progress:
-        return None
-    return (first_done - first_in_progress).total_seconds() / 86400.0
+        return None, None
+    return first_in_progress, first_done
 
 
 def _status_category(fields):
@@ -160,6 +168,21 @@ def _has_open_blocker(fields):
     return False
 
 
+def _start_date_has_arrived(fields, start_date_field, now):
+    if not start_date_field:
+        return False
+    start = _dt(fields.get(start_date_field))
+    return bool(start and start.date() <= now.date())
+
+
+def _is_container(fields):
+    issue_type = fields.get("issuetype") if isinstance(fields.get("issuetype"), dict) else {}
+    try:
+        return int(issue_type.get("hierarchyLevel")) >= 1
+    except (TypeError, ValueError):
+        return False
+
+
 def _health(metrics):
     total = max(1, int(metrics.get("total") or 0))
     open_count = int(metrics.get("status_counts", {}).get("to_do", 0)) + int(metrics.get("status_counts", {}).get("in_progress", 0))
@@ -176,7 +199,7 @@ def _health(metrics):
     return {"status": status, "overdue_share": round(overdue_share, 4), "blocked_share": round(blocked_share, 4)}
 
 
-def compute_project_metrics(project, issues, *, story_points_field=None, flagged_field=None, sprint_field=None, now=None, window_days=DEFAULT_WINDOW_DAYS, workload_threshold=DEFAULT_WORKLOAD_THRESHOLD):
+def compute_project_metrics(project, issues, *, story_points_field=None, flagged_field=None, sprint_field=None, start_date_field=None, now=None, window_days=DEFAULT_WINDOW_DAYS, workload_threshold=DEFAULT_WORKLOAD_THRESHOLD):
     now = now or _utcnow()
     status_counts = Counter()
     story_points = Counter()
@@ -186,9 +209,13 @@ def compute_project_metrics(project, issues, *, story_points_field=None, flagged
     workload = Counter()
     blocked = []
     closed_sprints = {}
+    epic_count = 0
 
     for issue in issues:
         fields = issue.get("fields") or {}
+        if _is_container(fields):
+            epic_count += 1
+            continue
         category = _status_category(fields)
         status_counts[category] += 1
         points = _number(fields.get(story_points_field)) if story_points_field else None
@@ -197,19 +224,33 @@ def compute_project_metrics(project, issues, *, story_points_field=None, flagged
         due = _dt(fields.get("duedate"))
         if due and category != "done" and due.date() < now.date():
             overdue.append((issue.get("key"), due))
-        resolved = _dt(fields.get("resolutiondate"))
-        if resolved and (now - resolved).days <= max(90, window_days):
+        first_in_progress, transitioned_done = _cycle_transition(issue)
+        resolved = _dt(fields.get("resolutiondate")) or transitioned_done
+        resolved_in_window = bool(
+            category == "done"
+            and resolved
+            and timedelta(0) <= now - resolved <= timedelta(days=window_days)
+        )
+        if resolved_in_window:
             resolved_dates.append(resolved)
-        if len(cycle_values) < MAX_CHANGELOG_SAMPLES:
-            cycle = _cycle_days(issue)
-            if cycle is not None:
-                cycle_values.append(cycle)
+        transitioned_done_in_window = bool(
+            category == "done"
+            and transitioned_done
+            and timedelta(0) <= now - transitioned_done <= timedelta(days=window_days)
+        )
+        if first_in_progress and transitioned_done_in_window and len(cycle_values) < MAX_CHANGELOG_SAMPLES:
+            cycle_values.append((transitioned_done - first_in_progress).total_seconds() / 86400.0)
         if category == "in_progress":
             assignee = fields.get("assignee") or {}
             name = str(assignee.get("displayName") or assignee.get("accountId") or "Unassigned")
             workload[name] += 1
         explicitly_flagged = bool(flagged_field and fields.get(flagged_field) not in (None, "", [], False))
-        if explicitly_flagged or _is_flagged(fields) or _has_open_blocker(fields):
+        blocked_by_open_issue = (
+            category != "done"
+            and _has_open_blocker(fields)
+            and (category == "in_progress" or _start_date_has_arrived(fields, start_date_field, now))
+        )
+        if explicitly_flagged or _is_flagged(fields) or blocked_by_open_issue:
             created = _dt(fields.get("created")) or now
             blocked.append((issue.get("key"), max(0, (now - created).days)))
         if sprint_field:
@@ -234,6 +275,7 @@ def compute_project_metrics(project, issues, *, story_points_field=None, flagged
     result = {
         "project_key": project.get("key"),
         "project_name": project.get("name") or project.get("key"),
+        "epic_count": epic_count,
         "total": total,
         "status_counts": {key: int(status_counts[key]) for key in ("to_do", "in_progress", "done")},
         "completion_percent": round((done / total) * 100, 1) if total else None,
@@ -269,7 +311,7 @@ def compute_project_metrics(project, issues, *, story_points_field=None, flagged
 
 def rollup_metrics(project_metrics):
     counts = Counter()
-    total = overdue = blocked = 0
+    total = overdue = blocked = epic_count = 0
     overloaded_names = set()
     cycle_weighted = []
     throughput_4 = throughput_12 = 0.0
@@ -277,6 +319,7 @@ def rollup_metrics(project_metrics):
         total += int(metrics.get("total") or 0)
         overdue += int(metrics.get("overdue_count") or 0)
         blocked += int(metrics.get("blocked_count") or 0)
+        epic_count += int(metrics.get("epic_count") or 0)
         counts.update(metrics.get("status_counts") or {})
         overloaded_names.update(row.get("assignee") for row in metrics.get("overloaded_assignees") or [] if row.get("assignee"))
         cycle = metrics.get("cycle_time") or {}
@@ -287,6 +330,7 @@ def rollup_metrics(project_metrics):
             cycle_weighted.extend([float(cycle["median_days"])] * max(1, int(cycle.get("sample_size") or 1)))
     result = {
         "project_count": len(project_metrics),
+        "epic_count": epic_count,
         "at_risk_projects": sum(1 for row in project_metrics if (row.get("health") or {}).get("status") == "at_risk"),
         "total": total,
         "status_counts": {key: int(counts[key]) for key in ("to_do", "in_progress", "done")},
@@ -419,6 +463,8 @@ def ai_prompt_text(snapshot):
 
 def _fresh(snapshot, *, now=None):
     now = now or _utcnow()
+    if (snapshot or {}).get("stale") or (snapshot or {}).get("refresh_failed"):
+        return False
     fetched = _dt((snapshot or {}).get("fetched_at"))
     return bool(fetched and now - fetched <= timedelta(hours=CACHE_TTL_HOURS))
 
@@ -437,9 +483,13 @@ def _list_projects(config):
 
 def _discover_fields(config):
     data, _ = _jira_request(config, "GET", "/rest/api/3/field", timeout=30)
-    discovered = {"story_points": None, "flagged": None, "sprint": None}
+    discovered = {"story_points": None, "flagged": None, "sprint": None, "start_date": None}
     for field in data if isinstance(data, list) else []:
-        custom = str((field.get("schema") or {}).get("custom") or "").lower()
+        schema = field.get("schema") or {}
+        custom = str(schema.get("custom") or "").lower()
+        schema_type = str(schema.get("type") or "").lower()
+        system = str(schema.get("system") or "").lower()
+        field_id = str(field.get("id") or "")
         name = str(field.get("name") or "").lower()
         if not discovered["story_points"] and ("story-points" in custom or "story point" in name):
             discovered["story_points"] = field.get("id")
@@ -447,6 +497,11 @@ def _discover_fields(config):
             discovered["flagged"] = field.get("id")
         if not discovered["sprint"] and ("gh-sprint" in custom or name == "sprint"):
             discovered["sprint"] = field.get("id")
+        is_date = schema_type == "date" or "datepicker" in custom
+        if not discovered["start_date"] and is_date and (
+            system == "startdate" or field_id.lower() == "startdate" or name.replace(" ", "") == "startdate"
+        ):
+            discovered["start_date"] = field.get("id")
     return discovered
 
 
@@ -455,7 +510,7 @@ def _search_project(config, project_key, fields, cap, window_days=DEFAULT_WINDOW
     while len(rows) < cap:
         payload = {
             "jql": f'project = "{project_key}" AND (resolution is EMPTY OR resolved >= -{int(window_days)}d) ORDER BY updated DESC',
-            "maxResults": min(100, cap - len(rows)), "fields": fields, "expand": ["changelog"],
+            "maxResults": min(100, cap - len(rows)), "fields": fields, "expand": "changelog",
         }
         if token:
             payload["nextPageToken"] = token
@@ -489,7 +544,8 @@ def refresh_portfolio(user_id, *, force=False, now=None):
         story_field = discovered_fields.get("story_points")
         flagged_field = discovered_fields.get("flagged")
         sprint_field = discovered_fields.get("sprint")
-        fields = ["summary", "status", "assignee", "duedate", "resolutiondate", "created", "issuelinks"]
+        start_date_field = discovered_fields.get("start_date")
+        fields = ["summary", "status", "assignee", "duedate", "resolutiondate", "created", "issuelinks", "issuetype"]
         fields.extend(value for value in discovered_fields.values() if value)
         remaining = MAX_ISSUES_PER_REFRESH
         metrics, no_access = [], []
@@ -500,12 +556,23 @@ def refresh_portfolio(user_id, *, force=False, now=None):
             try:
                 issues = _search_project(config, key, fields, remaining, window_days=window_days)
             except Exception as exc:
-                if "HTTP 401" in str(exc) or "HTTP 403" in str(exc):
+                if "HTTP 403" in str(exc):
+                    logger.warning("Jira portfolio access denied for user %s project %s: %s", user_id, key, exc)
                     no_access.append({"project_key": key, "project_name": project.get("name") or key, "status": "no_access"})
                     continue
                 raise
             remaining -= len(issues)
-            row = compute_project_metrics(project, issues, story_points_field=story_field, flagged_field=flagged_field, sprint_field=sprint_field, now=now, window_days=window_days, workload_threshold=threshold)
+            row = compute_project_metrics(
+                project,
+                issues,
+                story_points_field=story_field,
+                flagged_field=flagged_field,
+                sprint_field=sprint_field,
+                start_date_field=start_date_field,
+                now=now,
+                window_days=window_days,
+                workload_threshold=threshold,
+            )
             row["jira_url"] = f"{config['base_url']}/issues/?jql={quote('project = ' + key)}"
             row["jira_links"] = {
                 "all": row["jira_url"],
@@ -514,6 +581,8 @@ def refresh_portfolio(user_id, *, force=False, now=None):
                 "done": f"{config['base_url']}/issues/?jql={quote('project = ' + key + ' AND statusCategory = Done')}",
             }
             metrics.append(row)
+        if included and not metrics and no_access:
+            raise JiraPortfolioPermissionError([row.get("project_key") for row in no_access])
         snapshot = {
             "rules_version": RULES_VERSION,
             "fetched_at": _iso(now),
@@ -527,15 +596,42 @@ def refresh_portfolio(user_id, *, force=False, now=None):
         snapshot["evidence"] = canonical_evidence(snapshot)
         update_connector_settings(user_id, "jira_sync", {"jira_portfolio_snapshot": snapshot, "jira_data_last_refresh_failed": False})
         return snapshot
-    except Exception:
+    except Exception as exc:
+        refresh_error = classify_refresh_error(exc)
+        logger.exception("Jira portfolio refresh failed for user %s", user_id)
         if cached:
             stale = dict(cached)
             stale["stale"] = True
             stale["refresh_failed"] = True
+            stale["refresh_error"] = refresh_error
             stale["evidence"] = canonical_evidence(stale)
             update_connector_settings(user_id, "jira_sync", {"jira_portfolio_snapshot": stale, "jira_data_last_refresh_failed": True})
             return stale
         raise
+
+
+def classify_refresh_error(exc, *, project_keys=None):
+    raw = str(exc or "")
+    projects = [str(key) for key in (project_keys or getattr(exc, "project_keys", None) or []) if str(key).strip()]
+    if "HTTP 401" in raw:
+        return {
+            "category": "auth",
+            "message": "Your saved Jira connection no longer works. Reconnect Jira to continue.",
+            "reconnect_required": True,
+        }
+    if "HTTP 403" in raw:
+        scope = f" for projects {', '.join(projects)}" if projects else " for one or more selected projects"
+        return {
+            "category": "permission",
+            "message": f"Jira did not allow access{scope}. Check the Jira account's project permissions.",
+            "reconnect_required": False,
+            "projects": projects,
+        }
+    return {
+        "category": "request_format" if "HTTP 400" in raw or "Invalid request payload" in raw else "provider",
+        "message": "Jaspen couldn't read Jira data — we've logged the details.",
+        "reconnect_required": False,
+    }
 
 
 def portfolio_context_text(snapshot):

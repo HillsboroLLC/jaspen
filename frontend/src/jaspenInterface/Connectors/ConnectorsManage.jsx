@@ -403,6 +403,7 @@ export default function ConnectorsManage() {
   const [jiraProjects, setJiraProjects] = useState([]);
   const [jiraProjectsBusy, setJiraProjectsBusy] = useState(false);
   const [jiraPortfolioBusy, setJiraPortfolioBusy] = useState(false);
+  const [jiraPortfolioError, setJiraPortfolioError] = useState(null);
   const [setupModeByConnector, setSetupModeByConnector] = useState({});
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set(['enterprise']));
 
@@ -615,18 +616,28 @@ export default function ConnectorsManage() {
 
   const refreshJiraPortfolio = useCallback(async () => {
     setJiraPortfolioBusy(true);
-    setError('');
+    setJiraPortfolioError(null);
     try {
       const res = await authFetch(`${API_BASE}/api/v1/connectors/jira/context/summary?refresh=true`, {
         credentials: 'include',
         headers: authHeaders(false, 'GET'),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || 'Could not refresh Jira portfolio.');
-      setMessage('Jira portfolio evidence refreshed.');
+      if (!res.ok) {
+        setJiraPortfolioError({
+          category: data?.category || 'provider',
+          message: data?.error || data?.message || "Jaspen couldn't read Jira data — we've logged the details.",
+          reconnect_required: Boolean(data?.reconnect_required),
+          projects: Array.isArray(data?.projects) ? data.projects : [],
+        });
+        return;
+      }
+      const refreshError = data?.snapshot?.refresh_error || null;
+      setJiraPortfolioError(refreshError);
+      setMessage(refreshError ? 'Showing the last successful Jira portfolio snapshot.' : 'Jira portfolio evidence refreshed.');
       await loadConnectors();
     } catch (err) {
-      setError(err?.message || 'Could not refresh Jira portfolio.');
+      setJiraPortfolioError({ category: 'provider', message: err?.message || "Jaspen couldn't read Jira data — we've logged the details." });
     } finally {
       setJiraPortfolioBusy(false);
     }
@@ -1171,13 +1182,13 @@ export default function ConnectorsManage() {
     if (connectorId === 'jira_sync') {
       const snapshot = selectedConnector?.jira?.portfolio_snapshot || {};
       const projectRows = Array.isArray(snapshot?.projects) ? snapshot.projects : [];
+      const refreshError = jiraPortfolioError || snapshot?.refresh_error || null;
+      const noAccessProjects = Array.isArray(snapshot?.no_access_projects) ? snapshot.no_access_projects : [];
       return (
         <>
           {renderRequiredField('jira_base_url', 'Jira Base URL', { placeholder: 'https://yourcompany.atlassian.net' })}
           {renderRequiredField('jira_email', 'Email', { placeholder: 'you@yourcompany.com' })}
-          <label>Issue Type<input value={draft.jira_issue_type} onChange={(event) => updateDraft('jira_issue_type', event.target.value)} placeholder="Task" /></label>
           {renderRequiredField('jira_api_token', 'API Token', { type: 'password', placeholder: 'Enter token to set or rotate' })}
-          <label>Field Mapping JSON<textarea value={draft.jira_field_mapping} onChange={(event) => updateDraft('jira_field_mapping', event.target.value)} /></label>
           <div className="connector-data-source-settings connector-field-full">
             <div className="connector-account-summary">
               <div><strong>Using Jira: {draft.jira_base_url || 'site not set'} · {draft.jira_email || 'email not set'}</strong><br /><span>{snapshot?.fetched_at ? `Last refreshed ${new Date(snapshot.fetched_at).toLocaleString()}` : 'Not refreshed yet'}</span></div>
@@ -1211,6 +1222,22 @@ export default function ConnectorsManage() {
               <label>Workload threshold<input type="number" min="1" max="100" value={draft.jira_data_workload_threshold} onChange={(event) => updateDraft('jira_data_workload_threshold', event.target.value)} /></label>
               <button type="button" className="int-btn int-btn-ghost" onClick={refreshJiraPortfolio} disabled={jiraPortfolioBusy || !selectedConnector?.connected}>{jiraPortfolioBusy ? 'Refreshing…' : 'Refresh portfolio evidence'}</button>
             </div>
+            {refreshError && (
+              <div className="connector-inline-notice connector-inline-notice-error" role="alert">
+                <strong>{snapshot?.stale ? 'Showing the last successful snapshot. ' : ''}{refreshError.message}</strong>
+                {refreshError.reconnect_required && (
+                  <button type="button" className="int-btn int-btn-ghost" onClick={() => {
+                    setSetupModeByConnector((prev) => ({ ...prev, jira_sync: 'manual' }));
+                    setTimeout(() => document.querySelector('input[type="password"]')?.focus(), 0);
+                  }}>Reconnect Jira</button>
+                )}
+              </div>
+            )}
+            {noAccessProjects.length > 0 && (
+              <div className="connector-inline-notice" role="status">
+                Jira could not read: {noAccessProjects.map((row) => `${row.project_key} · ${row.project_name}`).join(', ')}. Check this account's project permissions.
+              </div>
+            )}
             {projectRows.length > 0 && (
               <div className="connector-portfolio-table-wrap">
                 <h3>Portfolio evidence</h3>
@@ -1632,6 +1659,7 @@ export default function ConnectorsManage() {
                         </span>
                       </div>
                     </label>
+                    {selectedConnector.id !== 'jira_sync' && <>
                     <label>
                       Sync Mode
                       <select value={selectedDraft.sync_mode} onChange={(event) => updateDraft('sync_mode', event.target.value)}>
@@ -1652,7 +1680,7 @@ export default function ConnectorsManage() {
                       External Workspace
                       <input value={selectedDraft.external_workspace} onChange={(event) => updateDraft('external_workspace', event.target.value)} />
                     </label>
-                    {(selectedConnector.id === 'jira_sync' || selectedConnector.id === 'smartsheet_sync') && (
+                    {(selectedConnector.id === 'smartsheet_sync') && (
                       <label>
                         Sync Thread
                         <select value={selectedThreadId} onChange={(event) => setSelectedThreadId(event.target.value)}>
@@ -1663,7 +1691,9 @@ export default function ConnectorsManage() {
                         </select>
                       </label>
                     )}
+                    </>}
                   </div>
+                  {selectedConnector.id !== 'jira_sync' && (
                   <div className="connector-auto-sync-row">
                     <label className="connector-auto-sync">
                       <input
@@ -1677,6 +1707,7 @@ export default function ConnectorsManage() {
                       Auto-sync runs scheduled refreshes for this connector when supported.
                     </p>
                   </div>
+                  )}
 
                   {/* Snowflake renders its own grid to avoid auto-fit column breaks */}
                   {selectedConnector.id === 'snowflake_insights'
