@@ -20,6 +20,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from . import db
 from .models_decision_record import (
     DecisionRecord,
+    OptionDecision,
     DECISION_RECORD_SCHEMA_VERSION,
     DECISION_RECORD_STATUSES,
     LIBRARY_CONSENT_LEVELS,
@@ -523,14 +524,145 @@ def create_or_refresh_record(user, thread_id):
 
 def _human_decision_block(record):
     """The record's human-decision state, derived from its own columns."""
-    decided = bool(record.final_decision)
+    option_rows = current_option_decisions(record)
+    decided = bool(record.final_decision or option_rows)
     return {
         'recorded': decided,
-        'decision': record.final_decision if decided else None,
-        'decided_at': record.decided_at.isoformat() if decided and record.decided_at else None,
+        'decision': record.final_decision if record.final_decision else None,
+        'option_decisions': [row.to_dict() for row in option_rows],
+        'decided_at': record.decided_at.isoformat() if record.final_decision and record.decided_at else None,
         'decided_by_user_id': (record.record or {}).get('human_decision', {}).get('decided_by_user_id')
         if isinstance(record.record, dict) else None,
     }
+
+
+def _option_decision_successor(decision):
+    if decision is None:
+        return None
+    return OptionDecision.query.filter_by(supersedes_id=str(decision.id)).first()
+
+
+def current_option_decisions(record):
+    """Return the one current human decision for each option on this record."""
+    rows = (
+        OptionDecision.query
+        .filter_by(decision_record_id=str(record.id))
+        .order_by(OptionDecision.decided_at.desc(), OptionDecision.created_at.desc())
+        .all()
+    )
+    superseded_ids = {str(row.supersedes_id) for row in rows if row.supersedes_id}
+    current = {}
+    for row in rows:
+        if str(row.id) in superseded_ids:
+            continue
+        current.setdefault(str(row.option_key), row)
+    return list(current.values())
+
+
+def current_option_decision(record, option_key):
+    wanted = str(option_key or '').strip()
+    if not wanted:
+        return None
+    return next(
+        (row for row in current_option_decisions(record) if str(row.option_key) == wanted),
+        None,
+    )
+
+
+def option_decision_history(record, option_key):
+    wanted = str(option_key or '').strip()
+    if not wanted:
+        return []
+    return (
+        OptionDecision.query
+        .filter_by(decision_record_id=str(record.id), option_key=wanted)
+        .order_by(OptionDecision.decided_at.desc(), OptionDecision.created_at.desc())
+        .all()
+    )
+
+
+def _sync_option_decision_summary(record):
+    """Persist the session-level portfolio view of current option decisions."""
+    rows = current_option_decisions(record)
+    summary = []
+    for row in sorted(rows, key=lambda item: (str(item.option_name or ''), str(item.option_key))):
+        item = row.to_dict()
+        item['current_state'] = CURRENT
+        item['replaces_earlier_decision'] = bool(row.supersedes_id)
+        summary.append(item)
+    record_json = {**(record.record if isinstance(record.record, dict) else {})}
+    record_json['option_decisions'] = summary
+    record_json['human_decision'] = _human_decision_block(record)
+    record.record = record_json
+    flag_modified(record, 'record')
+
+
+def record_option_decision(
+    record,
+    option_key,
+    final_decision_text,
+    *,
+    decided_by_user_id=None,
+    decided_by_name=None,
+    source='manual',
+    option_name=None,
+    rationale=None,
+    kit_verdict=None,
+    override_info=None,
+):
+    """Append an option-scoped decision and supersede only that option's prior one."""
+    wanted = str(option_key or '').strip()
+    final_text = _clip(final_decision_text, 4000)
+    if not wanted:
+        raise ValueError('option_key is required for an option decision')
+    if not final_text:
+        raise ValueError('final_decision is required')
+    source = str(source or 'manual').strip().lower()
+    if source not in {'manual', 'build_execution_plan'}:
+        raise ValueError('decision source must be manual or build_execution_plan')
+
+    prior = current_option_decision(record, wanted)
+    normalized_verdict = kit_verdict if isinstance(kit_verdict, dict) else None
+    normalized_override = override_info if isinstance(override_info, dict) else None
+    normalized_rationale = _clip(rationale, 4000) or None
+    normalized_name = _clip(option_name, 255) or None
+
+    # Repeating the same human act is idempotent. This is what prevents an
+    # existing plan rebuild from manufacturing another decision or prompting.
+    if prior is not None and (
+        prior.final_decision == final_text
+        and prior.source == source
+        and (prior.kit_verdict or None) == normalized_verdict
+        and (prior.rationale or None) == normalized_rationale
+    ):
+        return prior, False
+
+    now = datetime.utcnow()
+    row = OptionDecision(
+        decision_record_id=str(record.id),
+        option_key=wanted,
+        option_name=normalized_name or (prior.option_name if prior else None),
+        final_decision=final_text,
+        rationale=normalized_rationale,
+        source=source,
+        kit_verdict=normalized_verdict,
+        override_info=normalized_override,
+        decided_by_user_id=str(decided_by_user_id) if decided_by_user_id else None,
+        decided_by_name=_clip(decided_by_name, 255) or _display_name_for(decided_by_user_id),
+        supersedes_id=str(prior.id) if prior else None,
+        decided_at=now,
+    )
+    if prior is not None:
+        prior.superseded_at = now
+        prior.updated_at = now
+    db.session.add(row)
+    db.session.flush()
+
+    record.status = 'decided'
+    record.updated_at = now
+    _sync_option_decision_summary(record)
+    db.session.commit()
+    return row, True
 
 
 def record_final_decision(record, final_decision_text, decided_by_user_id=None):
@@ -561,28 +693,29 @@ def record_final_decision(record, final_decision_text, decided_by_user_id=None):
 def find_execution_plan_decision(user, thread_id, option_key, *, decision_kit=None):
     """Return the option-scoped recorded decision that authorizes a plan build."""
     _row, organization_id, attribution_user_id = canonical_context(user, thread_id)
-    query = DecisionRecord.query.filter_by(thread_id=str(thread_id))
-    query = (
-        query.filter_by(organization_id=organization_id)
-        if organization_id is not None
-        else query.filter_by(user_id=str(attribution_user_id or user.id))
-    )
     wanted_key = str(option_key or '').strip()
-    for candidate in query.order_by(DecisionRecord.updated_at.desc()).all():
-        if not candidate.final_decision:
-            continue
-        record_json = candidate.record if isinstance(candidate.record, dict) else {}
-        verdict = record_json.get('kit_verdict') if isinstance(record_json.get('kit_verdict'), dict) else {}
-        recorded_key = str(
-            verdict.get('option_key')
-            or record_json.get('execution_option_key')
-            or ''
-        ).strip()
-        if recorded_key and recorded_key != wanted_key:
-            continue
+    record = _find_existing_record(organization_id, attribution_user_id or user.id, thread_id)
+    if record is None:
+        return None
+    option_decision = current_option_decision(record, wanted_key)
+    if option_decision is not None:
+        verdict = option_decision.kit_verdict if isinstance(option_decision.kit_verdict, dict) else {}
         if decision_kit and verdict.get('verdict_key') not in {'advance', 'advance_with_conditions'}:
-            continue
-        return candidate
+            return None
+        return option_decision
+
+    # Compatibility for an unmigrated legacy row. Production migration maps
+    # identifiable rows into OptionDecision; this keeps db.create_all fixtures
+    # and restored snapshots safe without treating an unscoped decision as an
+    # authorization for every option.
+    if record.final_decision:
+        record_json = record.record if isinstance(record.record, dict) else {}
+        verdict = record_json.get('kit_verdict') if isinstance(record_json.get('kit_verdict'), dict) else {}
+        recorded_key = str(verdict.get('option_key') or record_json.get('execution_option_key') or '').strip()
+        if recorded_key == wanted_key:
+            if decision_kit and verdict.get('verdict_key') not in {'advance', 'advance_with_conditions'}:
+                return None
+            return record
     return None
 
 
@@ -590,26 +723,21 @@ def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=N
     """Record the user's explicit Build-plan choice through the shared writer.
 
     Clicking the acknowledged Build action is a human decision signal.  This
-    helper deliberately composes ``create_or_refresh_record`` and
-    ``record_final_decision`` so execution planning cannot grow a second,
+    helper deliberately composes ``create_or_refresh_record`` and the shared
+    option-decision writer so execution planning cannot grow a second,
     incompatible decision-record implementation.
     """
     card = scorecard if isinstance(scorecard, dict) else {}
     option_name = str(
         card.get('project_name') or card.get('name') or card.get('label') or 'this option'
     ).strip()
-    option_key = str(card.get('option_key') or '').strip()
     scorecard_id = str(card.get('id') or card.get('analysis_id') or '').strip()
+    option_key = execution_option_key(card)
     recommendation = card.get('recommendation') if isinstance(card.get('recommendation'), dict) else {}
 
     record, _created = create_or_refresh_record(user, thread_id)
-    record_final_decision(
-        record,
-        f'Moving forward with {option_name} — execution plan built.',
-        decided_by_user_id=user.id,
-    )
-
-    record_json = {**(record.record if isinstance(record.record, dict) else {})}
+    kit_verdict = None
+    override_info = None
     if decision_kit:
         recommended_key = str(recommendation.get('verdict_key') or '').strip()
         verdict_key = recommended_key if recommended_key in {'advance', 'advance_with_conditions'} else 'advance'
@@ -628,15 +756,33 @@ def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=N
                 if recommended_key == 'decline' else None
             ),
         }
-        record_json['kit_verdict'] = kit_verdict
-        record.decision_type = record_json.get('decision_kit') or record.decision_type
-    record_json['decision_source'] = 'build_execution_plan'
-    record_json['execution_option_key'] = option_key or None
-    record_json['execution_scorecard_id'] = scorecard_id or None
-    record.record = record_json
-    flag_modified(record, 'record')
-    db.session.commit()
-    return record
+        override_info = {
+            'override_of': kit_verdict.get('override_of'),
+            'override_reason': kit_verdict.get('override_reason'),
+        } if kit_verdict.get('override_of') else None
+        record.decision_type = (record.record or {}).get('decision_kit') or record.decision_type
+    option_decision, _created_decision = record_option_decision(
+        record,
+        option_key,
+        f'Moving forward with {option_name} — execution plan built.',
+        decided_by_user_id=user.id,
+        source='build_execution_plan',
+        option_name=option_name,
+        rationale=(kit_verdict or {}).get('override_reason'),
+        kit_verdict=kit_verdict,
+        override_info=override_info,
+    )
+    return option_decision
+
+
+def execution_option_key(scorecard):
+    """Canonical option identity, with a stable legacy scorecard fallback."""
+    card = scorecard if isinstance(scorecard, dict) else {}
+    key = str(card.get('option_key') or '').strip()
+    if key:
+        return key
+    scorecard_id = str(card.get('id') or card.get('analysis_id') or '').strip()
+    return f'scorecard:{scorecard_id}' if scorecard_id else ''
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -744,11 +890,20 @@ def append_outcome(record, summary, extra=None, actor=None):
     record.outcomes = outcomes
     flag_modified(record, 'outcomes')
 
-    # Never regress a superseded/archived record, and never overwrite a status
-    # that already says something stronger about lifecycle.
-    if record.status in ('in_analysis', 'recorded', 'decided'):
-        record.status = 'outcome_recorded'
-    record.outcome_recorded_at = datetime.utcnow()
+    # Option outcomes belong to the exact decision version. The parent record
+    # still advances its lifecycle so session-level memory can find completed
+    # learning without detaching the observation from its option.
+    if isinstance(record, DecisionRecord):
+        if record.status in ('in_analysis', 'recorded', 'decided'):
+            record.status = 'outcome_recorded'
+        record.outcome_recorded_at = datetime.utcnow()
+    else:
+        parent = DecisionRecord.query.get(record.decision_record_id)
+        if parent is not None:
+            if parent.status in ('in_analysis', 'recorded', 'decided'):
+                parent.status = 'outcome_recorded'
+            parent.outcome_recorded_at = datetime.utcnow()
+            parent.updated_at = datetime.utcnow()
     record.updated_at = datetime.utcnow()
     db.session.commit()
     return record
@@ -969,7 +1124,7 @@ def current_state(record):
         return UNKNOWN
     if successor_of(record) is not None:
         return SUPERSEDED
-    if record.final_decision:
+    if record.final_decision or current_option_decisions(record):
         return CURRENT
     return UNKNOWN
 
@@ -1082,7 +1237,9 @@ def supersession_chain(record, actor, *, max_depth=MAX_CHAIN_DEPTH):
             'title': item.title,
             'status': item.status,
             'current_state': current_state(item),
-            'human_decision_recorded': bool(item.final_decision),
+            'human_decision_recorded': bool(
+                item.final_decision or current_option_decisions(item)
+            ),
             'created_at': item.created_at.isoformat() if item.created_at else None,
             'superseded_at': item.superseded_at.isoformat() if item.superseded_at else None,
         }

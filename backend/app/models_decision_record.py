@@ -30,7 +30,7 @@ from . import db
 
 # Schema version for the JSON payload in `record`. Bump when the canonical
 # field set changes shape; readers must tolerate older versions.
-DECISION_RECORD_SCHEMA_VERSION = 2
+DECISION_RECORD_SCHEMA_VERSION = 3
 
 # Lifecycle vocabulary (promoted `status` column):
 #   in_analysis      — record created; decision still being worked
@@ -176,3 +176,70 @@ class DecisionRecord(db.Model):
         if include_record:
             payload['record'] = self.record if isinstance(self.record, dict) else {}
         return payload
+
+
+class OptionDecision(db.Model):
+    """One append-only human decision for one canonical option.
+
+    The parent DecisionRecord remains the session-level evidence artifact.
+    OptionDecision is the human-owned portfolio layer beneath it: one current
+    decision per option, with earlier choices retained through supersession.
+    """
+
+    __tablename__ = 'decision_option_decisions'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    decision_record_id = db.Column(
+        db.String(36),
+        db.ForeignKey('decision_records.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    option_key = db.Column(db.String(160), nullable=False, index=True)
+    option_name = db.Column(db.String(255), nullable=True)
+    final_decision = db.Column(db.Text, nullable=False)
+    rationale = db.Column(db.Text, nullable=True)
+    source = db.Column(db.String(32), nullable=False, default='manual', index=True)
+    kit_verdict = db.Column(db.JSON, nullable=True)
+    override_info = db.Column(db.JSON, nullable=True)
+    decided_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    decided_by_name = db.Column(db.String(255), nullable=True)
+    supersedes_id = db.Column(
+        db.String(36),
+        db.ForeignKey('decision_option_decisions.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    superseded_at = db.Column(db.DateTime, nullable=True)
+    outcomes = db.Column(db.JSON, nullable=False, default=list)
+    lessons_learned = db.Column(db.JSON, nullable=False, default=list)
+    decided_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'decision_record_id': self.decision_record_id,
+            'option_key': self.option_key,
+            'option_name': self.option_name,
+            'final_decision': self.final_decision,
+            'rationale': self.rationale,
+            'source': self.source,
+            'kit_verdict': self.kit_verdict if isinstance(self.kit_verdict, dict) else None,
+            'override_info': self.override_info if isinstance(self.override_info, dict) else None,
+            'decided_by_user_id': self.decided_by_user_id,
+            'decided_by_name': self.decided_by_name,
+            'supersedes_id': self.supersedes_id,
+            'superseded_at': self.superseded_at.isoformat() if self.superseded_at else None,
+            'outcomes': self.outcomes if isinstance(self.outcomes, list) else [],
+            'lessons_learned': self.lessons_learned if isinstance(self.lessons_learned, list) else [],
+            'decided_at': self.decided_at.isoformat() if self.decided_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }

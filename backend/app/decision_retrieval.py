@@ -32,17 +32,18 @@
 
 from datetime import datetime
 
-from sqlalchemy import or_
+from sqlalchemy import exists, or_
 
 from .decision_records import (
     CURRENT,
     SUPERSEDED,
     UNKNOWN,
     can_read_record,
+    current_option_decisions,
     current_state,
     latest_outcome,
 )
-from .models_decision_record import DecisionRecord
+from .models_decision_record import DecisionRecord, OptionDecision
 from .orgs import active_membership_for_user
 
 
@@ -117,9 +118,15 @@ def authorized_candidates(user, *, organization_id=None, status=None,
     if decision_type:
         query = query.filter(DecisionRecord.decision_type == str(decision_type))
     if human_decision is True:
-        query = query.filter(DecisionRecord.final_decision.isnot(None))
+        query = query.filter(or_(
+            DecisionRecord.final_decision.isnot(None),
+            exists().where(OptionDecision.decision_record_id == DecisionRecord.id),
+        ))
     elif human_decision is False:
-        query = query.filter(DecisionRecord.final_decision.is_(None))
+        query = query.filter(
+            DecisionRecord.final_decision.is_(None),
+            ~exists().where(OptionDecision.decision_record_id == DecisionRecord.id),
+        )
     if isinstance(since, datetime):
         query = query.filter(DecisionRecord.updated_at >= since)
     if isinstance(until, datetime):
@@ -203,6 +210,7 @@ def score_record(record, tokens):
         (str(record.title or ''), 3.0),
         (str(record.decision_statement or ''), 2.5),
         (str(record.final_decision or ''), 2.5),
+        (str(payload.get('option_decisions') or ''), 2.5),
         (str(payload.get('recommendation') or ''), 2.0),
         (' '.join(str(a) for a in alternatives), 1.5),
         (' '.join(str(t) for t in (record.tags or [])), 1.5),
@@ -257,7 +265,19 @@ def summarize(record):
     payload = record.record if isinstance(record.record, dict) else {}
     objectives = payload.get('objectives') if isinstance(payload.get('objectives'), dict) else {}
     confidence = payload.get('confidence') if isinstance(payload.get('confidence'), dict) else {}
-    decided = bool(record.final_decision)
+    option_rows = current_option_decisions(record)
+    option_decisions = [
+        {
+            'option_key': row.option_key,
+            'option_name': row.option_name,
+            'decision': _clip(row.final_decision),
+            'rationale': _clip(row.rationale),
+            'source': row.source,
+            'decided_at': row.decided_at.isoformat() if row.decided_at else None,
+        }
+        for row in option_rows
+    ]
+    decided = bool(record.final_decision or option_decisions)
     state = current_state(record)
     outcomes = record.outcomes if isinstance(record.outcomes, list) else []
     lessons = record.lessons_learned if isinstance(record.lessons_learned, list) else []
@@ -275,8 +295,9 @@ def summarize(record):
         # recommendation and the organization's decision are different facts.
         'human_decision': {
             'recorded': decided,
-            'summary': _clip(record.final_decision) if decided else None,
+            'summary': _clip(record.final_decision) if record.final_decision else None,
             'decided_at': record.decided_at.isoformat() if record.decided_at else None,
+            'option_decisions': option_decisions,
         },
         'status': record.status,
         # PHASE 5: populated honestly from derived state. `is_current` is

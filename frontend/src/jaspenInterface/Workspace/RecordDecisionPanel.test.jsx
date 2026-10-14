@@ -93,6 +93,36 @@ describe('RecordDecisionPanel', () => {
     expect(screen.queryByRole('button', { name: /record/i })).not.toBeInTheDocument();
   });
 
+  it('loads and displays only the scorecard option decision and its history marker', async () => {
+    const urls = [];
+    global.fetch = jest.fn(async (url) => {
+      urls.push(url);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          records: [{
+            ...PENDING_RECORD,
+            current_state: 'current',
+            final_decision: 'Bid with conditions — Adams County.',
+            decision_rationale: 'Proceed only if surety clears.',
+            option_decision: { option_key: 'option-adams', replaces_earlier_decision: true },
+          }],
+        }),
+      };
+    });
+
+    render(<RecordDecisionPanel
+      threadId="t-1"
+      scorecard={{ option_key: 'option-adams' }}
+    />);
+
+    expect(await screen.findByText('Bid with conditions — Adams County.')).toBeInTheDocument();
+    expect(screen.getByText('Proceed only if surety clears.')).toBeInTheDocument();
+    expect(screen.getByText('Replaces earlier decision')).toBeInTheDocument();
+    expect(urls[0]).toContain('option_key=option-adams');
+  });
+
   it('labels a superseded decision as superseded', async () => {
     global.fetch = mockFetch([
       ['?thread_id=', () => ({

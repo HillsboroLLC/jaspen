@@ -7304,19 +7304,23 @@ def generate_ai_wbs(thread_id):
         from ..decision_lineage import build_lineage_sources
         decision_kit_key = session.get('decision_kit') if isinstance(session, dict) else None
         decision_kit = get_decision_kit(decision_kit_key, session.get('decision_kit_version')) if decision_kit_key else None
-        from ..decision_records import find_execution_plan_decision
-        target_option_key = str(current_scorecard.get('option_key') or '')
+        from ..decision_records import execution_option_key, find_execution_plan_decision
+        target_option_key = execution_option_key(current_scorecard)
         recorded_row = find_execution_plan_decision(
             user, thread_id, target_option_key, decision_kit=decision_kit,
         )
         recorded_decision = None
         decision_recorded_now = False
         if recorded_row is not None:
-            record_json = recorded_row.record if isinstance(recorded_row.record, dict) else {}
+            record_json = recorded_row.record if isinstance(getattr(recorded_row, 'record', None), dict) else {}
             recorded_decision = {
                 'id': recorded_row.id,
                 'final_decision': recorded_row.final_decision,
-                'kit_verdict': record_json.get('kit_verdict') or {},
+                'kit_verdict': (
+                    recorded_row.kit_verdict
+                    if isinstance(getattr(recorded_row, 'kit_verdict', None), dict)
+                    else record_json.get('kit_verdict') or {}
+                ),
             }
 
         record_request = payload.get('record_decision') if isinstance(payload.get('record_decision'), dict) else {}
@@ -7344,11 +7348,15 @@ def generate_ai_wbs(thread_id):
             decision_record = record_execution_plan_decision(
                 user, thread_id, current_scorecard, decision_kit=decision_kit,
             )
-            record_json = decision_record.record if isinstance(decision_record.record, dict) else {}
+            record_json = decision_record.record if isinstance(getattr(decision_record, 'record', None), dict) else {}
             recorded_decision = {
                 'id': decision_record.id,
                 'final_decision': decision_record.final_decision,
-                'kit_verdict': record_json.get('kit_verdict') or {},
+                'kit_verdict': (
+                    decision_record.kit_verdict
+                    if isinstance(getattr(decision_record, 'kit_verdict', None), dict)
+                    else record_json.get('kit_verdict') or {}
+                ),
             }
             decision_recorded_now = True
         lineage_sources = build_lineage_sources(current_scorecard, decision_kit, recorded_decision)

@@ -7,6 +7,7 @@ one of them does it against a realistic PRE-Phase-1 schema so a migration that
 cannot apply to production data fails here rather than in production.
 """
 import contextlib
+import json
 import os
 import sqlite3
 
@@ -718,3 +719,74 @@ def test_org_memory_foreign_key_downgrade_removes_only_its_constraints(pre_phase
     ) is None
     assert 'last_edited_by_user_id' in _columns(pre_phase_5_db, 'user_sessions')
     assert 'supersedes_id' in _columns(pre_phase_5_db, 'decision_records')
+
+
+def test_option_decision_migration_preserves_legacy_text_and_scopes_identified_records(tmp_path):
+    db_path = str(tmp_path / 'option_decisions.sqlite')
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript("""
+            CREATE TABLE users (id VARCHAR(36) PRIMARY KEY);
+            CREATE TABLE decision_records (
+                id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(36),
+                final_decision TEXT,
+                record JSON NOT NULL,
+                outcomes JSON NOT NULL DEFAULT '[]',
+                lessons_learned JSON NOT NULL DEFAULT '[]',
+                decided_at DATETIME,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            );
+            INSERT INTO users (id) VALUES ('user-1');
+        """)
+        scoped = {
+            'execution_option_key': 'option-denver',
+            'decision_source': 'build_execution_plan',
+            'kit_verdict': {'option_key': 'option-denver', 'verdict_key': 'advance'},
+            'scorecards': [{'option_key': 'option-denver', 'name': 'Denver Water'}],
+        }
+        conn.execute(
+            'INSERT INTO decision_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            ('record-scoped', 'user-1', 'Moving forward with Denver.', json.dumps(scoped),
+             '[{"summary":"Awarded."}]', '[{"lesson":"Start surety early."}]',
+             '2026-10-01 12:00:00', '2026-10-01 11:00:00', '2026-10-01 12:00:00'),
+        )
+        conn.execute(
+            'INSERT INTO decision_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            ('record-session', 'user-1', 'Continue the portfolio.', '{}',
+             '[]', '[]',
+             '2026-10-02 12:00:00', '2026-10-02 11:00:00', '2026-10-02 12:00:00'),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    script = ScriptDirectory(MIGRATIONS_DIR)
+    revision = script.get_revision('d8f1a2b3c4d5').module
+    with _migration_ops(db_path):
+        revision.upgrade()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        children = conn.execute(
+            'SELECT decision_record_id, option_key, final_decision, source, outcomes, lessons_learned '
+            'FROM decision_option_decisions'
+        ).fetchall()
+        parents = dict(conn.execute(
+            'SELECT id, final_decision FROM decision_records'
+        ).fetchall())
+    finally:
+        conn.close()
+
+    assert len(children) == 1
+    assert children[0][:4] == (
+        'record-scoped', 'option-denver', 'Moving forward with Denver.',
+        'build_execution_plan',
+    )
+    assert json.loads(children[0][4]) == [{'summary': 'Awarded.'}]
+    assert json.loads(children[0][5]) == [{'lesson': 'Start surety early.'}]
+    assert parents == {
+        'record-scoped': 'Moving forward with Denver.',
+        'record-session': 'Continue the portfolio.',
+    }

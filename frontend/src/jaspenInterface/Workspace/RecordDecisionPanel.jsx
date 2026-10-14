@@ -75,6 +75,7 @@ async function api(path, options = {}) {
 }
 
 export default function RecordDecisionPanel({ threadId, alternatives = [], selectedAlternative = null, decisionKit = null, scorecard = null }) {
+  const optionKey = String(scorecard?.option_key || '').trim();
   const [record, setRecord] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
@@ -103,14 +104,15 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
     setLoading(true);
     setError(null);
     try {
-      const data = await api(`?thread_id=${encodeURIComponent(threadId)}&limit=1`);
+      const optionQuery = optionKey ? `&option_key=${encodeURIComponent(optionKey)}` : '';
+      const data = await api(`?thread_id=${encodeURIComponent(threadId)}&limit=1${optionQuery}`);
       setRecord((data?.records || [])[0] || null);
     } catch (err) {
       setError(err?.message || 'Could not load the decision record.');
     } finally {
       setLoading(false);
     }
-  }, [threadId]);
+  }, [threadId, optionKey]);
 
   React.useEffect(() => { void load(); }, [load]);
 
@@ -164,6 +166,7 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
         method: 'PATCH',
         body: JSON.stringify({
           final_decision: decision,
+          ...(optionKey ? { option_key: optionKey } : {}),
           ...(decisionKit && kitVerdict && scorecard ? { kit_verdict: {
             verdict_key: kitVerdict,
             scorecard_id: scorecard.id || scorecard.analysis_id,
@@ -207,6 +210,7 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
         method: 'POST',
         body: JSON.stringify({
           summary: outcomeText.trim(),
+          ...(optionKey ? { option_key: optionKey } : {}),
           ...(outcomeStatus ? { status: outcomeStatus } : {}),
         }),
       });
@@ -232,7 +236,10 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
     try {
       const updated = await api(`/${encodeURIComponent(record.id)}/lessons`, {
         method: 'POST',
-        body: JSON.stringify({ lesson: lessonText.trim() }),
+        body: JSON.stringify({
+          lesson: lessonText.trim(),
+          ...(optionKey ? { option_key: optionKey } : {}),
+        }),
       });
       setRecord(updated?.record || null);
       setLessonOpen(false);
@@ -282,6 +289,14 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
             Recorded {record.decided_at ? new Date(record.decided_at).toLocaleDateString() : ''}
             {state === 'superseded' && ' · replaced by a later decision'}
           </div>
+          {record.option_decision?.replaces_earlier_decision && (
+            <div style={{ fontSize: 11, color: MUTED }}>Replaces earlier decision</div>
+          )}
+          {record.decision_rationale && (
+            <div style={{ fontSize: 12, color: SLATE, lineHeight: 1.5 }}>
+              {record.decision_rationale}
+            </div>
+          )}
         </div>
       ) : (
         <div style={{ fontSize: 12.5, color: SLATE, lineHeight: 1.5 }}>

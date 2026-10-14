@@ -11,7 +11,7 @@ from app.decision_facts import normalize_option_facts
 from app.decision_processing import apply_decision_kit, normalize_gates
 from app.decision_recommendation import recommend
 from app.decision_selection import select_options
-from app.models_decision_record import DecisionRecord
+from app.models_decision_record import DecisionRecord, OptionDecision
 from app.scorecards import upsert_scorecard
 
 
@@ -292,7 +292,7 @@ def test_build_plan_decision_uses_shared_record_and_exposes_decline_override(db,
 
     assert first.id == second.id
     assert DecisionRecord.query.filter_by(thread_id=thread_id).count() == 1
-    verdict = second.record["kit_verdict"]
+    verdict = second.kit_verdict
     assert verdict["verdict_key"] == "advance"
     assert verdict["override_of"] == "decline"
     assert verdict["source"] == "build_execution_plan"
@@ -348,5 +348,9 @@ def test_live_rfp_record_keeps_option_and_accepts_human_verdict(client, db, test
     )
     assert response.status_code == 200, response.get_json()
     db.session.refresh(record)
-    assert record.final_decision == "Bid with conditions for Aurora."
-    assert record.record["kit_verdict"]["option_key"] == "opt-live"
+    assert record.final_decision is None
+    option_decision = OptionDecision.query.filter_by(
+        decision_record_id=record.id, option_key='opt-live'
+    ).one()
+    assert option_decision.final_decision == "Bid with conditions for Aurora."
+    assert option_decision.kit_verdict["option_key"] == "opt-live"

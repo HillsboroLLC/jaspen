@@ -20,6 +20,10 @@ from ..decision_records import (
     clear_supersession,
     create_or_refresh_record,
     current_state,
+    current_option_decision,
+    current_option_decisions,
+    option_decision_history,
+    record_option_decision,
     supersede_record,
     supersession_chain,
     record_final_decision,
@@ -42,7 +46,7 @@ from ..session_access import can_write_session, canonical_row
 decision_records_bp = Blueprint('decision_records', __name__)
 
 
-def _decision_view(record, user):
+def _decision_view(record, user, option_key=None):
     """A record plus the two things the UI cannot compute for itself:
     its derived current state, and whether THIS caller may change it."""
     row = canonical_row(user, record.thread_id, include_archived=True)
@@ -60,6 +64,47 @@ def _decision_view(record, user):
     payload['lessons_learned'] = (
         record.lessons_learned if isinstance(record.lessons_learned, list) else []
     )
+    current_options = current_option_decisions(record)
+    payload['option_decisions'] = [
+        {
+            **row.to_dict(),
+            'current_state': 'current',
+            'replaces_earlier_decision': bool(row.supersedes_id),
+        }
+        for row in current_options
+    ]
+    wanted_key = str(option_key or '').strip()
+    if wanted_key:
+        option_row = next((row for row in current_options if str(row.option_key) == wanted_key), None)
+        # A card may only display its own decision. The legacy session-level
+        # final_decision is intentionally hidden when an option was requested.
+        payload['option_key'] = wanted_key
+        payload['option_decision'] = None
+        payload['final_decision'] = None
+        payload['decided_at'] = None
+        payload['outcomes'] = []
+        payload['lessons_learned'] = []
+        payload['current_state'] = 'unknown'
+        if option_row is not None:
+            option_payload = option_row.to_dict()
+            option_payload['current_state'] = 'current'
+            option_payload['replaces_earlier_decision'] = bool(option_row.supersedes_id)
+            option_payload['history'] = [
+                {
+                    **item.to_dict(),
+                    'current_state': 'current' if item.id == option_row.id else 'superseded',
+                }
+                for item in option_decision_history(record, wanted_key)
+            ]
+            payload['option_decision'] = option_payload
+            payload['final_decision'] = option_row.final_decision
+            payload['decided_at'] = option_row.decided_at.isoformat() if option_row.decided_at else None
+            payload['outcomes'] = option_row.outcomes if isinstance(option_row.outcomes, list) else []
+            payload['lessons_learned'] = option_row.lessons_learned if isinstance(option_row.lessons_learned, list) else []
+            payload['current_state'] = 'current'
+            payload['decision_source'] = option_row.source
+            payload['decision_rationale'] = option_row.rationale
+            payload['kit_verdict'] = option_row.kit_verdict if isinstance(option_row.kit_verdict, dict) else None
     return payload
 
 
@@ -157,6 +202,7 @@ def list_records():
         return jsonify({'error': 'User not found'}), 404
     status = str(request.args.get('status') or '').strip().lower() or None
     thread_id = str(request.args.get('thread_id') or '').strip() or None
+    option_key = str(request.args.get('option_key') or '').strip() or None
     limit = min(max(int(request.args.get('limit', 50) or 50), 1), 200)
     offset = max(int(request.args.get('offset', 0) or 0), 0)
 
@@ -169,7 +215,7 @@ def list_records():
     page = rows[offset:offset + limit]
 
     return jsonify({
-        'records': [_decision_view(r, user) for r in page],
+        'records': [_decision_view(r, user, option_key=option_key) for r in page],
         'total': total,
         'limit': limit,
         'offset': offset,
@@ -250,6 +296,8 @@ def update_record(record_id):
     if not record:
         return jsonify({'error': 'Decision record not found'}), 404
     data = request.get_json(silent=True) or {}
+    response_option_key = None
+    response_option_decision = None
 
     try:
         if 'final_decision' in data:
@@ -286,18 +334,42 @@ def update_record(record_id):
                     'conditions_accepted': list(kit_verdict.get('conditions_accepted') or []),
                     'override_reason': override_reason or None,
                 }
-            # The human decision signal. Capture WHO decided, so the record can
-            # show that a person made this call rather than a model.
-            record_final_decision(
-                record, data.get('final_decision'), decided_by_user_id=user.id
-            )
-            if kit_verdict is not None:
-                from sqlalchemy.orm.attributes import flag_modified
-                record_json = {**(record.record if isinstance(record.record, dict) else {})}
-                record_json['kit_verdict'] = kit_verdict
-                record.record = record_json
-                record.decision_type = record_json.get('decision_kit') or record.decision_type
-                flag_modified(record, 'record')
+            response_option_key = str(
+                data.get('option_key') or (kit_verdict or {}).get('option_key') or ''
+            ).strip() or None
+            if response_option_key:
+                record_payload = record.record if isinstance(record.record, dict) else {}
+                cards = [item for item in (record_payload.get('scorecards') or []) if isinstance(item, dict)]
+                card = next((item for item in cards if str(item.get('option_key') or '') == response_option_key), None)
+                if card is None:
+                    return jsonify({
+                        'error': 'The recorded decision must target a canonical option in this decision',
+                        'code': 'decision_target_mismatch',
+                    }), 400
+                override_reason = str((kit_verdict or {}).get('override_reason') or '').strip() or None
+                response_option_decision, _created = record_option_decision(
+                    record,
+                    response_option_key,
+                    data.get('final_decision'),
+                    decided_by_user_id=user.id,
+                    source='manual',
+                    option_name=card.get('name'),
+                    rationale=data.get('rationale') or override_reason,
+                    kit_verdict=kit_verdict,
+                    override_info=(
+                        {
+                            'override_of': (kit_verdict or {}).get('recommendation_snapshot', {}).get('verdict_key'),
+                            'override_reason': override_reason,
+                        }
+                        if override_reason else None
+                    ),
+                )
+            else:
+                # Legacy/session-level decisions remain supported and are not
+                # silently assigned to an option without canonical identity.
+                record_final_decision(
+                    record, data.get('final_decision'), decided_by_user_id=user.id
+                )
         if 'status' in data:
             set_status(record, data.get('status'))
     except ValueError as exc:
@@ -312,7 +384,14 @@ def update_record(record_id):
     if isinstance(data.get('altitude'), str):
         record.altitude = data['altitude'].strip()[:32] or None
     db.session.commit()
-    return jsonify({'record': _decision_view(record, user)})
+    view = _decision_view(record, user, option_key=response_option_key)
+    if response_option_decision is not None:
+        view['option_decision'] = {
+            **response_option_decision.to_dict(),
+            'current_state': 'current',
+            'replaces_earlier_decision': bool(response_option_decision.supersedes_id),
+        }
+    return jsonify({'record': view})
 
 
 @decision_records_bp.route('/<record_id>/outcomes', methods=['POST'])
@@ -336,10 +415,14 @@ def add_outcome(record_id):
     if not summary:
         return jsonify({'error': 'summary is required'}), 400
     try:
-        append_outcome(record, summary, extra=data, actor=user)
+        option_key = str(data.get('option_key') or '').strip()
+        target = current_option_decision(record, option_key) if option_key else record
+        if option_key and target is None:
+            return jsonify({'error': 'No current decision exists for this option', 'code': 'option_decision_not_found'}), 404
+        append_outcome(target, summary, extra=data, actor=user)
     except ValueError as exc:
         return jsonify({'error': str(exc), 'code': 'invalid_outcome'}), 400
-    return jsonify({'record': _decision_view(record, user)}), 201
+    return jsonify({'record': _decision_view(record, user, option_key=option_key or None)}), 201
 
 
 @decision_records_bp.route('/<record_id>/lessons', methods=['POST'])
@@ -360,10 +443,14 @@ def add_lesson(record_id):
     if not lesson:
         return jsonify({'error': 'lesson is required'}), 400
     try:
-        append_lesson(record, lesson, extra=data, actor=user)
+        option_key = str(data.get('option_key') or '').strip()
+        target = current_option_decision(record, option_key) if option_key else record
+        if option_key and target is None:
+            return jsonify({'error': 'No current decision exists for this option', 'code': 'option_decision_not_found'}), 404
+        append_lesson(target, lesson, extra=data, actor=user)
     except ValueError as exc:
         return jsonify({'error': str(exc), 'code': 'invalid_lesson'}), 400
-    return jsonify({'record': _decision_view(record, user)}), 201
+    return jsonify({'record': _decision_view(record, user, option_key=option_key or None)}), 201
 
 
 @decision_records_bp.route('/<record_id>/consent', methods=['POST'])

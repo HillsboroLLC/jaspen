@@ -149,8 +149,30 @@ def build_memory_item(record):
     outcome = latest_outcome(record)
     lessons = record.lessons_learned if isinstance(record.lessons_learned, list) else []
 
-    from .decision_records import current_state
+    from .decision_records import current_option_decisions, current_state
     state = current_state(record)
+    option_decisions = []
+    for row in current_option_decisions(record):
+        outcomes = row.outcomes if isinstance(row.outcomes, list) else []
+        option_decisions.append({
+            'option_key': row.option_key,
+            'option_name': row.option_name,
+            'decision': _clip(row.final_decision),
+            'rationale': _clip(row.rationale) if row.rationale else None,
+            'source': row.source,
+            'decided_at': row.decided_at.isoformat() if row.decided_at else None,
+            'outcome': _clip(outcomes[-1].get('summary'))
+            if outcomes and isinstance(outcomes[-1], dict) else None,
+            'lessons': [
+                _clip(item.get('lesson'), 300)
+                for item in (row.lessons_learned or [])[:3]
+                if isinstance(item, dict) and item.get('lesson')
+            ],
+        })
+    latest_option_date = max(
+        (item['decided_at'] for item in option_decisions if item.get('decided_at')),
+        default=None,
+    )
 
     return {
         'source_type': 'decision_record',
@@ -168,6 +190,7 @@ def build_memory_item(record):
         # the way into the prompt. Collapsing them would let an old AI
         # suggestion read as something the organization actually chose.
         'human_decision': _clip(record.final_decision) if record.final_decision else None,
+        'option_decisions': option_decisions,
         'ai_recommendation': _clip(payload.get('recommendation')) if payload.get('recommendation') else None,
         'outcome': {
             'summary': _clip(outcome.get('summary')) if outcome else None,
@@ -182,7 +205,7 @@ def build_memory_item(record):
             for l in lessons[:3] if isinstance(l, dict) and l.get('lesson')
         ],
         'scorecard_ids': payload.get('scorecard_ids') if isinstance(payload.get('scorecard_ids'), list) else [],
-        'decided_at': record.decided_at.isoformat() if record.decided_at else None,
+        'decided_at': record.decided_at.isoformat() if record.decided_at else latest_option_date,
         'created_at': record.created_at.isoformat() if record.created_at else None,
     }
 
@@ -247,6 +270,17 @@ def render_memory_prompt(bundle):
         lines.append(f"  Status: {STATE_LABEL.get(item['state'], item['state'])}")
         if item.get('human_decision'):
             lines.append(f"  What the organization DECIDED (a person): {item['human_decision']}")
+        elif item.get('option_decisions'):
+            lines.append('  Current decisions by option (the bid/no-bid portfolio):')
+            for option in item['option_decisions']:
+                label = option.get('option_name') or option.get('option_key') or 'Option'
+                lines.append(f"    {label}: {option.get('decision')}")
+                if option.get('rationale'):
+                    lines.append(f"      Rationale: {option['rationale']}")
+                if option.get('outcome'):
+                    lines.append(f"      What happened: {option['outcome']}")
+                for lesson in option.get('lessons') or []:
+                    lines.append(f"      Lesson recorded: {lesson}")
         else:
             lines.append('  What the organization DECIDED: nothing was recorded.')
         if item.get('ai_recommendation'):
