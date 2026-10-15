@@ -4044,12 +4044,20 @@
   border-color: #161f3b;
 }
 
-.jas-connector-context-chip.unavailable {
+.jas-connector-context-chip.disconnected,
+.jas-connector-context-chip.problem {
   border-color: var(--gray-300);
   color: var(--gray-400);
   background: var(--gray-100);
   cursor: pointer;
   opacity: 0.72;
+}
+
+.jas-connector-context-chip.analysis-disabled {
+  border-color: var(--gray-300);
+  color: var(--gray-500);
+  background: var(--gray-50);
+  cursor: pointer;
 }
 
 .jas-connector-status-dot {

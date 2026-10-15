@@ -93,7 +93,12 @@ def validate_plan_lineage(plan, sources):
             dropped.append(str(task.get("id") or task.get("title") or "unlinked task"))
     missing = [item for identity, item in valid.items() if item.get("required") and identity not in covered]
     if not tasks or missing:
-        return None, {"code": "invalid_plan_lineage", "dropped_tasks": dropped, "missing_sources": missing}
+        return None, {
+            "code": "invalid_plan_lineage",
+            "dropped_tasks": dropped,
+            "missing_sources": missing,
+            "valid_task_count": len(tasks),
+        }
     # Provider task ids and dependencies are presentation mechanics, not
     # decision lineage. Canonicalize duplicates and discard unknown, self, or
     # forward dependencies so scheduling cannot fail on junk graph edges.
@@ -131,7 +136,11 @@ def validate_plan_lineage(plan, sources):
         phase_tasks = [task for task in tasks if str(task.get("phase") or "").strip() == phase_name]
         if phase_tasks:
             phases.append({"name": phase_name, "tasks": phase_tasks})
-    return {**plan, "tasks": tasks, "phases": phases}, {"dropped_tasks": dropped, "missing_sources": []}
+    return {**plan, "tasks": tasks, "phases": phases}, {
+        "dropped_tasks": dropped,
+        "missing_sources": [],
+        "valid_task_count": len(tasks),
+    }
 
 
 

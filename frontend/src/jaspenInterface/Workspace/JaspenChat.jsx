@@ -33,6 +33,7 @@ import {
 } from '../GuidedDecision';
 import ExecutionPlanExportButton from './ExecutionPlanExportButton';
 import PmSyncPanel from './PmSyncPanel';
+import { connectorContextState } from './connectorContextState';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -7251,24 +7252,21 @@ const renderConnectorContextTags = () => {
         {contextSourceLoading ? 'Loading…' : 'Data context'}
       </span>
       {DISCOVERY_DATA_CONTEXTS.map((available) => {
-        const connected = connectedById.get(available.id);
-        const source = connected || available;
-        const isConnected = Boolean(connected);
-        const connectorStatus = connectorStatusById[source.id] || {};
-        const hasProblem = ['error', 'degraded', 'reconnect_required'].includes(String(connectorStatus.lifecycle_status || connectorStatus.status || '').toLowerCase());
-        const isActive = activeContextSourceIds.has(source.id);
+        const source = connectedById.get(available.id) || available;
+        const contextState = connectorContextState(connectorStatusById[source.id], source);
+        const isActive = contextState.selectable && activeContextSourceIds.has(source.id);
         return (
           <button
             key={source.id}
             type="button"
-            className={`jas-connector-context-chip ${isActive ? 'active' : ''} ${!isConnected ? 'unavailable' : ''}`}
+            className={`jas-connector-context-chip ${isActive ? 'active' : ''} ${contextState.state}`}
             onClick={() => {
-              if (isConnected && !hasProblem) void handleToggleContextSource(source.id, source.label);
+              if (contextState.selectable) void handleToggleContextSource(source.id, source.label);
               else window.location.assign(`/connectors-manage?connector=${encodeURIComponent(source.id)}`);
             }}
-            title={hasProblem ? `Reconnect ${source.label}` : (!isConnected ? `Connect ${source.label} in Data Sources` : (isActive ? `Remove ${source.label} context` : `Add live ${source.label} data as AI context`))}
+            title={isActive ? `Remove ${source.label} context` : contextState.tooltip}
           >
-            <span className={`jas-connector-status-dot ${hasProblem ? 'problem' : isConnected ? 'connected' : 'disconnected'}`} aria-hidden="true" />
+            <span className={`jas-connector-status-dot ${contextState.dot}`} aria-hidden="true" />
             {isActive && <FontAwesomeIcon icon={faCheck} />}
             {source.label}
           </button>
@@ -8509,19 +8507,25 @@ useEffect(() => {
       const allowed = ['jira_sync', 'smartsheet_sync', 'salesforce_insights', 'snowflake_insights', 'servicenow_insights', 'netsuite_insights', 'oracle_fusion_insights'];
       const allConnectors = (Array.isArray(data?.connectors) ? data.connectors : []).filter((item) => allowed.includes(item?.id));
       setConnectorStatusById(Object.fromEntries(allConnectors.map((item) => [item.id, item])));
+      const selectableIds = new Set(
+        allConnectors
+          .filter((item) => connectorContextState(item).selectable)
+          .map((item) => item.id)
+      );
       const connected = allConnectors
         .filter((item) => {
-          if (!item?.connected || !allowed.includes(item?.id)) return false;
-          if (item.id === 'jira_sync') return Boolean(item?.jira?.data_enabled);
-          if (item.id === 'smartsheet_sync') return Boolean(item?.smartsheet?.data_enabled);
-          return true;
+          return Boolean(item?.connected && allowed.includes(item?.id));
         })
         .map((item) => ({
           id: item.id,
           label: item.label || item.id,
+          analysisEnabled: selectableIds.has(item.id),
           defaultTable: Array.isArray(item?.snowflake?.table_allowlist) ? (item.snowflake.table_allowlist[0] || '') : '',
         }));
       setConnectedDataSources(connected);
+      setActiveContextSourceIds((previous) => new Set(
+        [...previous].filter((id) => selectableIds.has(id))
+      ));
     } catch (error) {
       devWarn('[connectors/status] request failed', { message: error?.message || 'unknown error' });
     }

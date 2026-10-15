@@ -3,6 +3,7 @@ import path from 'path';
 
 const source = fs.readFileSync(path.join(__dirname, 'JaspenChat.jsx'), 'utf8');
 const clientSource = fs.readFileSync(path.join(__dirname, 'JaspenClient.jsx'), 'utf8');
+const connectorStateSource = fs.readFileSync(path.join(__dirname, 'connectorContextState.js'), 'utf8');
 
 test('Discovery presents objective, Decision Kit, and honest Data Context separately', () => {
   const objectiveBlock = source.slice(source.indexOf('const renderObjectiveTags'), source.indexOf('const renderDecisionKitTags'));
@@ -12,7 +13,7 @@ test('Discovery presents objective, Decision Kit, and honest Data Context separa
   expect(source).toContain("{ id: 'salesforce_insights', label: 'Salesforce' }");
   expect(source).toContain("{ id: 'snowflake_insights', label: 'Snowflake' }");
   expect(source).toContain('jas-connector-status-dot');
-  expect(source).toContain('Connect ${source.label} in Data Sources');
+  expect(connectorStateSource).toContain('Connect ${label} in Data Sources');
 });
 
 test('batch scoring failure keeps an explicit Retry action', () => {

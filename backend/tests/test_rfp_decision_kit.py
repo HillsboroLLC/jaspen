@@ -234,12 +234,82 @@ def test_materialize_keeps_real_phases_and_flat_plan_uses_plan_name():
     assert flat["tasks"][0]["phase"] == "Named delivery plan"
 
 
-def test_execution_prompt_requires_complete_delivery_without_minimal_plan_rule():
+def test_execution_prompt_restores_full_plan_rules_alongside_lineage():
     from pathlib import Path
     source = Path(__file__).parents[1].joinpath("app/routes/strategy.py").read_text()
+    assert "Return 10-18 tasks total spread across 4-6 meaningful phases." in source
+    assert "Phases must follow a logical sequence: Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate." in source
     assert "Include every task required to deliver the decision end to end" in source
     assert "Do not pad with generic busywork, and do not omit necessary delivery work" in source
+    assert "Include at least 1 risk-mitigation task, 1 change-management task, and 1 value-capture/measurement task." in source
+    assert "Estimated_days should be realistic for the task complexity (range: 1-15)." in source
+    assert "MINIMUM 10 tasks. If you return fewer than 10 the response will be rejected." in source
+    assert "Necessary delivery tasks must cite the recorded decision through decision_commitment lineage." in source
     assert "Do not add tasks to reach a count" not in source
+
+
+def test_four_phase_twelve_task_plan_survives_generation_validation_and_materialization(app, monkeypatch):
+    import json
+    from app.routes import strategy
+
+    lineage = [{"type": "decision_commitment", "ref": "decision-1"}]
+    phases = []
+    prior_id = None
+    task_number = 1
+    for phase_name in ("Discovery", "Planning", "Build and Execute", "Validate and Launch"):
+        tasks = []
+        for _ in range(3):
+            task_id = f"task-{task_number}"
+            task = {
+                "id": task_id,
+                "title": f"Deliver Acme launch work item {task_number}",
+                "description": f"Complete Acme launch work item {task_number}",
+                "estimated_days": (task_number % 5) + 1,
+                "activity_type": (
+                    "risk_management" if task_number == 3
+                    else "change_management" if task_number == 6
+                    else "reporting" if task_number == 12
+                    else "delivery"
+                ),
+                "dependencies": [prior_id] if prior_id else [],
+                "lineage": lineage,
+            }
+            tasks.append(task)
+            prior_id = task_id
+            task_number += 1
+        phases.append({"name": phase_name, "tasks": tasks})
+    response = {"name": "Acme launch plan", "phases": phases}
+    captured = {}
+
+    def provider(messages, **_kwargs):
+        captured["prompt"] = messages[0]["content"]
+        return json.dumps(response), {"provider": "test", "total_tokens": 1}
+
+    monkeypatch.setattr(strategy, "_strategy_generate_reply", provider)
+    plan, _, success, error = strategy._generate_ai_wbs_suggestion(
+        None,
+        "test",
+        scorecard={"project_name": "Acme launch"},
+        instruction="Build the execution plan.",
+        model_selection={"llm_model": "test"},
+        return_usage=True,
+        lineage_sources=[{
+            "type": "decision_commitment", "ref": "decision-1",
+            "label": "Proceed with Acme launch", "required": True,
+        }],
+    )
+
+    assert success and error is None
+    assert "Return 10-18 tasks total spread across 4-6 meaningful phases." in captured["prompt"]
+    assert [phase["name"] for phase in plan["phases"]] == [phase["name"] for phase in phases]
+    assert [len(phase["tasks"]) for phase in plan["phases"]] == [3, 3, 3, 3]
+    assert len(plan["tasks"]) == 12
+
+    materialized = strategy._materialize_ai_wbs(plan, start_date="2026-10-20")
+    assert [phase["name"] for phase in materialized["phases"]] == [phase["name"] for phase in phases]
+    assert [len(phase["task_ids"]) for phase in materialized["phases"]] == [3, 3, 3, 3]
+    assert len(materialized["tasks"]) == 12
+    assert materialized["tasks"][1]["depends_on"] == [materialized["tasks"][0]["id"]]
 
 
 def test_lineage_sources_include_recorded_decision_and_backward_schedule():
@@ -301,7 +371,15 @@ def test_only_human_recorded_bid_unlocks_rfp_execution_plan(client, db, test_use
     monkeypatch.setattr(agent, "_reserve_preflight_credits", lambda *a, **k: {"ok": True, "reserved": 0})
     monkeypatch.setattr(agent, "_settle_reserved_credits", lambda *a, **k: {"ok": True, "charged": 0})
     monkeypatch.setattr(strategy, "_strategy_generate_reply", lambda *a, **k: (
-        json.dumps({"tasks": [{"id": "submit", "title": "Submit JeffCo response", "estimated_days": 2, "lineage": [{"type": "decision_commitment", "ref": record.id}]}]}),
+        json.dumps({"tasks": [
+            {
+                "id": f"submit-{index}",
+                "title": f"Complete JeffCo response work item {index}",
+                "estimated_days": 2,
+                "lineage": [{"type": "decision_commitment", "ref": record.id}],
+            }
+            for index in range(1, 11)
+        ]}),
         {"provider": "anthropic", "model": "test", "input_tokens": 1, "output_tokens": 1},
     ))
     allowed = client.post(f"/api/v1/strategy/threads/{thread_id}/ai-wbs", headers=auth_headers, json={"commit": True, "scorecard_id": "rfp-card"})

@@ -12,16 +12,27 @@ def modules():
     return sys.modules['app.routes.strategy'], sys.modules['app.routes.ai_agent']
 
 
+def _lineage_tasks(count, *, ref='r1', start=1):
+    return [
+        {
+            'id': f'task-{index}',
+            'title': f'Proposal delivery task {index}',
+            'lineage': [{'type': 'recommendation', 'ref': ref}],
+        }
+        for index in range(start, start + count)
+    ]
+
+
 def test_execution_planner_worker_has_context(app, monkeypatch):
     strategy, _ = modules()
     def provider(*args, **kwargs):
         assert current_app._get_current_object() is app
         assert kwargs['operation_type'] == 'execution_plan'
-        return json.dumps({'tasks': [{'id': '1', 'title': 'Proposal response', 'lineage': [{'type': 'recommendation', 'ref': 'r1'}]}]}), {'provider': 'anthropic', 'input_tokens': 10, 'output_tokens': 10}
+        return json.dumps({'tasks': _lineage_tasks(10)}), {'provider': 'anthropic', 'input_tokens': 10, 'output_tokens': 10}
     monkeypatch.setattr(strategy, '_strategy_generate_reply', provider)
     plan, usage, success, error = strategy._generate_ai_wbs_suggestion(None, 'model', scorecard={'project_name': 'Proposal'}, instruction='', model_selection={'llm_model': 'model'}, return_usage=True, lineage_sources=[{'type': 'recommendation', 'ref': 'r1', 'label': 'Prepare proposal', 'required': True}])
     assert success and error is None
-    assert len(plan['tasks']) == 1 and usage['output_tokens'] == 10
+    assert len(plan['tasks']) == 10 and usage['output_tokens'] == 10
     assert plan['tasks'][0]['lineage'][0]['ref'] == 'r1'
 
 
@@ -35,7 +46,7 @@ def test_execution_plan_canonicalizes_duplicate_lineage_and_junk_dependencies(ap
         {"id": "task", "title": "Second", "lineage": [
             {"type": "recommendation", "ref": "r1"},
         ], "dependencies": ["task", "missing"]},
-    ]}
+    ] + _lineage_tasks(8, start=3)}
     monkeypatch.setattr(strategy, '_strategy_generate_reply', lambda *a, **k: (json.dumps(response), {}))
     sources = [{"type": "recommendation", "ref": "r1", "label": "Prepare", "required": True}]
     plan, _, success, error = strategy._generate_ai_wbs_suggestion(
@@ -43,10 +54,41 @@ def test_execution_plan_canonicalizes_duplicate_lineage_and_junk_dependencies(ap
         model_selection={'llm_model': 'model'}, return_usage=True, lineage_sources=sources,
     )
     assert success and error is None
-    assert [task['id'] for task in plan['tasks']] == ['task', 'task-2']
+    assert [task['id'] for task in plan['tasks'][:2]] == ['task', 'task-2']
     assert len(plan['tasks'][0]['lineage']) == 1
     assert plan['tasks'][0]['dependencies'] == []
     assert plan['tasks'][1]['dependencies'] == ['task']
+
+
+def test_execution_plan_retries_once_when_lineage_validation_leaves_too_few_tasks(app, monkeypatch):
+    strategy, _ = modules()
+    prompts = []
+    responses = [
+        {'tasks': _lineage_tasks(6)},
+        {'tasks': _lineage_tasks(12)},
+    ]
+
+    def provider(messages, **_kwargs):
+        prompts.append(messages[0]['content'])
+        return json.dumps(responses[len(prompts) - 1]), {
+            'provider': 'anthropic', 'input_tokens': 10, 'output_tokens': 5, 'total_tokens': 15,
+        }
+
+    monkeypatch.setattr(strategy, '_strategy_generate_reply', provider)
+    plan, usage, success, error = strategy._generate_ai_wbs_suggestion(
+        None, 'model', scorecard={'project_name': 'Proposal'}, instruction='',
+        model_selection={'llm_model': 'model'}, return_usage=True,
+        lineage_sources=[{'type': 'recommendation', 'ref': 'r1', 'label': 'Prepare', 'required': True}],
+    )
+
+    assert success and error is None
+    assert len(prompts) == 2
+    assert 'valid tasks after lineage validation: 6; minimum required: 10' in prompts[1]
+    assert 'Do not add generic padding' in prompts[1]
+    assert len(plan['tasks']) == 12
+    assert usage['input_tokens'] == 20
+    assert usage['output_tokens'] == 10
+    assert usage['total_tokens'] == 30
 
 
 def test_execution_plan_logs_lineage_validation_details(app, monkeypatch, caplog):

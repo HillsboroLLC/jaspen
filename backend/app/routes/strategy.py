@@ -5427,10 +5427,12 @@ Return JSON only:
 }}
 
 Rules:
+- Return 10-18 tasks total spread across 4-6 meaningful phases.
+- Phases must follow a logical sequence: Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate.
+- Name phases for this initiative's real work.
 - Include every task required to deliver the decision end to end. Cover the real mobilization, core delivery, reviews and approvals, risk checkpoints, launch or submission, handoff, and closeout work that genuinely applies.
 - Do not pad with generic busywork, and do not omit necessary delivery work.
 - Necessary delivery tasks must cite the recorded decision through decision_commitment lineage. Scorecard-driven work must cite its corresponding weak_criterion, risk, recommendation, gate, condition, or requirement.
-- Name phases for the derived work. Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate is guidance only when it fits.
 - CRITICAL: Every task title must be specific to THIS initiative — no generic titles like "Research" or "Planning". Use the conversation, scorecard, and the initiative name above to name exactly what is being done, by whom, for what outcome. Never use "Baseline Analysis" in a task title; use the actual initiative or project name.
 - DETERMINISM: Given the same scorecard, scenario, and instruction, produce the SAME plan every time. Derive tasks mechanically from the inputs below — do not invent variety for its own sake.
 - DRIVE TASKS FROM THE SCORECARD, do not emit a generic template:
@@ -5441,24 +5443,43 @@ Rules:
 - The number and shape of Execution-phase tasks MUST vary with the scorecard: a weak, high-risk initiative gets more remediation tasks than a strong one. Two different scorecards should not yield interchangeable plans.
 - Assign a realistic suggested_role to every task.
 - Include function and activity_type for every task.
+- Include at least 1 risk-mitigation task, 1 change-management task, and 1 value-capture/measurement task.
 - Every task must cite at least one exact lineage source. Every recorded lineage source must be covered by at least one task.
 - Never invent lineage, owners, requirements, gates, conditions, or commitments.
 - Estimated_days should be realistic for the task complexity (range: 1-15).
 - Dependencies must reference real task IDs in the list; avoid circular references.
 - Use context from the conversation turns, key_insights, and recommendations to name tasks after REAL work items from this session.
 - If a scenario was provided, weight tasks toward the scenario's adopted assumptions and lever changes.
-- Task and phase counts follow the derived work; a lineage-complete plan of any size is valid.
+- MINIMUM 10 tasks. If you return fewer than 10 the response will be rejected.
 """.strip()
 
     generation_usage = None
+    usage_attempts = []
     try:
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
         app = current_app._get_current_object()
-        def _call_llm():
+
+        def _merged_usage():
+            if not usage_attempts:
+                return None
+            latest = dict(usage_attempts[-1])
+            latest['input_tokens'] = sum(int(item.get('input_tokens') or 0) for item in usage_attempts)
+            latest['output_tokens'] = sum(int(item.get('output_tokens') or 0) for item in usage_attempts)
+            latest['total_tokens'] = sum(
+                int(item.get('total_tokens'))
+                if item.get('total_tokens') is not None
+                else int(item.get('input_tokens') or 0) + int(item.get('output_tokens') or 0)
+                for item in usage_attempts
+            )
+            if len(usage_attempts) > 1:
+                latest['component_usages'] = [dict(item) for item in usage_attempts]
+            return latest
+
+        def _call_llm(attempt_prompt):
             with app.app_context():
                 return _strategy_generate_reply(
-                    [{"role": "user", "content": prompt}],
-                    system_prompt="You are a senior project planning assistant. Generate only the work derived from the supplied decision lineage. Every task title must be specific and actionable. Return strict JSON only.",
+                    [{"role": "user", "content": attempt_prompt}],
+                    system_prompt="You are a senior project planning assistant. Generate 10-18 initiative-specific tasks across 4-6 meaningful phases, using only work derived from the supplied decision lineage. Every task title must be specific and actionable. Return strict JSON only.",
                     model_selection=model_selection,
                     llm_model=llm_model,
                     strategy_objective=strategy_objective,
@@ -5466,27 +5487,58 @@ Rules:
                     temperature=0,  # Deterministic — same scorecard/scenario/instruction → same plan
                     max_tokens=4096,
                 )
-        with ThreadPoolExecutor(max_workers=1) as _pool:
-            _future = _pool.submit(_call_llm)
-            try:
-                raw_reply, generation_usage = _future.result(timeout=55)
-            except _FuturesTimeout:
-                raise ValueError('wbs_ai_timeout')
-        parsed = _extract_json_object(raw_reply)
-        if not isinstance(parsed, dict):
-            raise ValueError('invalid_wbs_response')
-        if not isinstance(parsed.get('phases'), list) and not isinstance(parsed.get('tasks'), list):
-            raise ValueError('invalid_wbs_response')
-        from ..decision_lineage import assign_team_owners, validate_plan_lineage
-        validated, lineage_result = validate_plan_lineage(parsed, lineage_sources or [])
-        if validated is None:
-            error = ValueError('invalid_plan_lineage')
-            error.lineage_result = lineage_result
-            raise error
-        validated = assign_team_owners(validated, team or [])
-        validated['lineage_sources'] = list(lineage_sources or [])
-        validated['lineage_validation'] = lineage_result
-        return (validated, generation_usage, True, None) if return_usage else validated
+
+        retry_note = ''
+        for attempt_index in range(2):
+            attempt_prompt = prompt + retry_note
+            with ThreadPoolExecutor(max_workers=1) as _pool:
+                _future = _pool.submit(_call_llm, attempt_prompt)
+                try:
+                    raw_reply, attempt_usage = _future.result(timeout=55)
+                except _FuturesTimeout:
+                    raise ValueError('wbs_ai_timeout')
+            if isinstance(attempt_usage, dict):
+                usage_attempts.append(attempt_usage)
+            generation_usage = _merged_usage()
+            parsed = _extract_json_object(raw_reply)
+            if not isinstance(parsed, dict):
+                raise ValueError('invalid_wbs_response')
+            if not isinstance(parsed.get('phases'), list) and not isinstance(parsed.get('tasks'), list):
+                raise ValueError('invalid_wbs_response')
+            from ..decision_lineage import assign_team_owners, validate_plan_lineage
+            validated, lineage_result = validate_plan_lineage(parsed, lineage_sources or [])
+            valid_task_count = int((lineage_result or {}).get('valid_task_count') or 0)
+            if valid_task_count < 10:
+                missing_coverage = [f'valid tasks after lineage validation: {valid_task_count}; minimum required: 10']
+                dropped = (lineage_result or {}).get('dropped_tasks') or []
+                if dropped:
+                    missing_coverage.append('tasks dropped for missing or invalid lineage: ' + ', '.join(str(item) for item in dropped))
+                missing_sources = (lineage_result or {}).get('missing_sources') or []
+                if missing_sources:
+                    missing_coverage.append(
+                        'required lineage sources not covered: '
+                        + ', '.join(f"{item.get('type')}:{item.get('ref')}" for item in missing_sources if isinstance(item, dict))
+                    )
+                if attempt_index == 0:
+                    retry_note = (
+                        '\n\nRETRY REQUIRED. The prior response was rejected after deterministic lineage validation. '
+                        'Use the exact same decision inputs and correct only this missing coverage:\n- '
+                        + '\n- '.join(missing_coverage)
+                        + '\nReturn 10-18 specific tasks across 4-6 meaningful phases. Do not add generic padding.'
+                    )
+                    continue
+                error = ValueError('insufficient_plan_tasks')
+                error.lineage_result = {**(lineage_result or {}), 'missing_coverage': missing_coverage}
+                raise error
+            if validated is None:
+                error = ValueError('invalid_plan_lineage')
+                error.lineage_result = lineage_result
+                raise error
+            validated = assign_team_owners(validated, team or [])
+            validated['lineage_sources'] = list(lineage_sources or [])
+            validated['lineage_validation'] = lineage_result
+            return (validated, generation_usage, True, None) if return_usage else validated
+        raise ValueError('insufficient_plan_tasks')
     except Exception as generation_error:
         lineage_failure = getattr(generation_error, 'lineage_result', None)
         current_app.logger.warning(
