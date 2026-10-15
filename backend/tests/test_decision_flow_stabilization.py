@@ -23,6 +23,36 @@ def _lineage_tasks(count, *, ref='r1', start=1):
     ]
 
 
+def _phased_lineage_plan(*, task_count=18, phase_count=6, ref='r1'):
+    tasks_per_phase = task_count // phase_count
+    remainder = task_count % phase_count
+    phases = []
+    task_number = 1
+    prior_id = None
+    for phase_index in range(phase_count):
+        phase_tasks = []
+        count = tasks_per_phase + (1 if phase_index < remainder else 0)
+        for _ in range(count):
+            task_id = f'task-{task_number}'
+            phase_tasks.append({
+                'id': task_id,
+                'title': f'Proposal delivery task {task_number}',
+                'description': f'Complete proposal work item {task_number}.',
+                'priority': 'high' if task_number <= 3 else 'medium',
+                'estimated_days': (task_number % 5) + 1,
+                'suggested_role': 'Proposal Lead',
+                'function': 'Operations',
+                'activity_type': 'delivery',
+                'dependencies': [prior_id] if prior_id else [],
+                'risk_area': 'Proposal readiness',
+                'lineage': [{'type': 'recommendation', 'ref': ref}],
+            })
+            prior_id = task_id
+            task_number += 1
+        phases.append({'name': f'Phase {phase_index + 1}', 'tasks': phase_tasks})
+    return {'name': 'Proposal execution plan', 'summary': 'Deliver the proposal.', 'phases': phases}
+
+
 def test_execution_planner_worker_has_context(app, monkeypatch):
     strategy, _ = modules()
     def provider(*args, **kwargs):
@@ -89,6 +119,93 @@ def test_execution_plan_retries_once_when_lineage_validation_leaves_too_few_task
     assert usage['input_tokens'] == 20
     assert usage['output_tokens'] == 10
     assert usage['total_tokens'] == 30
+
+
+def test_execution_plan_retries_truncated_json_with_compact_descriptions(app, monkeypatch):
+    strategy, _ = modules()
+    prompts = []
+    max_tokens = []
+    complete = _phased_lineage_plan()
+
+    def provider(messages, **kwargs):
+        prompts.append(messages[0]['content'])
+        max_tokens.append(kwargs['max_tokens'])
+        if len(prompts) == 1:
+            return '{"name":"Proposal plan","phases":[{"name":"Phase 1","tasks":[', {
+                'provider': 'anthropic', 'stop_reason': 'max_tokens',
+                'input_tokens': 10, 'output_tokens': 8000, 'total_tokens': 8010,
+            }
+        return json.dumps(complete), {
+            'provider': 'anthropic', 'stop_reason': 'end_turn',
+            'input_tokens': 12, 'output_tokens': 4000, 'total_tokens': 4012,
+        }
+
+    monkeypatch.setattr(strategy, '_strategy_generate_reply', provider)
+    plan, usage, success, error = strategy._generate_ai_wbs_suggestion(
+        None, 'model', scorecard={'project_name': 'Proposal'}, instruction='',
+        model_selection={'llm_model': 'model'}, return_usage=True,
+        lineage_sources=[{'type': 'recommendation', 'ref': 'r1', 'label': 'Prepare', 'required': True}],
+    )
+
+    assert success and error is None
+    assert max_tokens == [8000, 8000]
+    assert len(prompts) == 2
+    assert 'output-token limit' in prompts[1]
+    assert 'one concise sentence' in prompts[1]
+    assert 'Do not return fewer tasks' in prompts[1]
+    assert len(plan['tasks']) == 18
+    assert len(plan['phases']) == 6
+    assert usage['stop_reason'] == 'end_turn'
+    assert [item['stop_reason'] for item in usage['component_usages']] == ['max_tokens', 'end_turn']
+
+
+def test_execution_plan_malformed_twice_returns_clean_failure(app, monkeypatch):
+    strategy, _ = modules()
+    prompts = []
+
+    def provider(messages, **_kwargs):
+        prompts.append(messages[0]['content'])
+        return '{"phases":[', {
+            'provider': 'anthropic', 'stop_reason': 'end_turn',
+            'input_tokens': 2, 'output_tokens': 3, 'total_tokens': 5,
+        }
+
+    monkeypatch.setattr(strategy, '_strategy_generate_reply', provider)
+    plan, usage, success, error = strategy._generate_ai_wbs_suggestion(
+        None, 'model', scorecard={'project_name': 'Proposal'}, instruction='',
+        model_selection={'llm_model': 'model'}, return_usage=True,
+        lineage_sources=[{'type': 'recommendation', 'ref': 'r1', 'label': 'Prepare', 'required': True}],
+    )
+
+    assert len(prompts) == 2
+    assert 'not valid JSON' in prompts[1]
+    assert plan is None and not success
+    assert error == 'invalid_wbs_response'
+    assert usage['total_tokens'] == 10
+
+
+def test_execution_plan_18_tasks_six_phases_materializes_intact(app, monkeypatch):
+    strategy, _ = modules()
+    response = _phased_lineage_plan()
+    monkeypatch.setattr(
+        strategy,
+        '_strategy_generate_reply',
+        lambda *args, **kwargs: (json.dumps(response), {'provider': 'test', 'stop_reason': 'end_turn'}),
+    )
+    plan, _, success, error = strategy._generate_ai_wbs_suggestion(
+        None, 'model', scorecard={'project_name': 'Proposal'}, instruction='',
+        model_selection={'llm_model': 'model'}, return_usage=True,
+        lineage_sources=[{'type': 'recommendation', 'ref': 'r1', 'label': 'Prepare', 'required': True}],
+    )
+    assert success and error is None
+    assert len(plan['tasks']) == 18
+    assert len(plan['phases']) == 6
+
+    materialized = strategy._materialize_ai_wbs(plan, start_date='2026-10-20')
+    assert len(materialized['tasks']) == 18
+    assert len(materialized['phases']) == 6
+    assert [len(phase['task_ids']) for phase in materialized['phases']] == [3, 3, 3, 3, 3, 3]
+    assert materialized['tasks'][-1]['depends_on'] == [materialized['tasks'][-2]['id']]
 
 
 def test_execution_plan_logs_lineage_validation_details(app, monkeypatch, caplog):
@@ -2302,7 +2419,7 @@ def test_execution_provider_failure_cannot_create_or_overwrite_plan(client, db, 
     assert response.get_json() == {
         'success': False,
         'code': 'execution_plan_generation_failed',
-        'error': 'AI execution-plan generation failed. Your existing plan was not changed.',
+        'error': "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.",
         'retryable': True,
         'generation_status': 'failed',
         'provider_error': 'RuntimeError',
@@ -2319,6 +2436,47 @@ def test_execution_provider_failure_cannot_create_or_overwrite_plan(client, db, 
     assert row.metadata_json['generation_failed'] is True
     assert row.charged_credits == 0
     assert test_user.credits_remaining == initial_credits
+
+
+def test_malformed_execution_plan_response_is_not_saved_and_records_stop_reason(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    strategy, _ = modules()
+    tid = 'planner-route-malformed-json'
+    card = {'id': 'planner-card', 'project_name': 'Proposal', 'jaspen_score': 61,
+            'recommendations': [{'id': 'rec-1', 'text': 'Prepare the response'}]}
+    seed_thread(test_user, tid, [card])
+    upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=card)
+    db.session.commit()
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(
+        strategy,
+        '_strategy_generate_reply',
+        lambda *args, **kwargs: ('{"phases":[', {
+            'provider': 'anthropic', 'model': 'claude-test', 'stop_reason': 'max_tokens',
+            'input_tokens': 3, 'output_tokens': 8000, 'total_tokens': 8003,
+        }),
+    )
+
+    response = client.post(
+        f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers,
+        json={'commit': True, 'force': True, 'scorecard_id': 'planner-card',
+              'record_decision': {'acknowledged': True}},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()['error'].startswith("Jaspen couldn't finish building this plan")
+    assert response.get_json()['retryable'] is True
+    stored_thread = strategy._load_scenarios(test_user.id).get(tid)
+    assert stored_thread is None or strategy._resolve_thread_wbs(stored_thread, 'planner-card') is None
+    event = UsageEvent.query.filter_by(thread_id=tid, operation_type='execution_plan_refinement').one()
+    assert event.success is False
+    assert event.metadata_json['stop_reason'] == 'max_tokens'
+    assert event.metadata_json['stop_reasons'] == ['max_tokens', 'max_tokens']
+    operation = AIOperation.query.filter_by(thread_id=tid, operation_type='execution_plan_refinement').one()
+    assert operation.status == 'degraded'
+    assert operation.metadata_json['stop_reason'] == 'max_tokens'
+    assert operation.metadata_json['stop_reasons'] == ['max_tokens', 'max_tokens']
 
 
 def test_queue_to_route_completes_seven_and_agent_can_compare(client, db, test_user, auth_headers, monkeypatch):

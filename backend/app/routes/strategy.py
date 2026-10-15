@@ -5418,7 +5418,6 @@ Return JSON only:
           "activity_type": "governance|planning|delivery|risk_management|financial_modeling|change_management|training|integration|quality|reporting|other",
           "dependencies": ["other-task-id"],
           "risk_area": "which component score this addresses",
-          "owner": "recorded team member name or Unassigned",
           "lineage": [{{"type": "exact source type", "ref": "exact source ref"}}]
         }}
       ]
@@ -5485,22 +5484,56 @@ Rules:
                     strategy_objective=strategy_objective,
                     operation_type='execution_plan',
                     temperature=0,  # Deterministic — same scorecard/scenario/instruction → same plan
-                    max_tokens=4096,
+                    max_tokens=8000,
                 )
 
         retry_note = ''
+        generation_deadline = time.monotonic() + 55
+
+        def _stop_reason(usage):
+            return str((usage or {}).get('stop_reason') or '').strip().lower()
+
+        def _was_truncated(usage):
+            return _stop_reason(usage) in {'max_tokens', 'max_output_tokens', 'length'}
+
         for attempt_index in range(2):
             attempt_prompt = prompt + retry_note
-            with ThreadPoolExecutor(max_workers=1) as _pool:
-                _future = _pool.submit(_call_llm, attempt_prompt)
-                try:
-                    raw_reply, attempt_usage = _future.result(timeout=55)
-                except _FuturesTimeout:
-                    raise ValueError('wbs_ai_timeout')
+            remaining_seconds = generation_deadline - time.monotonic()
+            if remaining_seconds <= 1:
+                raise ValueError('wbs_ai_timeout')
+            _pool = ThreadPoolExecutor(max_workers=1)
+            _future = _pool.submit(_call_llm, attempt_prompt)
+            try:
+                raw_reply, attempt_usage = _future.result(timeout=remaining_seconds)
+            except _FuturesTimeout:
+                _future.cancel()
+                raise ValueError('wbs_ai_timeout')
+            finally:
+                _pool.shutdown(wait=False, cancel_futures=True)
             if isinstance(attempt_usage, dict):
                 usage_attempts.append(attempt_usage)
             generation_usage = _merged_usage()
-            parsed = _extract_json_object(raw_reply)
+            try:
+                parsed = _extract_json_object(raw_reply)
+            except (TypeError, ValueError) as parse_error:
+                if attempt_index == 0:
+                    compact_note = (
+                        ' The provider stopped at its output-token limit. Keep all 10-18 tasks and 4-6 phases, '
+                        'but make every task description one concise sentence and keep all other text compact.'
+                        if _was_truncated(attempt_usage)
+                        else ' The prior response was not valid JSON. Return one complete, strict JSON object.'
+                    )
+                    retry_note = (
+                        '\n\nRETRY REQUIRED. Use the exact same decision inputs and deterministic plan. '
+                        + compact_note
+                        + ' Do not return fewer tasks, omit required coverage, or add generic padding.'
+                    )
+                    continue
+                error = ValueError(
+                    'execution_plan_truncated' if _was_truncated(attempt_usage) else 'invalid_wbs_response'
+                )
+                error.__cause__ = parse_error
+                raise error
             if not isinstance(parsed, dict):
                 raise ValueError('invalid_wbs_response')
             if not isinstance(parsed.get('phases'), list) and not isinstance(parsed.get('tasks'), list):
@@ -5548,7 +5581,15 @@ Rules:
         )
         generation_usage = generation_usage or getattr(generation_error, 'jaspen_usage', None)
         if return_usage:
-            return None, generation_usage, False, type(generation_error).__name__
+            error_text = str(generation_error or '').strip()
+            error_code = (
+                error_text
+                if error_text in {
+                    'execution_plan_truncated', 'invalid_wbs_response', 'wbs_ai_timeout',
+                }
+                else type(generation_error).__name__
+            )
+            return None, generation_usage, False, error_code
         raise
 
 
@@ -7539,7 +7580,7 @@ def generate_ai_wbs(thread_id):
                     'force': bool(payload.get('force') or payload.get('regenerate')),
                 },
                 model_type=model_selection['model_type'],
-                max_tokens=2500,
+                max_tokens=8000,
                 thread_id=thread_id,
             )
         except AIOperationPaymentRequired as payment_error:
@@ -7576,7 +7617,15 @@ def generate_ai_wbs(thread_id):
             error_code=provider_error,
             scorecard_id=telemetry_scorecard_id,
             evaluation_id=execution_evaluation_id,
-            metadata={'generation_failed': not provider_success},
+            metadata={
+                'generation_failed': not provider_success,
+                'stop_reason': provider_usage.get('stop_reason'),
+                'stop_reasons': [
+                    item.get('stop_reason')
+                    for item in (provider_usage.get('component_usages') or [])
+                    if isinstance(item, dict) and item.get('stop_reason')
+                ],
+            },
             persist_ai_operation=False,
         )
         db.session.commit()
@@ -7584,7 +7633,7 @@ def generate_ai_wbs(thread_id):
             return jsonify({
                 'success': False,
                 'code': 'execution_plan_generation_failed',
-                'error': 'AI execution-plan generation failed. Your existing plan was not changed.',
+                'error': "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.",
                 'retryable': True,
                 'generation_status': 'failed',
                 'provider_error': provider_error,

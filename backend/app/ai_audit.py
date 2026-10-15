@@ -217,6 +217,12 @@ def persist_operation(
         'customer_charged_once': bool(customer_visible),
         'internal_operation': not bool(customer_visible),
         'subsidy_classification': classification,
+        'stop_reason': usage.get('stop_reason'),
+        'stop_reasons': [
+            item.get('stop_reason')
+            for item in (usage.get('component_usages') or [])
+            if isinstance(item, dict) and item.get('stop_reason')
+        ],
     }
     if existing is None:
         db.session.add(operation)
@@ -270,6 +276,7 @@ def persist_operation(
                     'customer_visible_result': bool(customer_visible),
                     'component_index': index,
                     'settled_once_at_operation': True,
+                    'stop_reason': component.get('stop_reason'),
                 },
             ))
             sequence += 1

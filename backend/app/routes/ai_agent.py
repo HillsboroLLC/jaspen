@@ -4653,6 +4653,7 @@ def _generate_routed_chat_reply(
                 if not reply:
                     raise ValueError("invalid_response")
                 usage = _openai_usage_to_internal(payload.get("usage"), provider="gemini", model=route["model"])
+                usage["stop_reason"] = str(choice.get("finish_reason") or "").strip() or None
             else:
                 api_key = _anthropic_api_key()
                 if not api_key:
@@ -4687,6 +4688,7 @@ def _generate_routed_chat_reply(
                     ),
                     "provider": "anthropic",
                     "model": actual_model,
+                    "stop_reason": str(getattr(response, "stop_reason", "") or "").strip() or None,
                     "refused": str(getattr(response, "stop_reason", "") or "").lower() == "refusal",
                 }
 
@@ -8420,12 +8422,12 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         generated, _usage, _settlement = execute_customer_operation(
             user, generate=generate_plan, operation_type="execution_plan",
             request_payload={"thread_id": thread_id, "scorecard_id": target_idea_id, "instruction": instruction},
-            model_type=model_selection["model_type"], max_tokens=4096, thread_id=thread_id,
+            model_type=model_selection["model_type"], max_tokens=8000, thread_id=thread_id,
         )
         provider_success = bool(generated.get("provider_success"))
         if not provider_success:
             failure = _tool_error(
-                "AI execution-plan generation failed. Your existing plan was not changed. Retry when ready.",
+                "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.",
                 code="execution_plan_generation_failed",
             )
             failure["retryable"] = True
