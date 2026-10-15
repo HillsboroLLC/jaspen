@@ -123,6 +123,7 @@ it('separates existing and new projects, suggests a key, and blocks token-shaped
   fireEvent.click(screen.getByRole('button', { name: /Jira Connect/i }));
   await screen.findByRole('button', { name: /Create new/i });
   fireEvent.click(screen.getByRole('button', { name: /Create new/i }));
+  expect(screen.getByRole('checkbox', { name: /Group tasks under epics/i })).not.toBeChecked();
   expect(screen.queryByLabelText('Destination project')).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Project name'), { target:{ value:'Jaspen Production Test' } });
   expect(screen.getByLabelText('Project key (e.g. JPT)')).toHaveValue('JPT');
@@ -131,6 +132,8 @@ it('separates existing and new projects, suggests a key, and blocks token-shaped
   expect(screen.getByText(/That looks like an API token/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name:'Create project' })).toBeDisabled();
   expect(Jaspen.createJiraProject).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: /Choose existing/i }));
+  expect(screen.getByRole('checkbox', { name: /Group tasks under epics/i })).toBeChecked();
 });
 
 it('shows reconnect Jira and persists the repaired binding after replacing credentials', async () => {
@@ -206,4 +209,19 @@ it('refreshes the rendered plan after sync-on-open pulls Jira changes', async ()
   expect(screen.getByText(/To Do · 2026-11-20/)).toBeInTheDocument();
   expect(await screen.findByText(/Done · 2026-11-25/)).toBeInTheDocument();
   expect(screen.getByRole('status')).toHaveTextContent('Updated from Jira: 2 changes');
+});
+
+it('shows the Jira default-assignee note once in sync history', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
+    id: 'bind-1', status: 'active', mode: 'two_way',
+  }] });
+  Jaspen.syncPmBinding.mockResolvedValue({
+    result: { binding: { id: 'bind-1', status: 'active', mode: 'two_way' }, pulled: 0, deleted: 0 },
+    logs: [{ id:'log-1', status:'success', items_synced:9, created_at:'2026-10-14T12:00:00Z', sync_metadata:{
+      notes:['Jira assigns new issues to Lydia Bailey by default; Jaspen kept its own owners'],
+    } }],
+  });
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={9} />);
+  fireEvent.click(await screen.findByText('Sync history'));
+  expect(screen.getByText('Jira assigns new issues to Lydia Bailey by default; Jaspen kept its own owners')).toBeInTheDocument();
 });

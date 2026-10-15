@@ -5427,7 +5427,9 @@ Return JSON only:
 }}
 
 Rules:
-- Return only the tasks required to cover the recorded lineage sources. Do not add tasks to reach a count.
+- Include every task required to deliver the decision end to end. Cover the real mobilization, core delivery, reviews and approvals, risk checkpoints, launch or submission, handoff, and closeout work that genuinely applies.
+- Do not pad with generic busywork, and do not omit necessary delivery work.
+- Necessary delivery tasks must cite the recorded decision through decision_commitment lineage. Scorecard-driven work must cite its corresponding weak_criterion, risk, recommendation, gate, condition, or requirement.
 - Name phases for the derived work. Discovery -> Planning -> Build/Execute -> Validate -> Launch -> Operate is guidance only when it fits.
 - CRITICAL: Every task title must be specific to THIS initiative — no generic titles like "Research" or "Planning". Use the conversation, scorecard, and the initiative name above to name exactly what is being done, by whom, for what outcome. Never use "Baseline Analysis" in a task title; use the actual initiative or project name.
 - DETERMINISM: Given the same scorecard, scenario, and instruction, produce the SAME plan every time. Derive tasks mechanically from the inputs below — do not invent variety for its own sake.
@@ -5549,7 +5551,8 @@ def _materialize_ai_wbs(wbs_payload, start_date=None):
         if isinstance(wbs_payload.get('phases'), list) and wbs_payload.get('phases'):
             phases_in = wbs_payload.get('phases')
         elif isinstance(wbs_payload.get('tasks'), list):
-            phases_in = [{'name': 'Generated Plan', 'tasks': wbs_payload.get('tasks')}]
+            plan_name = str(wbs_payload.get('name') or 'Execution Plan').strip() or 'Execution Plan'
+            phases_in = [{'name': plan_name, 'tasks': wbs_payload.get('tasks')}]
 
     created = []
     id_aliases = {}

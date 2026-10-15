@@ -189,7 +189,10 @@ def task_fields(task, binding, parent_key=None):
         "description": adf_document(task, jaspen_url),
         "labels": ["jaspen", plan_label(binding), entity_label(binding, task.get("id"))],
     }
-    if not str(task.get("owner") or "").strip() and not str(task.get("owner_email") or "").strip():
+    account_id = mapped_owner_account_id(binding, task.get("owner"), task.get("owner_email"))
+    if account_id:
+        fields["assignee"] = {"accountId": account_id}
+    elif owner_is_unassigned(task.get("owner"), task.get("owner_email")):
         # Jira otherwise applies the project's default assignee. An explicit
         # null keeps an unowned Jaspen task unassigned when the site permits it.
         fields["assignee"] = None
@@ -206,6 +209,25 @@ def task_fields(task, binding, parent_key=None):
     if start_field and start_date:
         fields[start_field] = start_date
     return fields
+
+
+def owner_is_unassigned(owner=None, owner_email=None):
+    """Treat the product's visible Unassigned label as an empty owner."""
+    owner_text = str(owner or "").strip()
+    email_text = str(owner_email or "").strip()
+    return not email_text and owner_text.lower() in {"", "unassigned"}
+
+
+def mapped_owner_account_id(binding, owner=None, owner_email=None):
+    """Return a Jira account only for an explicit binding-owned mapping."""
+    if owner_is_unassigned(owner, owner_email):
+        return None
+    user_map = binding.user_map if isinstance(binding.user_map, dict) else {}
+    for value in (owner_email, owner):
+        key = str(value or "").strip()
+        if key and user_map.get(key):
+            return str(user_map[key])
+    return None
 
 
 def phase_fields(phase_name, binding, tasks=None, entity_id=None):
@@ -395,12 +417,13 @@ class JiraProvider(ProjectToolProvider):
         if "start_date" in changes and start_field:
             fields[start_field] = str(changes.get("start_date") or "")[:10] or None
         if "owner_email" in changes or "owner" in changes:
-            user_map = binding.user_map if isinstance(binding.user_map, dict) else {}
-            account_id = user_map.get(str(changes.get("owner_email") or task.get("owner_email") or "")) or user_map.get(str(changes.get("owner") or task.get("owner") or ""))
+            account_id = mapped_owner_account_id(
+                binding,
+                changes.get("owner", task.get("owner")),
+                changes.get("owner_email", task.get("owner_email")),
+            )
             if account_id:
                 fields["assignee"] = {"accountId": account_id}
-            elif not str(changes.get("owner") or "").strip() and not str(changes.get("owner_email") or "").strip():
-                fields["assignee"] = None
         if fields:
             request(config, "PUT", f"/rest/api/3/issue/{quote(external_id)}", {"fields": fields})
         status_ok = True
@@ -416,7 +439,7 @@ class JiraProvider(ProjectToolProvider):
 
     def get_item(self, config, binding, external_id):
         start_field = str((binding.config or {}).get("start_date_field_id") or "").strip()
-        fields = ["summary", "description", "assignee", "status", "parent", "duedate", "updated"]
+        fields = ["summary", "description", "assignee", "status", "parent", "duedate", "created", "updated"]
         if start_field:
             fields.append(start_field)
         try:
@@ -444,6 +467,7 @@ class JiraProvider(ProjectToolProvider):
         if start_field:
             field_map[start_field] = "start_date"
         changed_at = {}
+        owner_change = None
         histories = ((row.get("changelog") or {}).get("histories") or []) if isinstance(row.get("changelog"), dict) else []
         for history in histories:
             created = _parse_iso(history.get("created"))
@@ -453,9 +477,21 @@ class JiraProvider(ProjectToolProvider):
                     changed_at[key] = created
                     if key == "owner":
                         changed_at["owner_email"] = created
+                        author = history.get("author") if isinstance(history.get("author"), dict) else {}
+                        owner_change = {
+                            "changed_at": created,
+                            "changed_by_account_id": str(author.get("accountId") or "").strip() or None,
+                            "changed_by_name": str(author.get("displayName") or "").strip() or None,
+                            "changed_by_account_type": str(author.get("accountType") or "").strip().lower() or None,
+                            "account_id": str(assignee.get("accountId") or "").strip() or None,
+                            "display_name": str(assignee.get("displayName") or "").strip() or None,
+                            "email": str(assignee.get("emailAddress") or "").strip() or None,
+                            "account_type": str(assignee.get("accountType") or "").strip().lower() or None,
+                        }
         return {
             "deleted": False, "values": values, "changed_at": changed_at,
             "version": _parse_iso(remote.get("updated")), "status_error": status_error,
+            "created_at": _parse_iso(remote.get("created")), "owner_change": owner_change,
             "parent_id": str(parent.get("key") or "").strip() or None,
             "supported_fields": ["title", "description", "owner", "owner_email", "status", "due_date"] + (["start_date"] if start_field else []),
             "url": f"{config['base_url']}/browse/{external_id}",

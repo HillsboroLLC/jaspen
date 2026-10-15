@@ -1070,7 +1070,7 @@ def _decision_kit_judgment_for_turn(session, user_message, model_selection, *, e
 
 
 def _apply_rfp_decision_context(session, user_message, *, explicit_selection=None, judgment=None):
-    """Apply an explicit or grounded model-owned kit decision to persisted state."""
+    """Apply only a user-selected kit; model judgment may only suggest one."""
     if not isinstance(session, dict):
         return
     explicit = str(explicit_selection or "").strip().lower()
@@ -1113,6 +1113,7 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
             }
         return
     if explicit == "rfp":
+        session.pop("decision_kit_suggestion", None)
         session["decision_kit_family"] = "rfp"
         session["decision_kit_source"] = "user"
         session["decision_kit_family_locked"] = True
@@ -1124,6 +1125,7 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
             session["decision_kit_remap_required"] = True
         return
     if explicit in {"rfp_bid", "rfp_vendor_selection"}:
+        session.pop("decision_kit_suggestion", None)
         session["decision_kit_family"] = "rfp"
         session["decision_kit_source"] = "user"
         session["decision_kit_locked"] = True
@@ -1148,26 +1150,31 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
         return
     if not judged:
         return
-    if inferred and confidence in {"high", "medium"}:
-        session["decision_kit_family"] = "rfp"
+    # A user who clicked the visible RFP shortcut has explicitly selected the
+    # family. Discovery may resolve its internal subtype without another click;
+    # this is not automatic kit attachment.
+    if session.get("decision_kit_family_locked") and session.get("decision_kit_family") == "rfp" and inferred:
         kit = get_decision_kit(inferred)
         session["decision_kit"] = inferred
         session["decision_kit_version"] = kit["version"]
-        session["decision_kit_source"] = "model_inference"
+        session["decision_kit_source"] = "user"
         session["decision_kit_locked"] = True
-        session["decision_kit_evidence_quote"] = judged.get("evidence_quote")
-        session["decision_kit_notice_pending"] = _decision_kit_notice(inferred)
         session["decision_kit_remap_required"] = True
-        session.pop("decision_kit_conflict", None)
+        session.pop("decision_kit_suggestion", None)
         return
-    if judged.get("kit") == "none" and confidence in {"high", "medium"} and session.get("decision_kit_family") != "rfp":
-        session["decision_kit_locked"] = True
-        session["decision_kit_source"] = "model_inference"
-        session["decision_kit_evidence_quote"] = judged.get("evidence_quote")
+    if inferred and confidence in {"high", "medium"}:
+        session["decision_kit_suggestion"] = {
+            "kit": inferred,
+            "label": "RFP Response" if inferred == "rfp_bid" else "RFP Vendor Selection",
+            "evidence_quote": judged.get("evidence_quote"),
+        }
         return
-    if confidence == "low" and judged.get("kit") == "none" and judged.get("evidence_quote"):
-        session["decision_kit_family"] = "rfp"
-        session["decision_kit_source"] = session.get("decision_kit_source") or "model_ambiguous"
+    if confidence == "low" and judged.get("evidence_quote"):
+        session["decision_kit_suggestion"] = {
+            "kit": inferred or "rfp",
+            "label": "RFP",
+            "evidence_quote": judged.get("evidence_quote"),
+        }
 
 
 RFP_SUBTYPE_QUESTION = "Are you responding to this RFP, or selecting a vendor?"
@@ -12099,10 +12106,6 @@ def conversation_start():
             requested_objective = intake_objective
             objective_supplied = True
     inferred_objective = None
-    if not objective_supplied:
-        inferred_objective = _infer_strategy_objective_from_message(user_message)
-        if inferred_objective:
-            requested_objective = inferred_objective
     raw_decision_kit = str(data.get("decision_kit") or "").strip().lower()
     rfp_family_requested = raw_decision_kit == "rfp"
     requested_decision_kit = raw_decision_kit if raw_decision_kit in {"rfp_bid", "rfp_vendor_selection"} else None
@@ -12252,6 +12255,7 @@ def conversation_start():
             "strategy_objective": session.get("strategy_objective") or "balanced",
             "decision_kit": session.get("decision_kit"),
             "decision_kit_family": session.get("decision_kit_family"),
+            "decision_kit_suggestion": session.get("decision_kit_suggestion"),
             "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
             "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
             "organization_id": session.get("organization_id"),
@@ -12346,6 +12350,7 @@ def conversation_start():
             "strategy_objective": session.get("strategy_objective") or "balanced",
             "decision_kit": session.get("decision_kit"),
             "decision_kit_family": session.get("decision_kit_family"),
+            "decision_kit_suggestion": session.get("decision_kit_suggestion"),
             "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
             "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
             "organization_id": session.get("organization_id"),
@@ -12537,6 +12542,7 @@ def conversation_start():
                     "strategy_objective": session.get("strategy_objective") or "balanced",
                     "decision_kit": session.get("decision_kit"),
                     "decision_kit_family": session.get("decision_kit_family"),
+            "decision_kit_suggestion": session.get("decision_kit_suggestion"),
                     "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
                     "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
                     "organization_id": session.get("organization_id"),
@@ -12738,6 +12744,7 @@ def conversation_start():
         "strategy_objective": session.get("strategy_objective") or "balanced",
         "decision_kit": session.get("decision_kit"),
         "decision_kit_family": session.get("decision_kit_family"),
+        "decision_kit_suggestion": session.get("decision_kit_suggestion"),
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
         "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
         "organization_id": session.get("organization_id"),
@@ -12836,10 +12843,6 @@ def conversation_continue():
             requested_objective = intake_objective
             objective_supplied = True
     inferred_objective = None
-    if not objective_supplied:
-        inferred_objective = _infer_strategy_objective_from_message(user_message)
-        if inferred_objective:
-            requested_objective = inferred_objective
     starter_lever_defaults = _sanitize_lever_defaults(data.get("lever_defaults"))
     view_context_supplied = isinstance(data.get("view_context"), dict) or any(
         key in data for key in ("current_view", "active_tab", "active_scorecard_id", "active_scenario_id", "wbs_summary")
@@ -13889,6 +13892,7 @@ def get_thread(thread_id):
         "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
         "decision_kit": session.get("decision_kit"),
         "decision_kit_family": session.get("decision_kit_family"),
+        "decision_kit_suggestion": session.get("decision_kit_suggestion"),
         "decision_kit_version": session.get("decision_kit_version"),
         "decision_kit_source": session.get("decision_kit_source"),
         "kit_context": session.get("kit_context") if isinstance(session.get("kit_context"), dict) else {},
@@ -14068,8 +14072,9 @@ def update_thread(thread_id):
                 next_analyses.append(patched_entry)
             session["analyses"] = next_analyses
     if decision_kit_supplied:
+        raw_next_kit = str(data.get("decision_kit") or "").strip().lower()
         try:
-            next_kit = normalize_decision_kit(data.get("decision_kit"))
+            next_kit = None if raw_next_kit == "rfp" else normalize_decision_kit(data.get("decision_kit"))
         except ValueError as exc:
             return jsonify({"error": str(exc), "code": "invalid_decision_kit"}), 400
         kit = get_decision_kit(next_kit) if next_kit else None
@@ -14088,7 +14093,11 @@ def update_thread(thread_id):
             }), 409
         session["decision_kit"] = next_kit
         session["decision_kit_version"] = kit.get("version") if kit else None
-        session["decision_kit_source"] = str(data.get("decision_kit_source") or "user") if next_kit else None
+        session["decision_kit_source"] = str(data.get("decision_kit_source") or "user") if (next_kit or raw_next_kit == "rfp") else None
+        session["decision_kit_family"] = "rfp" if (raw_next_kit == "rfp" or (next_kit and next_kit.startswith("rfp_"))) else None
+        session["decision_kit_locked"] = bool(next_kit)
+        session["decision_kit_family_locked"] = bool(session.get("decision_kit_family"))
+        session.pop("decision_kit_suggestion", None)
         if previous_kit != next_kit and session.get("result"):
             session["decision_kit_rescore_required"] = True
             session["decision_kit_preserve_existing_facts"] = True

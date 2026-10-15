@@ -657,6 +657,7 @@ async convoStart({ description, project_id, model_type, strategy_objective, deci
       strategy_objective: data.strategy_objective || null,
       decision_kit: data.decision_kit || null,
       decision_kit_family: data.decision_kit_family || null,
+      decision_kit_suggestion: data.decision_kit_suggestion || null,
       intake_context: data.intake_context || null,
       status: data.status || 'gathering_info',
     };

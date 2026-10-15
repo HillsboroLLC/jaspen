@@ -195,6 +195,53 @@ def test_every_execution_task_must_have_valid_lineage_and_cover_every_source():
     assert audit["dropped_tasks"] == ["t1"]
 
 
+def test_validated_plan_preserves_phase_order_dependencies_and_drops_empty_phases():
+    sources = [{"type": "decision_commitment", "ref": "d1", "label": "Proceed", "required": True}]
+    lineage = [{"type": "decision_commitment", "ref": "d1"}]
+    plan = {
+        "name": "Complete launch",
+        "phases": [
+            {"name": "Mobilize", "tasks": [{"id": "a", "title": "Kick off launch", "lineage": lineage}]},
+            {"name": "Build", "tasks": [{"id": "b", "title": "Build launch", "dependencies": ["a"], "lineage": lineage}]},
+            {"name": "Empty after validation", "tasks": [{"id": "junk", "title": "Untraceable", "lineage": []}]},
+            {"name": "Closeout", "tasks": [{"id": "c", "title": "Close launch", "dependencies": ["b", "future"], "lineage": lineage}]},
+        ],
+    }
+    validated, audit = validate_plan_lineage(plan, sources)
+    assert [phase["name"] for phase in validated["phases"]] == ["Mobilize", "Build", "Closeout"]
+    assert [task["id"] for task in validated["tasks"]] == ["a", "b", "c"]
+    assert validated["tasks"][1]["dependencies"] == ["a"]
+    assert validated["tasks"][2]["dependencies"] == ["b"]
+    assert audit["dropped_tasks"] == ["junk"]
+
+
+def test_materialize_keeps_real_phases_and_flat_plan_uses_plan_name():
+    from app.routes.strategy import _materialize_ai_wbs
+
+    phased = {"name": "Launch", "phases": [
+        {"name": "Prepare", "tasks": [{"id": "a", "title": "Prepare launch", "lineage": [{"type": "decision_commitment", "ref": "d1"}]}]},
+        {"name": "Deliver", "tasks": [{"id": "b", "title": "Deliver launch", "dependencies": ["a"], "lineage": [{"type": "decision_commitment", "ref": "d1"}]}]},
+        {"name": "Close", "tasks": [{"id": "c", "title": "Close launch", "dependencies": ["b"], "lineage": [{"type": "decision_commitment", "ref": "d1"}]}]},
+    ]}
+    first = _materialize_ai_wbs(phased, start_date="2026-10-20")
+    second = _materialize_ai_wbs(phased, start_date="2026-10-20")
+    assert [phase["name"] for phase in first["phases"]] == ["Prepare", "Deliver", "Close"]
+    assert [task["phase"] for task in first["tasks"]] == ["Prepare", "Deliver", "Close"]
+    assert first == second
+
+    flat = _materialize_ai_wbs({"name": "Named delivery plan", "tasks": [{"id": "x", "title": "Deliver result"}]}, start_date="2026-10-20")
+    assert flat["phases"][0]["name"] == "Named delivery plan"
+    assert flat["tasks"][0]["phase"] == "Named delivery plan"
+
+
+def test_execution_prompt_requires_complete_delivery_without_minimal_plan_rule():
+    from pathlib import Path
+    source = Path(__file__).parents[1].joinpath("app/routes/strategy.py").read_text()
+    assert "Include every task required to deliver the decision end to end" in source
+    assert "Do not pad with generic busywork, and do not omit necessary delivery work" in source
+    assert "Do not add tasks to reach a count" not in source
+
+
 def test_lineage_sources_include_recorded_decision_and_backward_schedule():
     card = {"attributes": {"submission_due": attr("2026-11-14"), "mandatory_requirements": attr(["Signed form"])}, "dimensions": {}, "gates": []}
     sources = build_lineage_sources(card, get_decision_kit("rfp_bid"), {"id": "d1", "final_decision": "Bid"})

@@ -1099,7 +1099,7 @@ export function TimelineView({ wbs, phases }) {
 
 // ── Main canvas ────────────────────────────────────────────────────────────
 
-export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bundle, wbs: wbsProp, displayTitle, score, isWinner = false, onAskJaspen, showPlanActions = true }) {
+export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bundle, wbs: wbsProp, displayTitle, score, isWinner = false, onAskJaspen, showPlanActions = true, loading = false }) {
   // Local working copy of the WBS. Prefer the explicit wbs prop (fetched
   // from /threads/:tid/wbs which is the authoritative source) over the
   // bundle's project_wbs (which can lag for older threads).
@@ -1409,6 +1409,10 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
   const scoreCategory = typeof score === 'number' && score > 0
     ? (score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk')
     : null;
+
+  if (loading) {
+    return <div role="status" aria-live="polite" style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', background:COLOR.bg, color:COLOR.mute }}>Loading execution plan…</div>;
+  }
 
   // Legacy template fallbacks are invalid under Article 18. Never render
   // their tasks as a plan; give the user an explicit retry path instead.

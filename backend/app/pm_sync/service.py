@@ -6,6 +6,7 @@ from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync import jira_adapter
 from app.scenarios_store import load_scenarios_data
+from sqlalchemy.orm.attributes import flag_modified
 
 MODES = {"two_way", "push_only"}
 POLICIES = {"latest_wins", "prefer_external", "prefer_jaspen", "manual_review"}
@@ -171,12 +172,16 @@ def _snapshot(task):
             values = [item for item in values if item is not None]
             return values or None
         return value
-    return {
+    snapshot = {
         key: normalized(task.get(key)) for key in (
             "title", "description", "rationale", "owner", "owner_email", "status",
             "priority", "start_date", "due_date", "phase", "depends_on", "lineage", "updated_at",
         )
     }
+    if jira_adapter.owner_is_unassigned(snapshot.get("owner"), snapshot.get("owner_email")):
+        snapshot["owner"] = None
+        snapshot["owner_email"] = None
+    return snapshot
 
 
 def _task_synced_fields(task, binding):
@@ -184,12 +189,8 @@ def _task_synced_fields(task, binding):
     fields = {"title", "description", "status", "due_date"}
     if (binding.config or {}).get("start_date_field_id") and jira_adapter.effective_start_date(task):
         fields.add("start_date")
-    if not str(task.get("owner") or "").strip() and not str(task.get("owner_email") or "").strip():
+    if jira_adapter.mapped_owner_account_id(binding, task.get("owner"), task.get("owner_email")):
         fields.update({"owner", "owner_email"})
-    else:
-        user_map = binding.user_map if isinstance(binding.user_map, dict) else {}
-        if user_map.get(str(task.get("owner_email") or "")) or user_map.get(str(task.get("owner") or "")):
-            fields.update({"owner", "owner_email"})
     return sorted(fields)
 
 
@@ -209,6 +210,8 @@ def _created_task_snapshot(config, binding, issue_key, task):
     actual["_synced_fields"] = sorted(set(remote.get("supported_fields") or []) & {
         "title", "description", "owner", "owner_email", "status", "start_date", "due_date",
     })
+    actual["_jaspen_owner"] = local.get("owner")
+    actual["_jaspen_owner_email"] = local.get("owner_email")
     preserved = [
         field for field in ("owner", "owner_email")
         if local.get(field) is None and actual.get(field) is not None
@@ -217,7 +220,31 @@ def _created_task_snapshot(config, binding, issue_key, task):
         # Top-level values are the actual Jira baseline. The marker tells the
         # three-way comparer that Jaspen intentionally remains unassigned.
         actual["_preserve_local_empty_fields"] = preserved
+        assignee = actual.get("owner")
+        if assignee:
+            config_data = dict(binding.config or {})
+            if not config_data.get("jira_default_assignee_note"):
+                config_data["jira_default_assignee_note"] = (
+                    f"Jira assigns new issues to {assignee} by default; Jaspen kept its own owners"
+                )
+                config_data["jira_default_assignee_note_pending"] = True
+                binding.config = config_data
+                flag_modified(binding, "config")
     return actual
+
+
+def _consume_binding_note(binding, result):
+    config = dict(binding.config or {})
+    if not config.get("jira_default_assignee_note_pending"):
+        return []
+    note = str(config.get("jira_default_assignee_note") or "").strip()
+    config["jira_default_assignee_note_pending"] = False
+    binding.config = config
+    flag_modified(binding, "config")
+    notes = [note] if note else []
+    if notes:
+        result["notes"] = notes
+    return notes
 
 
 def _sync_phases(binding, plan, config, existing, result):
@@ -282,6 +309,7 @@ def _sync_phases(binding, plan, config, existing, result):
 
 def _record_log(binding, trigger, result):
     errors = result.get("errors") if isinstance(result.get("errors"), list) else []
+    notes = _consume_binding_note(binding, result)
     log = ConnectorSyncLog(
         user_id=binding.user_id,
         connector_id=binding.connector_id,
@@ -296,6 +324,7 @@ def _record_log(binding, trigger, result):
             "trigger": trigger,
             "counts": {key: int(result.get(key) or 0) for key in ("created", "updated", "dependencies", "failed")},
             "errors": errors[:50],
+            "notes": notes,
         },
     )
     db.session.add(log)
@@ -394,12 +423,15 @@ def push_binding(binding, plan=None, trigger="send"):
                 # Parent structure is reconciled separately from editable task
                 # fields so its repair is explicit and auditable.
                 fields.pop("parent", None)
+                if fields.get("assignee", object()) is None:
+                    # An explicit null is useful once at creation. If Jira's
+                    # project policy replaces it with a default assignee, do
+                    # not retry the rejected clear on every later push.
+                    fields.pop("assignee", None)
                 jira_adapter.request(config, "PUT", f"/rest/api/3/issue/{issue_key}", {"fields": jira_adapter.update_fields(fields)})
                 jira_adapter.set_identity(config, binding, issue_key, "task", task_id)
                 jira_adapter.sync_status(config, binding, issue_key, task.get("status"))
-                task_snapshot = _snapshot(task)
-                task_snapshot["start_date"] = jira_adapter.effective_start_date(task)
-                task_snapshot["_synced_fields"] = _task_synced_fields(task, binding)
+                task_snapshot = _created_task_snapshot(config, binding, issue_key, task)
                 _upsert_link(binding, "task", task_id, issue_key, parent, task_snapshot)
                 db.session.commit()
                 result["updated"] += 1

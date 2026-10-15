@@ -79,7 +79,11 @@ export function useExecutionPlanBuild() {
           <button type="button" className="jas-account-modal-close" onClick={() => finishConfirmation({ acknowledged: false })} aria-label="Close">×</button>
         </div>
         <p style={{ margin: '0 0 16px', color: 'var(--color-text-secondary)' }}>
-          Building this plan records that you&apos;re moving forward with <strong>{confirmation.optionName}</strong> ({confirmation.verdict}). This is saved to your decision history.
+          {/\b(?:no[-\s]?bid|decline)\b/i.test(String(confirmation.verdict || '')) ? (
+            <>Building this plan records that you&apos;re moving forward with <strong>{confirmation.optionName}</strong>, overriding Jaspen&apos;s No-Bid recommendation. This is saved to your decision history.</>
+          ) : (
+            <>Building this plan records that you&apos;re moving forward with <strong>{confirmation.optionName}</strong> ({confirmation.verdict}). This is saved to your decision history.</>
+          )}
         </p>
         <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
           <input
@@ -109,4 +113,3 @@ export function useExecutionPlanBuild() {
 
   return { generateExecutionPlan, executionPlanDecisionDialog };
 }
-

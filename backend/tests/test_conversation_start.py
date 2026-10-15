@@ -112,7 +112,7 @@ class TestHomepageHandoffIntegration:
         response = client.post(START_URL, json={"message": "Use Value 60% and Risk 40%. Score it now.", "thread_id": thread_id})
         assert response.status_code == 200, response.get_data(as_text=True)
 
-    def test_manual_and_inferred_rfp_activation_share_persisted_state(self, client, db, monkeypatch):
+    def test_manual_activation_applies_and_inference_only_suggests(self, client, db, monkeypatch):
         from app.routes.sessions import load_user_sessions
 
         signup = _signup(client)
@@ -125,24 +125,33 @@ class TestHomepageHandoffIntegration:
         inferred = client.post(START_URL, json={"message": message, "thread_id": inferred_id, "strategy_objective": "growth"})
         assert manual.status_code == inferred.status_code == 200
         sessions = load_user_sessions(user_id)
-        for thread_id in (manual_id, inferred_id):
-            assert sessions[thread_id]["decision_kit"] == "rfp_bid"
-            assert sessions[thread_id]["decision_kit_family"] == "rfp"
-            assert sessions[thread_id]["strategy_objective"] == "growth"
+        assert sessions[manual_id]["decision_kit"] == "rfp_bid"
+        assert sessions[manual_id]["decision_kit_family"] == "rfp"
+        assert sessions[inferred_id].get("decision_kit") is None
+        assert sessions[inferred_id].get("decision_kit_family") is None
+        assert sessions[inferred_id]["decision_kit_suggestion"]["kit"] == "rfp_bid"
+        assert sessions[manual_id]["strategy_objective"] == sessions[inferred_id]["strategy_objective"] == "growth"
         assert sessions[manual_id]["decision_kit_source"] == "user"
-        assert sessions[inferred_id]["decision_kit_source"] == "model_inference"
 
-    def test_ambiguous_inferred_rfp_asks_one_subtype_question(self, client, db, monkeypatch):
+    def test_ambiguous_inferred_rfp_returns_suggestion_without_applying(self, client, db, monkeypatch):
         from app.routes import ai_agent
 
         _signup(client)
+        _patch_generation_success(monkeypatch)
         monkeypatch.setattr(ai_agent, "_classify_decision_kit", lambda *_args, **_kwargs: {
             "kit": "none", "confidence": "low", "evidence_quote": "this RFP",
         })
-        response = client.post(START_URL, json={"message": "Help me with this RFP.", "thread_id": f"thread_{uuid.uuid4().hex[:16]}"})
+        thread_id = f"thread_{uuid.uuid4().hex[:16]}"
+        response = client.post(START_URL, json={"message": "Help me with this RFP.", "thread_id": thread_id})
         assert response.status_code == 200
-        assert response.get_json()["reply"] == ai_agent.RFP_SUBTYPE_QUESTION
-        assert response.get_json()["decision_kit_family"] == "rfp"
+        assert response.get_json()["decision_kit"] is None
+        assert response.get_json()["decision_kit_family"] is None
+        assert response.get_json()["decision_kit_suggestion"]["kit"] == "rfp"
+        selected = client.patch(f"/api/v1/ai-agent/threads/{thread_id}", json={"decision_kit": "rfp", "decision_kit_source": "user"})
+        assert selected.status_code == 200
+        stored = client.get(f"/api/v1/ai-agent/threads/{thread_id}").get_json()["thread"]
+        assert stored["decision_kit"] is None
+        assert stored["decision_kit_family"] == "rfp"
 
     @pytest.mark.parametrize("message", [
         "Should we respond to the state’s RFP?",

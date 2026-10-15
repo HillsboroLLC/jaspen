@@ -1645,6 +1645,7 @@ export default function JaspenChat() {
   const [sharedProjectsLoading, setSharedProjectsLoading] = useState(false);
   const [strategyObjective, setStrategyObjective] = useState('balanced');
   const [decisionKit, setDecisionKit] = useState(null);
+  const [decisionKitSuggestion, setDecisionKitSuggestion] = useState(null);
   const [objectiveExplicitlySet, setObjectiveExplicitlySet] = useState(false);
 
   const [busy, setBusy] = useState(false);
@@ -1718,7 +1719,7 @@ export default function JaspenChat() {
     return () => window.removeEventListener('keydown', onKey);
   }, [lightboxScorecard]);
   // Tracks which stage pill's content the sidebar is showing
-  const [activePill, setActivePill] = useState('discovery');
+  const [activePill, setActivePill] = useState(null);
   const [artifactsOpen, setArtifactsOpen] = useState(false);
   const [uploadsOpen, setUploadsOpen] = useState(false);
   // Scenario results kept at the Workspace level (so Score tab can switch)
@@ -2088,7 +2089,8 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
       bundle?.strategy_objective || bundle?.thread?.strategy_objective || 'balanced'
     );
     setStrategyObjective(bundleObjective);
-    setDecisionKit(bundle?.decision_kit || bundle?.thread?.decision_kit || ((bundle?.decision_kit_family || bundle?.thread?.decision_kit_family) === 'rfp' ? RFP_DECISION_INTENT : null));
+    setDecisionKit(bundle?.decision_kit || bundle?.thread?.decision_kit || null);
+    setDecisionKitSuggestion(bundle?.decision_kit_suggestion || bundle?.thread?.decision_kit_suggestion || null);
 
     setSavedScenarios(normalized);
     const bundleLeverCatalog = Array.isArray(bundle?.lever_catalog) ? bundle.lever_catalog : [];
@@ -5986,6 +5988,7 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
     const normalized = nextKit || null;
     const persistThreadId = options.threadId || currentSessionId || sessionId || null;
     setDecisionKit(normalized);
+    setDecisionKitSuggestion(null);
     if (options.persist === false || !persistThreadId) return normalized;
     try {
       await Jaspen.setThreadDecisionKit(persistThreadId, normalized, 'user');
@@ -6455,6 +6458,13 @@ useEffect(() => {
     didAutoRestoreRef.current = true;
 
     (async () => {
+      // Per-session state must never leak while a new or saved thread loads.
+      setDecisionKit(null);
+      setDecisionKitSuggestion(null);
+      setActiveContextSourceIds(new Set());
+      setUsedContextSourceIds(new Set());
+      setActivePill(null);
+      setThreadWbs(null);
       // Prefer URL sid, fallback to localStorage
       const urlSid = (() => {
         try { return new URLSearchParams(window.location.search).get('sid'); }
@@ -6477,6 +6487,7 @@ useEffect(() => {
         setTradeoffRequested(false);
         setStrategyObjective('balanced');
         setDecisionKit(null);
+        setDecisionKitSuggestion(null);
         setObjectiveExplicitlySet(false);
 // (removed) sidebar uses main `messages` as the thread source of truth
         setCollectedData({});
@@ -6518,7 +6529,7 @@ useEffect(() => {
             strategy_objective: normalizeStrategyObjective(
               restoreBundle?.strategy_objective || restoreBundle?.thread?.strategy_objective || 'balanced'
             ),
-            decision_kit: restoreBundle?.decision_kit || restoreBundle?.thread?.decision_kit || ((restoreBundle?.decision_kit_family || restoreBundle?.thread?.decision_kit_family) === 'rfp' ? RFP_DECISION_INTENT : null),
+            decision_kit: restoreBundle?.decision_kit || restoreBundle?.thread?.decision_kit || null,
             objective_explicitly_set: false,
           };
         } catch (e) {
@@ -6544,6 +6555,9 @@ useEffect(() => {
       setSessionId(canonicalSid);
       setCurrentSessionId(canonicalSid);
       setDecisionKit(session?.decision_kit || restoreBundle?.decision_kit || restoreBundle?.thread?.decision_kit || null);
+      setDecisionKitSuggestion(session?.decision_kit_suggestion || restoreBundle?.decision_kit_suggestion || restoreBundle?.thread?.decision_kit_suggestion || null);
+      setActiveContextSourceIds(new Set(session?.data_context_connector_ids || restoreBundle?.data_context_connector_ids || restoreBundle?.thread?.data_context_connector_ids || []));
+      setUsedContextSourceIds(new Set(session?.data_context_connector_ids || restoreBundle?.data_context_connector_ids || restoreBundle?.thread?.data_context_connector_ids || []));
       setLastSessionId(canonicalSid);
       const restoredModelType = String(session?.model_type || '').toLowerCase();
       if (restoredModelType && allowedModelTypes.includes(restoredModelType)) {
@@ -6791,6 +6805,10 @@ if (rawHistory.length > 0) {
 const hasConversationMessages = Array.isArray(messages)
   && messages.some((m) => String(m?.text || '').trim().length > 0);
 
+useEffect(() => {
+  if (hasConversationMessages && !activePill) setActivePill('discovery');
+}, [activePill, hasConversationMessages]);
+
 // canAnalyze: true once the user has provided at least 3 substantive messages
 const canAnalyze = useMemo(() => {
   const userTurns = messages?.filter(m => m.role === 'user' && (m.text || '').trim().length > 0) || [];
@@ -6799,33 +6817,37 @@ const canAnalyze = useMemo(() => {
 
 // Advance sidebar pill to 'scoring' the moment a scorecard lands
 useEffect(() => {
-  if (analysisResult) setActivePill('scoring');
-}, [analysisResult]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!analysisResult) return;
+  const hasExecutionPlan = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
+  setActivePill(hasExecutionPlan ? 'execution' : 'scoring');
+}, [analysisResult, threadWbs]); // eslint-disable-line react-hooks/exhaustive-deps
 
 // On session resume: scorecardSnapshots load from the bundle before analysisResult
 // is set (analysisResult requires hasMeaningfulScorecardData to pass). If the pill
 // is still at the initial 'discovery' state and snapshots exist, advance it now.
-// We use a ref so this only fires once — subsequent snapshot changes (user scores
-// a new idea) don't reset a pill the user has explicitly navigated away from.
-const _pillSeededRef = useRef(false);
+// Track the thread that was seeded so switching sessions cannot inherit the
+// previous thread's navigation guard.
+const _pillSeededSessionRef = useRef(null);
 useEffect(() => {
-  if (_pillSeededRef.current) return;
+  const activeThreadId = currentSessionId || sessionId || null;
+  if (!activeThreadId || _pillSeededSessionRef.current === activeThreadId) return;
   if (Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0) {
-    _pillSeededRef.current = true;
-    setActivePill((prev) => prev === 'discovery' ? 'scoring' : prev);
+    _pillSeededSessionRef.current = activeThreadId;
+    setActivePill((prev) => (!prev || prev === 'discovery') ? 'scoring' : prev);
   }
-}, [scorecardSnapshots]); // eslint-disable-line react-hooks/exhaustive-deps
+}, [currentSessionId, scorecardSnapshots, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
 // On session resume: if there's already an execution plan, jump straight to
 // the Execution pill so users land in the right place after a page refresh.
-const _wbsPillSeededRef = useRef(false);
+const _wbsPillSeededSessionRef = useRef(null);
 useEffect(() => {
-  if (_wbsPillSeededRef.current) return;
+  const activeThreadId = currentSessionId || sessionId || null;
+  if (!activeThreadId || _wbsPillSeededSessionRef.current === activeThreadId) return;
   if (Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0) {
-    _wbsPillSeededRef.current = true;
+    _wbsPillSeededSessionRef.current = activeThreadId;
     setActivePill('execution');
   }
-}, [threadWbs]); // eslint-disable-line react-hooks/exhaustive-deps
+}, [currentSessionId, sessionId, threadWbs]); // eslint-disable-line react-hooks/exhaustive-deps
 
 // Primary path: artifacts arrive as explicit assistant messages from backend
 // and are rendered directly in thread order. Backward-compat fallback: older
@@ -7178,18 +7200,6 @@ const tradeoffEligibleScoredItems = useMemo(() => {
     }));
 }, [scoredIdeaInsights]);
 
-// Trade-off auto-evolves: as soon as the session has two or more scored ideas,
-// enable the trade-off so it builds (and continuously refreshes) without the
-// user having to ask. The local trade-off artifact is recomputed from the
-// current snapshot pool on every render, so it stays in sync as new ideas are
-// scored. (This only flips the flag on — never off — so the user can still
-// dismiss individual ideas via tradeoff_included overrides.)
-useEffect(() => {
-  if (!tradeoffRequested && tradeoffEligibleScoredItems.length >= 2) {
-    setTradeoffRequested(true);
-  }
-}, [tradeoffRequested, tradeoffEligibleScoredItems.length]);
-
 const renderObjectiveTags = (className = '') => {
   if (objectiveLocked) return null;
   return (
@@ -7221,6 +7231,15 @@ const renderDecisionKitTags = (className = '') => (
     >
       RFP
     </button>
+    {!decisionKit && decisionKitSuggestion?.kit && (
+      <button
+        type="button"
+        className="jas-objective-tag jas-decision-kit-suggestion"
+        onClick={() => applyDecisionKit(decisionKitSuggestion.kit, { persist: true })}
+      >
+        This looks like an RFP — use the {decisionKitSuggestion.label || 'RFP'} kit?
+      </button>
+    )}
   </div>
 );
 
@@ -7235,6 +7254,8 @@ const renderConnectorContextTags = () => {
         const connected = connectedById.get(available.id);
         const source = connected || available;
         const isConnected = Boolean(connected);
+        const connectorStatus = connectorStatusById[source.id] || {};
+        const hasProblem = ['error', 'degraded', 'reconnect_required'].includes(String(connectorStatus.lifecycle_status || connectorStatus.status || '').toLowerCase());
         const isActive = activeContextSourceIds.has(source.id);
         return (
           <button
@@ -7242,12 +7263,12 @@ const renderConnectorContextTags = () => {
             type="button"
             className={`jas-connector-context-chip ${isActive ? 'active' : ''} ${!isConnected ? 'unavailable' : ''}`}
             onClick={() => {
-              if (isConnected) void handleToggleContextSource(source.id, source.label);
+              if (isConnected && !hasProblem) void handleToggleContextSource(source.id, source.label);
+              else window.location.assign(`/connectors-manage?connector=${encodeURIComponent(source.id)}`);
             }}
-            disabled={!isConnected}
-            aria-disabled={!isConnected}
-            title={!isConnected ? `Connect ${source.label} in Data Sources to use it` : (isActive ? `Remove ${source.label} context` : `Add live ${source.label} data as AI context`)}
+            title={hasProblem ? `Reconnect ${source.label}` : (!isConnected ? `Connect ${source.label} in Data Sources` : (isActive ? `Remove ${source.label} context` : `Add live ${source.label} data as AI context`))}
           >
+            <span className={`jas-connector-status-dot ${hasProblem ? 'problem' : isConnected ? 'connected' : 'disconnected'}`} aria-hidden="true" />
             {isActive && <FontAwesomeIcon icon={faCheck} />}
             {source.label}
           </button>
@@ -7731,7 +7752,8 @@ useEffect(() => {
         setSelectedModelType(String(data.model_type).toLowerCase());
       }
       setStrategyObjective(normalizeStrategyObjective(data?.strategy_objective || strategyObjective));
-      setDecisionKit(data?.decision_kit || (data?.decision_kit_family === 'rfp' ? RFP_DECISION_INTENT : decisionKit));
+      setDecisionKit(data?.decision_kit || null);
+      setDecisionKitSuggestion(data?.decision_kit_suggestion || null);
       setObjectiveExplicitlySet(Boolean(data?.objective_explicitly_set) || objectiveExplicitlySet);
       await applyMutationRefreshes(data, sid);
       setSelectedStarterId('');
@@ -7820,6 +7842,8 @@ async function continueConversation(userText, options = {}) {
       setSelectedModelType(String(data.model_type).toLowerCase());
     }
     setStrategyObjective(normalizeStrategyObjective(data?.strategy_objective || strategyObjective));
+    setDecisionKit(data?.decision_kit || decisionKit || null);
+    setDecisionKitSuggestion(data?.decision_kit_suggestion || null);
     setObjectiveExplicitlySet(Boolean(data?.objective_explicitly_set) || objectiveExplicitlySet);
     await applyMutationRefreshes(data, sessionId);
 
@@ -7995,8 +8019,8 @@ const [preflightOpen, setPreflightOpen] = useState(false);
 const [preflightQuestions, setPreflightQuestions] = useState([]);
 const [preflightAnswers, setPreflightAnswers] = useState({});
 const [connectedDataSources, setConnectedDataSources] = useState([]);
+const [connectorStatusById, setConnectorStatusById] = useState({});
 const [activeContextSourceIds, setActiveContextSourceIds] = useState(new Set());
-const dataContextDefaultsAppliedRef = useRef(false);
 const [usedContextSourceIds, setUsedContextSourceIds] = useState(new Set()); // persistent: accumulates all sources ever successfully sent to AI this session
 const [contextSourceData, setContextSourceData] = useState({});
 const [contextSourceMeta, setContextSourceMeta] = useState({});
@@ -8483,7 +8507,9 @@ useEffect(() => {
       }
       const data = await response.json().catch(() => ({}));
       const allowed = ['jira_sync', 'smartsheet_sync', 'salesforce_insights', 'snowflake_insights', 'servicenow_insights', 'netsuite_insights', 'oracle_fusion_insights'];
-      const connected = (Array.isArray(data?.connectors) ? data.connectors : [])
+      const allConnectors = (Array.isArray(data?.connectors) ? data.connectors : []).filter((item) => allowed.includes(item?.id));
+      setConnectorStatusById(Object.fromEntries(allConnectors.map((item) => [item.id, item])));
+      const connected = allConnectors
         .filter((item) => {
           if (!item?.connected || !allowed.includes(item?.id)) return false;
           if (item.id === 'jira_sync') return Boolean(item?.jira?.data_enabled);
@@ -8493,17 +8519,9 @@ useEffect(() => {
         .map((item) => ({
           id: item.id,
           label: item.label || item.id,
-          defaultActive: item.id === 'jira_sync' && Boolean(item?.jira?.data_enabled),
           defaultTable: Array.isArray(item?.snowflake?.table_allowlist) ? (item.snowflake.table_allowlist[0] || '') : '',
         }));
       setConnectedDataSources(connected);
-      if (!dataContextDefaultsAppliedRef.current) {
-        dataContextDefaultsAppliedRef.current = true;
-        const defaults = connected.filter((item) => item.defaultActive).map((item) => item.id);
-        if (defaults.length > 0) {
-          setActiveContextSourceIds((previous) => new Set([...previous, ...defaults]));
-        }
-      }
     } catch (error) {
       devWarn('[connectors/status] request failed', { message: error?.message || 'unknown error' });
     }
@@ -10945,6 +10963,12 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     // session renders the previous session's scorecards until a hard refresh.
     setScorecardSnapshots([]);
     setTradeoffRequested(false);
+    setDecisionKit(null);
+    setDecisionKitSuggestion(null);
+    setActiveContextSourceIds(new Set());
+    setUsedContextSourceIds(new Set());
+    setActivePill(null);
+    setThreadWbs(null);
     setError(null);
     setSavedScenarios([]);
     setCollectedData({});
@@ -11058,6 +11082,13 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
 
   // ======== FIXED: Select analysis (history restore) ========================
   const handleSelectAnalysis = async (selection) => {
+  setDecisionKit(null);
+  setDecisionKitSuggestion(null);
+  setActiveContextSourceIds(new Set());
+  setUsedContextSourceIds(new Set());
+  setActivePill(null);
+  setThreadWbs(null);
+  setTradeoffRequested(false);
   const result =
     selection && typeof selection === 'object' && selection.result && typeof selection.result === 'object'
       ? selection.result
@@ -11140,6 +11171,13 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   );
   setStrategyObjective(mergedObjective);
   setObjectiveExplicitlySet(Boolean(merged?.objective_explicitly_set || merged?.result?.objective_explicitly_set));
+  const restoredKit = merged?.decision_kit || bundle?.decision_kit || bundle?.thread?.decision_kit || null;
+  const restoredSuggestion = merged?.decision_kit_suggestion || bundle?.decision_kit_suggestion || bundle?.thread?.decision_kit_suggestion || null;
+  const restoredContextIds = merged?.data_context_connector_ids || bundle?.data_context_connector_ids || bundle?.thread?.data_context_connector_ids || [];
+  setDecisionKit(restoredKit);
+  setDecisionKitSuggestion(restoredSuggestion);
+  setActiveContextSourceIds(new Set(restoredContextIds));
+  setUsedContextSourceIds(new Set(restoredContextIds));
   const resolvedOwnerThreadId = resolveHistoryOwnerId(
     analysisHistory,
     ownerThreadId,
@@ -13547,11 +13585,8 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 
           <div className="jas-context-stages">
             {(() => {
-              // Only the CURRENT stage is highlighted
-              const currentStage = activePill || (
-                (Array.isArray(scorecardSnapshots) && scorecardSnapshots.length > 0) || analysisResult
-                  ? 'scoring'
-                  : 'discovery'
+              const hasTradeoffArtifact = (Array.isArray(displayMessages) ? displayMessages : []).some(
+                (entry) => String(entry?.artifact?.type || '').trim() === 'tradeoff'
               );
               // Trade-off is available for the whole session once the user has
               // any scorecard — they shouldn't lose access after building an
@@ -13571,6 +13606,15 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
               const canScoring = scoredIdeasCount >= 1;
               const canScenarios = scoredIdeasCount >= 2;
               const hasExecutionPlan = Array.isArray(threadWbs?.tasks) && threadWbs.tasks.length > 0;
+              const currentStage = hasExecutionPlan
+                ? 'execution'
+                : hasTradeoffArtifact
+                  ? 'scenarios'
+                  : (canScoring || scorecardGenerating || Boolean(batchScoring))
+                    ? 'scoring'
+                    : hasConversationMessages
+                      ? 'discovery'
+                      : null;
               const canExecution = hasExecutionPlan;
               const stages = [
                 { key: 'discovery',  label: 'Discovery',  disabled: false },
@@ -13622,7 +13666,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
             //      "[Data context attached: <labels>]" marker into the user
             //      message, which is persisted/reloaded with the thread. We scan
             //      those markers and map the labels back to source ids.
-            const usedIds = new Set([...usedContextSourceIds, ...activeContextSourceIds]);
+            const usedIds = new Set([...usedContextSourceIds]);
             const markerRe = /\[Data context attached:\s*([^\]]+)\]/gi;
             (Array.isArray(messages) ? messages : []).forEach((m) => {
               const txt = typeof m?.text === 'string' ? m.text : '';

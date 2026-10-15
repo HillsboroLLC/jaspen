@@ -5,7 +5,11 @@ from app import db
 from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncLink
 from app.pm_sync.provider import get_provider
-from app.pm_sync.service import _sync_phases, ensure_start_date_field, ensure_task_parent, get_plan, push_binding
+from app.pm_sync import jira_adapter
+from app.pm_sync.service import (
+    _consume_binding_note, _sync_phases, ensure_start_date_field,
+    ensure_task_parent, get_plan, push_binding,
+)
 from app.scenarios_store import load_scenarios_data, save_scenarios_data
 
 FIELDS = ("title", "description", "owner", "owner_email", "status", "start_date", "due_date")
@@ -37,6 +41,11 @@ def _normalized(value):
 
 def _snapshot(task, binding=None):
     result = {key: _normalized(task.get(key)) for key in FIELDS}
+    if binding is not None and binding.connector_id == "jira_sync" and jira_adapter.owner_is_unassigned(
+        result.get("owner"), result.get("owner_email")
+    ):
+        result["owner"] = None
+        result["owner_email"] = None
     if binding is not None and binding.connector_id == "jira_sync" and (binding.config or {}).get("start_date_field_id"):
         from app.pm_sync.jira_adapter import effective_start_date
         result["start_date"] = effective_start_date(task)
@@ -78,6 +87,7 @@ def _save_plan(binding, plan):
 def _log(binding, trigger, result):
     problems = [*(result["errors"] or []), *(result["conflicts"] or [])]
     synced = result["pulled"] + result["pushed"] + result["created"]
+    notes = _consume_binding_note(binding, result)
     row = ConnectorSyncLog(
         user_id=binding.user_id, connector_id=binding.connector_id, thread_id=binding.thread_id,
         action="pm_sync", status="success" if not problems else ("partial" if synced else "failed"),
@@ -86,7 +96,7 @@ def _log(binding, trigger, result):
         sync_metadata={"binding_id": binding.id, "direction": "two_way", "trigger": trigger,
             "counts": {key: result[key] for key in ("created", "pulled", "pushed", "deleted", "failed")},
             "conflicts": result["conflicts"][:50], "unknown_statuses": result["unknown_statuses"][:50],
-            "errors": result["errors"][:50]},
+            "errors": result["errors"][:50], "notes": notes},
     )
     db.session.add(row)
 
@@ -157,7 +167,52 @@ def reconcile_binding(binding, trigger="sync_now"):
             supported = set(remote.get("supported_fields") or FIELDS)
             outgoing = {}
             task_conflicts = []
-            for field in FIELDS:
+            # Ownership is intentionally not generic text reconciliation. A
+            # Jira default at creation is provider state, not a human edit.
+            # Jaspen sends only mapped owners and accepts only a later,
+            # attributable Jira assignee change.
+            local_owner = (local.get("owner"), local.get("owner_email"))
+            prior_local_owner = (
+                _normalized(base.get("_jaspen_owner")),
+                _normalized(base.get("_jaspen_owner_email")),
+            ) if "_jaspen_owner" in base or "_jaspen_owner_email" in base else local_owner
+            remote_owner = (_normalized(outside.get("owner")), _normalized(outside.get("owner_email")))
+            owner_change = remote.get("owner_change") if isinstance(remote.get("owner_change"), dict) else {}
+            owner_changed_at = _dt(owner_change.get("changed_at"))
+            issue_created_at = _dt(remote.get("created_at"))
+            last_synced_at = _dt(link.last_synced_at)
+            explicit_remote_owner = bool(
+                owner_change.get("changed_by_account_id")
+                and owner_change.get("changed_by_account_type") in {"atlassian", "customer"}
+                and owner_change.get("account_id")
+                and owner_change.get("display_name")
+                and owner_change.get("account_type") in {"atlassian", "customer"}
+                and owner_changed_at
+                and (not issue_created_at or owner_changed_at > issue_created_at)
+                and (not last_synced_at or owner_changed_at > last_synced_at)
+            )
+            owner_pushed = False
+            if explicit_remote_owner:
+                resolved_remote_owner = (
+                    _normalized(owner_change.get("display_name")),
+                    _normalized(owner_change.get("email")),
+                )
+                if local_owner != resolved_remote_owner:
+                    task["owner"], task["owner_email"] = resolved_remote_owner
+                    stamp = owner_change.get("changed_at") or datetime.utcnow().isoformat()
+                    task.setdefault("field_updated_at", {})["owner"] = stamp
+                    task.setdefault("field_updated_at", {})["owner_email"] = stamp
+                    local["owner"], local["owner_email"] = resolved_remote_owner
+                    local_owner = resolved_remote_owner
+                    result["pulled"] += 1
+                    changed = True
+            elif local_owner != prior_local_owner and jira_adapter.mapped_owner_account_id(
+                binding, local_owner[0], local_owner[1]
+            ):
+                outgoing["owner"], outgoing["owner_email"] = local_owner
+                owner_pushed = True
+
+            for field in (field for field in FIELDS if field not in {"owner", "owner_email"}):
                 if field not in supported or (field == "status" and remote.get("status_error")):
                     continue
                 previous, here, there = _normalized(base.get(field)), local.get(field), _normalized(outside.get(field))
@@ -208,6 +263,17 @@ def reconcile_binding(binding, trigger="sync_now"):
                 result["pushed"] += 1
             if not task_conflicts:
                 next_base = _snapshot(task, binding)
+                next_base["_jaspen_owner"] = local_owner[0]
+                next_base["_jaspen_owner_email"] = local_owner[1]
+                if explicit_remote_owner or owner_pushed:
+                    next_base["owner"], next_base["owner_email"] = local_owner
+                    synced_fields.update({"owner", "owner_email"})
+                else:
+                    # Retain Jira's actual provider-side default separately
+                    # from the Jaspen owner that remains authoritative.
+                    next_base["owner"], next_base["owner_email"] = remote_owner
+                    synced_fields.discard("owner")
+                    synced_fields.discard("owner_email")
                 still_preserved = []
                 for field in preserve_local_empty:
                     if local.get(field) is None and _normalized(outside.get(field)) == _normalized(base.get(field)):

@@ -37,7 +37,7 @@ def test_classifier_rejects_a_quote_not_present_in_the_user_message(app, monkeyp
         ai_agent._classify_decision_kit("We are the bidder.", {"llm_model": "test"})
 
 
-def test_low_confidence_rfp_asks_once_then_natural_answer_locks_subtype(app):
+def test_low_confidence_rfp_is_suggested_and_never_auto_applied(app):
     from app.routes import ai_agent
 
     session = {}
@@ -47,14 +47,14 @@ def test_low_confidence_rfp_asks_once_then_natural_answer_locks_subtype(app):
         ambiguous,
         judgment=_judge("none", "low", "Bid 3, CDOT"),
     )
-    assert ai_agent._rfp_subtype_question_needed(session)
+    assert session.get("decision_kit") is None
+    assert session["decision_kit_suggestion"]["kit"] == "rfp"
 
     answer = "We're responding to these RFPs. We are the bidder."
-    ai_agent._apply_rfp_decision_context(
-        session,
-        answer,
-        judgment=_judge("rfp_bid", "high", "We are the bidder"),
-    )
+    ai_agent._apply_rfp_decision_context(session, answer, judgment=_judge("rfp_bid", "high", "We are the bidder"))
+    assert session.get("decision_kit") is None
+    assert session["decision_kit_suggestion"]["kit"] == "rfp_bid"
+    ai_agent._apply_rfp_decision_context(session, answer, explicit_selection="rfp_bid")
     assert session["decision_kit"] == "rfp_bid"
     assert session["decision_kit_locked"] is True
     assert not ai_agent._rfp_subtype_question_needed(session)
@@ -79,7 +79,7 @@ def test_locked_kit_cannot_silently_flip_on_later_score_request(app):
     assert session.get("decision_kit_change_pending") is None
 
 
-def test_manual_and_inferred_activation_reach_the_same_canonical_scoring_identity(app):
+def test_suggested_kit_reaches_manual_canonical_identity_only_after_click(app):
     from app.decision_fingerprint import scoring_fingerprint
     from app.routes import ai_agent
 
@@ -88,6 +88,9 @@ def test_manual_and_inferred_activation_reach_the_same_canonical_scoring_identit
     manual, inferred = {}, {}
     ai_agent._apply_rfp_decision_context(manual, message, explicit_selection="rfp", judgment=judgment)
     ai_agent._apply_rfp_decision_context(inferred, message, judgment=judgment)
+    assert inferred.get("decision_kit") is None
+    assert inferred["decision_kit_suggestion"]["kit"] == "rfp_bid"
+    ai_agent._apply_rfp_decision_context(inferred, message, explicit_selection="rfp_bid")
     facts = {"contract_value": {"value": 42_000_000, "source": "user", "evidence": "contract value is $42M"}}
     rubric = {"criteria": [{"key": "fit", "label": "Fit", "weight": 1.0}]}
     common = dict(option_key="aurora", attributes=facts, rubric=rubric, objective="balanced", evidence_corpus="contract value is $42M")

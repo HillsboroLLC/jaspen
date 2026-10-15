@@ -60,14 +60,18 @@ def validate_plan_lineage(plan, sources):
     valid = {(item["type"], str(item["ref"])): item for item in sources or [] if item.get("type") in VALID_LINEAGE_TYPES and item.get("ref")}
     tasks, dropped, covered = [], [], set()
     phase_source = plan.get("phases") if isinstance(plan.get("phases"), list) else None
+    phase_order = []
     raw_tasks = []
     if phase_source is not None:
         for phase in phase_source:
             if not isinstance(phase, dict):
                 continue
+            phase_name = str(phase.get("name") or "").strip()
+            if phase_name and phase_name not in phase_order:
+                phase_order.append(phase_name)
             for task in phase.get("tasks") or []:
                 if isinstance(task, dict):
-                    raw_tasks.append({**task, "phase": task.get("phase") or phase.get("name") or "Execution"})
+                    raw_tasks.append({**task, "phase": task.get("phase") or phase_name or "Execution"})
     else:
         raw_tasks = [item for item in plan.get("tasks") or [] if isinstance(item, dict)]
     for task in raw_tasks:
@@ -115,7 +119,19 @@ def validate_plan_lineage(plan, sources):
         task["dependencies"] = normalized_dependencies
         task.pop("depends_on", None)
         prior.add(task["id"])
-    return {**plan, "tasks": tasks, "phases": []}, {"dropped_tasks": dropped, "missing_sources": []}
+    # Keep the model's phase sequence after validation. Tasks removed for
+    # invalid lineage disappear from their phase; empty phases disappear too.
+    # Flat responses remain flat unless the model supplied task-level phases.
+    for task in tasks:
+        phase_name = str(task.get("phase") or "").strip()
+        if phase_name and phase_name not in phase_order:
+            phase_order.append(phase_name)
+    phases = []
+    for phase_name in phase_order:
+        phase_tasks = [task for task in tasks if str(task.get("phase") or "").strip() == phase_name]
+        if phase_tasks:
+            phases.append({"name": phase_name, "tasks": phase_tasks})
+    return {**plan, "tasks": tasks, "phases": phases}, {"dropped_tasks": dropped, "missing_sources": []}
 
 
 
@@ -134,7 +150,15 @@ def assign_team_owners(plan, team):
             match = next((item for item in members if role and role in str(item.get("role") or "").strip().lower()), None)
             task["owner"] = str((match or {}).get("name") or "Unassigned")
         tasks.append(task)
-    return {**plan, "tasks": tasks}
+    by_id = {str(task.get("id") or ""): task for task in tasks}
+    phases = []
+    for phase in plan.get("phases") or []:
+        if not isinstance(phase, dict):
+            continue
+        phase_tasks = [by_id.get(str(task.get("id") or ""), task) for task in phase.get("tasks") or [] if isinstance(task, dict)]
+        if phase_tasks:
+            phases.append({**phase, "tasks": phase_tasks})
+    return {**plan, "tasks": tasks, "phases": phases}
 
 def _business_shift(day, amount):
     direction = 1 if amount >= 0 else -1

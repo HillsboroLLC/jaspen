@@ -998,7 +998,7 @@ def test_decision_kit_starter_rubric_is_persisted_and_rendered_before_provider_r
     assert 'Surety / bond confirmation: required gate' in reply
 
 
-def test_inferred_rfp_kit_saves_one_proposal_and_first_approval_allows_scoring(app, db, test_user, monkeypatch):
+def test_suggested_rfp_kit_requires_selection_then_first_approval_allows_scoring(app, db, test_user, monkeypatch):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions, save_user_sessions
 
@@ -1016,6 +1016,22 @@ def test_inferred_rfp_kit_saves_one_proposal_and_first_approval_allows_scoring(a
         'evidence_quote': 'decide whether to bid',
     })
 
+    assert session.get('decision_kit') is None
+    assert session['decision_kit_suggestion']['kit'] == 'rfp_bid'
+    assert agent._ensure_decision_kit_starter_rubric(
+        session, user_message=first_message,
+    ) is False
+
+    # The user accepts the one-click suggestion in the composer. Only that
+    # explicit action activates the kit and makes its starter rubric eligible.
+    session.update({
+        'decision_kit': 'rfp_bid',
+        'decision_kit_version': 1,
+        'decision_kit_family': 'rfp',
+        'decision_kit_source': 'user',
+        'decision_kit_family_locked': True,
+    })
+    session.pop('decision_kit_suggestion', None)
     assert agent._ensure_decision_kit_starter_rubric(
         session, user_message=first_message,
     ) is True

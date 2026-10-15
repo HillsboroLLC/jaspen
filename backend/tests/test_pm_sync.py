@@ -4,6 +4,7 @@ from unittest.mock import call, patch
 import pytest
 
 from app import db as app_db
+from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync.service import _sync_phases, create_binding, preview, push_binding
 from app.pm_sync.reconciliation import reconcile_binding, resolve_conflict
@@ -116,6 +117,8 @@ def test_push_is_plan_scoped_idempotent_and_preserves_lineage(test_user):
     adf = create_payload["issueUpdates"][0]["fields"]["description"]
     assert "Derived from" in str(adf)
     assert "Condition: legal review" in str(adf)
+    existing_updates = [payload for method, path, payload in calls if method == "PUT" and "/rest/api/3/issue/JST-" in path]
+    assert all("assignee" not in update.get("fields", {}) for update in existing_updates)
 
 
 def test_partial_failure_keeps_successful_task_link_for_retry(test_user):
@@ -305,6 +308,51 @@ def test_task_and_epic_dates_use_discovered_start_field(test_user):
     assert fields["duedate"] == "2026-11-25"
 
 
+def test_jira_owner_fields_only_send_explicit_mappings(test_user):
+    from app.pm_sync.jira_adapter import JiraProvider, task_fields
+
+    binding = _binding(test_user)
+    binding.user_map = {"mapped@example.com": "jira-account-1"}
+    app_db.session.commit()
+
+    assert task_fields({"id": "a", "title": "A", "owner": "Unassigned"}, binding)["assignee"] is None
+    assert "assignee" not in task_fields({"id": "b", "title": "B", "owner": "Estimating lead"}, binding)
+    assert task_fields({
+        "id": "c", "title": "C", "owner": "Morgan Lee", "owner_email": "mapped@example.com",
+    }, binding)["assignee"] == {"accountId": "jira-account-1"}
+
+    with patch("app.pm_sync.jira_adapter.request") as request:
+        JiraProvider().update_item({}, binding, "JPT-12", {"owner": "Unassigned", "owner_email": None}, {})
+    request.assert_not_called()
+
+
+def test_jira_assignee_changelog_carries_actor_and_current_person(test_user):
+    from app.pm_sync.jira_adapter import JiraProvider
+
+    binding = _binding(test_user)
+    response = {
+        "fields": {
+            "summary": "Task", "description": None,
+            "assignee": {"accountId": "person-2", "accountType": "atlassian", "displayName": "Morgan Lee", "emailAddress": "morgan@example.com"},
+            "status": {"name": "To Do", "statusCategory": {"key": "new"}},
+            "created": "2026-10-14T12:00:00Z", "updated": "2026-10-14T12:05:00Z",
+        },
+        "changelog": {"histories": [{
+            "created": "2026-10-14T12:05:00Z",
+            "author": {"accountId": "editor-1", "accountType": "atlassian", "displayName": "Project manager"},
+            "items": [{"fieldId": "assignee", "field": "assignee"}],
+        }]},
+    }
+    with patch("app.pm_sync.jira_adapter.request", return_value=(response, {})):
+        item = JiraProvider().get_item({"base_url": "https://example.atlassian.net"}, binding, "JPT-12")
+    assert item["created_at"] == "2026-10-14T12:00:00+00:00"
+    assert item["owner_change"] == {
+        "changed_at": "2026-10-14T12:05:00+00:00",
+        "changed_by_account_id": "editor-1", "changed_by_name": "Project manager", "changed_by_account_type": "atlassian",
+        "account_id": "person-2", "display_name": "Morgan Lee", "email": "morgan@example.com", "account_type": "atlassian",
+    }
+
+
 class _Provider:
     def __init__(self, remote):
         self.remote = remote
@@ -471,6 +519,112 @@ def test_jira_create_keeps_unowned_task_unassigned_and_absorbs_remote_default(te
     assert synced["pushed"] == 0
     assert plan["tasks"][0]["owner"] is None
     assert plan["tasks"][0]["owner_email"] == ""
+
+
+def test_nine_unassigned_tasks_ignore_jira_creation_default_on_repeated_syncs(test_user):
+    binding = _binding(test_user)
+    binding.mode = "two_way"
+    app_db.session.commit()
+    plan = {"name": "Plan", "tasks": [
+        {"id": f"task-{index}", "title": f"Task {index}", "status": "todo",
+         "owner": "Unassigned", "owner_email": "", "depends_on": []}
+        for index in range(1, 10)
+    ]}
+
+    def request(_config, method, path, payload=None, timeout=30):
+        if path == "/rest/api/3/search/jql":
+            return {"issues": []}, {}
+        if path == "/rest/api/3/issue/bulk":
+            return {"issues": [{"key": f"JPT-{index}"} for index in range(1, 10)], "errors": []}, {}
+        if "?expand=changelog" in path:
+            key = path.split("/issue/", 1)[1].split("?", 1)[0]
+            index = int(key.rsplit("-", 1)[1])
+            return {"fields": {
+                "summary": f"Task {index}", "description": None,
+                "assignee": {"accountId": "lead-1", "displayName": "Lydia Bailey", "emailAddress": "lead@example.com"},
+                "status": {"name": "To Do", "statusCategory": {"key": "new"}},
+                "duedate": None, "created": "2026-10-14T12:00:00Z", "updated": "2026-10-14T12:00:00Z",
+                "customfield_10015": None,
+            }, "changelog": {"histories": []}}, {}
+        if "/transitions" in path and method == "GET":
+            return {"transitions": []}, {}
+        return {}, {}
+
+    with patch("app.pm_sync.jira_adapter.assert_connected", return_value={"base_url": "https://example.atlassian.net"}), patch(
+        "app.pm_sync.jira_adapter.request", side_effect=request
+    ), patch("app.pm_sync.service.jira_adapter.recover_issue", return_value=None):
+        sent = push_binding(binding, plan, trigger="send")
+        with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")):
+            first = reconcile_binding(binding)
+            second = reconcile_binding(binding)
+
+    assert sent["created"] == 9
+    assert first["pushed"] == first["pulled"] == 0
+    assert second["pushed"] == second["pulled"] == 0
+    assert {task["owner"] for task in plan["tasks"]} == {"Unassigned"}
+    assert binding.config["jira_default_assignee_note"] == (
+        "Jira assigns new issues to Lydia Bailey by default; Jaspen kept its own owners"
+    )
+    stored_logs = ConnectorSyncLog.query.filter_by(
+        user_id=binding.user_id, connector_id="jira_sync"
+    ).order_by(ConnectorSyncLog.created_at.asc()).all()
+    notes = [note for row in stored_logs for note in ((row.sync_metadata or {}).get("notes") or [])]
+    assert notes == [binding.config["jira_default_assignee_note"]]
+
+
+def test_explicit_post_link_jira_assignee_change_pulls_one_owner(test_user):
+    base = {
+        "title": "Task", "description": None, "owner": "Unassigned", "owner_email": None,
+        "status": "todo", "start_date": None, "due_date": None,
+        "_jaspen_owner": None, "_jaspen_owner_email": None,
+        "_synced_fields": ["title", "description", "status", "due_date"],
+    }
+    binding, link = _linked_binding(test_user, base)
+    link.last_synced_at = datetime(2026, 10, 14, 12, 0, 5)
+    app_db.session.commit()
+    plan = {"tasks": [{**base, "id": "task-a", "owner": "Unassigned"}]}
+    provider = _Provider({
+        "deleted": False,
+        "values": {**base, "owner": "Morgan Lee", "owner_email": "morgan@example.com"},
+        "changed_at": {"owner": "2026-10-14T12:05:00Z", "owner_email": "2026-10-14T12:05:00Z"},
+        "created_at": "2026-10-14T12:00:00Z",
+        "owner_change": {
+            "changed_at": "2026-10-14T12:05:00Z", "changed_by_account_id": "editor-1",
+            "changed_by_account_type": "atlassian", "account_id": "morgan-1", "account_type": "atlassian",
+            "display_name": "Morgan Lee", "email": "morgan@example.com",
+        },
+        "version": "2026-10-14T12:05:00Z",
+    })
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=provider
+    ), patch("app.pm_sync.reconciliation._save_plan") as save:
+        result = reconcile_binding(binding)
+    assert result["pulled"] == 1
+    assert result["pushed"] == 0
+    assert plan["tasks"][0]["owner"] == "Morgan Lee"
+    assert plan["tasks"][0]["owner_email"] == "morgan@example.com"
+    assert save.called
+
+
+def test_only_mapped_jaspen_owner_pushes_to_jira(test_user):
+    base = {"title": "Task", "description": None, "owner": None, "owner_email": None,
+            "status": "todo", "start_date": None, "due_date": None,
+            "_jaspen_owner": None, "_jaspen_owner_email": None,
+            "_synced_fields": ["title", "description", "status", "due_date"]}
+    binding, _ = _linked_binding(test_user, base)
+    binding.user_map = {"mapped@example.com": "jira-mapped-1"}
+    app_db.session.commit()
+    plan = {"tasks": [{**base, "id": "task-a", "owner": "Estimating lead"}]}
+    provider = _Provider({"deleted": False, "values": base, "changed_at": {}, "version": None})
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=provider):
+        unmapped = reconcile_binding(binding)
+        plan["tasks"][0]["owner"] = "Morgan Lee"
+        plan["tasks"][0]["owner_email"] = "mapped@example.com"
+        mapped = reconcile_binding(binding)
+    assert unmapped["pushed"] == unmapped["pulled"] == 0
+    assert mapped["pushed"] == 1
+    assert provider.updates == [("JST-1", {"owner": "Morgan Lee", "owner_email": "mapped@example.com"})]
 
 
 def test_sync_retries_identity_for_existing_link_with_prior_remote_link_failure(test_user):

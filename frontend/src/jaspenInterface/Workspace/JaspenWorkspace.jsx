@@ -2364,6 +2364,7 @@ export default function JaspenWorkspace() {
                 setChatInput(text);
               }}
               showPlanActions={false}
+              loading={loading}
             />
           ) : (
           classicCanvas ? (

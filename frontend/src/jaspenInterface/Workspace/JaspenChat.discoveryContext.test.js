@@ -11,7 +11,8 @@ test('Discovery presents objective, Decision Kit, and honest Data Context separa
   expect(source).toContain("{ id: 'jira_sync', label: 'Jira' }");
   expect(source).toContain("{ id: 'salesforce_insights', label: 'Salesforce' }");
   expect(source).toContain("{ id: 'snowflake_insights', label: 'Snowflake' }");
-  expect(source).toContain('disabled={!isConnected}');
+  expect(source).toContain('jas-connector-status-dot');
+  expect(source).toContain('Connect ${source.label} in Data Sources');
 });
 
 test('batch scoring failure keeps an explicit Retry action', () => {
@@ -34,12 +35,27 @@ test('active objective and RFP kit render in the upper-right context', () => {
   expect(source).toContain('Session objective:');
   expect(source).toContain('Active Decision Kit: RFP');
   expect(source).toContain('isRfpDecision(decisionKit)');
-  expect(source).toContain('new Set([...usedContextSourceIds, ...activeContextSourceIds])');
+  expect(source).toContain('new Set([...usedContextSourceIds])');
   expect(source).toContain('connectedDataSources.filter((src) => usedIds.has(src.id))');
 });
 
-test('Jira analysis defaults on from account settings and the session chip controls prompt inclusion', () => {
-  expect(source).toContain("defaultActive: item.id === 'jira_sync' && Boolean(item?.jira?.data_enabled)");
+test('Jira is available but never auto-selected and the session chip controls prompt inclusion', () => {
+  expect(source).not.toContain('defaultActive:');
+  expect(source).not.toContain('dataContextDefaultsAppliedRef');
   expect(source).toContain('dataContextConnectorIds: [...activeContextSourceIds]');
   expect(clientSource).toContain('data_context_connector_ids: Array.isArray(data_context_connector_ids)');
+});
+
+test('blank and switched sessions clear per-session kit context and progress state', () => {
+  expect(source).toContain('const [activePill, setActivePill] = useState(null)');
+  expect(source).toContain('setDecisionKitSuggestion(null)');
+  expect(source).toContain('setActiveContextSourceIds(new Set())');
+  expect(source).toContain('setUsedContextSourceIds(new Set())');
+  expect(source).toContain('setThreadWbs(null)');
+  expect(source).toContain("hasConversationMessages\n                      ? 'discovery'\n                      : null");
+});
+
+test('model kit classification is offered as a one-click suggestion', () => {
+  expect(source).toContain('This looks like an RFP — use the');
+  expect(source).toContain('decisionKitSuggestion.kit');
 });

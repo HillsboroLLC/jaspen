@@ -21,5 +21,15 @@ describe('execution plan build entry points', () => {
     expect(shared).toContain('record_decision');
     expect(shared).toContain('acknowledged: true');
     expect(shared).toContain('skip_plan_decision_confirm');
+    expect(shared).toContain("overriding Jaspen&apos;s No-Bid recommendation");
+  });
+
+  test('execution workspace suppresses plan counts while authoritative data loads', () => {
+    const srcRoot = path.resolve(__dirname, '..');
+    const canvas = fs.readFileSync(path.join(srcRoot, 'Workspace', 'JaspenExecutionCanvas.jsx'), 'utf8');
+    const workspace = fs.readFileSync(path.join(srcRoot, 'Workspace', 'JaspenWorkspace.jsx'), 'utf8');
+    expect(workspace).toContain('loading={loading}');
+    expect(canvas).toContain('if (loading)');
+    expect(canvas).toContain('Loading execution plan…');
   });
 });
