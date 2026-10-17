@@ -7243,16 +7243,14 @@ def score_batch_queued(thread_id):
         provider_usage.setdefault('model', model_selection.get('llm_model'))
         provider_usage.setdefault('model_type', model_selection.get('model_type'))
         provider_usage.setdefault('provider', 'anthropic')
-        component_usages = [
-            item for item in (provider_usage.get('component_usages') or [])
-            if isinstance(item, dict)
-        ]
+        # Card identities come from the actual generated results rather than
+        # optional provider-usage metadata. This keeps allocation correct for
+        # legacy/mocked usage shapes and ensures an unpersisted generated card
+        # remains in the denominator so Jaspen absorbs its share.
         generated_component_ids = [
-            evaluation_contexts[int(item['component_index'])]['scorecard_id']
-            for item in component_usages
-            if not item.get('reused')
-            and isinstance(item.get('component_index'), int)
-            and 0 <= int(item['component_index']) < len(evaluation_contexts)
+            evaluation_context['scorecard_id']
+            for payload, evaluation_context in zip(cards, evaluation_contexts)
+            if isinstance(payload, dict) and not payload.get('reused_stored_result')
         ]
         persisted_component_ids = []
 
