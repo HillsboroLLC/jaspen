@@ -93,10 +93,16 @@ function Strength({ model }) {
       </div>
       <div className="op-strength__body">
         <h2 id="op-strength" className="op-h2">How strong is the case?</h2>
+        <div className="op-col-label">Evidence-adjusted score</div>
         <p className="op-lead">
           {verdict}
           {s.verifiedShare !== null && ` About ${s.verifiedShare}% of the case rests on stated facts; the rest depends on assumptions you can check.`}
         </p>
+        {s.initialScore !== null && s.initialScore !== s.score && (
+          <p className="op-muted">
+            Initial assessment: <strong>{s.initialScore}/100</strong>. The displayed score is lower because evidence confidence caps unsupported criteria before the final calculation.
+          </p>
+        )}
         {s.verifiedShare !== null && (
           <>
             <div className="op-bar" aria-hidden="true">

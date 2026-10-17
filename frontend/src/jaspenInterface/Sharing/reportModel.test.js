@@ -71,7 +71,7 @@ test('context tags show objective, kit and data sources actually used', () => {
 
 test('case strength splits weight between stated facts and assumptions', () => {
   const model = buildReportModel({ artifactType: 'tradeoff', snapshot, title: '' });
-  expect(model.strength).toEqual({ score: 64, verifiedShare: 60, raiseConfidence: ['Delivery capacity'] });
+  expect(model.strength).toEqual({ score: 64, initialScore: null, verifiedShare: 60, raiseConfidence: ['Delivery capacity'] });
   expect(model.change[0]).toEqual({
     label: 'Delivery capacity',
     evidence: 'none',
@@ -79,6 +79,22 @@ test('case strength splits weight between stated facts and assumptions', () => {
     detail: 'Carries 40% of the decision.',
     strengthen: 'Share crew availability for the bid window.',
   });
+});
+
+test('case strength keeps the evidence-adjusted score primary and only exposes a different initial assessment', () => {
+  const adjusted = buildReportModel({
+    artifactType: 'scorecard',
+    snapshot: { scorecard: bid('Denver', 52, 'Bid with conditions', { initial_jaspen_score: 71 }) },
+    title: 'Denver',
+  });
+  expect(adjusted.strength).toMatchObject({ score: 52, initialScore: 71 });
+
+  const unchanged = buildReportModel({
+    artifactType: 'scorecard',
+    snapshot: { scorecard: bid('Denver', 52, 'Bid with conditions', { initial_jaspen_score: 52 }) },
+    title: 'Denver',
+  });
+  expect(unchanged.strength).toMatchObject({ score: 52, initialScore: 52 });
 });
 
 test('carries production guidance: exposure and recommended moves', () => {

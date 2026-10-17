@@ -518,6 +518,21 @@
   color: #0d7a3e;
 }
 
+.score-dashboard-container .score-basis {
+  margin-top: 5px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.score-dashboard-container .score-initial {
+  max-width: 430px;
+  margin-top: 8px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 .score-dashboard-container .score-rating.excellent {
   color: #0d7a3e;
 }

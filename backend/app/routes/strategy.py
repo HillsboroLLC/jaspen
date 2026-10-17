@@ -2633,11 +2633,16 @@ def _validate_grounded_scorecard_judgment(payload, criteria, attributes, approve
         if confidence not in {"high", "medium", "low", "assumed"}:
             raise UngroundedScorecardJudgment(f"The judge returned invalid confidence for {key}.")
         references = dim.get("evidence_references") if isinstance(dim.get("evidence_references"), list) else []
-        signatures.append((round(score, 6), confidence, len(references)))
+        signatures.append((
+            round(score, 6),
+            confidence,
+            len(references),
+            bool(str(dim.get("rationale") or "").strip()),
+        ))
     if (
         len(signatures) > 1
         and all(signature[:2] == (45.0, "assumed") for signature in signatures)
-        and all(dimensions[key].get("_provider_reasoning_missing") for key in expected)
+        and not any(signature[3] for signature in signatures)
     ):
         raise UngroundedScorecardJudgment(
             "The judge returned the default judgment for every criterion without reasoning."
@@ -3443,6 +3448,37 @@ The executive_summary must read like a concise leadership briefing. It should ne
                 if isinstance(dim, dict):
                     dim["label"] = c.get("label") or c["key"]
                     dim["is_risk"] = bool(c.get("is_risk"))
+
+    # Validate the provider's actual judgment before evidence classification,
+    # confidence caps, gate normalization, or assumption labeling can mutate
+    # it. Those later steps may safely demote a valid answer; they must never
+    # manufacture a missing score, confidence, criterion, or rationale and
+    # thereby turn unusable provider output into a publishable scorecard.
+    try:
+        _validate_grounded_scorecard_judgment(
+            parsed,
+            rubric_criteria or [{"key": key} for key in weights],
+            attributes,
+            [],
+        )
+    except UngroundedScorecardJudgment as exc:
+        if _attempt == 0:
+            return _generate_jaspen_scorecard(
+                client, project_description, llm_model,
+                model_selection=model_selection, strategy_objective=strategy_objective,
+                rubric=rubric, return_usage=return_usage, evidence_corpus=evidence_corpus,
+                routing_signals=routing_signals, structured_context=structured_context,
+                attributes=attributes, decision_kit=decision_kit,
+                decision_kit_version=decision_kit_version, kit_context=kit_context,
+                option_key=option_key, option_name=option_name, _attempt=1,
+                _failed_attempt_usages=[generation_usage], _retry_issue=str(exc),
+            )
+        exc.jaspen_usage = {
+            **dict(generation_usage or {}), "degraded": True, "operation_failed": True,
+            "error_code": "unusable_scorecard_output",
+            "failover": {"attempted_providers": list(_failed_attempt_usages or [])},
+        }
+        raise
 
     # Verify every passage the model claimed as evidence against the text it was
     # actually shown. Quotes that cannot be found are discarded rather than

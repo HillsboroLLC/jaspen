@@ -217,8 +217,10 @@ def test_three_bid_rfp_dates_surety_metrics_and_verdicts(app, monkeypatch):
         )
         assert card["metrics"]["expected_value"]["value"] == expected_value
         assert card["metrics"]["pursuit_roi"]["value"] == roi
-        if surety in {"pending", "declined"}:
+        if surety == "pending":
             assert card["recommendation"]["label"].startswith("Depends on confirming ")
+        elif surety == "declined":
+            assert card["recommendation"]["label"] == "No-Bid"
         else:
             assert card["recommendation"]["label"] == verdict
         deadline = next(gate for gate in card["gates"] if gate["key"] == "submission_deadline")

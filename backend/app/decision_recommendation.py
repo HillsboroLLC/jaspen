@@ -52,7 +52,12 @@ def recommend(scorecard, kit, *, due_by=None):
     trace.append({"step": "score", "value": score, "threshold": thresholds["advance_min_score"], "decline_below": thresholds["decline_below_score"], "effect": "meets" if score >= thresholds["advance_min_score"] else "below advance"})
     trace.append({"step": "confidence", "value": confidence, "threshold": thresholds["min_confidence_pct"], "effect": "meets" if confidence >= thresholds["min_confidence_pct"] else "below minimum"})
 
-    if score < thresholds["decline_below_score"]:
+    # A verified failed must-have is decisive regardless of the weighted
+    # score. Unknown checks remain conditional; they must never be promoted to
+    # either a pass or a failure.
+    if failed:
+        verdict = "decline"
+    elif score < thresholds["decline_below_score"]:
         verdict = "decline"
     elif all_pass and score >= thresholds["advance_min_score"] and confidence >= thresholds["min_confidence_pct"]:
         verdict = "advance"
@@ -73,7 +78,7 @@ def recommend(scorecard, kit, *, due_by=None):
         for index, (key, dim) in enumerate(blocking, 1):
             conditions.append(_condition(f"cond_criterion_{index}", str(dim["what_would_improve"]), {"type": "weak_criterion", "key": key}, due_by=due_by))
     threshold_snapshot = {"kit": kit["key"], **thresholds}
-    blocking_gates = failed + unknown
+    blocking_gates = unknown
     label = kit["verdict_vocabulary"][verdict]
     if blocking_gates and verdict != "decline":
         labels = [str(gate.get("label") or gate.get("key")) for gate in blocking_gates]

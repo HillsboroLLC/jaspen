@@ -70,6 +70,11 @@ export const cardScore = (card) => {
   return Number.isFinite(Number(value)) ? Math.round(Number(value)) : null;
 };
 
+const initialCardScore = (card) => {
+  const value = card?.initial_jaspen_score;
+  return Number.isFinite(Number(value)) ? Math.round(Number(value)) : null;
+};
+
 const money = (value) => {
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
@@ -454,7 +459,12 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
       verify,
       metrics,
     } : null,
-    strength: featured ? { score: cardScore(featured), verifiedShare, raiseConfidence } : null,
+    strength: featured ? {
+      score: cardScore(featured),
+      initialScore: initialCardScore(featured),
+      verifiedShare,
+      raiseConfidence,
+    } : null,
     change,
     sharedChangeScore,
     exposure,

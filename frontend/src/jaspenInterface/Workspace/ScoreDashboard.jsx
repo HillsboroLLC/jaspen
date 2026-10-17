@@ -123,6 +123,8 @@ export default function ScoreDashboard({
 
   const result = selectedSnapshot || analysisResult || {};
   const score = result.jaspen_score || 0;
+  const initialScore = Number(result.initial_jaspen_score);
+  const showInitialScore = Number.isFinite(initialScore) && Math.round(initialScore) !== Math.round(Number(score));
   const dataConfidence = Number(result.data_confidence);
   // Attached by the scoring engine (app/decision_confidence.py). Absent on
   // scorecards written before it existed, which is what keeps the old
@@ -619,6 +621,12 @@ export default function ScoreDashboard({
           <div className="score-text">
             <h3>Decision Case Strength</h3>
             <span className={`score-rating ${scoreRatingClass}`}>{scoreLabel}</span>
+            <div className="score-basis">Evidence-adjusted score</div>
+            {showInitialScore && (
+              <div className="score-initial">
+                Initial assessment: <strong>{Math.round(initialScore)}</strong>/100. Evidence confidence caps reduce unsupported criteria before Jaspen calculates the displayed score.
+              </div>
+            )}
             {/* The "Data confidence" bar that lived here reported a bare
                 percentage with no account of what it measured or what to do
                 about it, which read as a system health meter rather than a
