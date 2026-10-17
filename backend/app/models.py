@@ -1272,6 +1272,8 @@ class SharedArtifact(db.Model):
     title = db.Column(db.String(255), nullable=False, default='')
     snapshot_json = db.Column(db.JSON, nullable=False)
     include_evidence = db.Column(db.Boolean, nullable=False, default=False)
+    disclosure_settings = db.Column(db.JSON, nullable=False, default=dict)
+    disclosure_reviewed_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     expires_at = db.Column(db.DateTime, nullable=True)
     revoked_at = db.Column(db.DateTime, nullable=True)

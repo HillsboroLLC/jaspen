@@ -64,7 +64,8 @@ def paid_user(db, test_user):
 
 
 def _create(client, headers, **body):
-    payload = {'artifact_type': 'scorecard', 'thread_id': THREAD, 'scorecard_id': 'card-a'}
+    payload = {'artifact_type': 'scorecard', 'thread_id': THREAD, 'scorecard_id': 'card-a',
+               'disclosure_review_confirmed': True}
     payload.update(body)
     return client.post('/api/v1/shares', json=payload, headers=headers)
 
@@ -111,6 +112,8 @@ def test_preview_reports_what_will_be_shared_without_creating_a_link(client, pai
     assert data['summary']['evidence_quotes_available'] == 1
     assert data['summary']['evidence_quotes_included'] is False
     assert QUOTE not in str(data['snapshot'])
+    assert data['disclosure_review']['required'] is True
+    assert 'facts' not in data['snapshot']['scorecard']
     assert SharedArtifact.query.count() == 0
 
 
@@ -139,6 +142,7 @@ def test_created_link_serves_a_frozen_noindexed_copy(client, db, paid_user, auth
 def test_tradeoff_share_includes_every_included_card(client, paid_user, auth_headers):
     created = client.post('/api/v1/shares', json={
         'artifact_type': 'tradeoff', 'thread_id': THREAD, 'expires_in_days': 'never',
+        'disclosure_review_confirmed': True,
     }, headers=auth_headers)
     assert created.status_code == 201
     assert created.get_json()['link']['expires_at'] is None
@@ -147,6 +151,16 @@ def test_tradeoff_share_includes_every_included_card(client, paid_user, auth_hea
     names = [card['project_name'] for card in body['snapshot']['scorecards']]
     assert names == ['Paid search', 'Podcasts']
     assert body['snapshot']['portfolio_summary']['recommended_sequence'] == 'Commit to A.'
+
+
+def test_creation_requires_review_when_protective_defaults_exclude_content(client, paid_user, auth_headers):
+    before = SharedArtifact.query.count()
+    response = client.post('/api/v1/shares', json={
+        'artifact_type': 'scorecard', 'thread_id': THREAD, 'scorecard_id': 'card-a',
+    }, headers=auth_headers)
+    assert response.status_code == 400
+    assert response.get_json()['code'] == 'disclosure_review_required'
+    assert SharedArtifact.query.count() == before
 
 
 @pytest.mark.parametrize('value', [1, 45, 'forever'])

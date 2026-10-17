@@ -24,11 +24,15 @@ from app.sharing import (
     config_value,
     content_summary,
     daily_create_limit,
+    disclosure_narrative_matches,
+    disclosure_requires_review,
     expiry_from_days,
     is_sharing_disabled,
     link_is_live,
     new_token,
     parse_expiry_days,
+    filter_public_snapshot,
+    normalize_disclosure_settings,
     sanitize_presentation,
     set_sharing_disabled,
     sharing_block_reason,
@@ -100,6 +104,8 @@ def _link_json(link, *, include_url=True):
         'source_id': link.source_id,
         'title': link.title,
         'include_evidence': bool(link.include_evidence),
+        'disclosure_settings': normalize_disclosure_settings(link.disclosure_settings),
+        'disclosure_reviewed_at': _iso(link.disclosure_reviewed_at),
         'created_at': _iso(link.created_at),
         'expires_at': _iso(link.expires_at),
         'revoked_at': _iso(link.revoked_at),
@@ -146,12 +152,13 @@ def _prepare(user, body):
     if not thread_id:
         return None, (jsonify({'error': 'thread_id is required.'}), 400)
     include_evidence = body.get('include_evidence') is True
+    disclosure_settings = normalize_disclosure_settings(body.get('disclosure_settings'))
 
     session, cards = _load_thread_cards(user.id, thread_id)
     if session is None:
         return None, (jsonify({'error': 'Thread not found.'}), 404)
     try:
-        snapshot, title, source_id, evidence_available = build_snapshot(
+        raw_snapshot, title, source_id, evidence_available = build_snapshot(
             artifact_type=artifact_type,
             cards=cards,
             include_evidence=include_evidence,
@@ -169,7 +176,9 @@ def _prepare(user, body):
         }
         message, status = messages.get(str(error), ('Could not prepare this share.', 400))
         return None, (jsonify({'error': message, 'code': str(error)}), status)
-    if not snapshot_size_ok(snapshot):
+    snapshot = filter_public_snapshot(raw_snapshot, disclosure_settings)
+    matches = disclosure_narrative_matches(raw_snapshot, snapshot, disclosure_settings)
+    if not snapshot_size_ok(raw_snapshot):
         return None, (jsonify({'error': 'This artifact is too large to share.', 'code': 'too_large'}), 413)
     return {
         'artifact_type': artifact_type,
@@ -177,7 +186,11 @@ def _prepare(user, body):
         'source_id': source_id,
         'title': title,
         'snapshot': snapshot,
+        'raw_snapshot': raw_snapshot,
         'include_evidence': include_evidence,
+        'disclosure_settings': disclosure_settings,
+        'review_required': disclosure_requires_review(disclosure_settings),
+        'narrative_matches': matches,
         'summary': content_summary(
             snapshot, include_evidence=include_evidence, evidence_available=evidence_available,
         ),
@@ -211,6 +224,12 @@ def preview_share():
         'include_evidence': prepared['include_evidence'],
         'snapshot': prepared['snapshot'],
         'summary': prepared['summary'],
+        'disclosure_settings': prepared['disclosure_settings'],
+        'disclosure_review': {
+            'required': prepared['review_required'],
+            'matches': prepared['narrative_matches'],
+            'warning': 'Automated detection can miss figures written in other ways. Review the shared narrative before creating this link.' if prepared['review_required'] else None,
+        },
     })
 
 
@@ -251,6 +270,12 @@ def create_share():
     prepared, error = _prepare(user, body)
     if error:
         return error
+    if prepared['review_required'] and body.get('disclosure_review_confirmed') is not True:
+        return jsonify({
+            'error': 'Review the shared narrative and confirm it before creating this link.',
+            'code': 'disclosure_review_required',
+            'matches': prepared['narrative_matches'],
+        }), 400
     link = SharedArtifact(
         token=new_token(),
         owner_user_id=user.id,
@@ -258,8 +283,10 @@ def create_share():
         artifact_type=prepared['artifact_type'],
         source_id=prepared['source_id'],
         title=prepared['title'],
-        snapshot_json=prepared['snapshot'],
+        snapshot_json=prepared['raw_snapshot'],
         include_evidence=prepared['include_evidence'],
+        disclosure_settings=prepared['disclosure_settings'],
+        disclosure_reviewed_at=now if prepared['review_required'] else None,
         created_at=now,
         expires_at=expiry_from_days(days, now),
         view_count=0,
@@ -341,6 +368,41 @@ def manage_share(token):
         'can_edit': sharing_block_reason(user) is None,
         'link': _link_json(link),
         'presentation': snapshot.get('presentation') or {},
+        'disclosure_settings': normalize_disclosure_settings(link.disclosure_settings),
+    })
+
+
+@sharing_bp.route('/manage/<token>/disclosure', methods=['PUT', 'PATCH'])
+@jwt_required()
+@limiter.limit('60 per minute')
+def save_share_disclosure(token):
+    """Persist per-link disclosure settings after an owner-reviewed preview."""
+    user = _current_user()
+    blocked = _blocked(user)
+    if blocked:
+        return blocked
+    link = _owned_link_by_token(user, token)
+    if link is None:
+        return jsonify(UNAVAILABLE), 404
+    body = request.get_json(silent=True) or {}
+    settings = normalize_disclosure_settings(body.get('disclosure_settings'))
+    filtered = filter_public_snapshot(link.snapshot_json, settings)
+    matches = disclosure_narrative_matches(link.snapshot_json, filtered, settings)
+    review_required = disclosure_requires_review(settings)
+    if review_required and body.get('disclosure_review_confirmed') is not True:
+        return jsonify({
+            'error': 'Review the shared narrative and confirm it before saving these settings.',
+            'code': 'disclosure_review_required',
+            'matches': matches,
+        }), 400
+    link.disclosure_settings = settings
+    link.disclosure_reviewed_at = datetime.utcnow() if review_required else None
+    db.session.commit()
+    return jsonify({
+        'disclosure_settings': settings,
+        'disclosure_reviewed_at': _iso(link.disclosure_reviewed_at),
+        'snapshot': filtered,
+        'matches': matches,
     })
 
 
@@ -402,14 +464,16 @@ def view_public_share(token):
         SharedArtifact.last_viewed_at: datetime.utcnow(),
     }, synchronize_session=False)
     db.session.commit()
-    return _noindex(jsonify({
+    public_payload = {
         'artifact_type': link.artifact_type,
         'title': link.title,
         'created_at': _iso(link.created_at),
         'expires_at': _iso(link.expires_at),
         'include_evidence': bool(link.include_evidence),
-        'snapshot': link.snapshot_json,
-    }))
+        'disclosure_settings': normalize_disclosure_settings(link.disclosure_settings),
+        'snapshot': filter_public_snapshot(link.snapshot_json, link.disclosure_settings),
+    }
+    return _noindex(jsonify(public_payload))
 
 
 @sharing_bp.route('/public/<token>/report', methods=['POST'])

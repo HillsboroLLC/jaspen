@@ -79,6 +79,25 @@ PRESENTATION_EVIDENCE_VARIANTS = ('detailed', 'compact')
 _HEX_COLOR = re.compile(r'^#[0-9a-fA-F]{6}$')
 DISPLAY_OVERRIDE_FIELDS = frozenset({'title', 'tradeoff_included'})
 
+FINANCIAL_FIELDS = frozenset({
+    'financial_impact', 'before_after_financials', 'investment_analysis',
+    'npv_irr_analysis', 'valuation',
+})
+DEFAULT_DISCLOSURE_SETTINGS = {
+    'include_facts': False,
+    'fact_keys': [],
+    'include_metrics': False,
+    'include_financials': False,
+}
+PUBLIC_RESPONSE_FIELDS = frozenset({
+    'artifact_type', 'title', 'created_at', 'expires_at', 'include_evidence',
+    'disclosure_settings', 'snapshot',
+})
+PUBLIC_SNAPSHOT_FIELDS = frozenset({
+    'scorecard', 'scorecards', 'context', 'presentation', 'strategy_objective',
+    'portfolio_summary',
+})
+
 # Verbatim passages of the user's own words. Removed everywhere in the
 # snapshot unless the owner explicitly chooses to include evidence.
 EVIDENCE_KEYS = frozenset({
@@ -235,7 +254,27 @@ def count_evidence_passages(value):
     return len(found)
 
 
-def sanitize_scorecard(card, *, include_evidence, public_id):
+def normalize_disclosure_settings(value):
+    source = value if isinstance(value, dict) else {}
+    fact_keys = source.get('fact_keys') if isinstance(source.get('fact_keys'), list) else []
+    return {
+        'include_facts': source.get('include_facts') is True,
+        'fact_keys': sorted({str(key).strip() for key in fact_keys if str(key).strip()}),
+        'include_metrics': source.get('include_metrics') is True,
+        'include_financials': source.get('include_financials') is True,
+    }
+
+
+def disclosure_requires_review(settings):
+    settings = normalize_disclosure_settings(settings)
+    return not (
+        settings['include_facts']
+        and settings['include_metrics']
+        and settings['include_financials']
+    )
+
+
+def sanitize_scorecard(card, *, include_evidence, public_id, disclosure_settings=None):
     if not isinstance(card, dict):
         return None
     kept = {key: copy.deepcopy(card[key]) for key in SCORECARD_FIELDS if key in card}
@@ -254,7 +293,7 @@ def sanitize_scorecard(card, *, include_evidence, public_id):
     # only need to be unique inside this one snapshot.
     kept['id'] = public_id
     kept['analysis_id'] = public_id
-    return kept
+    return kept if disclosure_settings is None else _filter_scorecard_disclosure(kept, disclosure_settings)
 
 
 def _shared_facts(card, include_evidence):
@@ -270,6 +309,148 @@ def _shared_facts(card, include_evidence):
             item['evidence'] = fact['evidence']
         shared[str(key)] = item
     return shared
+
+
+def _filter_scorecard_disclosure(card, settings):
+    clean = copy.deepcopy(card) if isinstance(card, dict) else {}
+    settings = normalize_disclosure_settings(settings)
+    if settings['include_facts']:
+        selected = set(settings['fact_keys'])
+        facts = clean.get('facts') if isinstance(clean.get('facts'), dict) else {}
+        clean['facts'] = {
+            key: value for key, value in facts.items()
+            if key in selected
+        }
+        if not clean['facts']:
+            clean.pop('facts', None)
+    else:
+        clean.pop('facts', None)
+    if not settings['include_metrics']:
+        clean.pop('metrics', None)
+    if not settings['include_financials']:
+        for key in FINANCIAL_FIELDS:
+            clean.pop(key, None)
+    return clean
+
+
+_HIDDEN_SECTION_FIELDS = {
+    'financials': FINANCIAL_FIELDS | {'metrics'},
+    'criteria': {'dimensions', 'scores', 'rubric', 'scoring_rubric', 'group_scores', 'groups'},
+    'framework': {'decision_framework', 'strategic_decision_framework'},
+    'insights': {'ai_insights', 'key_insights', 'key_considerations'},
+    'exposure': {'assumptions'},
+    'drivers': {'component_scores', 'component_rationale'},
+}
+
+
+def filter_public_snapshot(snapshot, disclosure_settings=None):
+    """Apply protective per-link rules at read time, including old snapshots."""
+    source = snapshot if isinstance(snapshot, dict) else {}
+    result = {key: copy.deepcopy(source[key]) for key in PUBLIC_SNAPSHOT_FIELDS if key in source}
+    if isinstance(result.get('scorecard'), dict):
+        result['scorecard'] = _filter_scorecard_disclosure(result['scorecard'], disclosure_settings)
+    if isinstance(result.get('scorecards'), list):
+        result['scorecards'] = [
+            _filter_scorecard_disclosure(card, disclosure_settings)
+            for card in result['scorecards'] if isinstance(card, dict)
+        ]
+    presentation = result.get('presentation') if isinstance(result.get('presentation'), dict) else {}
+    layout = presentation.get('layout') if isinstance(presentation.get('layout'), dict) else {}
+    hidden = set(layout.get('hidden') or [])
+    hidden_fields = set().union(*(_HIDDEN_SECTION_FIELDS.get(section, set()) for section in hidden)) if hidden else set()
+    if hidden_fields:
+        cards = ([result['scorecard']] if isinstance(result.get('scorecard'), dict) else result.get('scorecards') or [])
+        for card in cards:
+            for field in hidden_fields:
+                card.pop(field, None)
+    return result
+
+
+def _excluded_values(snapshot, settings):
+    settings = normalize_disclosure_settings(settings)
+    cards = snapshot.get('scorecards') if isinstance(snapshot.get('scorecards'), list) else [snapshot.get('scorecard')]
+    excluded = []
+    for card in (item for item in cards if isinstance(item, dict)):
+        facts = card.get('facts') if isinstance(card.get('facts'), dict) else {}
+        selected = set(settings['fact_keys'])
+        for key, fact in facts.items():
+            if settings['include_facts'] and (not selected or key in selected):
+                continue
+            if isinstance(fact, dict) and fact.get('value') not in (None, '', [], {}):
+                excluded.append({'field': f'facts.{key}', 'value': fact.get('value'), 'unit': fact.get('unit'), 'key': key})
+        if not settings['include_metrics']:
+            for key, metric in (card.get('metrics') or {}).items():
+                if isinstance(metric, dict) and metric.get('value') not in (None, '', [], {}):
+                    excluded.append({'field': f'metrics.{key}', 'value': metric.get('value'), 'unit': metric.get('unit'), 'key': key})
+        if not settings['include_financials']:
+            for group in FINANCIAL_FIELDS:
+                for path, value in _scalar_values(card.get(group), prefix=group):
+                    excluded.append({'field': path, 'value': value, 'unit': None, 'key': path})
+    return excluded
+
+
+def _scalar_values(value, prefix=''):
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            yield from _scalar_values(inner, f'{prefix}.{key}' if prefix else str(key))
+    elif isinstance(value, list):
+        for index, inner in enumerate(value):
+            yield from _scalar_values(inner, f'{prefix}.{index}')
+    elif isinstance(value, (str, int, float)) and not isinstance(value, bool) and value not in ('', None):
+        yield prefix, value
+
+
+_NARRATIVE_KEYS = frozenset({
+    'summary', 'executive_summary', 'executive_narrative', 'strategic_rationale',
+    'rationale', 'risk', 'risks', 'top_risks', 'recommendation', 'recommendations',
+    'action', 'basis', 'note', 'notes', 'mitigation', 'key_insights',
+    'key_considerations', 'assumptions', 'text',
+})
+
+
+def _narrative_strings(value, path=''):
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            child = f'{path}.{key}' if path else str(key)
+            if isinstance(inner, str) and (key in _NARRATIVE_KEYS or any(part in _NARRATIVE_KEYS for part in child.split('.'))):
+                yield child, inner
+            else:
+                yield from _narrative_strings(inner, child)
+    elif isinstance(value, list):
+        for index, inner in enumerate(value):
+            yield from _narrative_strings(inner, f'{path}.{index}')
+
+
+def _value_patterns(item):
+    value, unit, key = item.get('value'), str(item.get('unit') or '').lower(), str(item.get('key') or '').lower()
+    patterns = []
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        number = float(value)
+        plain = f'{number:g}'
+        patterns.extend([rf'(?<![\d.]){re.escape(plain)}(?![\d.])', rf'(?<!\d){re.escape(f"{number:,.0f}")}(?!\d)'])
+        if 'percent' in unit or 'pct' in key or 'margin' in key or 'probability' in key or key.endswith('irr'):
+            patterns.extend([rf'(?<![\d.]){re.escape(plain)}\s*%', rf'(?<![\d.]){re.escape(plain)}\s+percent\b'])
+        if unit in {'usd', 'currency', '$'} or any(word in key for word in ('cost', 'value', 'revenue', 'investment', 'npv', 'ebitda', 'return')):
+            patterns.append(rf'\$\s*{re.escape(f"{number:,.0f}")}\b')
+            for divisor, suffix, word in ((1_000_000_000, 'B', 'billion'), (1_000_000, 'M', 'million'), (1_000, 'K', 'thousand')):
+                if abs(number) >= divisor:
+                    short = f'{number / divisor:g}'
+                    patterns.extend([rf'\$?\s*{re.escape(short)}\s*{suffix}\b', rf'\$?\s*{re.escape(short)}\s+{word}\b'])
+                    break
+    elif isinstance(value, str) and len(value.strip()) >= 3:
+        patterns.append(re.escape(value.strip()))
+    return patterns
+
+
+def disclosure_narrative_matches(raw_snapshot, filtered_snapshot, settings):
+    excluded = _excluded_values(raw_snapshot, settings)
+    matches = []
+    for path, text in _narrative_strings(filtered_snapshot):
+        for item in excluded:
+            if any(re.search(pattern, text, re.IGNORECASE) for pattern in _value_patterns(item)):
+                matches.append({'path': path, 'excluded_field': item['field'], 'excluded_value': item['value']})
+    unique = {(item['path'], item['excluded_field'], str(item['excluded_value'])): item for item in matches}
+    return list(unique.values())
 
 
 def _contrast_ratio(hex_a, hex_b):
