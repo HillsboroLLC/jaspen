@@ -47,12 +47,12 @@ def recommend(scorecard, kit, *, due_by=None):
         status = gate.get("status") if gate.get("status") in {"pass", "fail", "unknown"} else "unknown"
         effect = "decline" if status == "fail" else "conditional" if status == "unknown" else "clear"
         trace.append({"step": "gate", "key": gate.get("key"), "label": gate.get("label"), "status": status, "effect": effect, "evidence": gate.get("evidence") or []})
-        if status == "unknown":
-            conditions.append(_condition(f"cond_gate_{index}", f"Resolve mandatory gate: {gate.get('label') or gate.get('key')}", {"type": "gate", "key": gate.get("key")}, due_by=due_by, due_by_rule="decision deadline" if due_by else None))
+        if status in {"fail", "unknown"}:
+            conditions.append(_condition(f"cond_gate_{index}", f"Confirm mandatory gate: {gate.get('label') or gate.get('key')}", {"type": "gate", "key": gate.get("key")}, due_by=due_by, due_by_rule="decision deadline" if due_by else None))
     trace.append({"step": "score", "value": score, "threshold": thresholds["advance_min_score"], "decline_below": thresholds["decline_below_score"], "effect": "meets" if score >= thresholds["advance_min_score"] else "below advance"})
     trace.append({"step": "confidence", "value": confidence, "threshold": thresholds["min_confidence_pct"], "effect": "meets" if confidence >= thresholds["min_confidence_pct"] else "below minimum"})
 
-    if failed or score < thresholds["decline_below_score"]:
+    if score < thresholds["decline_below_score"]:
         verdict = "decline"
     elif all_pass and score >= thresholds["advance_min_score"] and confidence >= thresholds["min_confidence_pct"]:
         verdict = "advance"
@@ -73,9 +73,14 @@ def recommend(scorecard, kit, *, due_by=None):
         for index, (key, dim) in enumerate(blocking, 1):
             conditions.append(_condition(f"cond_criterion_{index}", str(dim["what_would_improve"]), {"type": "weak_criterion", "key": key}, due_by=due_by))
     threshold_snapshot = {"kit": kit["key"], **thresholds}
+    blocking_gates = failed + unknown
+    label = kit["verdict_vocabulary"][verdict]
+    if blocking_gates and verdict != "decline":
+        labels = [str(gate.get("label") or gate.get("key")) for gate in blocking_gates]
+        label = f"Depends on confirming {', '.join(labels)}"
     return {
         "verdict_key": verdict,
-        "label": kit["verdict_vocabulary"][verdict],
+        "label": label,
         "trace": trace,
         "conditions": conditions,
         "thresholds_used": threshold_snapshot,

@@ -217,7 +217,10 @@ def test_three_bid_rfp_dates_surety_metrics_and_verdicts(app, monkeypatch):
         )
         assert card["metrics"]["expected_value"]["value"] == expected_value
         assert card["metrics"]["pursuit_roi"]["value"] == roi
-        assert card["recommendation"]["label"] == verdict
+        if surety in {"pending", "declined"}:
+            assert card["recommendation"]["label"].startswith("Depends on confirming ")
+        else:
+            assert card["recommendation"]["label"] == verdict
         deadline = next(gate for gate in card["gates"] if gate["key"] == "submission_deadline")
         assert deadline["status"] == "pass"
 
@@ -405,7 +408,7 @@ def test_batch_and_single_apply_identical_per_option_gates(app, monkeypatch):
     assert single["gates"][0]["status"] == "pass"
 
 
-def test_real_judge_path_rejects_uniform_ungrounded_default(app, monkeypatch):
+def test_real_judge_path_publishes_reasoned_thin_evidence_as_assumed(app, monkeypatch):
     from app.routes import strategy
 
     rubric = {"approval_status": "approved", "criteria": [
@@ -427,15 +430,17 @@ def test_real_judge_path_rejects_uniform_ungrounded_default(app, monkeypatch):
     monkeypatch.setattr(strategy, "_strategy_generate_reply", lambda *a, **k: (json.dumps(response), {"provider": "test"}))
     attributes = {"contract_value": {"value": 14_000_000, "source": "user", "evidence": "Contract value $14M"}}
 
-    with pytest.raises(strategy.UngroundedScorecardJudgment, match="ignored all canonical evidence|ungrounded default"):
-        strategy._generate_jaspen_scorecard(
-            None, "Boulder", "test", rubric=rubric,
-            attributes=attributes, evidence_corpus="Contract value $14M",
-            option_key="opt-boulder", option_name="Boulder",
-        )
+    card = strategy._generate_jaspen_scorecard(
+        None, "Boulder", "test", rubric=rubric,
+        attributes=attributes, evidence_corpus="Contract value $14M",
+        option_key="opt-boulder", option_name="Boulder",
+    )
+    assert card["jaspen_score"] == 45
+    assert all(dim["evidence_status"] == "assumed" for dim in card["dimensions"].values())
+    assert all(dim["confidence"] == "assumed" for dim in card["dimensions"].values())
 
 
-def test_uniform_assumed_default_is_rejected_even_when_reference_counts_vary(app, monkeypatch):
+def test_uniform_assumed_with_reasoning_is_not_mistaken_for_empty_output(app, monkeypatch):
     from app.routes import strategy
 
     quotes = ["Revenue is $1M.", "Build-out is $200,000."]
@@ -468,12 +473,75 @@ def test_uniform_assumed_default_is_rejected_even_when_reference_counts_vary(app
         {"key": "risk", "label": "Risk", "weight": 0.5, "is_risk": True},
     ]}
 
-    with pytest.raises(strategy.UngroundedScorecardJudgment, match="ungrounded default"):
-        strategy._generate_jaspen_scorecard(
-            None, "Boulder", "test", rubric=rubric,
-            attributes=attributes, evidence_corpus=" ".join(quotes),
-            option_key="opt-boulder", option_name="Boulder",
-        )
+    card = strategy._generate_jaspen_scorecard(
+        None, "Boulder", "test", rubric=rubric,
+        attributes=attributes, evidence_corpus=" ".join(quotes),
+        option_key="opt-boulder", option_name="Boulder",
+    )
+    assert card["jaspen_score"] == 45
+    assert card["initial_jaspen_score"] == 45
+
+
+def test_empty_default_judgment_retries_once_then_fails_cleanly(app, monkeypatch):
+    from app.routes import strategy
+
+    calls = []
+    response = {"dimensions": {
+        key: {"score": 45, "confidence": "assumed", "source": "assumed", "evidence": []}
+        for key in ("fit", "risk")
+    }, "gates": []}
+
+    def provider(messages, **kwargs):
+        calls.append(messages[0]["content"])
+        return json.dumps(response), {"provider": "test", "model": "mock", "input_tokens": 2, "output_tokens": 3}
+
+    monkeypatch.setattr(strategy, "_strategy_generate_reply", provider)
+    rubric = {"approval_status": "approved", "criteria": [
+        {"key": "fit", "label": "Fit", "weight": 0.5},
+        {"key": "risk", "label": "Risk", "weight": 0.5},
+    ]}
+    with pytest.raises(strategy.UngroundedScorecardJudgment, match="without reasoning") as caught:
+        strategy._generate_jaspen_scorecard(None, "A", "test", rubric=rubric)
+    assert len(calls) == 2
+    assert "RETRY REQUIRED" in calls[1]
+    assert caught.value.jaspen_usage["degraded"] is True
+
+
+def test_missing_confidence_retries_and_is_never_filled(app, monkeypatch):
+    from app.routes import strategy
+
+    calls = []
+    response = {"dimensions": {
+        "fit": {"score": 61, "source": "conversation", "evidence": ["Useful input"], "rationale": "Useful input supports fit."},
+    }, "gates": []}
+    monkeypatch.setattr(
+        strategy, "_strategy_generate_reply",
+        lambda messages, **kwargs: (calls.append(messages[0]["content"]) or json.dumps(response), {"provider": "test"}),
+    )
+    rubric = {"approval_status": "approved", "criteria": [{"key": "fit", "label": "Fit", "weight": 1.0}]}
+    with pytest.raises(strategy.UngroundedScorecardJudgment, match="invalid confidence"):
+        strategy._generate_jaspen_scorecard(None, "A", "test", rubric=rubric, evidence_corpus="Useful input")
+    assert len(calls) == 2
+
+
+def test_formatting_only_repairs_are_logged_without_retry(app, monkeypatch, caplog):
+    from app.routes import strategy
+
+    calls = []
+    wrapped = "Result follows:\n" + json.dumps({"dimensions": {
+        "fit": {"score": "61", "confidence": "MEDIUM", "source": "CONVERSATION", "evidence": ["Useful input"], "rationale": "Useful input supports fit."},
+    }, "gates": []}) + "\nEnd."
+    monkeypatch.setattr(
+        strategy, "_strategy_generate_reply",
+        lambda *args, **kwargs: (calls.append(1) or wrapped, {"provider": "test"}),
+    )
+    rubric = {"approval_status": "approved", "criteria": [{"key": "fit", "label": "Fit", "weight": 1.0}]}
+    with caplog.at_level("INFO"):
+        card = strategy._generate_jaspen_scorecard(None, "A", "test", rubric=rubric, evidence_corpus="Useful input")
+    assert len(calls) == 1
+    assert card["dimensions"]["fit"]["raw_score"] == 61
+    assert "extracted_json_object" in card["formatting_repairs"]
+    assert any("scorecard_formatting_repaired" in message for message in caplog.messages)
 
 
 def test_gate_judge_path_requires_and_preserves_exact_canonical_citation(app, monkeypatch):

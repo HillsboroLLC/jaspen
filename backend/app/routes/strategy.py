@@ -775,7 +775,7 @@ def _repair_json_text(text):
     return cleaned
 
 
-def _extract_json_object(text):
+def _extract_json_object(text, *, repair_log=None):
     """Parse JSON object from model output (raw JSON or fenced/embedded JSON).
 
     Resilient to: trailing commas, missing commas between fields, markdown
@@ -791,20 +791,30 @@ def _extract_json_object(text):
     except json.JSONDecodeError:
         pass
 
-    # Pass 2: locate the outermost JSON object
+    # Pass 2: locate the outermost JSON object. This changes presentation only;
+    # it never fills or changes a value.
     json_match = re.search(r'\{.*\}', text, re.DOTALL)
     candidate = json_match.group() if json_match else text
 
     # Pass 3: try parsing the candidate directly
     try:
-        return json.loads(candidate)
+        parsed = json.loads(candidate)
+        if candidate != text and isinstance(repair_log, list):
+            repair_log.append("extracted_json_object")
+        return parsed
     except json.JSONDecodeError:
         pass
 
     # Pass 4: apply common repairs
     repaired = _repair_json_text(candidate)
     try:
-        return json.loads(repaired)
+        parsed = json.loads(repaired)
+        if isinstance(repair_log, list):
+            if candidate != text:
+                repair_log.append("extracted_json_object")
+            if repaired != candidate:
+                repair_log.append("normalized_json_formatting")
+        return parsed
     except json.JSONDecodeError as exc:
         # Final fallback: truncate to last valid `}` and try again
         last_brace = repaired.rfind('}')
@@ -816,6 +826,47 @@ def _extract_json_object(text):
         raise ValueError(
             f"Could not parse JSON from LLM response: {exc}; first 200 chars: {candidate[:200]!r}"
         )
+
+
+def _normalize_scorecard_formatting(payload, repair_log):
+    """Normalize representation-only scorecard values without inventing data."""
+    if not isinstance(payload, dict):
+        return payload
+    dimensions = payload.get("dimensions")
+    if isinstance(dimensions, dict):
+        for key, dim in dimensions.items():
+            if not isinstance(dim, dict):
+                continue
+            score = dim.get("score")
+            if isinstance(score, str):
+                try:
+                    dim["score"] = float(score.strip())
+                    repair_log.append(f"numeric_string:dimensions.{key}.score")
+                except (TypeError, ValueError):
+                    pass
+            for field, allowed in (
+                ("confidence", {"high", "medium", "low", "assumed"}),
+                ("source", {"conversation", "connector", "inferred", "assumed"}),
+            ):
+                value = dim.get(field)
+                normalized = str(value or "").strip().lower()
+                if isinstance(value, str) and normalized in allowed and value != normalized:
+                    dim[field] = normalized
+                    repair_log.append(f"enum_case:dimensions.{key}.{field}")
+    for index, gate in enumerate(payload.get("gates") or []):
+        if not isinstance(gate, dict):
+            continue
+        for field, allowed in (
+            ("status", {"pass", "fail", "unknown"}),
+            ("confidence", {"high", "medium", "low", "assumed"}),
+            ("source", {"conversation", "connector", "inferred", "assumed", "user"}),
+        ):
+            value = gate.get(field)
+            normalized = str(value or "").strip().lower()
+            if isinstance(value, str) and normalized in allowed and value != normalized:
+                gate[field] = normalized
+                repair_log.append(f"enum_case:gates.{index}.{field}")
+    return payload
 
 
 class UngroundedScorecardJudgment(ValueError):
@@ -2555,7 +2606,7 @@ def _calibrate_confidence_to_verified_evidence(payload):
 
 
 def _validate_grounded_scorecard_judgment(payload, criteria, attributes, approved_gates):
-    """Reject plausible-looking provider defaults that have no canonical basis."""
+    """Reject unusable output; thin evidence is a publishable scorecard state."""
     dimensions = payload.get("dimensions") if isinstance(payload, dict) else None
     if not isinstance(dimensions, dict) or not dimensions:
         raise UngroundedScorecardJudgment("The judge returned no criterion judgments.")
@@ -2571,20 +2622,7 @@ def _validate_grounded_scorecard_judgment(payload, criteria, attributes, approve
             f"The judge omitted required criteria: {', '.join(missing)}"
         )
 
-    canonical_quotes = [
-        str(entry.get("evidence") or "").strip()
-        for entry in (attributes or {}).values()
-        if isinstance(entry, dict) and str(entry.get("evidence") or "").strip()
-    ]
-    verified_count = 0
     signatures = []
-    explicit_assumptions = payload.get("assumptions") if isinstance(payload.get("assumptions"), list) else []
-    assumed_impacts = {
-        str(criterion)
-        for entry in (attributes or {}).values()
-        if isinstance(entry, dict) and entry.get("source") == "assumed"
-        for criterion in ((entry.get("assumption") or {}).get("affects") or [])
-    }
     for key in expected:
         dim = dimensions[key]
         try:
@@ -2595,31 +2633,14 @@ def _validate_grounded_scorecard_judgment(payload, criteria, attributes, approve
         if confidence not in {"high", "medium", "low", "assumed"}:
             raise UngroundedScorecardJudgment(f"The judge returned invalid confidence for {key}.")
         references = dim.get("evidence_references") if isinstance(dim.get("evidence_references"), list) else []
-        verified_count += len(references)
         signatures.append((round(score, 6), confidence, len(references)))
-        if references:
-            continue
-        explicit_gap = bool(
-            confidence in {"low", "assumed"}
-            and str(dim.get("rationale") or "").strip()
-            and str(dim.get("what_would_improve") or "").strip()
-            and (explicit_assumptions or key in assumed_impacts)
-        )
-        if not explicit_gap:
-            raise UngroundedScorecardJudgment(
-                f"The judgment for {key} has neither verified evidence nor an explicit assumption."
-            )
-
-    if canonical_quotes and verified_count == 0:
-        raise UngroundedScorecardJudgment(
-            "The judge ignored all canonical evidence supplied for this option."
-        )
     if (
         len(signatures) > 1
         and all(signature[:2] == (45.0, "assumed") for signature in signatures)
+        and all(dimensions[key].get("_provider_reasoning_missing") for key in expected)
     ):
         raise UngroundedScorecardJudgment(
-            "The judge returned an ungrounded default judgment for every criterion."
+            "The judge returned the default judgment for every criterion without reasoning."
         )
 
     gates_by_key = {
@@ -2630,15 +2651,43 @@ def _validate_grounded_scorecard_judgment(payload, criteria, attributes, approve
         key = str(definition.get("key") or "")
         gate = gates_by_key.get(key)
         if not isinstance(gate, dict):
-            raise UngroundedScorecardJudgment(f"The judge omitted gate {key}.")
+            continue
         status = str(gate.get("status") or "").strip().lower()
         if status not in {"pass", "fail", "unknown"}:
             raise UngroundedScorecardJudgment(f"Gate {key} has an invalid status.")
         structured = str(gate.get("basis") or "").startswith("Resolved from canonical fact ")
         if status in {"pass", "fail"} and not structured and not gate.get("evidence"):
-            raise UngroundedScorecardJudgment(f"Gate {key} has no verified canonical evidence.")
+            gate.update(status="unknown", confidence="assumed", source="assumed", basis="No verified evidence yet")
         if not str(gate.get("basis") or "").strip():
-            raise UngroundedScorecardJudgment(f"Gate {key} has no rationale.")
+            gate["basis"] = "No verified evidence yet"
+    return payload
+
+
+def _mark_scorecard_evidence_state(payload):
+    """Make thin evidence explicit without fabricating a missing judgment."""
+    if not isinstance(payload, dict):
+        return payload
+    assumptions = payload.get("assumptions") if isinstance(payload.get("assumptions"), list) else []
+    for key, dim in (payload.get("dimensions") or {}).items():
+        if not isinstance(dim, dict):
+            continue
+        references = dim.get("evidence_references") if isinstance(dim.get("evidence_references"), list) else []
+        evidenced = any(reference_supports_decision(item) for item in references)
+        dim["evidence_status"] = "evidence_backed" if evidenced else "assumed"
+        dim["_provider_reasoning_missing"] = not bool(str(dim.get("rationale") or "").strip())
+        if evidenced:
+            continue
+        dim["source"] = "assumed"
+        dim["confidence"] = "assumed"
+        if not str(dim.get("rationale") or "").strip():
+            dim["rationale"] = "No supporting input was provided for this criterion."
+        if not str(dim.get("what_would_improve") or "").strip():
+            label = str(dim.get("label") or key).replace("_", " ")
+            dim["what_would_improve"] = f"Provide source evidence that establishes {label}."
+        note = f"{dim.get('label') or key}: assessed as an assumption because no supporting input was verified."
+        if note not in assumptions:
+            assumptions.append(note)
+    payload["assumptions"] = assumptions
     return payload
 
 
@@ -2870,6 +2919,7 @@ def _recompute_jaspen_score(payload, weights):
         return payload
 
     acc = 0.0
+    raw_acc = 0.0
     total_w = 0.0
     for dim_key, w in (weights or {}).items():
         dim = dims.get(dim_key)
@@ -2900,6 +2950,7 @@ def _recompute_jaspen_score(payload, weights):
         # score (otherwise the UI would show an uncapped bar above a capped total).
         dim["score"] = int(round(capped))
         acc += capped * float(w)
+        raw_acc += raw_val * float(w)
         total_w += float(w)
 
     if total_w <= 0:
@@ -2908,6 +2959,7 @@ def _recompute_jaspen_score(payload, weights):
     score = int(round(acc / total_w))
     score = max(0, min(100, score))
     payload["jaspen_score"] = score
+    payload["initial_jaspen_score"] = max(0, min(100, int(round(raw_acc / total_w))))
     payload["score_category"] = (
         "Excellent" if score >= 80
         else "Good" if score >= 60
@@ -3015,6 +3067,9 @@ def _generate_jaspen_scorecard(
     kit_context=None,
     option_key=None,
     option_name=None,
+    _attempt=0,
+    _failed_attempt_usages=None,
+    _retry_issue=None,
 ):
     """Run the existing LLM scoring flow and return parsed scorecard JSON.
 
@@ -3257,6 +3312,11 @@ Those values are calculated by deterministic code after your criterion judgments
 
 The executive_summary must read like a concise leadership briefing. It should never repeat raw prompt text or user questions.
 """
+    if _retry_issue:
+        analysis_prompt += (
+            "\n\nRETRY REQUIRED: the previous response was unusable because: "
+            f"{_retry_issue}. Return a complete corrected JSON object; do not omit any required field."
+        )
 
     gate_rubric = rubric
     kit = None
@@ -3329,7 +3389,33 @@ The executive_summary must read like a concise leadership briefing. It should ne
     except Exception:
         raise
 
-    parsed = _normalize_scorecard_payload(_extract_json_object(analysis_text))
+    repairs = []
+    try:
+        parsed = _normalize_scorecard_payload(_extract_json_object(analysis_text, repair_log=repairs))
+        parsed = _normalize_scorecard_formatting(parsed, repairs)
+    except (ValueError, TypeError) as exc:
+        issue = str(exc)
+        if _attempt == 0:
+            return _generate_jaspen_scorecard(
+                client, project_description, llm_model,
+                model_selection=model_selection, strategy_objective=strategy_objective,
+                rubric=rubric, return_usage=return_usage, evidence_corpus=evidence_corpus,
+                routing_signals=routing_signals, structured_context=structured_context,
+                attributes=attributes, decision_kit=decision_kit,
+                decision_kit_version=decision_kit_version, kit_context=kit_context,
+                option_key=option_key, option_name=option_name, _attempt=1,
+                _failed_attempt_usages=[generation_usage], _retry_issue=issue,
+            )
+        failure = UngroundedScorecardJudgment(issue)
+        failure.jaspen_usage = {
+            **dict(generation_usage or {}), "degraded": True, "operation_failed": True,
+            "error_code": "unusable_scorecard_output",
+            "failover": {"attempted_providers": list(_failed_attempt_usages or [])},
+        }
+        raise failure
+    if repairs:
+        current_app.logger.info("scorecard_formatting_repaired repairs=%s", repairs)
+        parsed["formatting_repairs"] = repairs
 
     # Gates are categorical constraints, never weighted 0-100 judgments.  A
     # provider may still echo a gate in ``dimensions`` despite the schema; drop
@@ -3394,12 +3480,35 @@ The executive_summary must read like a concise leadership briefing. It should ne
         option_key=option_key, option_name=option_name or project_description,
         attributes=attributes,
     )
-    _validate_grounded_scorecard_judgment(
-        parsed,
-        rubric_criteria or [{"key": key} for key in weights],
-        attributes,
-        approved_gates,
-    )
+    parsed = _mark_scorecard_evidence_state(parsed)
+    try:
+        _validate_grounded_scorecard_judgment(
+            parsed,
+            rubric_criteria or [{"key": key} for key in weights],
+            attributes,
+            approved_gates,
+        )
+    except UngroundedScorecardJudgment as exc:
+        if _attempt == 0:
+            return _generate_jaspen_scorecard(
+                client, project_description, llm_model,
+                model_selection=model_selection, strategy_objective=strategy_objective,
+                rubric=rubric, return_usage=return_usage, evidence_corpus=evidence_corpus,
+                routing_signals=routing_signals, structured_context=structured_context,
+                attributes=attributes, decision_kit=decision_kit,
+                decision_kit_version=decision_kit_version, kit_context=kit_context,
+                option_key=option_key, option_name=option_name, _attempt=1,
+                _failed_attempt_usages=[generation_usage], _retry_issue=str(exc),
+            )
+        exc.jaspen_usage = {
+            **dict(generation_usage or {}), "degraded": True, "operation_failed": True,
+            "error_code": "unusable_scorecard_output",
+            "failover": {"attempted_providers": list(_failed_attempt_usages or [])},
+        }
+        raise
+    for dim in (parsed.get("dimensions") or {}).values():
+        if isinstance(dim, dict):
+            dim.pop("_provider_reasoning_missing", None)
 
     # The current schema cannot trace model-generated financial/risk numbers
     # to a specific source field or deterministic calculation. Do not publish
@@ -3427,6 +3536,14 @@ The executive_summary must read like a concise leadership briefing. It should ne
     if not isinstance(scored.get("section_provenance"), dict):
         scored["section_provenance"] = {}
     scored["section_provenance"]["executive_summary"] = "deterministic"
+    if _failed_attempt_usages:
+        generation_usage = dict(generation_usage or {})
+        generation_usage["failover"] = {
+            "attempted_providers": [
+                {**dict(item or {}), "outcome": "invalid_response", "error_code": "unusable_scorecard_output"}
+                for item in _failed_attempt_usages
+            ]
+        }
     return (scored, generation_usage) if return_usage else scored
 
 

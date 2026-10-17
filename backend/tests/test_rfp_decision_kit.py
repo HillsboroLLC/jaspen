@@ -89,7 +89,7 @@ def test_proposed_rubric_authorized_by_score_request_keeps_its_gates():
 @pytest.mark.parametrize("score,confidence,gates,expected", [
     (70, 75, [{"key": "g", "status": "pass"}], "advance"),
     (55, 75, [{"key": "g", "status": "pass"}], "advance_with_conditions"),
-    (80, 80, [{"key": "g", "status": "fail"}], "decline"),
+    (80, 80, [{"key": "g", "status": "fail"}], "advance_with_conditions"),
 ])
 def test_recommendation_is_decomposable(score, confidence, gates, expected):
     card = {"jaspen_score": score, "gates": gates, "decision_confidence": {"confidence_pct": confidence}, "dimensions": {}}
