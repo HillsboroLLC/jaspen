@@ -393,7 +393,7 @@ def _excluded_values(snapshot, settings):
         facts = card.get('facts') if isinstance(card.get('facts'), dict) else {}
         selected = set(settings['fact_keys'])
         for key, fact in facts.items():
-            if settings['include_facts'] and (not selected or key in selected):
+            if settings['include_facts'] and key in selected:
                 continue
             if isinstance(fact, dict) and fact.get('value') not in (None, '', [], {}):
                 excluded.append({'field': f'facts.{key}', 'value': fact.get('value'), 'unit': fact.get('unit'), 'key': key})
@@ -403,20 +403,49 @@ def _excluded_values(snapshot, settings):
                     excluded.append({'field': f'metrics.{key}', 'value': metric.get('value'), 'unit': metric.get('unit'), 'key': key})
         if not settings['include_financials']:
             for group in FINANCIAL_FIELDS:
-                for path, value in _scalar_values(card.get(group), prefix=group):
-                    excluded.append({'field': path, 'value': value, 'unit': None, 'key': path})
+                for path, value, unit, key in _financial_numeric_values(card.get(group), prefix=group):
+                    excluded.append({'field': path, 'value': value, 'unit': unit, 'key': key})
     return excluded
 
 
-def _scalar_values(value, prefix=''):
+_FINANCIAL_PERCENT_KEYS = frozenset({
+    'irr', 'roi', 'margin', 'rate', 'percent', 'percentage', 'pct',
+})
+_FINANCIAL_CURRENCY_KEYS = frozenset({
+    'amount', 'benefit', 'cost', 'ebitda', 'investment', 'loss', 'npv',
+    'profit', 'return', 'revenue', 'savings', 'value',
+})
+_FINANCIAL_COUNT_KEYS = frozenset({
+    'day', 'days', 'duration', 'month', 'months', 'multiple', 'rating',
+    'ratings', 'year', 'years',
+})
+
+
+def _financial_numeric_values(value, prefix=''):
+    """Yield only typed monetary/percentage numbers from financial sections.
+
+    Financial groups also contain narrative labels, confidence words, duration
+    counts, ratings, and display strings. Those are useful presentation data,
+    but treating every scalar as a secret produces false disclosure warnings.
+    The canonical field name supplies the type here; display strings are never
+    scanned as source values.
+    """
     if isinstance(value, dict):
         for key, inner in value.items():
-            yield from _scalar_values(inner, f'{prefix}.{key}' if prefix else str(key))
+            child = f'{prefix}.{key}' if prefix else str(key)
+            if isinstance(inner, (int, float)) and not isinstance(inner, bool):
+                words = {part for part in re.split(r'[^a-z0-9]+', str(key).lower()) if part}
+                if words & _FINANCIAL_PERCENT_KEYS:
+                    yield child, inner, 'percent', str(key)
+                elif words & _FINANCIAL_CURRENCY_KEYS:
+                    yield child, inner, 'currency', str(key)
+                elif words & _FINANCIAL_COUNT_KEYS:
+                    continue
+            else:
+                yield from _financial_numeric_values(inner, child)
     elif isinstance(value, list):
         for index, inner in enumerate(value):
-            yield from _scalar_values(inner, f'{prefix}.{index}')
-    elif isinstance(value, (str, int, float)) and not isinstance(value, bool) and value not in ('', None):
-        yield prefix, value
+            yield from _financial_numeric_values(inner, f'{prefix}.{index}')
 
 
 _NARRATIVE_KEYS = frozenset({

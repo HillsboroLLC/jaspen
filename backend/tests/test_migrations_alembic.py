@@ -790,3 +790,43 @@ def test_option_decision_migration_preserves_legacy_text_and_scopes_identified_r
         'record-scoped': 'Moving forward with Denver.',
         'record-session': 'Continue the portfolio.',
     }
+
+
+def test_share_disclosure_migration_keeps_legacy_inserts_compatible(tmp_path):
+    """Old application code can insert while the new migration is ahead."""
+    db_path = str(tmp_path / 'share_disclosure_default.sqlite')
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute('CREATE TABLE shared_artifacts (id VARCHAR(36) PRIMARY KEY)')
+        conn.execute("INSERT INTO shared_artifacts (id) VALUES ('existing-link')")
+        conn.commit()
+    finally:
+        conn.close()
+
+    script = ScriptDirectory(MIGRATIONS_DIR)
+    revision = script.get_revision('a4c8e1f3b2d7').module
+    with _migration_ops(db_path):
+        revision.upgrade()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        # This intentionally names only the legacy column. It models the old
+        # production application inserting after the schema migrated first.
+        conn.execute("INSERT INTO shared_artifacts (id) VALUES ('legacy-code-link')")
+        conn.commit()
+        rows = conn.execute(
+            'SELECT id, disclosure_settings FROM shared_artifacts ORDER BY id'
+        ).fetchall()
+        column = next(
+            row for row in conn.execute('PRAGMA table_info(shared_artifacts)')
+            if row[1] == 'disclosure_settings'
+        )
+    finally:
+        conn.close()
+
+    assert rows == [
+        ('existing-link', '{}'),
+        ('legacy-code-link', '{}'),
+    ]
+    assert column[3] == 1  # NOT NULL
+    assert column[4] == "'{}'"  # database-level default

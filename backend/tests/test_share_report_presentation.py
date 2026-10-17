@@ -209,6 +209,46 @@ def test_narrative_check_flags_only_values_excluded_for_this_link():
     assert disclosure_narrative_matches(raw, filter_public_snapshot(raw, opted_in), opted_in) == []
 
 
+def test_empty_fact_selection_means_no_facts_are_shared_or_exempt_from_review():
+    raw = {'scorecard': {
+        'executive_summary': 'Contract is $2.4M.',
+        'facts': {'contract_value': {'value': 2400000, 'unit': 'USD'}},
+    }}
+    settings = {'include_facts': True, 'fact_keys': []}
+
+    filtered = filter_public_snapshot(raw, settings)
+    matches = disclosure_narrative_matches(raw, filtered, settings)
+
+    assert 'facts' not in filtered['scorecard']
+    assert [(item['excluded_field'], item['excluded_value']) for item in matches] == [
+        ('facts.contract_value', 2400000),
+    ]
+
+
+def test_financial_review_checks_amounts_and_rates_without_duration_or_text_noise():
+    raw = {'scorecard': {
+        'executive_summary': 'Payback in 3 years; High confidence. NPV is $1.2M.',
+        'investment_analysis': {
+            'payback_years': 3,
+            'confidence': 'High',
+        },
+        'npv_irr_analysis': {
+            'npv_3_year': 1200000,
+        },
+    }}
+    settings = {'include_financials': False}
+
+    matches = disclosure_narrative_matches(
+        raw,
+        filter_public_snapshot(raw, settings),
+        settings,
+    )
+
+    assert [(item['excluded_field'], item['excluded_value']) for item in matches] == [
+        ('npv_irr_analysis.npv_3_year', 1200000),
+    ]
+
+
 def test_owner_can_load_and_save_presentation(client, paid_user, auth_headers):
     token = _share(client, auth_headers)
 

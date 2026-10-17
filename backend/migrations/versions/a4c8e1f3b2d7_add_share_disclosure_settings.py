@@ -16,11 +16,20 @@ depends_on = None
 
 def upgrade():
     with op.batch_alter_table("shared_artifacts") as batch:
-        batch.add_column(sa.Column("disclosure_settings", sa.JSON(), nullable=True))
+        batch.add_column(sa.Column(
+            "disclosure_settings",
+            sa.JSON(),
+            nullable=True,
+            server_default=sa.text("'{}'"),
+        ))
         batch.add_column(sa.Column("disclosure_reviewed_at", sa.DateTime(), nullable=True))
     op.execute("UPDATE shared_artifacts SET disclosure_settings = '{}' WHERE disclosure_settings IS NULL")
     with op.batch_alter_table("shared_artifacts") as batch:
-        batch.alter_column("disclosure_settings", nullable=False)
+        batch.alter_column(
+            "disclosure_settings",
+            nullable=False,
+            server_default=sa.text("'{}'"),
+        )
 
 
 def downgrade():
