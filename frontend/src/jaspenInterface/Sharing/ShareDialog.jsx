@@ -68,6 +68,11 @@ function LinkActions({ link, title }) {
 export default function ShareDialog({ open, onClose, threadId, artifactType, scorecardId = null, title = '' }) {
   const [expiry, setExpiry] = useState('30');
   const [includeEvidence, setIncludeEvidence] = useState(false);
+  const [includeFacts, setIncludeFacts] = useState(false);
+  const [factKeys, setFactKeys] = useState([]);
+  const [includeMetrics, setIncludeMetrics] = useState(false);
+  const [includeFinancials, setIncludeFinancials] = useState(false);
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const [preview, setPreview] = useState(null);
   const [previewError, setPreviewError] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -83,7 +88,13 @@ export default function ShareDialog({ open, onClose, threadId, artifactType, sco
     thread_id: threadId,
     ...(artifactType === 'scorecard' ? { scorecard_id: scorecardId } : {}),
     include_evidence: includeEvidence,
-  }), [artifactType, threadId, scorecardId, includeEvidence]);
+    disclosure_settings: {
+      include_facts: includeFacts,
+      fact_keys: includeFacts ? factKeys : [],
+      include_metrics: includeMetrics,
+      include_financials: includeFinancials,
+    },
+  }), [artifactType, threadId, scorecardId, includeEvidence, includeFacts, factKeys, includeMetrics, includeFinancials]);
 
   const loadLinks = useCallback(async () => {
     try {
@@ -100,6 +111,7 @@ export default function ShareDialog({ open, onClose, threadId, artifactType, sco
     if (!open) return undefined;
     setCreated(null);
     setError('');
+    setReviewConfirmed(false);
     closeRef.current?.focus();
     void loadLinks();
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
@@ -133,6 +145,7 @@ export default function ShareDialog({ open, onClose, threadId, artifactType, sco
       const result = await Jaspen.createShare({
         ...request,
         expires_in_days: expiry === 'never' ? 'never' : Number(expiry),
+        disclosure_review_confirmed: reviewConfirmed,
       });
       setCreated(result?.link || null);
       void loadLinks();
@@ -156,6 +169,8 @@ export default function ShareDialog({ open, onClose, threadId, artifactType, sco
   if (!open) return null;
 
   const summary = preview?.summary;
+  const availableFacts = summary?.available_facts || [];
+  const review = preview?.disclosure_review || {};
   const quotes = summary?.evidence_quotes_available || 0;
   const activeLinks = links.filter((link) => link.status === 'active');
   const kind = artifactType === 'tradeoff' ? 'trade-off comparison' : 'scorecard';
@@ -223,18 +238,82 @@ export default function ShareDialog({ open, onClose, threadId, artifactType, sco
                 <p className="share-muted">{previewLoading ? 'Building preview…' : previewError}</p>
               )}
 
+              <fieldset className="share-fieldset">
+                <legend>Choose details to include</legend>
+                <label className="share-check">
+                  <input
+                    type="checkbox"
+                    checked={includeFacts}
+                    disabled={!availableFacts.length}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setIncludeFacts(checked);
+                      setFactKeys(checked ? availableFacts.map((fact) => fact.key) : []);
+                      setReviewConfirmed(false);
+                    }}
+                  />
+                  <span>
+                    Facts
+                    <small>Off by default. Turning this on selects every available fact; uncheck any fact you do not want to share.</small>
+                  </span>
+                </label>
+                {includeFacts && availableFacts.length > 0 && (
+                  <div className="share-fact-list" aria-label="Facts to include">
+                    {availableFacts.map((fact) => (
+                      <label className="share-fact" key={fact.key}>
+                        <input
+                          type="checkbox"
+                          checked={factKeys.includes(fact.key)}
+                          onChange={(event) => {
+                            setFactKeys((current) => event.target.checked
+                              ? Array.from(new Set([...current, fact.key]))
+                              : current.filter((key) => key !== fact.key));
+                            setReviewConfirmed(false);
+                          }}
+                        />
+                        <span>{fact.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <label className="share-check">
+                  <input type="checkbox" checked={includeMetrics} onChange={(event) => { setIncludeMetrics(event.target.checked); setReviewConfirmed(false); }} />
+                  <span>Decision Kit metrics<small>Calculated values from the active Decision Kit.</small></span>
+                </label>
+                <label className="share-check">
+                  <input type="checkbox" checked={includeFinancials} onChange={(event) => { setIncludeFinancials(event.target.checked); setReviewConfirmed(false); }} />
+                  <span>Financial sections<small>Financial impact, investment, valuation, and related figures.</small></span>
+                </label>
+              </fieldset>
+
               <label className={`share-check ${quotes ? '' : 'is-disabled'}`}>
                 <input
                   type="checkbox"
                   checked={includeEvidence}
                   disabled={!quotes}
-                  onChange={(e) => setIncludeEvidence(e.target.checked)}
+                  onChange={(event) => {
+                    setIncludeEvidence(event.target.checked);
+                    setReviewConfirmed(false);
+                  }}
                 />
                 <span>
                   Include evidence quotes
                   <small>These are your own words from the conversation. Leave off unless the viewer should see them.</small>
                 </span>
               </label>
+
+              {review.required && (
+                <div className="share-review">
+                  <p>{review.warning}</p>
+                  {review.matches?.length > 0 && (
+                    <p className="share-warning">Review the preview: {review.matches.length} shared narrative passage{review.matches.length === 1 ? '' : 's'} may still mention excluded figures.</p>
+                  )}
+                  <label className="share-check">
+                    <input type="checkbox" checked={reviewConfirmed} onChange={(event) => setReviewConfirmed(event.target.checked)} />
+                    <span>I reviewed the shared narrative and confirmed it does not disclose details I excluded.</span>
+                  </label>
+                </div>
+              )}
 
               {summary && (
                 <details className="share-never">
@@ -248,7 +327,7 @@ export default function ShareDialog({ open, onClose, threadId, artifactType, sco
                 type="button"
                 className="share-btn share-btn--primary share-btn--block"
                 onClick={onCreate}
-                disabled={creating || !preview}
+                disabled={creating || !preview || (review.required && !reviewConfirmed)}
               >
                 {creating ? 'Creating link…' : 'Create link'}
               </button>

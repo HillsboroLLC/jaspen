@@ -34,6 +34,10 @@ const summary = (overrides = {}) => ({
   includes_risks: true,
   includes_assumptions: false,
   excluded_always: ['Chat conversation', 'Uploaded files'],
+  available_facts: [
+    { key: 'contract_value', label: 'Contract value', value: 2400000, unit: 'USD' },
+    { key: 'margin_pct', label: 'Margin', value: 18, unit: 'percent' },
+  ],
   ...overrides,
 });
 
@@ -46,6 +50,11 @@ describe('ShareDialog', () => {
       title: 'Paid search',
       snapshot,
       summary: summary({ evidence_quotes_included: payload.include_evidence }),
+      disclosure_review: {
+        required: !payload?.disclosure_settings?.include_financials,
+        matches: [],
+        warning: 'Automated detection can miss figures written in other ways. Review the shared narrative before creating this link.',
+      },
     }));
     Jaspen.createShare.mockResolvedValue({
       link: { id: 'l1', url: 'https://jaspen.ai/s/abc', expires_at: '2026-10-26T00:00:00Z', status: 'active' },
@@ -64,8 +73,14 @@ describe('ShareDialog', () => {
     expect(screen.getByText(/Evidence quotes from your conversation \(3\)/)).toBeInTheDocument();
     expect(screen.getByLabelText('Link expires')).toHaveValue('30');
 
+    expect(screen.getByRole('button', { name: 'Create link' })).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: /I reviewed the shared narrative/ }));
     await user.click(screen.getByRole('button', { name: 'Create link' }));
-    expect(Jaspen.createShare).toHaveBeenCalledWith(expect.objectContaining({ expires_in_days: 30, include_evidence: false }));
+    expect(Jaspen.createShare).toHaveBeenCalledWith(expect.objectContaining({
+      expires_in_days: 30,
+      include_evidence: false,
+      disclosure_review_confirmed: true,
+    }));
     expect(await screen.findByDisplayValue('https://jaspen.ai/s/abc')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Download PDF' })).toHaveAttribute('href', 'https://jaspen.ai/s/abc?print=1');
     expect(screen.getByRole('link', { name: 'Email' }).getAttribute('href')).toContain('mailto:');
@@ -80,6 +95,29 @@ describe('ShareDialog', () => {
     await user.click(screen.getByRole('checkbox', { name: /Include evidence quotes/ }));
     await waitFor(() => expect(Jaspen.previewShare).toHaveBeenLastCalledWith(
       expect.objectContaining({ include_evidence: true }),
+    ));
+  });
+
+  test('turning Facts on selects every fact and allows individual exclusions', async () => {
+    const user = userEvent.setup();
+    render(<ShareButton threadId="t1" scorecardId="card-a" />);
+    await user.click(screen.getByRole('button', { name: 'Share' }));
+    await screen.findByTestId('shared-view');
+
+    await user.click(screen.getByRole('checkbox', { name: /^Facts/ }));
+    await waitFor(() => expect(Jaspen.previewShare).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        disclosure_settings: expect.objectContaining({
+          include_facts: true,
+          fact_keys: ['contract_value', 'margin_pct'],
+        }),
+      }),
+    ));
+    await user.click(screen.getByRole('checkbox', { name: 'Margin' }));
+    await waitFor(() => expect(Jaspen.previewShare).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        disclosure_settings: expect.objectContaining({ fact_keys: ['contract_value'] }),
+      }),
     ));
   });
 

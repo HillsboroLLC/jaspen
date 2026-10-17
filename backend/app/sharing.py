@@ -274,6 +274,25 @@ def disclosure_requires_review(settings):
     )
 
 
+def share_fact_inventory(snapshot):
+    """Return the fact choices an owner may include on this one link."""
+    source = snapshot if isinstance(snapshot, dict) else {}
+    cards = source.get('scorecards') if isinstance(source.get('scorecards'), list) else [source.get('scorecard')]
+    inventory = {}
+    for card in (item for item in cards if isinstance(item, dict)):
+        for key, fact in (card.get('facts') or {}).items():
+            if not isinstance(fact, dict) or fact.get('value') in (None, '', [], {}):
+                continue
+            fact_key = str(key)
+            inventory.setdefault(fact_key, {
+                'key': fact_key,
+                'label': str(fact.get('label') or fact_key.replace('_', ' ').title()),
+                'value': copy.deepcopy(fact.get('value')),
+                'unit': fact.get('unit'),
+            })
+    return [inventory[key] for key in sorted(inventory)]
+
+
 def sanitize_scorecard(card, *, include_evidence, public_id, disclosure_settings=None):
     if not isinstance(card, dict):
         return None
@@ -427,10 +446,17 @@ def _value_patterns(item):
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         number = float(value)
         plain = f'{number:g}'
-        patterns.extend([rf'(?<![\d.]){re.escape(plain)}(?![\d.])', rf'(?<!\d){re.escape(f"{number:,.0f}")}(?!\d)'])
-        if 'percent' in unit or 'pct' in key or 'margin' in key or 'probability' in key or key.endswith('irr'):
+        is_percentage = 'percent' in unit or 'pct' in key or 'margin' in key or 'probability' in key or key.endswith('irr')
+        is_currency = unit in {'usd', 'currency', '$'} or any(word in key for word in ('cost', 'value', 'revenue', 'investment', 'npv', 'ebitda', 'return'))
+        # Typed figures keep their type. An excluded 18% margin must not match
+        # unrelated prose such as "18 tasks", and an excluded $18 must not
+        # match a count of 18. Untyped numbers retain the conservative bare
+        # number scan.
+        if not is_percentage and not is_currency:
+            patterns.extend([rf'(?<![\d.]){re.escape(plain)}(?![\d.])', rf'(?<!\d){re.escape(f"{number:,.0f}")}(?!\d)'])
+        if is_percentage:
             patterns.extend([rf'(?<![\d.]){re.escape(plain)}\s*%', rf'(?<![\d.]){re.escape(plain)}\s+percent\b'])
-        if unit in {'usd', 'currency', '$'} or any(word in key for word in ('cost', 'value', 'revenue', 'investment', 'npv', 'ebitda', 'return')):
+        if is_currency:
             patterns.append(rf'\$\s*{re.escape(f"{number:,.0f}")}\b')
             for divisor, suffix, word in ((1_000_000_000, 'B', 'billion'), (1_000_000, 'M', 'million'), (1_000, 'K', 'thousand')):
                 if abs(number) >= divisor:
@@ -620,7 +646,7 @@ def snapshot_size_ok(snapshot):
         return False
 
 
-def content_summary(snapshot, *, include_evidence, evidence_available):
+def content_summary(snapshot, *, include_evidence, evidence_available, available_facts=None):
     """What a viewer will see, for the owner's preview before sharing."""
     cards = snapshot.get('scorecards') if isinstance(snapshot.get('scorecards'), list) else [snapshot.get('scorecard')]
     cards = [c for c in cards if isinstance(c, dict)]
@@ -632,6 +658,7 @@ def content_summary(snapshot, *, include_evidence, evidence_available):
         'scorecard_count': len(cards),
         'evidence_quotes_available': int(evidence_available),
         'evidence_quotes_included': bool(include_evidence and evidence_available),
+        'available_facts': list(available_facts or []),
         'includes_financials': _has('financial_impact', 'before_after_financials',
                                     'investment_analysis', 'npv_irr_analysis', 'valuation'),
         'includes_rationale': _has('strategic_rationale', 'executive_summary',

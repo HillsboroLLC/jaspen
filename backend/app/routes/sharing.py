@@ -34,6 +34,7 @@ from app.sharing import (
     filter_public_snapshot,
     normalize_disclosure_settings,
     sanitize_presentation,
+    share_fact_inventory,
     set_sharing_disabled,
     sharing_block_reason,
     snapshot_size_ok,
@@ -192,7 +193,10 @@ def _prepare(user, body):
         'review_required': disclosure_requires_review(disclosure_settings),
         'narrative_matches': matches,
         'summary': content_summary(
-            snapshot, include_evidence=include_evidence, evidence_available=evidence_available,
+            snapshot,
+            include_evidence=include_evidence,
+            evidence_available=evidence_available,
+            available_facts=share_fact_inventory(raw_snapshot),
         ),
     }, None
 
