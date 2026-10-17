@@ -5,12 +5,18 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from decimal import Decimal
 
 from flask import current_app, has_request_context, request
 from sqlalchemy.exc import IntegrityError
 
 from . import db
-from .ai_audit import persist_operation, projected_charge_for_usage, subsidy_classification
+from .ai_audit import (
+    persist_operation,
+    projected_charge_for_usage,
+    subsidy_classification,
+    usage_is_billable_success,
+)
 from .ai_governance import CREDIT_POLICY_VERSION, ROUTER_VERSION, credit_policy_mode, router_mode
 from .models import AIOperation
 
@@ -212,7 +218,7 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
         usage['operation_id'] = claimed.id
     projected_credits, successful_cost = projected_charge_for_usage(usage)
     if should_charge:
-        actual_credits = 0 if usage.get('degraded') else _charge_for_usage(usage, str(model_type or 'orbit'), user)
+        actual_credits = _charge_for_usage(usage, str(model_type or 'orbit'), user) if usage_is_billable_success(usage) else 0
         credit_settlement = _settle_reserved_credits(
             user, reserved_credits=reserved, actual_credits=actual_credits,
         )
@@ -246,6 +252,7 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
         'remaining': credit_settlement.get('remaining'),
         'customer_visible': bool(customer_visible),
         'idempotent_replay': False,
+        'operation_id': claimed.id if claimed is not None else usage.get('operation_id'),
     }
     result_json = {'value': value, 'usage': usage, 'settlement': settlement}
     operation = persist_operation(
@@ -262,6 +269,9 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
         result_json=result_json if key else None,
     )
     if operation is not None:
+        settlement['operation_id'] = operation.id
+        if isinstance(operation.result_json, dict):
+            operation.result_json = {**operation.result_json, 'settlement': dict(settlement)}
         metadata = dict(operation.metadata_json or {})
         metadata.update({
             'shadow_projected_credits': int(projected_credits),
@@ -269,10 +279,111 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
             'legacy_charge_preserved': bool(should_charge and not policy_active),
             'internal_cost_absorbed': not customer_visible,
             'idempotency_protected': bool(key),
+            'charge_owner': usage.get('charge_owner') or operation_type,
         })
         operation.metadata_json = metadata
     db.session.commit()
     return value, usage, settlement
+
+
+def reverse_customer_operation_charge(user, settlement, *, error_code='persistence_rolled_back'):
+    """Void a settled charge once when its result was not durably retained."""
+    from .routes.ai_agent import _release_reserved_credits
+
+    details = dict(settlement or {})
+    operation_id = str(details.get('operation_id') or '').strip()
+    operation = AIOperation.query.get(operation_id) if operation_id else None
+    if operation is not None and (operation.metadata_json or {}).get('charge_reversed'):
+        return 0
+    charged = max(0, int(details.get('charged_credits') or 0))
+    if charged:
+        _release_reserved_credits(user, charged)
+    if operation is not None:
+        total_cost = float(operation.total_provider_cost_usd or 0)
+        operation.charged_credits = 0
+        operation.successful_provider_cost_usd = 0
+        operation.status = 'failed'
+        operation.error_code = str(error_code)
+        metadata = dict(operation.metadata_json or {})
+        metadata.update({
+            'result_persistence_rolled_back': True,
+            'charge_reversed': True,
+            'failed_attempt_provider_cost_usd': total_cost,
+            'failed_attempt_costs_absorbed': True,
+        })
+        operation.metadata_json = metadata
+        operation.result_json = None
+    db.session.commit()
+    return charged
+
+
+def finalize_batch_charge_allocation(user, settlement, *, component_ids, persisted_component_ids):
+    """Allocate one batch charge equally across its persisted generated cards.
+
+    The provider operation remains one settlement. Its intended charge is
+    divided into equal integer shares in original option order; rounding
+    remainders go to the earliest persisted cards. The failed/unpersisted
+    portion is refunded and recorded as absorbed provider cost. Finalization is
+    idempotent by operation id, so a replay cannot allocate or refund twice.
+    """
+    from .routes.ai_agent import _release_reserved_credits
+
+    details = dict(settlement or {})
+    operation_id = str(details.get('operation_id') or '').strip()
+    operation = AIOperation.query.get(operation_id) if operation_id else None
+    if operation is None:
+        return {'charged_credits': int(details.get('charged_credits') or 0), 'allocations': []}
+    metadata = dict(operation.metadata_json or {})
+    if metadata.get('batch_allocation_finalized'):
+        return {
+            'charged_credits': int(operation.charged_credits or 0),
+            'allocations': list(metadata.get('batch_charge_allocations') or []),
+        }
+
+    ordered = [str(value) for value in (component_ids or []) if str(value)]
+    persisted = {str(value) for value in (persisted_component_ids or []) if str(value)}
+    intended = max(0, int(operation.charged_credits or details.get('charged_credits') or 0))
+    total = len(ordered)
+    retained = [value for value in ordered if value in persisted]
+    allocated_total = (intended * len(retained)) // total if total else 0
+    base, remainder = divmod(allocated_total, len(retained)) if retained else (0, 0)
+    allocations = [
+        {'component_id': value, 'charged_credits': base + (1 if index < remainder else 0)}
+        for index, value in enumerate(retained)
+    ]
+    refund = intended - allocated_total
+    if refund:
+        _release_reserved_credits(user, refund)
+
+    successful_cost = float(operation.successful_provider_cost_usd or 0)
+    retained_cost = successful_cost * (len(retained) / total) if total else 0.0
+    operation.charged_credits = allocated_total
+    operation.successful_provider_cost_usd = Decimal(str(retained_cost))
+    metadata.update({
+        'batch_allocation_finalized': True,
+        'batch_charge_rule': 'equal_integer_shares_original_option_order',
+        'batch_intended_charge': intended,
+        'batch_allocated_charge': allocated_total,
+        'batch_absorbed_charge': refund,
+        'batch_charge_allocations': allocations,
+        'batch_generated_components': ordered,
+        'batch_persisted_components': retained,
+        'failed_attempt_provider_cost_usd': float(
+            metadata.get('failed_attempt_provider_cost_usd') or 0
+        ) + max(0.0, successful_cost - retained_cost),
+        'failed_attempt_costs_absorbed': True,
+    })
+    operation.metadata_json = metadata
+    if isinstance(operation.result_json, dict):
+        result_json = dict(operation.result_json)
+        result_json['settlement'] = {
+            **dict(result_json.get('settlement') or {}),
+            'charged_credits': allocated_total,
+            'batch_allocations': allocations,
+        }
+        operation.result_json = result_json
+    db.session.commit()
+    return {'charged_credits': allocated_total, 'allocations': allocations}
 
 
 def execute_customer_text_operation(user, *, messages, system_prompt, operation_type,

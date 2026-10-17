@@ -44,9 +44,14 @@ def attach_governance(usage, *, decision, legacy_routes=None, operation_type=Non
     return payload
 
 
+def usage_is_billable_success(usage):
+    usage = usage if isinstance(usage, dict) else {}
+    return bool(not usage.get('degraded') or usage.get('billable_action_completed'))
+
+
 def projected_charge_for_usage(usage):
     usage = usage if isinstance(usage, dict) else {}
-    cost = 0.0 if usage.get('degraded') else _successful_provider_cost(usage)
+    cost = _successful_provider_cost(usage) if usage_is_billable_success(usage) else 0.0
     return credits_for_provider_cost(cost, internal=True), cost
 
 
@@ -152,11 +157,11 @@ def persist_operation(
     governance = usage.get('governance') if isinstance(usage.get('governance'), dict) else {}
     failover = usage.get('failover') if isinstance(usage.get('failover'), dict) else {}
     failed_attempts = [item for item in (failover.get('attempted_providers') or []) if isinstance(item, dict)]
-    if usage.get('degraded') and (usage.get('input_tokens') or usage.get('output_tokens')):
+    if usage.get('degraded') and not usage.get('billable_action_completed') and (usage.get('input_tokens') or usage.get('output_tokens')):
         # A syntactically invalid/thin plan may still incur provider cost.
         # Retain that attempt as absorbed cost, never as a successful generation.
         failed_attempts.append({**usage, 'outcome': 'invalid_response', 'error_code': usage.get('error_code')})
-    success = bool(success and not usage.get('degraded'))
+    success = bool(success and usage_is_billable_success(usage))
     successful_cost = _successful_provider_cost(usage) if success else 0.0
     failed_costs = [_attempt_cost(item) for item in failed_attempts]
     failed_cost = sum(item[0] for item in failed_costs)
@@ -181,7 +186,7 @@ def persist_operation(
     operation.status = (
         'failed'
         if usage.get('operation_failed')
-        else ('degraded' if usage.get('degraded') else ('succeeded' if success else 'failed'))
+        else ('succeeded' if success else ('degraded' if usage.get('degraded') else 'failed'))
     )
     operation.customer_visible = bool(customer_visible)
     operation.subsidized = subsidized
@@ -210,6 +215,9 @@ def persist_operation(
         'degraded': bool(usage.get('degraded')),
         'generation_failed': bool(usage.get('generation_failed')),
         'operation_failed': bool(usage.get('operation_failed')),
+        'billable_action_completed': bool(usage.get('billable_action_completed')),
+        'charge_owner': usage.get('charge_owner'),
+        'completed_action_ids': list(usage.get('completed_action_ids') or []),
         'failed_attempt_costs_absorbed': True,
         'failed_attempt_cost_known': bool(failed_attempts) and not any(estimated for _cost, estimated in failed_costs),
         'failed_attempt_cost_estimated': any(estimated for _cost, estimated in failed_costs),

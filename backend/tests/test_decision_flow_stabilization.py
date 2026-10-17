@@ -2768,3 +2768,100 @@ def test_chat_execution_plan_confirms_records_and_does_not_reprompt_for_regenera
     assert regenerated['ok'] is True
     assert regenerated.get('confirmation_required') is not True
     assert len(provider_calls) == 2
+
+
+def test_execution_assistant_persists_edits_before_returning_success(
+    client, db, test_user, auth_headers, monkeypatch
+):
+    strategy, _ = modules()
+    tid = 'plan-refinement-persist-first'
+    seed_thread(test_user, tid)
+    stored = strategy._load_scenarios(test_user.id)
+    stored[tid] = strategy._thread_entry()
+    stored[tid]['project_wbs'] = {
+        'name': 'Launch plan',
+        'tasks': [{'id': 'task-1', 'title': 'Old title', 'status': 'todo'}],
+    }
+    assert strategy._save_scenarios(test_user.id, stored)
+    monkeypatch.setattr(
+        strategy,
+        'execute_customer_text_operation',
+        lambda *a, **k: (
+            json.dumps({
+                'reply': 'Updated the task.',
+                'uiActions': [{
+                    'type': 'WBS_UPDATE_TASK',
+                    'payload': {'id': 'task-1', 'title': 'Approved title'},
+                }],
+            }),
+            {'provider': 'test'},
+            {'charged_credits': 9, 'operation_id': 'op-refine'},
+        ),
+    )
+
+    response = client.post(
+        f'/api/v1/strategy/threads/{tid}/execution-assistant',
+        headers=auth_headers,
+        json={'instruction': 'Rename the first task to Approved title.'},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['appliedActions'] == 1
+    assert response.get_json()['uiActions'] == []
+    saved = strategy._load_scenarios(test_user.id)[tid]['project_wbs']
+    assert saved['tasks'][0]['title'] == 'Approved title'
+
+
+def test_execution_assistant_save_failure_reverses_charge_and_keeps_plan(
+    client, db, test_user, auth_headers, monkeypatch
+):
+    strategy, _ = modules()
+    tid = 'plan-refinement-save-failure'
+    seed_thread(test_user, tid)
+    original = {
+        'name': 'Launch plan',
+        'tasks': [{'id': 'task-1', 'title': 'Keep this title', 'status': 'todo'}],
+    }
+    stored = strategy._load_scenarios(test_user.id)
+    stored[tid] = strategy._thread_entry()
+    stored[tid]['project_wbs'] = original
+    assert strategy._save_scenarios(test_user.id, stored)
+    monkeypatch.setattr(
+        strategy,
+        'execute_customer_text_operation',
+        lambda *a, **k: (
+            json.dumps({
+                'reply': 'Updated the task.',
+                'uiActions': [{
+                    'type': 'WBS_UPDATE_TASK',
+                    'payload': {'id': 'task-1', 'title': 'Unsaved title'},
+                }],
+            }),
+            {'provider': 'test'},
+            {'charged_credits': 9, 'operation_id': 'op-refine-failed'},
+        ),
+    )
+    reversed_settlements = []
+    monkeypatch.setattr(
+        strategy,
+        'reverse_customer_operation_charge',
+        lambda user, settlement, **kwargs: reversed_settlements.append((settlement, kwargs)) or 9,
+    )
+    monkeypatch.setattr(strategy, '_save_scenarios', lambda *a, **k: False)
+
+    response = client.post(
+        f'/api/v1/strategy/threads/{tid}/execution-assistant',
+        headers=auth_headers,
+        json={'instruction': 'Rename the first task.'},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json() == {
+        'error': "Jaspen couldn't save that plan update — try again.",
+        'retryable': True,
+    }
+    assert reversed_settlements == [(
+        {'charged_credits': 9, 'operation_id': 'op-refine-failed'},
+        {'error_code': 'plan_refinement_persistence_failed'},
+    )]
+    assert strategy._load_scenarios(test_user.id)[tid]['project_wbs']['tasks'][0]['title'] == 'Keep this title'

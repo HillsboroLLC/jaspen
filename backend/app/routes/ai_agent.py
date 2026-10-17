@@ -60,6 +60,7 @@ from app.ai_runtime import (
     execute_customer_operation,
     execute_customer_text_operation,
     execute_system_text_operation,
+    reverse_customer_operation_charge,
 )
 from app.connector_monitor import check_connector_health, generate_connector_insights
 from app.tool_registry import (
@@ -3730,6 +3731,26 @@ def _has_successful_mutations(mutations):
     )
 
 
+_INDEPENDENT_AI_CHARGE_TOOLS = {'generate_scorecard', 'generate_execution_plan'}
+
+
+def _apply_charge_ownership_to_turn_usage(usage, mutations):
+    """Keep persisted outer actions billable without double billing artifacts."""
+    usage = dict(usage or {})
+    successful = [
+        item for item in (mutations or [])
+        if isinstance(item, dict) and item.get('success') and item.get('tool')
+    ]
+    outer_owned = [item for item in successful if str(item.get('tool')) not in _INDEPENDENT_AI_CHARGE_TOOLS]
+    usage['charge_owner'] = 'conversation'
+    if usage.get('degraded') and usage.get('error_code') == 'narration_failed' and outer_owned:
+        usage['billable_action_completed'] = True
+        usage['completed_action_ids'] = [
+            f"{item.get('tool')}:{index}" for index, item in enumerate(outer_owned, 1)
+        ]
+    return usage
+
+
 def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn, user_message="", session=None):
     if not _is_mutation_tool(tool_name):
         return None
@@ -5083,7 +5104,7 @@ def _charge_for_usage(usage, model_type, user):
     margin debit. Falls back to the legacy flat-token math if any of those
     pieces are missing.
     """
-    if isinstance(usage, dict) and usage.get('degraded'):
+    if isinstance(usage, dict) and usage.get('degraded') and not usage.get('billable_action_completed'):
         return 0
     if not isinstance(usage, dict):
         return _estimate_usage_credit_charge(0, model_type, None)
@@ -7702,7 +7723,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 from ..decision_state import mark_option_scored
                 mark_option_scored(session, option_key, requested_name)
                 sessions[session_key or thread_id] = session
-                save_user_sessions(user_id, sessions)
+                if not save_user_sessions(user_id, sessions):
+                    reverse_customer_operation_charge(
+                        user, ai_settlement, error_code='scorecard_persistence_failed',
+                    )
+                    return _tool_error(
+                        "The scorecard was generated but could not be retained. It has not been reported as scored.",
+                        code="scorecard_persistence_failed",
+                    )
                 db.session.commit()
                 _refresh_decision_record_after_score(user, thread_id)
                 keep_name = str(updated.get("name") or updated.get("project_name") or requested_name)
@@ -7716,6 +7744,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     "selected_scorecard_id": keep_id,
                     "rescored": True,
                 })
+            if not reused_source_id:
+                reverse_customer_operation_charge(
+                    user, ai_settlement, error_code='scorecard_persistence_failed',
+                )
             return _tool_error(
                 "The selected scorecard could not be safely re-scored. No scorecard was changed or created.",
                 code="rescore_target_unavailable",
@@ -7735,6 +7767,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             db.session.commit()
         except Exception:
             db.session.rollback()
+            if not reused_source_id:
+                reverse_customer_operation_charge(
+                    user, ai_settlement, error_code='scorecard_persistence_failed',
+                )
             current_app.logger.exception("Failed to persist peer scorecard %s", analysis_id)
             return _tool_error(
                 "The scorecard was generated but could not be retained. It has not been reported as scored.",
@@ -10716,9 +10752,12 @@ def _record_usage(
     if not isinstance(session, dict):
         return
     usage = usage if isinstance(usage, dict) else {}
-    if usage.get('degraded'):
+    if usage.get('degraded') and not usage.get('billable_action_completed'):
         success = False
         error_code = error_code or usage.get('error_code') or 'provider_fallback'
+    elif usage.get('billable_action_completed'):
+        success = True
+        error_code = None
     failover = usage.get("failover") if isinstance(usage.get("failover"), dict) else None
 
     input_tokens = int(usage.get("input_tokens") or 0)
@@ -12427,6 +12466,7 @@ def conversation_start():
                 )
                 assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
+                usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
                 artifact_messages = _artifact_entries_from_actions(actions)
                 _apply_rubric_action_to_session(session, actions)
@@ -12640,6 +12680,7 @@ def conversation_start():
     assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
         assistant_reply, usage, actions,
     )
+    usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
     assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
     credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
@@ -13120,6 +13161,7 @@ def conversation_continue():
                 )
                 assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
+                usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
                 artifact_messages = _artifact_entries_from_actions(actions)
                 _apply_rubric_action_to_session(session, actions)
@@ -13328,6 +13370,7 @@ def conversation_continue():
     assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
         assistant_reply, usage, actions,
     )
+    usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
     assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
     credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(

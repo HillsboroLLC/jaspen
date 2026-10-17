@@ -51,6 +51,7 @@ from app.models import (
     UserAuthSession,
     UserSession,
     UsageEvent,
+    AIOperation,
 )
 from app.homepage_promotion import (
     ALLOWED_CAMPAIGN_PATHS,
@@ -732,6 +733,7 @@ def master_ai_economics():
     days = min(max(_to_int(request.args.get("days"), 30) or 30, 1), 365)
     since = datetime.utcnow() - timedelta(days=days)
     events = UsageEvent.query.filter(UsageEvent.created_at >= since).all()
+    operations = AIOperation.query.filter(AIOperation.created_at >= since).all()
     users = {str(row.id): row for row in User.query.all()}
     catalog = get_plan_catalog(current_app.config)
 
@@ -743,6 +745,22 @@ def master_ai_economics():
     unpriced_events = 0
     input_tokens = 0
     output_tokens = 0
+    absorbed_by_operation_type = {}
+
+    for operation in operations:
+        absorbed = max(
+            0.0,
+            float(operation.total_provider_cost_usd or 0)
+            - float(operation.successful_provider_cost_usd or 0),
+        )
+        if absorbed <= 0:
+            continue
+        key = str(operation.operation_type or 'ai_operation')
+        row = absorbed_by_operation_type.setdefault(
+            key, {'operations': 0, 'absorbed_provider_cost_usd': 0.0},
+        )
+        row['operations'] += 1
+        row['absorbed_provider_cost_usd'] += absorbed
 
     for event in events:
         cost = provider_cost_usd(event.model, event.input_tokens, event.output_tokens)
@@ -807,6 +825,14 @@ def master_ai_economics():
         "models": rows(models, "model"),
         "plans": rows(plans, "plan"),
         "active_plan_counts": active_plan_counts,
+        "absorbed_costs": [
+            {
+                'operation_type': key,
+                'operations': value['operations'],
+                'absorbed_provider_cost_usd': round(value['absorbed_provider_cost_usd'], 6),
+            }
+            for key, value in sorted(absorbed_by_operation_type.items())
+        ],
         "notes": {
             "revenue": "Estimated from active subscriptions at current monthly list price; Stripe-settled revenue, annual discounts, seats, refunds, taxes, and fees are not included.",
             "cost": "Calculated from recorded input/output tokens and configured published Claude and Gemini rates. Unpriced events are called out separately and are not included in provider cost.",

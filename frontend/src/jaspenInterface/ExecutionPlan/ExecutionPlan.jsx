@@ -465,7 +465,7 @@ export default function ExecutionPlan() {
       });
 
       const uiActions = parseUIActions(response);
-      let appliedCount = 0;
+      let appliedCount = Number(response?.appliedActions || 0);
       for (const action of uiActions) {
         try {
           const applied = await applyUiAction(action);

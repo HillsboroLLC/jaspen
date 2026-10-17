@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
+import copy
 import hashlib
 import json
 import os
@@ -28,6 +29,8 @@ from app.ai_runtime import (
     AIOperationPaymentRequired,
     execute_customer_operation,
     execute_customer_text_operation,
+    finalize_batch_charge_allocation,
+    reverse_customer_operation_charge,
 )
 from app.scorecards import (
     COMPARISON_SESSION_LIMIT_MESSAGE,
@@ -3761,7 +3764,7 @@ def _generate_batch_scorecards(
         return card, usage
 
     results = [None] * len(ideas)
-    usages = []
+    usages = [None] * len(ideas)
     with ThreadPoolExecutor(max_workers=min(5, len(ideas))) as pool:
         futures = [pool.submit(score_one, item) for item in ideas]
         for index, future in enumerate(futures):
@@ -3769,7 +3772,12 @@ def _generate_batch_scorecards(
                 card, usage = future.result()
                 results[index] = card
                 if isinstance(usage, dict):
-                    usages.append(usage)
+                    usages[index] = {
+                        **usage,
+                        'component_index': index,
+                        'option_name': str(ideas[index].get('name') or '').strip(),
+                        'reused': bool(isinstance(card, dict) and card.get('reused_stored_result')),
+                    }
             except Exception:
                 current_app.logger.exception(
                     "[_generate_batch_scorecards] option %s failed", index
@@ -3777,22 +3785,23 @@ def _generate_batch_scorecards(
 
     summary = _portfolio_summary_from_cards(ideas, results, rubric=rubric)
     merged_usage = None
-    if usages:
+    billable_usages = [item for item in usages if isinstance(item, dict)]
+    if billable_usages:
         merged_usage = {
-            "provider": usages[-1].get("provider"),
-            "model": usages[-1].get("model"),
-            "model_type": usages[-1].get("model_type"),
-            "input_tokens": sum(int(item.get("input_tokens") or 0) for item in usages),
-            "output_tokens": sum(int(item.get("output_tokens") or 0) for item in usages),
-            "total_tokens": sum(int(item.get("total_tokens") or 0) for item in usages),
+            "provider": billable_usages[-1].get("provider"),
+            "model": billable_usages[-1].get("model"),
+            "model_type": billable_usages[-1].get("model_type"),
+            "input_tokens": sum(int(item.get("input_tokens") or 0) for item in billable_usages),
+            "output_tokens": sum(int(item.get("output_tokens") or 0) for item in billable_usages),
+            "total_tokens": sum(int(item.get("total_tokens") or 0) for item in billable_usages),
             "operation_id": str(uuid.uuid4()),
             "operation_type": "score_batch",
-            "governance": dict(usages[-1].get("governance") or {}),
-            "component_usages": [dict(item) for item in usages],
+            "governance": dict(billable_usages[-1].get("governance") or {}),
+            "component_usages": [dict(item) for item in billable_usages],
             "failover": {
                 "attempted_providers": [
                     attempt
-                    for item in usages
+                    for item in billable_usages
                     for attempt in ((item.get("failover") or {}).get("attempted_providers") or [])
                     if isinstance(attempt, dict)
                 ],
@@ -4138,6 +4147,10 @@ def analyze_project():
             db.session.commit()
         except Exception:
             db.session.rollback()
+            if reusable_row is None:
+                reverse_customer_operation_charge(
+                    user, ai_settlement, error_code='scorecard_persistence_failed',
+                )
             current_app.logger.exception('Failed to persist analyzed peer scorecard %s', analysis_id)
             return jsonify({
                 'error': 'The scorecard was generated but could not be retained.',
@@ -7032,6 +7045,9 @@ def score_batch_queued(thread_id):
     made concurrently, then each canonical scorecard is persisted so the workspace
     and trade-off views render the complete comparison together.
     """
+    ai_settlement = None
+    allocation_finalized = False
+    user = None
     try:
         user_id = get_jwt_identity()
         user = User.query.get(user_id)
@@ -7227,22 +7243,18 @@ def score_batch_queued(thread_id):
         provider_usage.setdefault('model', model_selection.get('llm_model'))
         provider_usage.setdefault('model_type', model_selection.get('model_type'))
         provider_usage.setdefault('provider', 'anthropic')
-        settled_credits = int(ai_settlement.get('charged_credits') or 0)
-        _record_claude_operation_batch(
-            user,
-            evaluation_contexts=evaluation_contexts,
-            thread_id=thread_id,
-            endpoint='/threads/<id>/score-batch',
-            operation_type='score_batch',
-            usage=provider_usage,
-            reserved_credits=int(ai_settlement.get('reserved_credits') or 0),
-            settled_credits=settled_credits,
-            success=True,
-            error_code=None,
-            metadata={'requested_projects': requested_count, 'generated_slots': len(ideas_to_generate)},
-            persist_ai_operation=False,
-        )
-        db.session.commit()
+        component_usages = [
+            item for item in (provider_usage.get('component_usages') or [])
+            if isinstance(item, dict)
+        ]
+        generated_component_ids = [
+            evaluation_contexts[int(item['component_index'])]['scorecard_id']
+            for item in component_usages
+            if not item.get('reused')
+            and isinstance(item.get('component_index'), int)
+            and 0 <= int(item['component_index']) < len(evaluation_contexts)
+        ]
+        persisted_component_ids = []
 
         scored_out = []
         persistence_failures = []
@@ -7330,6 +7342,8 @@ def score_batch_queued(thread_id):
                 )
                 persistence_failures.append(name)
                 continue
+            if not payload.get('reused_stored_result'):
+                persisted_component_ids.append(analysis_id)
 
             # Reload fresh each iteration so prior writes in this loop are visible.
             sessions = load_user_sessions(user_id) or {}
@@ -7391,6 +7405,34 @@ def score_batch_queued(thread_id):
             save_user_sessions(user_id, sessions)
             scored_out.append({'name': name, 'score': scorecard.get('jaspen_score'), 'id': analysis_id})
 
+        allocation = finalize_batch_charge_allocation(
+            user,
+            ai_settlement,
+            component_ids=generated_component_ids,
+            persisted_component_ids=persisted_component_ids,
+        )
+        allocation_finalized = True
+        settled_credits = int(allocation.get('charged_credits') or 0)
+        _record_claude_operation_batch(
+            user,
+            evaluation_contexts=evaluation_contexts,
+            thread_id=thread_id,
+            endpoint='/threads/<id>/score-batch',
+            operation_type='score_batch',
+            usage=provider_usage,
+            reserved_credits=int(ai_settlement.get('reserved_credits') or 0),
+            settled_credits=settled_credits,
+            success=bool(scored_out),
+            error_code=None if scored_out else 'score_batch_persistence_failed',
+            metadata={
+                'requested_projects': requested_count,
+                'generated_slots': len(ideas_to_generate),
+                'charge_allocations': allocation.get('allocations') or [],
+            },
+            persist_ai_operation=False,
+        )
+        db.session.commit()
+
         # Clear the queue and store the portfolio summary for the thread.
         sessions = load_user_sessions(user_id) or {}
         session_key, session = _resolve_user_session(sessions, thread_id)
@@ -7445,6 +7487,10 @@ def score_batch_queued(thread_id):
             'done': True,
         })
     except Exception as e:
+        if user is not None and ai_settlement and not allocation_finalized:
+            reverse_customer_operation_charge(
+                user, ai_settlement, error_code='score_batch_persistence_failed',
+            )
         current_app.logger.exception('[score_batch_queued] %s', e)
         return jsonify({'error': str(e)}), 500
 
@@ -7459,6 +7505,9 @@ def generate_ai_wbs(thread_id):
     Generate an AI-driven WBS from baseline/adopted scorecard context.
     `commit=true` writes to thread WBS; otherwise returns a preview.
     """
+    ai_settlement = None
+    plan_persisted = False
+    user = None
     try:
         user_id = get_jwt_identity()
         user, plan_key, read_access_err = _require_tool_access(user_id, 'wbs_read', access='read')
@@ -7824,6 +7873,8 @@ def generate_ai_wbs(thread_id):
         dep_count = _wbs_dependency_count(normalized_wbs)
 
         if isinstance(max_tasks, int) and task_count > max_tasks:
+            reverse_customer_operation_charge(user, ai_settlement, error_code='wbs_task_limit_reached')
+            ai_settlement = None
             return jsonify({
                 'error': 'Generated WBS exceeds task limit for current plan',
                 'code': 'wbs_task_limit_reached',
@@ -7833,6 +7884,8 @@ def generate_ai_wbs(thread_id):
             }), 403
 
         if isinstance(max_deps, int) and dep_count > max_deps:
+            reverse_customer_operation_charge(user, ai_settlement, error_code='wbs_dependency_limit_reached')
+            ai_settlement = None
             return jsonify({
                 'error': 'Generated WBS exceeds dependency limit for current plan',
                 'code': 'wbs_dependency_limit_reached',
@@ -7863,7 +7916,9 @@ def generate_ai_wbs(thread_id):
                     thread_id, exc_info=True,
                 )
             all_data[thread_id] = thread_data
-            _save_scenarios(user_id, all_data)
+            if not _save_scenarios(user_id, all_data):
+                raise RuntimeError('Failed to persist generated execution plan.')
+            plan_persisted = True
             # Register the plan as a Session Artifact on the originating idea so
             # it shows up in the artifacts list even though it was built from the
             # workspace CTA / trade-off table rather than the chat tool.
@@ -7892,6 +7947,10 @@ def generate_ai_wbs(thread_id):
             'decision_record_id': recorded_decision.get('id') if recorded_decision else None,
         }), 200
     except Exception as e:
+        if user is not None and ai_settlement and not plan_persisted:
+            reverse_customer_operation_charge(
+                user, ai_settlement, error_code='execution_plan_persistence_failed',
+            )
         current_app.logger.error("[generate_ai_wbs] %s", e)
         return jsonify({'error': str(e)}), 500
 
@@ -10436,10 +10495,66 @@ Rules:
 # EXECUTION ASSISTANT  (execution plan sidebar)
 # ============================================================
 
+_EXECUTION_EDIT_ACTIONS = {
+    'WBS_ADD_TASK', 'WBS_UPDATE_TASK', 'WBS_REMOVE_TASK', 'WBS_ADD_DEPENDENCY',
+}
+
+
+def _apply_execution_assistant_actions(project_wbs, actions):
+    """Validate and atomically apply the supported plan-edit action set."""
+    updated = copy.deepcopy(project_wbs if isinstance(project_wbs, dict) else {'name': 'Execution Plan', 'tasks': []})
+    tasks = list(updated.get('tasks') or [])
+    for action in actions or []:
+        if not isinstance(action, dict) or action.get('type') not in _EXECUTION_EDIT_ACTIONS:
+            raise ValueError('Unsupported execution-plan edit.')
+        kind = action['type']
+        payload = action.get('payload') if isinstance(action.get('payload'), dict) else {}
+        if kind == 'WBS_ADD_TASK':
+            title = str(payload.get('title') or '').strip()
+            if not title:
+                raise ValueError('A new execution task needs a title.')
+            tasks.append({
+                'id': str(payload.get('id') or f'task_{uuid.uuid4().hex[:12]}'),
+                'title': title,
+                'status': str(payload.get('status') or 'todo').lower(),
+                'owner': str(payload.get('owner') or ''),
+                'due_date': payload.get('due_date') or payload.get('dueDate'),
+                'phase': str(payload.get('phase') or payload.get('phase_name') or 'Execution'),
+                'description': str(payload.get('description') or ''),
+                'priority': str(payload.get('priority') or 'medium').lower(),
+                'estimated_days': payload.get('estimated_days'),
+                'depends_on': list(payload.get('depends_on') or []),
+            })
+            continue
+        task_id = str(payload.get('id') or payload.get('task_id') or payload.get('taskId') or '').strip()
+        index = next((i for i, task in enumerate(tasks) if str(task.get('id') or '') == task_id), -1)
+        if index < 0:
+            raise ValueError('The execution task to edit was not found.')
+        if kind == 'WBS_UPDATE_TASK':
+            patch = {key: value for key, value in payload.items() if key not in {'id', 'task_id', 'taskId'}}
+            tasks[index] = {**tasks[index], **patch}
+        elif kind == 'WBS_REMOVE_TASK':
+            tasks.pop(index)
+            for task in tasks:
+                task['depends_on'] = [dep for dep in (task.get('depends_on') or []) if str(dep) != task_id]
+        else:
+            dependency = str(payload.get('depends_on') or payload.get('dependsOn') or '').strip()
+            if not dependency or not any(str(task.get('id') or '') == dependency for task in tasks):
+                raise ValueError('The execution dependency was not found.')
+            dependencies = list(tasks[index].get('depends_on') or [])
+            if dependency not in dependencies:
+                dependencies.append(dependency)
+            tasks[index] = {**tasks[index], 'depends_on': dependencies}
+    updated['tasks'] = tasks
+    updated['updated_at'] = datetime.utcnow().isoformat()
+    return _normalize_project_wbs({'project_wbs': updated}, existing=project_wbs)
+
 @strategy_bp.route('/threads/<thread_id>/execution-assistant', methods=['POST'])
 @jwt_required()
 @limiter.limit("20 per minute")
 def execution_assistant(thread_id):
+    assistant_settlement = None
+    user = None
     try:
         user_id = get_jwt_identity()
         user = User.query.get(user_id)
@@ -10555,7 +10670,7 @@ If no plan changes are needed, return "uiActions": [].
         model_id = model_selection.get('llm_model') or 'claude-haiku-4-5-20251001'
 
         try:
-            raw, _usage, _settlement = execute_customer_text_operation(
+            raw, _usage, assistant_settlement = execute_customer_text_operation(
                 user,
                 messages=[{"role": "user", "content": editor_prompt}],
                 system_prompt=system_prompt,
@@ -10581,12 +10696,39 @@ If no plan changes are needed, return "uiActions": [].
                 cleaned = re.sub(r'\n?```$', '', cleaned)
             result = json.loads(cleaned)
         except Exception:
-            result = {'reply': raw, 'uiActions': []}
+            reverse_customer_operation_charge(
+                user, assistant_settlement, error_code='plan_refinement_unusable_output',
+            )
+            return jsonify({
+                'error': "Jaspen couldn't save that plan update — try again.",
+                'retryable': True,
+            }), 503
 
         reply = str(result.get('reply') or '').strip() or 'Done.'
         ui_actions = result.get('uiActions') or result.get('actions') or []
         if not isinstance(ui_actions, list):
             ui_actions = []
+
+        applied_count = 0
+        updated_wbs = None
+        if ui_actions:
+            try:
+                updated_wbs = _apply_execution_assistant_actions(project_wbs, ui_actions)
+                scorecard_id = str(updated_wbs.get('scorecard_id') or '').strip() or None
+                _store_thread_wbs(td, scorecard_id, updated_wbs)
+                all_data[thread_id] = td
+                if not _save_scenarios(user_id, all_data):
+                    raise RuntimeError('The execution plan could not be saved.')
+                applied_count = len(ui_actions)
+            except Exception:
+                reverse_customer_operation_charge(
+                    user, assistant_settlement, error_code='plan_refinement_persistence_failed',
+                )
+                current_app.logger.exception('[execution_assistant] plan edit persistence failed')
+                return jsonify({
+                    'error': "Jaspen couldn't save that plan update — try again.",
+                    'retryable': True,
+                }), 503
 
         # Persist the turn to conversation history
         try:
@@ -10599,7 +10741,12 @@ If no plan changes are needed, return "uiActions": [].
         return jsonify({
             'success': True,
             'reply': reply,
-            'uiActions': ui_actions,
+            # Edits are committed atomically on the server before the charge
+            # remains settled. The browser refreshes this canonical plan and
+            # must not apply the same actions a second time.
+            'uiActions': [] if applied_count else ui_actions,
+            'appliedActions': applied_count,
+            'project_wbs': updated_wbs,
         }), 200
 
     except Exception as e:

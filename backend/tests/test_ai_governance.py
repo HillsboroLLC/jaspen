@@ -21,7 +21,10 @@ from app.billing_config import provider_cost_usd
 from app.models import AIOperation, AIProviderAttempt
 from app.ai_runtime import (
     AIOperationIdempotencyConflict,
+    execute_customer_operation,
     execute_customer_text_operation,
+    finalize_batch_charge_allocation,
+    reverse_customer_operation_charge,
 )
 
 
@@ -666,6 +669,124 @@ def test_idempotent_retry_returns_cached_result_without_second_generation_or_cha
     assert calls == {'generate': 1, 'reserve': 1, 'settle': 1}
     assert AIOperation.query.filter_by(operation_type='report_generation').count() == 1
     assert AIProviderAttempt.query.count() == 1
+
+
+def test_persisted_action_is_billable_when_closing_narration_failed(app, db, test_user, monkeypatch):
+    from app.routes import ai_agent
+
+    monkeypatch.setattr(ai_agent, '_reserve_preflight_credits', lambda *a, **k: {'ok': True, 'reserved': 100})
+    monkeypatch.setattr(ai_agent, '_settle_reserved_credits', lambda *a, **k: {'ok': True, 'charged': k['actual_credits'], 'remaining': 1000})
+    monkeypatch.setattr(ai_agent, '_charge_for_usage', lambda *a, **k: 17)
+    value, _usage, settlement = execute_customer_operation(
+        test_user,
+        generate=lambda: (
+            {'saved': True},
+            {
+                'provider': 'anthropic', 'model': 'claude-sonnet-4-6',
+                'input_tokens': 20, 'output_tokens': 10,
+                'degraded': True, 'error_code': 'narration_failed',
+                'billable_action_completed': True, 'charge_owner': 'conversation',
+                'completed_action_ids': ['update_wbs_task:1'],
+            },
+        ),
+        operation_type='conversation', request_payload={'message': 'update task'},
+        idempotency_key='narration-after-action',
+    )
+    operation = AIOperation.query.filter_by(operation_type='conversation').one()
+    assert value == {'saved': True}
+    assert settlement['charged_credits'] == 17
+    assert operation.status == 'succeeded'
+    assert operation.metadata_json['billable_action_completed'] is True
+
+
+def test_rolled_back_persisted_result_reverses_charge_once_and_records_absorbed_cost(
+    app, db, test_user, monkeypatch
+):
+    from app.routes import ai_agent
+
+    monkeypatch.setattr(ai_agent, '_reserve_preflight_credits', lambda *a, **k: {'ok': True, 'reserved': 100})
+    monkeypatch.setattr(ai_agent, '_settle_reserved_credits', lambda *a, **k: {'ok': True, 'charged': 13, 'remaining': 1000})
+    monkeypatch.setattr(ai_agent, '_charge_for_usage', lambda *a, **k: 13)
+    released = []
+    monkeypatch.setattr(ai_agent, '_release_reserved_credits', lambda user, amount: released.append(amount))
+    _value, _usage, settlement = execute_customer_operation(
+        test_user,
+        generate=lambda: ({'scorecard': 'valid'}, {
+            'provider': 'anthropic', 'model': 'claude-sonnet-4-6',
+            'input_tokens': 20, 'output_tokens': 10,
+        }),
+        operation_type='scorecard_generation', request_payload={'option': 'A'},
+        idempotency_key='score-save-rollback',
+    )
+    assert reverse_customer_operation_charge(
+        test_user, settlement, error_code='scorecard_persistence_failed',
+    ) == 13
+    assert reverse_customer_operation_charge(
+        test_user, settlement, error_code='scorecard_persistence_failed',
+    ) == 0
+    operation = AIOperation.query.filter_by(operation_type='scorecard_generation').one()
+    assert released == [13]
+    assert operation.charged_credits == 0 and operation.status == 'failed'
+    assert operation.total_provider_cost_usd > 0
+    assert operation.metadata_json['result_persistence_rolled_back'] is True
+    assert operation.metadata_json['failed_attempt_costs_absorbed'] is True
+
+
+def test_batch_charge_allocates_only_to_persisted_cards_without_duplicate_refund(
+    app, db, test_user, monkeypatch
+):
+    from app.routes import ai_agent
+
+    operation = AIOperation(
+        user_id=test_user.id,
+        operation_type='score_batch',
+        status='succeeded',
+        router_mode='shadow',
+        router_version='test',
+        policy_mode='active',
+        policy_version='test',
+        charged_credits=101,
+        successful_provider_cost_usd=Decimal('1.01'),
+        total_provider_cost_usd=Decimal('1.01'),
+        metadata_json={},
+        result_json={'settlement': {'charged_credits': 101}},
+    )
+    db.session.add(operation)
+    db.session.commit()
+    released = []
+    monkeypatch.setattr(ai_agent, '_release_reserved_credits', lambda user, amount: released.append(amount))
+
+    first = finalize_batch_charge_allocation(
+        test_user,
+        {'operation_id': operation.id, 'charged_credits': 101},
+        component_ids=['A', 'B', 'C', 'D', 'E'],
+        persisted_component_ids=['A', 'B', 'D', 'E'],
+    )
+    second = finalize_batch_charge_allocation(
+        test_user,
+        {'operation_id': operation.id, 'charged_credits': 101},
+        component_ids=['A', 'B', 'C', 'D', 'E'],
+        persisted_component_ids=['A', 'B', 'D', 'E'],
+    )
+
+    assert first == second
+    assert first['charged_credits'] == 80
+    assert sum(row['charged_credits'] for row in first['allocations']) == 80
+    assert [row['component_id'] for row in first['allocations']] == ['A', 'B', 'D', 'E']
+    assert released == [21]
+    db.session.refresh(operation)
+    assert operation.metadata_json['batch_absorbed_charge'] == 21
+    assert operation.metadata_json['batch_allocation_finalized'] is True
+
+
+def test_charge_ownership_document_names_nested_and_batch_rules():
+    from pathlib import Path
+
+    text = (Path(__file__).parents[1] / 'app' / 'AI_CHARGE_OWNERSHIP.md').read_text()
+    assert '`score_next`, `scorecard_generation`' in text
+    assert '`execution_plan`' in text
+    assert 'Nested action rule' in text
+    assert 'equal integer shares' in text
 
 
 def test_idempotency_key_cannot_be_reused_for_different_request(app, db, test_user, monkeypatch):
