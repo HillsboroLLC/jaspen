@@ -566,6 +566,27 @@ def test_surety_approved_alias_normalizes_and_grounds_as_confirmed(app):
     ) == sentence
 
 
+@pytest.mark.parametrize(('excerpt', 'expected'), [
+    ('has declined', 'declined'),
+    ("hasn't declined", None),
+    ('has not declined', None),
+    ("didn't decline", None),
+    ('no longer pending', None),
+    ("hasn't declined; the request is still pending", 'pending'),
+    ('approved the bond', 'confirmed'),
+])
+def test_enum_value_from_user_excerpt_ignores_negated_phrases(app, excerpt, expected):
+    from app.decision_facts import _enum_value_from_user_excerpt
+    from app.decision_kits import get_decision_kit
+
+    surety_status = next(
+        field for field in get_decision_kit('rfp_bid')['fields']
+        if field['key'] == 'surety_status'
+    )
+
+    assert _enum_value_from_user_excerpt(excerpt, surety_status) == expected
+
+
 def test_exact_user_excerpt_overrides_reworded_enum_and_text_values(app):
     from app.decision_facts import ground_user_evidence, normalize_fact_entry
     from app.decision_kits import get_decision_kit

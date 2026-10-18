@@ -282,15 +282,22 @@ def _enum_value_from_user_excerpt(evidence, field_definition):
     }
     enum_phrases.update({value: value for value in enum_phrases.values()})
     derived_values = set()
+    evidence_text = str(evidence or "")
     for phrase, canonical_value in enum_phrases.items():
         for match in re.finditer(
             rf"(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])",
-            str(evidence or ""),
+            evidence_text,
             re.I,
         ):
             # A correction such as "has not declined; still pending" must
             # not preserve the explicitly negated prior state.
-            if re.search(r"\bnot\s+$", str(evidence)[:match.start()], re.I):
+            clause_prefix = re.split(r"[.;,!?\n]", evidence_text[:match.start()])[-1]
+            if re.search(
+                r"(?:\bnot\s+yet\b|\bno\s+longer\b|\b(?:not|never|without)\b|\b\w+n['\u2019]t\b)"
+                r"(?:\s+[A-Za-z0-9_'-]+){0,3}\s*$",
+                clause_prefix,
+                re.I,
+            ):
                 continue
             derived_values.add(canonical_value)
     return next(iter(derived_values)) if len(derived_values) == 1 else None
