@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function ScoreReuseNotice({ provenance, onScoreFresh }) {
+export default function ScoreReuseNotice({ provenance, scorecardId, optionKey, onScoreFresh }) {
   if (!provenance) return null;
   return (
     <div role="status" style={{
@@ -15,7 +15,7 @@ export default function ScoreReuseNotice({ provenance, onScoreFresh }) {
       {onScoreFresh && (
         <button
           type="button"
-          onClick={onScoreFresh}
+          onClick={() => onScoreFresh({ scorecardId, optionKey })}
           style={{ marginLeft: 8, border: 0, background: 'transparent', color: '#a0036c', fontWeight: 700, cursor: 'pointer', padding: 0 }}
         >Score fresh</button>
       )}

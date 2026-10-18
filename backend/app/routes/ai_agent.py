@@ -7531,7 +7531,12 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             decision_kit_version=decision_kit_version,
             model_tier=model_selection.get("model_type"),
         )
-        if rescore_id and isinstance(rescore_target, dict) and rescore_target.get("decision_fingerprint") == decision_fp:
+        if (
+            rescore_id
+            and tool_input.get("force_fresh") is not True
+            and isinstance(rescore_target, dict)
+            and rescore_target.get("decision_fingerprint") == decision_fp
+        ):
             _audit_ai_agent_event(
                 "scorecard.reused_stored_result",
                 target_user_id=user_id,

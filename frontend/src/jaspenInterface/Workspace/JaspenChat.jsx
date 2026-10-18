@@ -2330,6 +2330,21 @@ const drainScoreQueue = async (tid, queuedItems = []) => {
   }
 };
 
+const handleScoreFresh = async ({ scorecardId, optionKey } = {}) => {
+  const tid = sessionId || currentSessionId;
+  if (!tid || (!scorecardId && !optionKey)) return;
+  try {
+    const result = await Jaspen.scoreFresh(tid, { scorecardId, optionKey });
+    if (result?.ok === false) throw new Error(result?.error || 'Scoring failed.');
+    await refreshBundle(tid);
+  } catch (error) {
+    showToast(error?.message || 'Jaspen could not score this option. Try again.', 'error', {
+      actionLabel: 'Retry',
+      onAction: () => void handleScoreFresh({ scorecardId, optionKey }),
+    });
+  }
+};
+
 const refreshThreadWbs = useCallback(async (tid) => {
   if (!tid) return null;
   setWbsLoading(true);
@@ -2951,9 +2966,9 @@ const renderScorecardCard = (result, opts = {}) => {
     <div className="jas-scorecard-card">
       <ScoreReuseNotice
         provenance={result?.reuse_provenance}
-        onScoreFresh={opts.onSendText
-          ? () => opts.onSendText('Score this option fresh now. Do not reuse a stored judgment.')
-          : null}
+        scorecardId={result?.id || result?.analysis_id}
+        optionKey={result?.option_key}
+        onScoreFresh={opts.onScoreFresh || null}
       />
       {/* Eyebrow + timestamp */}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
@@ -12348,6 +12363,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       onExportScorecardPdf: handleExportScorecardPdf,
       onExportScorecardPptx: handleExportScorecardPptx,
       onSendText: (txt) => void onSubmit({ text: txt, force: true }),
+      onScoreFresh: handleScoreFresh,
       lastMessage: Array.isArray(messages) && messages.length ? messages[messages.length - 1] : null,
     })}
     renderAttachments={(m) => renderMessageAttachments(m)}
@@ -14033,6 +14049,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
 	                    onExportScorecardPdf: handleExportScorecardPdf,
 	                    onExportScorecardPptx: handleExportScorecardPptx,
 	                    onSendText: (txt) => void onSubmit({ text: txt, force: true }),
+                    onScoreFresh: handleScoreFresh,
                     lastMessage: Array.isArray(displayMessages) && displayMessages.length ? displayMessages[displayMessages.length - 1] : null,
                   })}</div>
 	                  {renderMessageAttachments(m)}

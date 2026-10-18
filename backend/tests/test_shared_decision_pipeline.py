@@ -1087,7 +1087,7 @@ def test_canonical_judgment_is_reusable_across_sessions_and_org_members(db, test
         UserSession(
             user_id=test_user.id, session_id='source-session', name='Source',
             organization_id=org.id, created_by_user_id=test_user.id,
-            visibility='specific', shared_with_user_ids=[colleague.id], payload={},
+            visibility='team', shared_with_user_ids=[], payload={},
         ),
     ])
     test_user.active_organization_id = org.id
@@ -1114,7 +1114,7 @@ def test_canonical_judgment_is_reusable_across_sessions_and_org_members(db, test
 
     # Access is checked on every retrieval, not cached when the card is made.
     source_session = UserSession.query.filter_by(session_id='source-session').one()
-    source_session.shared_with_user_ids = []
+    source_session.visibility = 'private'
     db.session.commit()
     assert find_scorecard_by_fingerprint(
         colleague.id, 'same-state', organization_id=org.id,

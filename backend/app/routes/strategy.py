@@ -6947,6 +6947,7 @@ def score_next_queued(thread_id):
             return jsonify({'error': 'User not found'}), 404
 
         from .ai_agent import (
+            _collect_session_scorecards,
             _execute_mutation_tool,
             _artifact_chat_entry,
             _resolve_user_session,
@@ -6956,6 +6957,54 @@ def score_next_queued(thread_id):
         session_key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return jsonify({'error': 'Thread not found'}), 404
+
+        body = request.get_json(silent=True) or {}
+        if body.get('force_fresh') is True:
+            scorecard_id = str(body.get('scorecard_id') or '').strip()
+            option_key = str(body.get('option_key') or '').strip()
+            if not scorecard_id and not option_key:
+                return jsonify({'error': 'Choose the scorecard to score fresh.'}), 400
+            target = next((
+                card for card in _collect_session_scorecards(
+                    session, user_id=user_id, thread_id=thread_id,
+                )
+                if (
+                    (not scorecard_id or str(card.get('id') or card.get('analysis_id') or '').strip() == scorecard_id)
+                    and (not option_key or str(card.get('option_key') or '').strip() == option_key)
+                )
+            ), None)
+            if target is None:
+                return jsonify({'error': 'That scorecard is no longer available.'}), 404
+            target_id = str(target.get('id') or target.get('analysis_id') or '').strip()
+            name = str(target.get('project_name') or target.get('name') or target.get('label') or '').strip()
+            result = _execute_mutation_tool(
+                'generate_scorecard',
+                {
+                    'name': name,
+                    'idea_description': str(target.get('project_description') or name).strip(),
+                    'rescore_scorecard_id': target_id,
+                    'force_fresh': True,
+                },
+                user=user,
+                user_id=user_id,
+                thread_id=thread_id,
+            )
+            if not (isinstance(result, dict) and result.get('ok')):
+                return jsonify({
+                    'ok': False,
+                    'error': str((result or {}).get('error') or "Jaspen couldn't score this option. Try again."),
+                    'failure_state': True,
+                    'retryable': True,
+                }), 200
+            return jsonify({
+                'ok': True,
+                'scorecard': result.get('updated_scorecard') or result.get('scorecard'),
+                'scorecard_id': result.get('scorecard_id') or target_id,
+                'option_key': str(target.get('option_key') or ''),
+                'fresh_scored': True,
+                'done': True,
+                'remaining': len(session.get('scorecard_queue') or []),
+            })
 
         # Freeze the intake baseline before any analysis touches this thread
         # (docs/DECISION_IMPACT_REPORT_SPEC.md §3.4). Best effort and
@@ -6970,7 +7019,6 @@ def score_next_queued(thread_id):
         if not queue:
             return jsonify({'done': True, 'remaining': 0, 'scorecard': None})
 
-        body = request.get_json(silent=True) or {}
         requested_name = str(body.get('name') or '').strip()
         item = next(
             (

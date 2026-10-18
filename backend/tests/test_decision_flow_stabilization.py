@@ -2220,6 +2220,72 @@ def test_score_next_accepts_explicitly_authorized_proposed_rubric(
     assert response.get_json()['ok'] is True
 
 
+def test_score_fresh_bypasses_reuse_for_only_the_selected_option(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    strategy, agent = modules()
+    from app import decision_fingerprint
+
+    tid = 'score-fresh-selected-option'
+    option_a = {
+        'id': 'card-a', 'analysis_id': 'card-a', 'project_name': 'Option A',
+        'name': 'Option A', 'option_key': 'option-a', 'jaspen_score': 41,
+        'decision_fingerprint': 'same-state', 'attributes': {},
+    }
+    option_b = {
+        'id': 'card-b', 'analysis_id': 'card-b', 'project_name': 'Option B',
+        'name': 'Option B', 'option_key': 'option-b', 'jaspen_score': 52,
+        'decision_fingerprint': 'same-state', 'attributes': {},
+    }
+    seed_thread(test_user, tid, [option_a, option_b])
+    upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=option_a)
+    upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=option_b)
+    db.session.commit()
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(decision_fingerprint, 'scoring_fingerprint', lambda **_kwargs: 'same-state')
+    generated = []
+
+    def score_fresh(*_args, **_kwargs):
+        generated.append(1)
+        return ({
+            'jaspen_score': 77,
+            'score_category': 'Strong',
+            'dimensions': {},
+            'gates': [],
+        }, {
+            'provider': 'test', 'model': 'test',
+            'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2,
+        })
+
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', score_fresh)
+
+    response = client.post(
+        f'/api/v1/strategy/threads/{tid}/score-next',
+        headers=auth_headers,
+        json={
+            'scorecard_id': 'card-b',
+            'option_key': 'option-b',
+            'force_fresh': True,
+        },
+    )
+
+    assert response.status_code == 200, response.get_json()
+    payload = response.get_json()
+    assert payload['ok'] is True, payload
+    assert payload['fresh_scored'] is True
+    assert payload['scorecard_id'] == 'card-b'
+    assert payload['scorecard']['jaspen_score'] == 77
+    assert generated == [1]
+    by_id = {
+        row.id: row.to_peer_dict()
+        for row in Scorecard.query.filter_by(user_id=test_user.id, thread_id=tid).all()
+    }
+    assert by_id['card-a']['jaspen_score'] == 41
+    assert by_id['card-b']['jaspen_score'] == 77
+    stored = agent.load_user_sessions(test_user.id)[tid]
+    assert stored['chat_history'] == []
+
+
 def test_failed_single_scoring_turn_is_explicit_saved_retryable_and_zero_credit(client, db, test_user, auth_headers, monkeypatch):
     _, agent = modules()
     tid = 'live-failed-single-score'

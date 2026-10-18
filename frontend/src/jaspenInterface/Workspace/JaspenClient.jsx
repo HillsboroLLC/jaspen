@@ -1510,6 +1510,13 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   scoreNext: async (threadId, name = '') =>
     postJSON(endpoints.scoreNext(threadId), { name }, { withSid: true }),
 
+  scoreFresh: async (threadId, { scorecardId, optionKey } = {}) =>
+    postJSON(endpoints.scoreNext(threadId), {
+      scorecard_id: scorecardId,
+      option_key: optionKey,
+      force_fresh: true,
+    }, { withSid: true }),
+
   // Score ALL queued ideas in one model pass (the 'build the Excel' path).
   scoreBatch: async (threadId) =>
     postJSON(endpoints.scoreBatch(threadId), {}, { withSid: true }),
