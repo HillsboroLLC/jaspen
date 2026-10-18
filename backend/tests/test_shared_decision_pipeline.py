@@ -407,7 +407,9 @@ def test_user_stated_context_reaches_judge_and_only_unknown_criteria_become_neut
     assert quote in prompts[0]
     assert '"past_project_experience"' in prompts[0]
     assert '"source": "user-stated"' in prompts[0]
-    assert "no information" not in card["dimensions"]["qualifications_past_performance"]["rationale"].lower()
+    assert card["dimensions"]["qualifications_past_performance"]["rationale"] == (
+        f"Based on what you told me: {quote}"
+    )
     assert card["dimensions"]["qualifications_past_performance"]["score"] == 30
     assert card["dimensions"]["delivery_capability_capacity"]["score"] == 45
     assert card["dimensions"]["strategic_fit_relationship"]["score"] == 45
@@ -415,6 +417,31 @@ def test_user_stated_context_reaches_judge_and_only_unknown_criteria_become_neut
         "delivery_capability_capacity", "strategic_fit_relationship",
     ]
     assert any("scorecard_neutral_value_adjusted" in message for message in caplog.messages)
+
+
+def test_supported_criterion_keeps_provider_rationale(app):
+    from app.routes import strategy
+    from app.decision_kits import get_decision_kit
+
+    quote = "We have done three similar water main jobs in the last two years."
+    payload = {"dimensions": {"qualifications_past_performance": {
+        "score": 72,
+        "rationale": "Three recent comparable projects demonstrate relevant delivery experience.",
+        "evidence": [],
+    }}}
+    result = strategy._apply_neutral_unknown_criteria(
+        payload,
+        [{"key": "qualifications_past_performance", "label": "Past performance"}],
+        {"qualifications_past_performance"},
+        attributes={"past_project_experience": {
+            "value": quote, "source": "user", "evidence": quote,
+        }},
+        kit=get_decision_kit("rfp_bid"),
+    )
+
+    assert result["dimensions"]["qualifications_past_performance"]["rationale"] == (
+        "Three recent comparable projects demonstrate relevant delivery experience."
+    )
 
 
 def test_failed_gate_does_not_zero_unrelated_unknown_criterion(app, monkeypatch):

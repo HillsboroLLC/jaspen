@@ -273,6 +273,29 @@ def normalize_value(value, field):
     return normalized
 
 
+def _enum_value_from_user_excerpt(evidence, field_definition):
+    aliases = dict(field_definition.get("value_aliases") or {})
+    enum_phrases = {
+        str(alias).strip(): str(canonical_value).strip()
+        for alias, canonical_value in aliases.items()
+        if str(alias).strip() and str(canonical_value).strip()
+    }
+    enum_phrases.update({value: value for value in enum_phrases.values()})
+    derived_values = set()
+    for phrase, canonical_value in enum_phrases.items():
+        for match in re.finditer(
+            rf"(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])",
+            str(evidence or ""),
+            re.I,
+        ):
+            # A correction such as "has not declined; still pending" must
+            # not preserve the explicitly negated prior state.
+            if re.search(r"\bnot\s+$", str(evidence)[:match.start()], re.I):
+                continue
+            derived_values.add(canonical_value)
+    return next(iter(derived_values)) if len(derived_values) == 1 else None
+
+
 def normalize_fact_entry(key, raw, *, kit=None, default_source="user", default_evidence=""):
     definitions = field_definitions(kit)
     entry = dict(raw) if isinstance(raw, dict) else {"value": raw}
@@ -306,19 +329,30 @@ def normalize_fact_entry(key, raw, *, kit=None, default_source="user", default_e
         raise ValueError(f"Invalid source for {canonical}")
     field_definition = definitions.get(canonical) or _COMMON_FIELD_DEFINITIONS.get(canonical, {})
     raw_value = entry.get("value")
+    evidence = str(entry.get("evidence") or default_evidence or "").strip()
+    field_type = str(field_definition.get("type") or "").lower()
+    if source == "user" and evidence and field_type == "text":
+        # The user's exact words are the fact. Provider paraphrases remain useful
+        # for assigning a field, but must not replace user-stated text.
+        raw_value = evidence
+    elif source == "user" and evidence and field_type == "enum":
+        derived_value = _enum_value_from_user_excerpt(evidence, field_definition)
+        if derived_value is not None:
+            raw_value = derived_value
+        elif field_definition.get("value_aliases"):
+            raise ValueError(f"User evidence does not determine one value for {canonical}")
     relative = entry.get("relative")
     reference_date = entry.get("reference_date")
     if isinstance(raw_value, dict):
         relative = relative or raw_value.get("relative")
         reference_date = reference_date or raw_value.get("reference_date")
-    if str(field_definition.get("type") or "").lower() == "date" and relative:
+    if field_type == "date" and relative:
         value, normalized_relative = _relative_date(relative, reference_date)
     else:
         value = normalize_value(raw_value, field_definition)
         normalized_relative = None
     if entry.get("value") not in (None, "") and value is None:
         raise ValueError(f"Invalid value for {canonical}")
-    evidence = str(entry.get("evidence") or default_evidence or "").strip()
     result = {"value": value, "source": source, "evidence": evidence}
     if normalized_relative:
         result["relative"] = normalized_relative
@@ -348,9 +382,9 @@ def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None,
     """Return an exact user excerpt supporting a canonical field/value pair.
 
     A provider may paraphrase an excerpt, but stored provenance must remain the
-    user's words. Matching requires the same normalized value and either the
-    schema-owned field signal or a clause with no competing schema field signal.
-    No value is extracted or invented here.
+    user's words. Text values come from that excerpt, enums resolve only through
+    schema-owned values and aliases, and numeric/date values must still match
+    exactly. No value is invented here.
     """
     corpus = str(source_text or "")
     claimed = str(claimed_evidence or "").strip()
@@ -367,6 +401,11 @@ def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None,
         return None
     definitions = field_definitions(kit)
     definition = definitions.get(canonical) or _COMMON_FIELD_DEFINITIONS.get(canonical, {})
+    field_type = str(definition.get("type") or "").lower()
+    if claimed_excerpt and field_type == "text":
+        return claimed_excerpt
+    if claimed_excerpt and field_type == "enum" and definition.get("value_aliases"):
+        return claimed_excerpt if _enum_value_from_user_excerpt(claimed_excerpt, definition) is not None else None
     expected = normalize_value(value, definition)
     if expected is None:
         return None
@@ -388,8 +427,8 @@ def ground_user_evidence(key, value, claimed_evidence, source_text, *, kit=None,
         if field_key != canonical
     )) if len(all_definitions) > 1 else set()
 
-    numeric_kind = str(definition.get("type") or "").lower() in {"money", "number", "percentage"}
-    date_kind = str(definition.get("type") or "").lower() == "date"
+    numeric_kind = field_type in {"money", "number", "percentage"}
+    date_kind = field_type == "date"
     # Relative dates are accepted only from the provider's exact cited words;
     # code verifies amount/unit but never searches prose to infer the phrase.
     if date_kind and isinstance(relative, dict) and not claimed_excerpt:

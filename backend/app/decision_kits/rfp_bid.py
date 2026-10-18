@@ -45,6 +45,8 @@ KIT = {
                 "not yet confirmed": "pending",
                 "awaiting confirmation": "pending",
                 "still pending": "pending",
+                "haven't decided": "pending",
+                "have not decided": "pending",
             },
             "affects": ["delivery_capability_capacity", "surety_confirmation"],
         },

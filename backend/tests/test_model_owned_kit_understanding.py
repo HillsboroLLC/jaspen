@@ -136,8 +136,12 @@ def test_unknown_kit_fields_are_partitioned_into_auditable_notes(app):
         "label": "local_partner_history", "value": "Strong", "source": "user",
         "attribution": "user-stated", "evidence": "local partner history is strong",
         "affects": [], "reason": "not_in_active_decision_kit",
+    }, {
+        "label": "margin_pct", "value": "margin is unclear", "source": "user",
+        "attribution": "user-stated", "evidence": "margin is unclear",
+        "affects": [], "reason": "not_stored_as_canonical_fact",
     }]
-    assert invalid == [rejected[1]]
+    assert invalid == []
 
 
 def test_rfp_similar_jobs_maps_to_past_project_experience(app):

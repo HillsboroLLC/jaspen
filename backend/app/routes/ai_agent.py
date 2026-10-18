@@ -90,6 +90,7 @@ from app.evaluation_telemetry import (
 )
 from app.decision_facts import (
     attach_relative_reference,
+    canonical_field_key,
     extract_candidate_facts,
     field_definitions,
     ground_option_user_evidence,
@@ -5502,15 +5503,23 @@ def _partition_unknown_fact_notes(rejected_fields, source_text=""):
     notes, rejected = [], []
     corpus = str(source_text or "")
     for item in rejected_fields or []:
-        if str((item or {}).get("reason") or "").startswith("Unknown decision field:"):
-            evidence = str((item or {}).get("evidence") or "").strip()
-            source = str((item or {}).get("source") or "user").strip().lower()
-            if source == "user" and (not evidence or evidence.casefold() not in corpus.casefold()):
+        reason = str((item or {}).get("reason") or "")
+        evidence = str((item or {}).get("evidence") or "").strip()
+        source = str((item or {}).get("source") or "user").strip().lower()
+        exact_user_excerpt = bool(
+            source == "user" and evidence and evidence.casefold() in corpus.casefold()
+        )
+        if reason.startswith("Unknown decision field:") or exact_user_excerpt:
+            if source == "user" and not exact_user_excerpt:
                 rejected.append({**item, "reason": "Evidence could not be grounded in the user's words"})
                 continue
             notes.append({
                 "label": str((item or {}).get("field") or "Additional context").strip(),
-                "value": (item or {}).get("value"),
+                "value": (
+                    (item or {}).get("value")
+                    if reason.startswith("Unknown decision field:")
+                    else evidence
+                ),
                 "source": (item or {}).get("source") or "user",
                 "attribution": "user-stated" if source == "user" else source,
                 "evidence": evidence,
@@ -5518,7 +5527,11 @@ def _partition_unknown_fact_notes(rejected_fields, source_text=""):
                     str(key).strip() for key in ((item or {}).get("affects") or [])
                     if str(key).strip()
                 ],
-                "reason": "not_in_active_decision_kit",
+                "reason": (
+                    "not_in_active_decision_kit"
+                    if reason.startswith("Unknown decision field:")
+                    else "not_stored_as_canonical_fact"
+                ),
             })
         else:
             rejected.append(item)
@@ -7058,6 +7071,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             session, option_key, option, known_names,
         )
         scoped_corpus = option_fact_text(corpus, option, known_names) or (user_message or corpus)
+        definitions = field_definitions(kit)
         normalized = {}
         rejected_fields = []
         for field in fields:
@@ -7075,10 +7089,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 prepared_field = attach_relative_reference(field, session)
                 key, entry = normalize_fact_entry(field.get("key"), prepared_field, kit=kit)
             except ValueError as exc:
+                normalized_field_name = canonical_field_key(field.get("key"), kit) or re.sub(
+                    r"[^a-z0-9]+", "_", str(field.get("key") or "").strip().lower()
+                ).strip("_")
+                definition = definitions.get(normalized_field_name) or {}
                 rejected_fields.append({
                     "field": str(field.get("key") or ""), "value": field.get("value"),
                     "source": source, "evidence": evidence,
-                    "affects": field.get("affects") or [], "reason": str(exc),
+                    "affects": field.get("affects") or definition.get("affects") or [],
+                    "reason": str(exc),
                 })
                 continue
             if source == "user":
@@ -7093,6 +7112,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     rejected_fields.append({
                         "field": str(field.get("key") or ""), "value": field.get("value"),
                         "source": source, "evidence": evidence,
+                        "affects": (definitions.get(key) or {}).get("affects") or [],
                         "reason": "Evidence could not be grounded in the user's words",
                     })
                     continue
@@ -7101,6 +7121,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         context_notes, rejected_fields = _partition_unknown_fact_notes(rejected_fields, user_message or corpus)
         _store_option_context_notes(session, option_key, context_notes)
         if not normalized and not context_notes:
+            if rejected_fields:
+                current_app.logger.warning(
+                    "Rejected %d ungrounded fact(s) for option %s",
+                    len(rejected_fields), _normalized_option_identity(option),
+                )
             error = _tool_error("No valid structured fields were provided.", code="invalid_option_attributes")
             error["rejected_fields"] = rejected_fields
             return error

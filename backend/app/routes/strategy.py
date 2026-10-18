@@ -2729,7 +2729,9 @@ def _criteria_with_supplied_information(attributes, context_notes, kit):
     return supported
 
 
-def _apply_neutral_unknown_criteria(payload, criteria, supported_criteria):
+def _apply_neutral_unknown_criteria(
+    payload, criteria, supported_criteria, *, attributes=None, context_notes=None, kit=None,
+):
     """Make every valid but unsupported weighted judgment a visible neutral 45."""
     if not isinstance(payload, dict) or not isinstance(payload.get("dimensions"), dict):
         return payload
@@ -2739,6 +2741,21 @@ def _apply_neutral_unknown_criteria(payload, criteria, supported_criteria):
         if isinstance(item, dict) and item.get("key") and not item.get("gate")
     }
     neutral = []
+    supplied_excerpts = {}
+    affects_by_field = {
+        str(field.get("key")): [str(key) for key in (field.get("affects") or [])]
+        for field in ((kit or {}).get("fields") or []) if isinstance(field, dict)
+    }
+    for field_key, entry in (attributes or {}).items():
+        if not isinstance(entry, dict) or not str(entry.get("evidence") or "").strip():
+            continue
+        for criterion_key in affects_by_field.get(str(field_key), []):
+            supplied_excerpts.setdefault(criterion_key, str(entry["evidence"]).strip())
+    for note in context_notes or []:
+        if not isinstance(note, dict) or not str(note.get("evidence") or "").strip():
+            continue
+        for criterion_key in note.get("affects") or []:
+            supplied_excerpts.setdefault(str(criterion_key), str(note["evidence"]).strip())
     for key, definition in criteria_by_key.items():
         dim = payload["dimensions"].get(key)
         if not isinstance(dim, dict):
@@ -2751,7 +2768,10 @@ def _apply_neutral_unknown_criteria(payload, criteria, supported_criteria):
             # failed to repeat its excerpt. Do not let the visible rationale
             # contradict information Jaspen demonstrably received.
             dim["evidence_status"] = "input_supplied"
-            dim["rationale"] = "Judged using the supplied information for this criterion."
+            if re.search(r"\bno information\b", str(dim.get("rationale") or ""), re.I):
+                excerpt = supplied_excerpts.get(key)
+                if excerpt:
+                    dim["rationale"] = f"Based on what you told me: {excerpt}"
             continue
         previous_score = dim.get("score")
         label = str(dim.get("label") or definition.get("label") or key).strip()
@@ -3648,6 +3668,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
         parsed,
         rubric_criteria or [{"key": key, "label": key.replace("_", " ")} for key in weights],
         _criteria_with_supplied_information(attributes, context_notes, kit),
+        attributes=attributes, context_notes=context_notes, kit=kit,
     )
     for dim in (parsed.get("dimensions") or {}).values():
         if isinstance(dim, dict):

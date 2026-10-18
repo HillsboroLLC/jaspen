@@ -566,6 +566,166 @@ def test_surety_approved_alias_normalizes_and_grounds_as_confirmed(app):
     ) == sentence
 
 
+def test_exact_user_excerpt_overrides_reworded_enum_and_text_values(app):
+    from app.decision_facts import ground_user_evidence, normalize_fact_entry
+    from app.decision_kits import get_decision_kit
+
+    kit = get_decision_kit('rfp_bid')
+    cases = [
+        (
+            'surety_status', 'declined',
+            'Our surety has declined to provide the required performance bond for this job.',
+            'declined',
+        ),
+        (
+            'surety_status', 'declined - surety will not issue required performance bond',
+            'Our surety has declined to provide the required performance bond for this job.',
+            'declined',
+        ),
+        ('surety_status', 'pending', "We haven't decided on surety yet.", 'pending'),
+        (
+            'past_project_experience', '3 similar water main jobs in last 2 years',
+            'We have done three similar water main jobs in the last two years.',
+            'We have done three similar water main jobs in the last two years.',
+        ),
+        ('client', 'City of Aurora', 'The client is the City of Aurora.', 'The client is the City of Aurora.'),
+    ]
+
+    for key, provider_value, quote, expected in cases:
+        assert ground_user_evidence(
+            key, provider_value, quote, quote, kit=kit,
+        ) == quote
+        normalized_key, entry = normalize_fact_entry(
+            key,
+            {'value': provider_value, 'source': 'user', 'evidence': quote},
+            kit=kit,
+        )
+        assert entry['value'] == expected
+        assert ground_user_evidence(
+            normalized_key, entry['value'], quote, quote, kit=kit,
+        ) == quote
+
+
+def test_exact_money_excerpt_with_reworded_value_becomes_context_note(app, db, test_user):
+    _, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'reworded-money-context-note'
+    seed_rfp_thread(test_user, tid)
+    quote = 'Pursuit cost is $80,000.'
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'] = [{'role': 'user', 'content': quote}]
+    assert save_user_sessions(test_user.id, sessions)
+
+    result = agent._execute_mutation_tool(
+        'set_option_attributes', {'option': 'Aurora', 'fields': [{
+            'key': 'pursuit_cost', 'value': '$800,000', 'source': 'user',
+            'evidence': quote,
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=tid, user_message=quote,
+    )
+
+    assert result['ok'], result
+    assert 'pursuit_cost' not in result['option_attributes']
+    session = load_user_sessions(test_user.id)[tid]
+    note = next(iter(session['option_context_notes_by_key'].values()))[0]
+    assert note['value'] == quote
+    assert note['evidence'] == quote
+    assert note['affects'] == ['financial_attractiveness']
+    assert result['rejected_fields'] == []
+
+
+def test_pending_surety_correction_saves_and_rescores_existing_card(
+    app, db, test_user, monkeypatch,
+):
+    strategy, agent = modules()
+    from app.decision_kits import get_decision_kit
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'pending-surety-correction'
+    seed_rfp_thread(test_user, tid)
+    initial_quote = (
+        'Our surety has declined to provide the required performance bond for this job.'
+    )
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'] = [{'role': 'user', 'content': initial_quote}]
+    kit = get_decision_kit('rfp_bid')
+    sessions[tid]['scoring_rubric']['criteria'].extend({
+        'key': item['key'], 'label': item['label'], 'weight': 0,
+        'gate': True, 'gate_rule': item['rule'],
+    } for item in kit['gate_suggestions'])
+    assert save_user_sessions(test_user.id, sessions)
+    mock_accounting(monkeypatch)
+
+    def scorer(*_args, **kwargs):
+        status = kwargs['attributes']['surety_status']['value']
+        label = 'No-Bid' if status == 'declined' else 'Depends on confirming surety / bond confirmation'
+        gate_status = 'fail' if status == 'declined' else 'unknown'
+        return ({
+            'jaspen_score': 52,
+            'score_category': 'Mixed',
+            'dimensions': {'delivery_capability_capacity': {
+                'score': 52, 'confidence': 'medium',
+            }},
+            'gates': [{
+                'key': 'surety_confirmation', 'label': 'Surety / bond confirmation',
+                'status': gate_status, 'confidence': 'medium', 'source': 'conversation',
+                'evidence': [kwargs['attributes']['surety_status']['evidence']],
+                'basis': f'Surety status is {status}.',
+            }],
+            'recommendation': {'label': label},
+        }, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1})
+
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', scorer)
+    saved_decline = agent._execute_mutation_tool(
+        'set_option_attributes', {'option': 'Aurora RFP', 'fields': [{
+            'key': 'surety_status',
+            'value': 'declined - surety will not issue required performance bond',
+            'source': 'user', 'evidence': initial_quote,
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=tid, user_message=initial_quote,
+    )
+    first = agent._execute_mutation_tool(
+        'generate_scorecard', {'name': 'Aurora RFP', 'idea_description': 'Score the RFP.'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert saved_decline['ok'], saved_decline
+    assert saved_decline['option_attributes']['surety_status']['value'] == 'declined'
+    assert first['ok'] and first['scorecard']['recommendation']['label'] == 'No-Bid'
+
+    correction = (
+        'Correction: our surety has not declined; its decision is still pending. Re-score with that.'
+    )
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['chat_history'].append({'role': 'user', 'content': correction})
+    assert save_user_sessions(test_user.id, sessions)
+    changed = agent._execute_mutation_tool(
+        'set_option_attributes', {
+            'option': 'Aurora RFP', 'scorecard_id': first['scorecard']['id'],
+            'fields': [{
+                'key': 'surety_status', 'value': 'not declined - awaiting surety decision',
+                'source': 'user', 'evidence': correction,
+            }],
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid, user_message=correction,
+    )
+    rescored = agent._execute_mutation_tool(
+        'generate_scorecard', {
+            'name': 'Aurora RFP', 'idea_description': 'Re-score with corrected surety status.',
+            'rescore_scorecard_id': first['scorecard']['id'],
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert changed['ok'], changed
+    assert changed['option_attributes']['surety_status']['value'] == 'pending'
+    assert rescored['ok'] and rescored['rescored'], rescored
+    assert rescored['updated_scorecard']['recommendation']['label'].startswith(
+        'Depends on confirming'
+    )
+
+
 def test_full_corpus_fallback_rejects_evidence_naming_another_option(app):
     from app.decision_facts import ground_option_user_evidence
     from app.decision_kits import get_decision_kit
@@ -1834,7 +1994,7 @@ def test_material_update_can_bind_user_evidence_when_provider_omits_quote(app, d
     assert result['option_attributes']['build_out_cost']['evidence'] == 'Build-out is now $320,000.'
 
 
-def test_failed_fact_grounding_blocks_same_turn_rescore(app, db, test_user, monkeypatch):
+def test_failed_fact_grounding_blocks_same_turn_rescore(app, db, test_user, monkeypatch, caplog):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions, save_user_sessions
 
@@ -1847,18 +2007,20 @@ def test_failed_fact_grounding_blocks_same_turn_rescore(app, db, test_user, monk
     assert save_user_sessions(test_user.id, sessions)
     session = load_user_sessions(test_user.id)[tid]
 
-    failed, count = agent._execute_local_tool(
-        'set_option_attributes', {'option': 'Boulder', 'fields': [{
-            'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
-            'evidence': 'Build-out cost: $320,000',
-        }]},
-        readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
-        user_turn_count=2, mutations_this_turn=0,
-        user_message='Monthly lease is now $320,000.', session=session,
-    )
+    with caplog.at_level('WARNING'):
+        failed, count = agent._execute_local_tool(
+            'set_option_attributes', {'option': 'Boulder', 'fields': [{
+                'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
+                'evidence': 'Build-out cost: $320,000',
+            }]},
+            readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
+            user_turn_count=2, mutations_this_turn=0,
+            user_message='Monthly lease is now $320,000.', session=session,
+        )
     assert failed['ok'] is False
     assert count == 0
     assert failed['rejected_fields'][0]['reason'] == "Evidence could not be grounded in the user's words"
+    assert any('Rejected 1 ungrounded fact(s)' in message for message in caplog.messages)
 
     monkeypatch.setattr(
         agent, '_execute_mutation_tool',
