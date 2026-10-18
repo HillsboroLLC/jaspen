@@ -6506,6 +6506,16 @@ useEffect(() => {
         setCurrentSessionId(null);
         setAnalysisResult(null);
         setScorecardSnapshots([]);
+        setBundleCurrentScorecard(null);
+        setBundleBaselineScorecard(null);
+        setSelectedScorecardId(null);
+        setActiveSnapshotId(null);
+        setBaselineScorecardId(null);
+        setScoreVariants([]);
+        setSelectedVariantId('baseline');
+        setResultA(null);
+        setResultB(null);
+        setResultC(null);
         setMessages([]);
         setTradeoffRequested(false);
         setStrategyObjective('balanced');
@@ -10988,6 +10998,16 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
     // Clear scorecard artifacts from the prior session — otherwise a brand-new
     // session renders the previous session's scorecards until a hard refresh.
     setScorecardSnapshots([]);
+    setBundleCurrentScorecard(null);
+    setBundleBaselineScorecard(null);
+    setSelectedScorecardId(null);
+    setActiveSnapshotId(null);
+    setBaselineScorecardId(null);
+    setScoreVariants([]);
+    setSelectedVariantId('baseline');
+    setResultA(null);
+    setResultB(null);
+    setResultC(null);
     setTradeoffRequested(false);
     setDecisionKit(null);
     setDecisionKitSuggestion(null);
@@ -11115,6 +11135,18 @@ const handleExportConversationPdf = useCallback(async ({ threadBundleId, project
   setActivePill(null);
   setThreadWbs(null);
   setTradeoffRequested(false);
+  setAnalysisResult(null);
+  setScorecardSnapshots([]);
+  setBundleCurrentScorecard(null);
+  setBundleBaselineScorecard(null);
+  setSelectedScorecardId(null);
+  setActiveSnapshotId(null);
+  setBaselineScorecardId(null);
+  setScoreVariants([]);
+  setSelectedVariantId('baseline');
+  setResultA(null);
+  setResultB(null);
+  setResultC(null);
   const result =
     selection && typeof selection === 'object' && selection.result && typeof selection.result === 'object'
       ? selection.result

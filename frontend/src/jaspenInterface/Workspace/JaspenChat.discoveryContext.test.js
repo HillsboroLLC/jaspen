@@ -56,6 +56,31 @@ test('blank and switched sessions clear per-session kit context and progress sta
   expect(source).toContain("hasConversationMessages\n                      ? 'discovery'\n                      : null");
 });
 
+test('new and switched sessions clear every scorecard id before building view context', () => {
+  const newSessionBlock = source.slice(
+    source.indexOf('const handleNewAnalysis'),
+    source.indexOf("useEffect(() => {\n    if (!analysisResult) return;", source.indexOf('const handleNewAnalysis')),
+  );
+  const switchSessionBlock = source.slice(
+    source.indexOf('const handleSelectAnalysis'),
+    source.indexOf('const result =', source.indexOf('const handleSelectAnalysis')),
+  );
+
+  for (const block of [newSessionBlock, switchSessionBlock]) {
+    expect(block).toContain('setSelectedScorecardId(null)');
+    expect(block).toContain('setActiveSnapshotId(null)');
+    expect(block).toContain('setBaselineScorecardId(null)');
+    expect(block).toContain('setBundleCurrentScorecard(null)');
+    expect(block).toContain('setBundleBaselineScorecard(null)');
+    expect(block).toContain('setScoreVariants([])');
+    expect(block).toContain("setSelectedVariantId('baseline')");
+    expect(block).toContain('setResultA(null)');
+    expect(block).toContain('setResultB(null)');
+    expect(block).toContain('setResultC(null)');
+  }
+  expect(source).toContain("active_scorecard_id: String(effectiveSelectedScorecardId || activeScorecardId || '').trim() || undefined");
+});
+
 test('model kit classification is offered as a one-click suggestion', () => {
   expect(source).toContain('This looks like an RFP — use the');
   expect(source).toContain('decisionKitSuggestion.kit');

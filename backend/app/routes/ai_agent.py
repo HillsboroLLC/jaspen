@@ -6957,11 +6957,33 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             return _tool_error("Thread not found.", code="thread_not_found")
         kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version")) if session.get("decision_kit") else None
         explicit_target_id = str(tool_input.get("scorecard_id") or "").strip()
+        session_scorecards = _collect_session_scorecards(
+            session, user_id=user_id, thread_id=thread_id,
+        )
+        scorecards_by_id = {
+            str(card.get("id") or card.get("analysis_id") or "").strip(): card
+            for card in session_scorecards
+            if isinstance(card, dict)
+            and str(card.get("id") or card.get("analysis_id") or "").strip()
+        }
+        active_evaluation_scorecard_id = str(
+            session.get("active_evaluation_scorecard_id") or ""
+        ).strip()
+        if active_evaluation_scorecard_id and active_evaluation_scorecard_id not in scorecards_by_id:
+            session.pop("active_evaluation_scorecard_id", None)
+
         target_id = str(explicit_target_id or view_active_scorecard_id or "").strip()
-        target_card = next((
-            card for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
-            if str(card.get("id") or card.get("analysis_id") or "").strip() == target_id
-        ), None) if target_id else None
+        target_card = scorecards_by_id.get(target_id) if target_id else None
+        if target_id and not target_card:
+            if explicit_target_id and session_scorecards:
+                return _tool_error(
+                    "The selected scorecard was not found in this session. Its facts were not changed.",
+                    code="scorecard_not_found",
+                )
+            # Presentation state can lag behind a session change. A foreign view
+            # id (or an explicit stale id on a first, cardless session) is not a
+            # target and must not turn a valid fact save into a failed re-score.
+            target_id = ""
         from ..decision_state import migrate_attribute_mapping, migrate_option_attribute_keys, resolve_option_key, store_option_attributes
         if target_card and not _requested_name_matches_scorecard(session, target_card, option):
             if explicit_target_id:

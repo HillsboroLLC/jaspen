@@ -1585,6 +1585,75 @@ def test_common_canonical_fact_update_survives_active_decision_kit(app, db, test
     assert values[0]['build_out_cost']['value'] == 320000
 
 
+def test_foreign_view_scorecard_id_saves_facts_and_allows_first_score(
+    app, db, test_user, monkeypatch,
+):
+    strategy, agent = modules()
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    tid = 'foreign-view-scorecard-first-score'
+    seed_thread(test_user, tid)
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['active_evaluation_scorecard_id'] = 'scorecard-from-another-session'
+    sessions[tid]['chat_history'] = [{
+        'role': 'user', 'content': 'Option B costs $320,000.',
+    }]
+    assert save_user_sessions(test_user.id, sessions)
+
+    facts = agent._execute_mutation_tool(
+        'set_option_attributes', {'option': 'Option B', 'fields': [{
+            'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
+            'evidence': 'Option B costs $320,000.',
+        }]},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+        user_message='Option B costs $320,000.',
+        view_context={'active_scorecard_id': 'scorecard-from-another-session'},
+    )
+
+    assert facts['ok'], facts
+    stored = load_user_sessions(test_user.id)[tid]
+    assert stored.get('active_evaluation_scorecard_id') is None
+    assert list(stored['option_attributes_by_key'].values())[0]['build_out_cost']['value'] == 320000
+
+    stale_explicit_target = agent._execute_mutation_tool(
+        'set_option_attributes', {
+            'option': 'Option B',
+            'scorecard_id': 'scorecard-from-another-session',
+            'fields': [{
+                'key': 'build_out_cost', 'value': '$320,000', 'source': 'user',
+                'evidence': 'Option B costs $320,000.',
+            }],
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+        user_message='Option B costs $320,000.',
+    )
+    assert stale_explicit_target['ok'], stale_explicit_target
+
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', lambda *a, **k: ({
+        'jaspen_score': 61,
+        'score_category': 'Good',
+        'dimensions': {'financial_viability': {'score': 61, 'confidence': 'medium'}},
+        'gates': [],
+    }, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1}))
+    scored = agent._execute_mutation_tool(
+        'generate_scorecard', {'name': 'Option B', 'idea_description': 'Score Option B.'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert scored['ok'], scored
+    missing_explicit_target = agent._execute_mutation_tool(
+        'set_option_attributes', {
+            'option': 'Option B',
+            'scorecard_id': 'missing-from-this-session',
+            'fields': [],
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert missing_explicit_target['ok'] is False
+    assert missing_explicit_target['code'] == 'scorecard_not_found'
+
+
 def test_material_update_binds_provider_paraphrase_to_exact_user_evidence(app, db, test_user):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions, save_user_sessions
