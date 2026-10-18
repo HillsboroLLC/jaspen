@@ -6,7 +6,8 @@ from decimal import Decimal, InvalidOperation
 from flask import current_app
 
 from . import db
-from .models import Scorecard
+from .models import Scorecard, User, UserSession
+from .session_access import can_read_session
 
 
 COMPARISON_SESSION_PROJECT_LIMIT = 30
@@ -90,6 +91,18 @@ def upsert_scorecard(
     row.assumptions = payload.get('assumptions') or []
     row.recommendation = payload.get('recommendation') or payload.get('recommendations')
     row.execution_plan_ref = payload.get('execution_plan_ref')
+    if 'decision_fingerprint' in payload:
+        row.decision_fingerprint = str(payload.get('decision_fingerprint') or '').strip() or None
+    if 'decision_state_reusable' in payload:
+        row.decision_state_reusable = bool(payload.get('decision_state_reusable') is True)
+    reuse = payload.get('reuse_provenance') if isinstance(payload.get('reuse_provenance'), dict) else {}
+    if reuse or 'reused_source_scorecard_id' in payload:
+        row.reused_from_scorecard_id = str(
+            reuse.get('source_scorecard_id') or payload.get('reused_source_scorecard_id') or ''
+        ).strip() or None
+        row.reuse_root_scorecard_id = str(
+            reuse.get('root_scorecard_id') or row.reused_from_scorecard_id or ''
+        ).strip() or None
     normalized = dict(payload)
     normalized['id'] = scorecard_id
     normalized['analysis_id'] = scorecard_id
@@ -147,27 +160,67 @@ def list_scorecard_rows(user_id, *, thread_id=None, include_archived=False):
     return query.order_by(Scorecard.created_at.asc(), Scorecard.id.asc()).all()
 
 
+def _source_session_for_scorecard(row):
+    session_id = str(row.session_id or row.thread_id or '').strip()
+    if not session_id:
+        return None
+    query = UserSession.query.filter_by(session_id=session_id)
+    if row.organization_id:
+        query = query.filter_by(organization_id=str(row.organization_id))
+    else:
+        query = query.filter_by(user_id=str(row.user_id))
+    return query.order_by(UserSession.created_at.asc(), UserSession.id.asc()).first()
+
+
+def _can_reuse_scorecard(row, actor):
+    if actor is None:
+        return False
+    source_session = _source_session_for_scorecard(row)
+    if source_session is None:
+        # Legacy personal scorecards may predate durable UserSession rows. They
+        # remain reusable by their owner, never by a teammate.
+        return str(row.user_id) == str(actor.id)
+    return can_read_session(source_session, actor)
+
+
 def find_scorecard_by_fingerprint(user_id, fingerprint, *, organization_id=None):
     """Find a reusable canonical judgment within its declared custody ring."""
     fingerprint = str(fingerprint or "").strip()
     if not fingerprint:
         return None
+    actor = User.query.get(str(user_id))
+    filters = {
+        'decision_fingerprint': fingerprint,
+        'decision_state_reusable': True,
+        'archived_at': None,
+    }
     if organization_id:
-        query = Scorecard.query.filter_by(
-            organization_id=str(organization_id), archived_at=None,
-        )
+        query = Scorecard.query.filter_by(organization_id=str(organization_id), **filters)
     else:
-        query = Scorecard.query.filter_by(
-            user_id=str(user_id), archived_at=None,
-        )
+        query = Scorecard.query.filter_by(user_id=str(user_id), **filters)
+    # The exact indexed predicate keeps this bounded without imposing an
+    # arbitrary result cap that could hide an older accessible source behind
+    # many private cards with the same state.
     for row in query.order_by(Scorecard.updated_at.desc()).all():
-        payload = row.data if isinstance(row.data, dict) else {}
-        if (
-            payload.get("decision_fingerprint") == fingerprint
-            and payload.get("decision_state_reusable") is True
-        ):
+        if _can_reuse_scorecard(row, actor):
             return row
     return None
+
+
+def reuse_provenance(source_row):
+    """Immutable source metadata for a newly persisted reused scorecard."""
+    root_id = str(source_row.reuse_root_scorecard_id or source_row.id)
+    root = Scorecard.query.filter_by(id=root_id).first() or source_row
+    author = User.query.get(str(root.user_id))
+    return {
+        'source_scorecard_id': str(source_row.id),
+        'root_scorecard_id': str(root.id),
+        'source_session_id': str(root.session_id or root.thread_id or ''),
+        'source_user_id': str(root.user_id),
+        'source_user_name': str(getattr(author, 'name', '') or '').strip() or None,
+        'source_created_at': root.created_at.isoformat() if root.created_at else None,
+        'reused_at': datetime.utcnow().isoformat(),
+    }
 
 
 def _legacy_scorecards(session, thread_data, thread_id):

@@ -3717,12 +3717,14 @@ def _generate_batch_scorecards(
             rubric=rubric, objective=strategy_objective,
             gates=(rubric or {}).get("criteria") or [],
             decision_kit=decision_kit, decision_kit_version=decision_kit_version,
+            model_tier=(model_selection or {}).get("model_type"),
         )
         fingerprint = scoring_fingerprint(
             option_key=option_key, option_name=name, attributes=attributes,
             rubric=rubric, objective=strategy_objective,
             decision_kit=decision_kit, decision_kit_version=decision_kit_version,
             evidence_corpus=scoped_corpus,
+            model_tier=(model_selection or {}).get("model_type"),
         )
         with app.app_context():
             reused = reuse_lookup(fingerprint, state) if callable(reuse_lookup) and state_is_reusable(state) else None
@@ -3965,6 +3967,7 @@ def analyze_project():
             attributes=legacy_attributes, rubric=legacy_rubric,
             objective=strategy_objective, gates=(legacy_rubric or {}).get('criteria') or [],
             decision_kit=legacy_decision_kit, decision_kit_version=legacy_decision_kit_version,
+            model_tier=model_selection.get('model_type'),
         )
         provisional_fp = scoring_fingerprint(
             option_key=provisional_option_key, option_name=requested_name,
@@ -3972,8 +3975,9 @@ def analyze_project():
             objective=strategy_objective, decision_kit=legacy_decision_kit,
             decision_kit_version=legacy_decision_kit_version,
             evidence_corpus=legacy_evidence_corpus,
+            model_tier=model_selection.get('model_type'),
         ) if requested_name else None
-        from ..scorecards import find_scorecard_by_fingerprint
+        from ..scorecards import find_scorecard_by_fingerprint, reuse_provenance
         reusable_row = (
             find_scorecard_by_fingerprint(current_user_id, provisional_fp, organization_id=active_org_id)
             if provisional_fp and state_is_reusable(provisional_state) else None
@@ -3984,7 +3988,9 @@ def analyze_project():
                 analysis_result.pop(identity_field, None)
             provider_usage = {'provider': 'canonical_cache', 'model': None, 'model_type': 'reuse', 'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
             ai_settlement = {'charged_credits': 0, 'reserved_credits': 0}
+            reuse_metadata = reuse_provenance(reusable_row)
         else:
+            reuse_metadata = None
             try:
                 analysis_result, provider_usage, ai_settlement = execute_customer_operation(
                 user,
@@ -4084,6 +4090,7 @@ def analyze_project():
             'timestamp': generated_at,
             'user_id': current_user_id,
             'ai_insights': ai_insights,
+            'reuse_provenance': reuse_metadata,
             'meta': {
                 **prior_meta,
                 'thread_id': resolved_thread_id,
@@ -4093,6 +4100,7 @@ def analyze_project():
                 'generated_at': generated_at,
                 'model_type': model_selection['model_type'],
                 'reused_source_scorecard_id': str(reusable_row.id) if reusable_row is not None else None,
+                'reuse_provenance': reuse_metadata,
             }
         }
         analysis_state = canonical_decision_state(
@@ -4100,6 +4108,7 @@ def analyze_project():
             attributes=legacy_attributes, rubric=legacy_rubric,
             objective=strategy_objective, gates=(legacy_rubric or {}).get('criteria') or [],
             decision_kit=legacy_decision_kit, decision_kit_version=legacy_decision_kit_version,
+            model_tier=model_selection.get('model_type'),
         )
         analysis['decision_state'] = analysis_state
         analysis['decision_fingerprint'] = scoring_fingerprint(
@@ -4108,6 +4117,7 @@ def analyze_project():
             objective=strategy_objective, decision_kit=legacy_decision_kit,
             decision_kit_version=legacy_decision_kit_version,
             evidence_corpus=legacy_evidence_corpus,
+            model_tier=model_selection.get('model_type'),
         )
         analysis['canonical_judgment_id'] = analysis['decision_fingerprint']
         analysis['decision_state_reusable'] = state_is_reusable(analysis_state)
@@ -7177,7 +7187,7 @@ def score_batch_queued(thread_id):
         ]
         client = get_llm_client()
 
-        from ..scorecards import find_scorecard_by_fingerprint
+        from ..scorecards import find_scorecard_by_fingerprint, reuse_provenance
         reuse_organization_id = session.get('organization_id') or getattr(user, 'active_organization_id', None)
         def reuse_lookup(fingerprint, state):
             row = find_scorecard_by_fingerprint(
@@ -7194,6 +7204,7 @@ def score_batch_queued(thread_id):
             ):
                 payload.pop(identity_field, None)
             payload['reused_source_scorecard_id'] = str(row.id)
+            payload['reuse_provenance'] = reuse_provenance(row)
             return payload
 
         try:
@@ -7344,6 +7355,7 @@ def score_batch_queued(thread_id):
                 decision_kit_version=decision_kit_version,
                 evidence_corpus=_thread_user_corpus(user_id, thread_id),
                 option_name=name,
+                model_tier=model_selection.get('model_type'),
             )
             scorecard['canonical_judgment_id'] = scorecard['decision_fingerprint']
             from ..decision_state import canonical_decision_state, state_is_reusable
@@ -7352,6 +7364,7 @@ def score_batch_queued(thread_id):
                 rubric=rubric, objective=strategy_objective,
                 gates=(rubric or {}).get('criteria') or [],
                 decision_kit=decision_kit, decision_kit_version=decision_kit_version,
+                model_tier=model_selection.get('model_type'),
             )
             scorecard['decision_state_reusable'] = state_is_reusable(scorecard['decision_state'])
 
@@ -11023,6 +11036,7 @@ def recompute_decision_recommendation(thread_id, scorecard_id):
         rubric=session.get('scoring_rubric'), objective=session.get('strategy_objective'),
         decision_kit=session.get('decision_kit'), decision_kit_version=session.get('decision_kit_version'),
         evidence_corpus=_thread_user_corpus(user_id, thread_id), facts_text=card.get('project_description'),
+        model_tier=((card.get('meta') or {}).get('model_type') if isinstance(card.get('meta'), dict) else None),
     )
     if card.get('facts_changed') or current_fp != card.get('decision_fingerprint'):
         return jsonify({'error': 'Facts or evidence changed; holistic re-score is required', 'code': 'holistic_rescore_required'}), 409

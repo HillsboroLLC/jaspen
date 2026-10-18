@@ -1607,6 +1607,12 @@ class Scorecard(db.Model):
     assumptions = db.Column(db.JSON, nullable=True, default=list)
     recommendation = db.Column(db.JSON, nullable=True)
     execution_plan_ref = db.Column(db.String(255), nullable=True, index=True)
+    decision_fingerprint = db.Column(db.String(64), nullable=True, index=True)
+    decision_state_reusable = db.Column(
+        db.Boolean, nullable=False, default=False, server_default=db.false(), index=True,
+    )
+    reused_from_scorecard_id = db.Column(db.String(255), nullable=True, index=True)
+    reuse_root_scorecard_id = db.Column(db.String(255), nullable=True, index=True)
     data = db.Column(db.JSON, nullable=False, default=dict)
     search_metadata = db.Column(db.JSON, nullable=True, default=dict)
     source = db.Column(db.String(40), nullable=False, default='native', index=True)
@@ -1616,6 +1622,16 @@ class Scorecard(db.Model):
 
     __table_args__ = (
         db.Index('ix_scorecards_user_thread_created', 'user_id', 'thread_id', 'created_at'),
+        db.Index(
+            'ix_scorecards_org_reuse_lookup',
+            'organization_id', 'decision_fingerprint', 'decision_state_reusable',
+            'archived_at', 'updated_at',
+        ),
+        db.Index(
+            'ix_scorecards_user_reuse_lookup',
+            'user_id', 'decision_fingerprint', 'decision_state_reusable',
+            'archived_at', 'updated_at',
+        ),
     )
 
     def to_peer_dict(self):

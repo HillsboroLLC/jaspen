@@ -717,6 +717,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
     "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the shared scoring system, which evaluates every option against the same criteria and builds the trade-off comparison. After calling it, state only that all N were queued (name them if there are only a few). Do not promise that cards were created; the scoring operation reports success or a retryable failure separately. If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead. "
     "HARD RULE — multi-option requests ALWAYS batch: if the user gave two or more options to compare, you MUST use queue_scorecards for the whole set. NEVER score them one at a time with generate_scorecard, and NEVER abandon the batch midway to 'use the standard approach' — that produces a single card on the generic default rubric and breaks the comparison. If the user also gave their own criteria/weights, call set_scoring_rubric FIRST so the batch is scored on THEIR rubric, not the generic default. Only fall back to the generic default dimensions when the user has given no criteria and explicitly wants a quick score.\n"
+    "SCORE FRESH: if the user explicitly chooses 'Score fresh' on a reused scorecard, call generate_scorecard for that option with force_fresh=true. Do not reuse the stored judgment; this is a normal-cost scoring request.\n"
     "CANONICAL FACTS BEFORE SCORING: Semantically normalize user evidence into canonical fields before a score call. For one option, call set_option_attributes before generate_scorecard. For a batch, include each option's canonical attributes in its queue_scorecards item. Equivalent paraphrases must yield the same field/value/source. Preserve unknown values as null, label assumptions with basis/bounds/affected criteria, and never invent a value. Do not depend on literal keywords or copy prose into a numeric field.\n"
     "BATCH SIZE — Queue ALL requested options in one queue_scorecards call. Provider concurrency is handled automatically; never ask the user to continue a batch.\n"
     "NEW IDEAS MID-CONVERSATION: When the user introduces a NEW option AFTER others have already been scored in this thread (e.g. 'what about a hybrid plan?', 'add Denver', 'also compare Vendor X'), treat it exactly like the original ideas: score it against the SAME existing rubric (queue_scorecards for one or more new ones, or generate_scorecard for a single one) so it is added to the running set and stacked into the trade-off comparison alongside the others. Never start over or drop the earlier ideas — the comparison grows. Confirm a score exists only after scoring succeeds.\n"
@@ -6015,6 +6016,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                             "type": "string",
                             "description": "Set to the OPEN scorecard's id to re-score that idea in place. Omit to create a new scorecard.",
                         },
+                        "force_fresh": {
+                            "type": "boolean",
+                            "description": "Set true only when the user explicitly chooses Score fresh. This bypasses stored judgment reuse and incurs the normal scoring cost.",
+                        },
                     },
                     "required": ["idea_description", "name"],
                     "additionalProperties": False,
@@ -7465,6 +7470,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             evidence_corpus=scoped_evidence_corpus,
             facts_text=idea_description,
             option_name=requested_name,
+            model_tier=model_selection.get("model_type"),
         )
         decision_state = canonical_decision_state(
             option_key=option_key,
@@ -7475,6 +7481,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             gates=(rubric or {}).get("criteria") or [],
             decision_kit=decision_kit,
             decision_kit_version=decision_kit_version,
+            model_tier=model_selection.get("model_type"),
         )
         if rescore_id and isinstance(rescore_target, dict) and rescore_target.get("decision_fingerprint") == decision_fp:
             _audit_ai_agent_event(
@@ -7493,15 +7500,16 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "reused_stored_result": True,
                 "credits_charged": 0,
             })
-        from ..scorecards import find_scorecard_by_fingerprint
+        from ..scorecards import find_scorecard_by_fingerprint, reuse_provenance
         reuse_row = None
-        if state_is_reusable(decision_state):
+        if state_is_reusable(decision_state) and tool_input.get("force_fresh") is not True:
             reuse_row = find_scorecard_by_fingerprint(
                 user_id,
                 decision_fp,
                 organization_id=(session.get("organization_id") or getattr(user, "active_organization_id", None)),
             )
         reused_source_id = str(reuse_row.id) if reuse_row is not None else None
+        reuse_metadata = reuse_provenance(reuse_row) if reuse_row is not None else None
         if reuse_row is not None:
             scorecard_payload = dict(reuse_row.data or {})
             for identity_field in (
@@ -7612,6 +7620,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "canonical_judgment_id": decision_fp,
             "decision_state": decision_state,
             "decision_state_reusable": state_is_reusable(decision_state),
+            "reuse_provenance": reuse_metadata,
             "timestamp": generated_at,
             "createdAt": generated_at,
             "label": requested_name,
@@ -7622,6 +7631,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "tool": "generate_scorecard",
                 "model_type": model_selection["model_type"],
                 "reused_source_scorecard_id": reused_source_id,
+                "reuse_provenance": reuse_metadata,
             },
         }
         scorecard["executive_summary"] = _deterministic_executive_summary(scorecard)

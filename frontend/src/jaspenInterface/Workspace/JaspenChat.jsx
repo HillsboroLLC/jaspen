@@ -64,6 +64,7 @@ import IntakeReceipt from './IntakeReceipt';
 import RfpRecommendationTrace from './RfpRecommendationTrace';
 import RecordDecisionPanel from './RecordDecisionPanel';
 import WorkspaceTips from './components/WorkspaceTips';
+import ScoreReuseNotice from './ScoreReuseNotice';
 
 // Tab components
 import ScoreDashboard   from './ScoreDashboard';
@@ -2948,6 +2949,12 @@ const renderScorecardCard = (result, opts = {}) => {
 
   return (
     <div className="jas-scorecard-card">
+      <ScoreReuseNotice
+        provenance={result?.reuse_provenance}
+        onScoreFresh={opts.onSendText
+          ? () => opts.onSendText('Score this option fresh now. Do not reuse a stored judgment.')
+          : null}
+      />
       {/* Eyebrow + timestamp */}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
         <span className="jas-scorecard-eyebrow">Scorecard</span>

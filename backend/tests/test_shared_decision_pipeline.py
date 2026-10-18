@@ -1070,7 +1070,7 @@ def test_general_and_rfp_use_the_same_state_schema_with_kit_as_overlay(app):
 
 def test_canonical_judgment_is_reusable_across_sessions_and_org_members(db, test_user):
     from werkzeug.security import generate_password_hash
-    from app.models import Organization, User
+    from app.models import Organization, OrganizationMember, User, UserSession
     from app.scorecards import find_scorecard_by_fingerprint, upsert_scorecard
 
     org = Organization(name="Decision Org", owner_user_id=test_user.id)
@@ -1081,6 +1081,17 @@ def test_canonical_judgment_is_reusable_across_sessions_and_org_members(db, test
     )
     db.session.add_all([org, colleague])
     db.session.flush()
+    db.session.add_all([
+        OrganizationMember(organization_id=org.id, user_id=test_user.id, role='owner', status='active'),
+        OrganizationMember(organization_id=org.id, user_id=colleague.id, role='collaborator', status='active'),
+        UserSession(
+            user_id=test_user.id, session_id='source-session', name='Source',
+            organization_id=org.id, created_by_user_id=test_user.id,
+            visibility='specific', shared_with_user_ids=[colleague.id], payload={},
+        ),
+    ])
+    test_user.active_organization_id = org.id
+    colleague.active_organization_id = org.id
     upsert_scorecard(
         user_id=test_user.id,
         thread_id="source-session",
@@ -1100,6 +1111,102 @@ def test_canonical_judgment_is_reusable_across_sessions_and_org_members(db, test
     )
     assert found is not None and found.thread_id == "source-session"
     assert find_scorecard_by_fingerprint(colleague.id, "same-state") is None
+
+    # Access is checked on every retrieval, not cached when the card is made.
+    source_session = UserSession.query.filter_by(session_id='source-session').one()
+    source_session.shared_with_user_ids = []
+    db.session.commit()
+    assert find_scorecard_by_fingerprint(
+        colleague.id, 'same-state', organization_id=org.id,
+    ) is None
+    assert find_scorecard_by_fingerprint(
+        test_user.id, 'same-state', organization_id=org.id,
+    ) is not None
+
+
+def test_private_teammate_scorecard_is_never_reused(db, test_user):
+    from werkzeug.security import generate_password_hash
+    from app.models import Organization, OrganizationMember, User, UserSession
+    from app.scorecards import find_scorecard_by_fingerprint, upsert_scorecard
+
+    org = Organization(name='Private Decision Org', owner_user_id=test_user.id)
+    teammate = User(
+        email='private-teammate@example.com', name='Private teammate',
+        password_hash=generate_password_hash('ValidPass1', method='pbkdf2:sha256'),
+        subscription_plan='free', credits_remaining=300, seat_limit=1, max_seats=1,
+    )
+    db.session.add_all([org, teammate])
+    db.session.flush()
+    db.session.add_all([
+        OrganizationMember(organization_id=org.id, user_id=test_user.id, role='owner', status='active'),
+        OrganizationMember(organization_id=org.id, user_id=teammate.id, role='collaborator', status='active'),
+        UserSession(
+            user_id=test_user.id, session_id='private-source', name='Private',
+            organization_id=org.id, created_by_user_id=test_user.id,
+            visibility='private', payload={},
+        ),
+    ])
+    teammate.active_organization_id = org.id
+    upsert_scorecard(
+        user_id=test_user.id, thread_id='private-source', organization_id=org.id,
+        payload={
+            'id': 'private-source-card', 'project_name': 'Private option',
+            'jaspen_score': 64, 'decision_fingerprint': 'private-state',
+            'decision_state_reusable': True,
+        },
+    )
+    db.session.commit()
+    assert find_scorecard_by_fingerprint(
+        teammate.id, 'private-state', organization_id=org.id,
+    ) is None
+
+
+def test_reused_scorecard_provenance_keeps_original_author(db, test_user):
+    from app.models import UserSession
+    from app.scorecards import reuse_provenance, upsert_scorecard
+
+    db.session.add(UserSession(
+        user_id=test_user.id, session_id='original-thread', name='Original',
+        created_by_user_id=test_user.id, visibility='private', payload={},
+    ))
+    original = upsert_scorecard(
+        user_id=test_user.id, thread_id='original-thread',
+        payload={
+            'id': 'original-card', 'project_name': 'Original option',
+            'jaspen_score': 70, 'decision_fingerprint': 'original-state',
+            'decision_state_reusable': True,
+        },
+    )
+    db.session.flush()
+    original_data = dict(original.data)
+    first_link = reuse_provenance(original)
+    reused = upsert_scorecard(
+        user_id=test_user.id, thread_id='second-thread',
+        payload={
+            **original.data, 'id': 'reused-card', 'analysis_id': 'reused-card',
+            'reuse_provenance': first_link,
+        },
+    )
+    db.session.flush()
+    second_link = reuse_provenance(reused)
+    assert second_link['root_scorecard_id'] == original.id
+    assert second_link['source_user_id'] == test_user.id
+    assert original.data == original_data
+
+
+def test_fingerprint_changes_for_methodology_kit_or_model_tier():
+    from app.decision_fingerprint import scoring_fingerprint
+
+    common = dict(
+        option_key='option', attributes={'cost': {'value': 10, 'source': 'user'}},
+        rubric={'approval_status': 'approved', 'criteria': [{'key': 'cost', 'weight': 1.0}]},
+        objective='balanced', decision_kit='rfp_bid', decision_kit_version=1,
+        model_tier='orbit', methodology_version='2',
+    )
+    baseline = scoring_fingerprint(**common)
+    assert baseline != scoring_fingerprint(**{**common, 'decision_kit_version': 2})
+    assert baseline != scoring_fingerprint(**{**common, 'methodology_version': '3'})
+    assert baseline != scoring_fingerprint(**{**common, 'model_tier': 'titan'})
 
 
 def test_schema_owned_aliases_cannot_create_duplicate_semantic_fields():

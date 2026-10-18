@@ -12,6 +12,11 @@ import re
 import uuid
 
 
+SCORING_STATE_SCHEMA_VERSION = 2
+SCORING_METHODOLOGY_KEY = "jaspen-evidence-weighted-score"
+SCORING_METHODOLOGY_VERSION = "2"
+
+
 def _plain(value):
     """Return stable JSON data without timestamps or presentation-only fields."""
     if isinstance(value, dict):
@@ -287,6 +292,9 @@ def canonical_decision_state(
     *, option_key=None, option_name=None, attributes=None, rubric=None,
     objective="balanced", gates=None, decision_kit=None,
     decision_kit_version=None, canonical_evidence=None,
+    methodology_key=SCORING_METHODOLOGY_KEY,
+    methodology_version=SCORING_METHODOLOGY_VERSION,
+    model_tier=None,
 ):
     facts = {}
     assumptions = []
@@ -299,6 +307,7 @@ def canonical_decision_state(
             "unit": raw.get("unit"),
             "source_id": raw.get("source_id"),
             "locator": raw.get("locator"),
+            "verification": raw.get("verification") or raw.get("verification_status"),
         }
         if entry["source"] == "assumed":
             entry["assumption"] = _plain(raw.get("assumption") or {})
@@ -309,7 +318,15 @@ def canonical_decision_state(
     for item in canonical_evidence or []:
         if not isinstance(item, dict):
             continue
-        evidence.append(_plain(item))
+        # Evidence wording is presentation. Identity is the verified binding
+        # and provenance that made it admissible for this scoring state.
+        evidence.append(_plain({
+            key: item.get(key) for key in (
+                "fact_key", "gate_key", "source", "source_classification",
+                "verification", "verification_status", "provenance",
+                "source_id", "locator",
+            ) if item.get(key) is not None
+        }))
     evidence.sort(key=lambda item: json.dumps(item, sort_keys=True, default=str))
 
     gate_defs = []
@@ -325,7 +342,7 @@ def canonical_decision_state(
     gate_defs.sort(key=lambda item: str(item.get("key") or ""))
 
     return {
-        "schema_version": 1,
+        "schema_version": SCORING_STATE_SCHEMA_VERSION,
         "option_identity": stable_option_identity(option_key, option_name),
         "facts": facts,
         "evidence": evidence,
@@ -336,6 +353,11 @@ def canonical_decision_state(
         "decision_kit": {
             "key": decision_kit,
             "version": decision_kit_version,
+        },
+        "methodology": {
+            "key": methodology_key,
+            "version": methodology_version,
+            "model_tier": str(model_tier or "default"),
         },
     }
 

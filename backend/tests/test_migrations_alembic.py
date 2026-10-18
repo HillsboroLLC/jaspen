@@ -830,3 +830,46 @@ def test_share_disclosure_migration_keeps_legacy_inserts_compatible(tmp_path):
     ]
     assert column[3] == 1  # NOT NULL
     assert column[4] == "'{}'"  # database-level default
+
+
+def test_scorecard_reuse_migration_backfills_identity_and_adds_indexes(tmp_path):
+    db_path = str(tmp_path / 'scorecard_reuse.sqlite')
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute('''CREATE TABLE scorecards (
+            id VARCHAR(255) PRIMARY KEY, organization_id VARCHAR(36), user_id VARCHAR(36),
+            archived_at DATETIME, updated_at DATETIME, data JSON NOT NULL
+        )''')
+        conn.execute(
+            'INSERT INTO scorecards VALUES (?, ?, ?, ?, ?, ?)',
+            ('source', 'org-1', 'user-1', None, '2026-10-17 12:00:00', json.dumps({
+                'decision_fingerprint': 'abc123', 'decision_state_reusable': True,
+                'reuse_provenance': {'source_scorecard_id': 'prior', 'root_scorecard_id': 'root'},
+            })),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    revision = ScriptDirectory(MIGRATIONS_DIR).get_revision('b7e2c9a4f1d6').module
+    with _migration_ops(db_path):
+        revision.upgrade()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            'SELECT decision_fingerprint, decision_state_reusable, reused_from_scorecard_id, reuse_root_scorecard_id '
+            'FROM scorecards WHERE id = ?', ('source',),
+        ).fetchone()
+        indexes = {item[1] for item in conn.execute('PRAGMA index_list(scorecards)')}
+        plan = conn.execute(
+            'EXPLAIN QUERY PLAN SELECT id FROM scorecards WHERE organization_id = ? '
+            'AND decision_fingerprint = ? AND decision_state_reusable = 1 AND archived_at IS NULL '
+            'ORDER BY updated_at DESC', ('org-1', 'abc123'),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert row == ('abc123', 1, 'prior', 'root')
+    assert 'ix_scorecards_org_reuse_lookup' in indexes
+    assert any('INDEX' in str(step[-1]).upper() for step in plan)
