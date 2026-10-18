@@ -1354,3 +1354,55 @@ def test_one_weighted_criterion_is_a_complete_custom_scoring_contract(app, monke
     assert set(result['dimensions']) == {'delivery_fit'}
     assert 'Scoring mode: CUSTOM RUBRIC' in captured['prompt']
     assert 'Delivery fit (100%)' in captured['prompt']
+
+
+def test_user_defined_single_criterion_is_approved_without_confirmation(app, test_user):
+    from app.routes import ai_agent as agent
+
+    result = agent._execute_mutation_tool(
+        'set_scoring_rubric',
+        {'criteria': [{'label': 'Price', 'weight': 100}]},
+        user=test_user, user_id=test_user.id, thread_id='single-user-rubric',
+        user_message='Score only on Price, weight 100%.',
+    )
+
+    assert result['ok'] is True
+    assert result['rubric']['approval_status'] == 'approved'
+    assert result.get('confirmation_required') is not True
+    weighted = [item for item in result['rubric']['criteria'] if not item.get('gate')]
+    assert len(weighted) == 1
+    assert weighted[0]['key'] == 'price'
+    assert weighted[0]['weight'] == 1.0
+
+
+def test_jaspen_proposed_single_criterion_requires_approved_confirmation(app, test_user):
+    from app.routes import ai_agent as agent
+    from app.routes.sessions import save_user_sessions
+
+    thread_id = 'single-proposed-rubric'
+    assert save_user_sessions(test_user.id, {thread_id: {
+        'session_id': thread_id,
+        'decision_kit': 'rfp_bid',
+        'decision_kit_version': 1,
+    }})
+    result = agent._execute_mutation_tool(
+        'set_scoring_rubric',
+        {'criteria': [{'label': 'Price', 'weight': 100}]},
+        user=test_user, user_id=test_user.id, thread_id=thread_id,
+        user_message='I suggest price as the criterion.',
+    )
+
+    assert result['confirmation_required'] is True
+    assert result['code'] == 'single_criterion_confirmation_required'
+    assert result['confirmation'] == (
+        'You’ve chosen one criterion: Price. Score on Price alone, or add another criterion?'
+    )
+    assert [item['label'] for item in result['rubric']['criteria'] if not item.get('gate')] == ['Price']
+    assert any(item.get('gate') for item in result['rubric']['criteria'])
+    assert result['actions'][0]['label'] == 'Score on Price alone'
+
+    shown = {}
+    agent._apply_rubric_action_to_session(shown, [{'result': result}])
+    assert agent._rubric_approval_from_message(
+        'Score on Price alone', shown['scoring_rubric']['criteria'], shown['scoring_rubric'],
+    ) is True

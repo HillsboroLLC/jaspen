@@ -1202,7 +1202,8 @@ def _decision_kit_change_question_needed(session):
 
 def _message_supplies_weighted_rubric(user_message):
     text = str(user_message or "")
-    if len(re.findall(r"\b\d+(?:\.\d+)?\s*%", text)) < 2:
+    percentage_count = len(re.findall(r"\b\d+(?:\.\d+)?\s*%", text))
+    if percentage_count < 1:
         return False
     # Ordinary option facts often contain several percentages. They are not a
     # user-authored rubric, even when the same message asks Jaspen to propose
@@ -1215,7 +1216,19 @@ def _message_supplies_weighted_rubric(user_message):
         if fact_terms.search(clause):
             continue
         weighted_percentages += len(re.findall(r"\b\d+(?:\.\d+)?\s*%", clause))
-    return weighted_percentages >= 2
+    if weighted_percentages >= 2:
+        return True
+    # One criterion is user-owned only when the user unmistakably defines the
+    # scoring contract. A passing percentage fact must never collapse a rubric.
+    return bool(
+        weighted_percentages == 1
+        and re.search(
+            r"\b(?:rubric|criterion|criteria|score\s+(?:only\s+)?(?:on|using)|"
+            r"evaluate\s+(?:only\s+)?(?:on|using)|weight)\b",
+            text,
+            re.I,
+        )
+    )
 
 
 def _rubric_proposal_requested(user_message):
@@ -6041,7 +6054,7 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                     "properties": {
                         "criteria": {
                             "type": "array",
-                            "description": "2 to 12 scoring criteria. Pass weights exactly as the user gave them.",
+                            "description": "1 to 12 scoring criteria. Pass weights exactly as the user gave them. A user-defined single criterion is valid; a Jaspen-proposed single criterion requires confirmation.",
                             "items": {
                                 "type": "object",
                                 "properties": {
@@ -6595,14 +6608,20 @@ def _refresh_decision_record_after_score(user, thread_id):
 
 def _rubric_approval_from_message(message, criteria=None, existing_rubric=None):
     text = str(message or "").strip().lower()
-    labels = [str(item.get("label") or "").strip().lower() for item in (criteria or []) if isinstance(item, dict)]
+    labels = [
+        str(item.get("label") or "").strip().lower()
+        for item in (criteria or [])
+        if isinstance(item, dict) and not item.get("gate")
+    ]
     matched_labels = [label for label in labels if label and label in text]
     explicit_score = bool(re.search(r"\b(?:score|rescore|re-score)\s+(?:it|this|them|these|all|now)(?:\s+now)?\b", text))
     stated_weights = re.findall(r"\b\d+(?:\.\d+)?\s*%?", text)
-    if len(matched_labels) >= 2 and (
+    if len(matched_labels) >= 1 and _message_supplies_weighted_rubric(message) and (
         re.search(r"\d+(?:\.\d+)?\s*%", text)
-        or (explicit_score and len(stated_weights) >= 2)
+        or (explicit_score and len(stated_weights) >= 1)
     ):
+        return True
+    if len(labels) == 1 and re.search(r"\bscore\s+on\b.{0,80}\balone\b", text):
         return True
     if not re.search(r"\b(?:approve|approved|looks good|use (?:this|that|the) rubric|accept (?:this|that|the) rubric)\b", text):
         return False
@@ -6643,7 +6662,7 @@ def _approve_presented_rubric_for_turn(session, *, user_id, thread_id, user_mess
         re.I,
     ))
     explicit_score = bool(re.search(
-        r"\b(?:score|rescore|re-score)\s+(?:it|this|them|these|all|now)(?:\s+now)?\b",
+        r"\b(?:score|rescore|re-score)\s+(?:(?:it|this|them|these|all|now)(?:\s+now)?|on\b.{0,80}\balone\b)",
         text,
         re.I,
     ))
@@ -6739,10 +6758,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 # {"Technical Talent": 18, "Cost": 6} → list of {label, weight}
                 raw = [{"label": k, "weight": v} for k, v in raw.items()]
 
-        if not isinstance(raw, list) or len(raw) < 2:
+        if not isinstance(raw, list) or len(raw) < 1:
             current_app.logger.warning("set_scoring_rubric rejected input shape: %r", tool_input)
             return _tool_error(
-                "Provide at least 2 scoring criteria, each with a label and a weight.",
+                "Provide at least 1 scoring criterion with a label and a weight.",
                 code="invalid_rubric",
             )
         if len(raw) > 12:
@@ -6805,9 +6824,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "gate_rule": (str(c.get("gate_rule") or c.get("rule") or "").strip() or None) if is_gate else None,
             })
 
-        if len(criteria) < 2:
-            current_app.logger.warning("set_scoring_rubric: <2 valid criteria parsed from: %r", tool_input)
-            return _tool_error("Provide at least 2 valid criteria (each needs a label).", code="invalid_rubric")
+        if len(criteria) < 1:
+            current_app.logger.warning("set_scoring_rubric: no valid criteria parsed from: %r", tool_input)
+            return _tool_error("Provide at least 1 valid criterion with a label.", code="invalid_rubric")
 
         # Accept weights given as 0..1 or 0..100; normalize so they sum to 1.0.
         total = sum(c["weight"] for c in criteria if not c.get("gate")) or 1.0
@@ -6865,6 +6884,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         }
         if user_approved:
             rubric_obj["approved_by_user_at"] = _iso_now()
+        weighted_criteria = [item for item in criteria if not item.get("gate")]
+        if len(weighted_criteria) == 1 and not user_approved:
+            label = weighted_criteria[0].get("label") or weighted_criteria[0].get("key") or "this criterion"
+            rubric_obj["single_criterion_confirmation"] = {
+                "criterion_key": weighted_criteria[0].get("key"),
+                "criterion_label": label,
+                "status": "required",
+            }
         # Best-effort immediate persist so a generate_scorecard later in THIS same
         # turn (which reloads sessions from the DB) can already see the rubric.
         # On the very first turn of a brand-new thread the session row does not
@@ -6887,7 +6914,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             )
             for c in criteria
         )
-        return {
+        response = {
             "ok": True,
             "tool": tool_name,
             "rubric": rubric_obj,
@@ -6897,6 +6924,18 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 else f"Proposed scoring rubric saved for your review: {summary}. Approve it or edit it before scoring."
             ),
         }
+        if len(weighted_criteria) == 1 and not user_approved:
+            label = weighted_criteria[0].get("label") or weighted_criteria[0].get("key") or "this criterion"
+            response.update({
+                "confirmation_required": True,
+                "code": "single_criterion_confirmation_required",
+                "confirmation": f"You’ve chosen one criterion: {label}. Score on {label} alone, or add another criterion?",
+                "actions": [
+                    {"label": f"Score on {label} alone", "value": f"Score on {label} alone"},
+                    {"label": "Add criteria", "value": "Add criteria"},
+                ],
+            })
+        return response
 
     if tool_name == "set_option_attributes":
         option = str(tool_input.get("option") or "").strip()
