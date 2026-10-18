@@ -193,6 +193,7 @@ def test_every_execution_task_must_have_valid_lineage_and_cover_every_source():
     invalid, audit = validate_plan_lineage({"tasks": [{"id": "t1", "title": "Generic kickoff", "lineage": []}]}, sources)
     assert invalid is None
     assert audit["dropped_tasks"] == ["t1"]
+    assert audit["dropped_task_details"] == [{"task": "t1", "reason": "missing_lineage"}]
 
 
 def test_validated_plan_preserves_phase_order_dependencies_and_drops_empty_phases():
@@ -213,6 +214,21 @@ def test_validated_plan_preserves_phase_order_dependencies_and_drops_empty_phase
     assert validated["tasks"][1]["dependencies"] == ["a"]
     assert validated["tasks"][2]["dependencies"] == ["b"]
     assert audit["dropped_tasks"] == ["junk"]
+    assert audit["dropped_task_details"] == [{"task": "junk", "reason": "missing_lineage"}]
+
+
+def test_lineage_audit_distinguishes_missing_from_invalid_references():
+    sources = [{"type": "requirement", "ref": "required", "label": "Required", "required": True}]
+    _validated, audit = validate_plan_lineage({"tasks": [
+        {"id": "missing", "title": "No lineage", "lineage": []},
+        {"id": "invalid", "title": "Wrong lineage", "lineage": [
+            {"type": "requirement", "ref": "other"},
+        ]},
+    ]}, sources)
+    assert audit["dropped_task_details"] == [
+        {"task": "missing", "reason": "missing_lineage"},
+        {"task": "invalid", "reason": "invalid_lineage_reference"},
+    ]
 
 
 def test_materialize_keeps_real_phases_and_flat_plan_uses_plan_name():

@@ -119,6 +119,16 @@ def test_execution_plan_retries_once_when_lineage_validation_leaves_too_few_task
     assert usage['input_tokens'] == 20
     assert usage['output_tokens'] == 10
     assert usage['total_tokens'] == 30
+    assert len(usage['component_usages']) == 2
+    first_attempt, second_attempt = usage['component_usages']
+    assert first_attempt['attempt'] == 1
+    assert first_attempt['duration_ms'] >= 0
+    assert first_attempt['lineage_valid_task_count'] == 6
+    assert first_attempt['lineage_dropped_tasks'] == []
+    assert first_attempt['outcome'] == 'insufficient_valid_tasks'
+    assert second_attempt['attempt'] == 2
+    assert second_attempt['lineage_valid_task_count'] == 12
+    assert second_attempt['outcome'] == 'accepted'
 
 
 def test_execution_plan_retries_truncated_json_with_compact_descriptions(app, monkeypatch):
@@ -157,6 +167,8 @@ def test_execution_plan_retries_truncated_json_with_compact_descriptions(app, mo
     assert len(plan['phases']) == 6
     assert usage['stop_reason'] == 'end_turn'
     assert [item['stop_reason'] for item in usage['component_usages']] == ['max_tokens', 'end_turn']
+    assert [item['outcome'] for item in usage['component_usages']] == ['truncated_json', 'accepted']
+    assert all(item['duration_ms'] >= 0 for item in usage['component_usages'])
 
 
 def test_execution_plan_malformed_twice_returns_clean_failure(app, monkeypatch):
@@ -2477,6 +2489,16 @@ def test_malformed_execution_plan_response_is_not_saved_and_records_stop_reason(
     assert operation.status == 'degraded'
     assert operation.metadata_json['stop_reason'] == 'max_tokens'
     assert operation.metadata_json['stop_reasons'] == ['max_tokens', 'max_tokens']
+    assert len(operation.metadata_json['plan_attempts']) == 2
+    assert [item['outcome'] for item in operation.metadata_json['plan_attempts']] == [
+        'truncated_json', 'truncated_json',
+    ]
+    attempts = AIProviderAttempt.query.filter_by(operation_id=operation.id).order_by(
+        AIProviderAttempt.sequence.asc()
+    ).all()
+    assert len(attempts) == 2
+    assert all(item.duration_ms is not None for item in attempts)
+    assert all(item.metadata_json['stop_reason'] == 'max_tokens' for item in attempts)
 
 
 def test_queue_to_route_completes_seven_and_agent_can_compare(client, db, test_user, auth_headers, monkeypatch):

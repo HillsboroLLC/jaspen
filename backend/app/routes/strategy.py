@@ -5668,20 +5668,40 @@ Rules:
             if remaining_seconds <= 1:
                 raise ValueError('wbs_ai_timeout')
             _pool = ThreadPoolExecutor(max_workers=1)
+            attempt_started = time.monotonic()
             _future = _pool.submit(_call_llm, attempt_prompt)
             try:
                 raw_reply, attempt_usage = _future.result(timeout=remaining_seconds)
             except _FuturesTimeout:
                 _future.cancel()
                 raise ValueError('wbs_ai_timeout')
+            except Exception as provider_error:
+                failed_usage = dict(getattr(provider_error, 'jaspen_usage', {}) or {})
+                failed_usage.update({
+                    'attempt': attempt_index + 1,
+                    'duration_ms': max(0, int((time.monotonic() - attempt_started) * 1000)),
+                    'outcome': 'provider_error',
+                })
+                usage_attempts.append(failed_usage)
+                generation_usage = _merged_usage()
+                provider_error.jaspen_usage = generation_usage
+                raise
             finally:
                 _pool.shutdown(wait=False, cancel_futures=True)
             if isinstance(attempt_usage, dict):
+                attempt_usage = dict(attempt_usage)
+                attempt_usage.update({
+                    'attempt': attempt_index + 1,
+                    'duration_ms': max(0, int((time.monotonic() - attempt_started) * 1000)),
+                })
                 usage_attempts.append(attempt_usage)
             generation_usage = _merged_usage()
             try:
                 parsed = _extract_json_object(raw_reply)
             except (TypeError, ValueError) as parse_error:
+                if usage_attempts:
+                    usage_attempts[-1]['outcome'] = 'truncated_json' if _was_truncated(attempt_usage) else 'malformed_json'
+                    generation_usage = _merged_usage()
                 if attempt_index == 0:
                     compact_note = (
                         ' The provider stopped at its output-token limit. Keep all 10-18 tasks and 4-6 phases, '
@@ -5706,8 +5726,19 @@ Rules:
                 raise ValueError('invalid_wbs_response')
             from ..decision_lineage import assign_team_owners, validate_plan_lineage
             validated, lineage_result = validate_plan_lineage(parsed, lineage_sources or [])
+            if usage_attempts:
+                usage_attempts[-1].update({
+                    'outcome': 'accepted' if validated is not None else 'lineage_rejected',
+                    'lineage_valid_task_count': int((lineage_result or {}).get('valid_task_count') or 0),
+                    'lineage_dropped_tasks': list((lineage_result or {}).get('dropped_task_details') or []),
+                    'lineage_missing_sources': list((lineage_result or {}).get('missing_sources') or []),
+                })
+                generation_usage = _merged_usage()
             valid_task_count = int((lineage_result or {}).get('valid_task_count') or 0)
             if valid_task_count < 10:
+                if usage_attempts:
+                    usage_attempts[-1]['outcome'] = 'insufficient_valid_tasks'
+                    generation_usage = _merged_usage()
                 missing_coverage = [f'valid tasks after lineage validation: {valid_task_count}; minimum required: 10']
                 dropped = (lineage_result or {}).get('dropped_tasks') or []
                 if dropped:
@@ -5733,6 +5764,9 @@ Rules:
                 error = ValueError('invalid_plan_lineage')
                 error.lineage_result = lineage_result
                 raise error
+            if usage_attempts:
+                usage_attempts[-1]['outcome'] = 'accepted'
+                generation_usage = _merged_usage()
             validated = assign_team_owners(validated, team or [])
             validated['lineage_sources'] = list(lineage_sources or [])
             validated['lineage_validation'] = lineage_result
@@ -7824,6 +7858,23 @@ def generate_ai_wbs(thread_id):
                     item.get('stop_reason')
                     for item in (provider_usage.get('component_usages') or [])
                     if isinstance(item, dict) and item.get('stop_reason')
+                ],
+                'plan_attempts': [
+                    {
+                        'attempt': item.get('attempt'),
+                        'duration_ms': item.get('duration_ms'),
+                        'output_tokens': int(item.get('output_tokens') or 0),
+                        'stop_reason': item.get('stop_reason'),
+                        'outcome': item.get('outcome'),
+                        'lineage_valid_task_count': item.get('lineage_valid_task_count'),
+                        'lineage_dropped_tasks': list(item.get('lineage_dropped_tasks') or []),
+                        'lineage_missing_sources': list(item.get('lineage_missing_sources') or []),
+                    }
+                    for item in (
+                        provider_usage.get('component_usages')
+                        or ([provider_usage] if provider_usage.get('attempt') else [])
+                    )
+                    if isinstance(item, dict)
                 ],
             },
             persist_ai_operation=False,

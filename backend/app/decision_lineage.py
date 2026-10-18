@@ -58,7 +58,7 @@ def build_lineage_sources(scorecard, kit=None, decision_record=None):
 def validate_plan_lineage(plan, sources):
     plan = dict(plan) if isinstance(plan, dict) else {}
     valid = {(item["type"], str(item["ref"])): item for item in sources or [] if item.get("type") in VALID_LINEAGE_TYPES and item.get("ref")}
-    tasks, dropped, covered = [], [], set()
+    tasks, dropped, dropped_details, covered = [], [], [], set()
     phase_source = plan.get("phases") if isinstance(plan.get("phases"), list) else None
     phase_order = []
     raw_tasks = []
@@ -90,12 +90,19 @@ def validate_plan_lineage(plan, sources):
         if normalized:
             tasks.append({**task, "lineage": normalized})
         else:
-            dropped.append(str(task.get("id") or task.get("title") or "unlinked task"))
+            task_label = str(task.get("id") or task.get("title") or "unlinked task")
+            dropped.append(task_label)
+            supplied_links = [link for link in (task.get("lineage") or []) if isinstance(link, dict)]
+            dropped_details.append({
+                "task": task_label,
+                "reason": "invalid_lineage_reference" if supplied_links else "missing_lineage",
+            })
     missing = [item for identity, item in valid.items() if item.get("required") and identity not in covered]
     if not tasks or missing:
         return None, {
             "code": "invalid_plan_lineage",
             "dropped_tasks": dropped,
+            "dropped_task_details": dropped_details,
             "missing_sources": missing,
             "valid_task_count": len(tasks),
         }
@@ -138,6 +145,7 @@ def validate_plan_lineage(plan, sources):
             phases.append({"name": phase_name, "tasks": phase_tasks})
     return {**plan, "tasks": tasks, "phases": phases}, {
         "dropped_tasks": dropped,
+        "dropped_task_details": dropped_details,
         "missing_sources": [],
         "valid_task_count": len(tasks),
     }

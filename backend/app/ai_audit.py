@@ -160,7 +160,13 @@ def persist_operation(
     if usage.get('degraded') and not usage.get('billable_action_completed') and (usage.get('input_tokens') or usage.get('output_tokens')):
         # A syntactically invalid/thin plan may still incur provider cost.
         # Retain that attempt as absorbed cost, never as a successful generation.
-        failed_attempts.append({**usage, 'outcome': 'invalid_response', 'error_code': usage.get('error_code')})
+        components = [
+            item for item in (usage.get('component_usages') or []) if isinstance(item, dict)
+        ]
+        if components:
+            failed_attempts.extend({**item, 'outcome': item.get('outcome') or 'invalid_response'} for item in components)
+        else:
+            failed_attempts.append({**usage, 'outcome': 'invalid_response', 'error_code': usage.get('error_code')})
     success = bool(success and usage_is_billable_success(usage))
     successful_cost = _successful_provider_cost(usage) if success else 0.0
     failed_costs = [_attempt_cost(item) for item in failed_attempts]
@@ -231,6 +237,20 @@ def persist_operation(
             for item in (usage.get('component_usages') or [])
             if isinstance(item, dict) and item.get('stop_reason')
         ],
+        'plan_attempts': [
+            {
+                'attempt': item.get('attempt'),
+                'duration_ms': item.get('duration_ms'),
+                'output_tokens': int(item.get('output_tokens') or 0),
+                'stop_reason': item.get('stop_reason'),
+                'outcome': item.get('outcome'),
+                'lineage_valid_task_count': item.get('lineage_valid_task_count'),
+                'lineage_dropped_tasks': list(item.get('lineage_dropped_tasks') or []),
+                'lineage_missing_sources': list(item.get('lineage_missing_sources') or []),
+            }
+            for item in (usage.get('component_usages') or ([usage] if usage.get('attempt') else []))
+            if isinstance(item, dict)
+        ],
     }
     if existing is None:
         db.session.add(operation)
@@ -256,6 +276,11 @@ def persist_operation(
             metadata_json={
                 'provider_cost_estimated': bool(cost_estimated),
                 'estimate_method': item.get('estimate_method') if cost_estimated else None,
+                'attempt': item.get('attempt'),
+                'stop_reason': item.get('stop_reason'),
+                'lineage_valid_task_count': item.get('lineage_valid_task_count'),
+                'lineage_dropped_tasks': list(item.get('lineage_dropped_tasks') or []),
+                'lineage_missing_sources': list(item.get('lineage_missing_sources') or []),
             },
         ))
         sequence += 1
@@ -276,6 +301,7 @@ def persist_operation(
                 provider=str(component.get('provider') or 'unknown'),
                 model=str(component.get('model') or '').strip() or None,
                 outcome='succeeded',
+                duration_ms=component.get('duration_ms'),
                 input_tokens=int(component.get('input_tokens') or 0),
                 output_tokens=int(component.get('output_tokens') or 0),
                 raw_provider_cost_usd=Decimal(str(component_cost or 0)),
@@ -285,6 +311,10 @@ def persist_operation(
                     'component_index': index,
                     'settled_once_at_operation': True,
                     'stop_reason': component.get('stop_reason'),
+                    'attempt': component.get('attempt'),
+                    'lineage_valid_task_count': component.get('lineage_valid_task_count'),
+                    'lineage_dropped_tasks': list(component.get('lineage_dropped_tasks') or []),
+                    'lineage_missing_sources': list(component.get('lineage_missing_sources') or []),
                 },
             ))
             sequence += 1
