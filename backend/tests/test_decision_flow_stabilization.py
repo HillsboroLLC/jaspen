@@ -1364,6 +1364,81 @@ def test_score_now_uses_proposed_kit_rubric_without_approval_stop(app, db, test_
     assert 'approve' not in detail.lower()
 
 
+@pytest.mark.parametrize('score_request', [
+    'Correction: delivery is June 1. Re-score with that.',
+    'Rescore with that.',
+    'Update the score.',
+    'Score again.',
+])
+def test_authorized_proposed_rubric_allows_natural_rescore_requests(app, score_request):
+    _, agent = modules()
+    session = {
+        'scoring_rubric': {
+            'approval_status': 'proposed',
+            'source': 'jaspen_proposed',
+            'criteria': [
+                {'key': 'value', 'label': 'Value', 'weight': 0.6},
+                {'key': 'risk', 'label': 'Risk', 'weight': 0.4},
+            ],
+        },
+    }
+
+    assert agent._guard_mutation_tool(
+        'generate_scorecard', user_turn_count=1, mutations_this_turn=0,
+        user_message='Score it now.', session=session,
+    ) is None
+    assert session['scoring_rubric']['approval_status'] == 'proposed'
+    assert session['scoring_rubric']['scoring_authorized_by'] == 'explicit_score_request'
+
+    assert agent._guard_mutation_tool(
+        'generate_scorecard', user_turn_count=2, mutations_this_turn=0,
+        user_message=score_request, session=session,
+    ) is None
+    assert session['scoring_rubric']['approval_status'] == 'proposed'
+    assert 'approved_by_user_at' not in session['scoring_rubric']
+
+
+def test_changed_rubric_after_authorized_score_shows_criteria_and_approve_action(app):
+    _, agent = modules()
+    session = {
+        'scoring_rubric': {
+            'approval_status': 'proposed',
+            'source': 'jaspen_proposed',
+            'criteria': [{'key': 'value', 'label': 'Value', 'weight': 1.0}],
+        },
+    }
+    assert agent._guard_mutation_tool(
+        'generate_scorecard', user_turn_count=1, mutations_this_turn=0,
+        user_message='Score it now.', session=session,
+    ) is None
+
+    session['scoring_rubric'] = {
+        'approval_status': 'proposed',
+        'source': 'jaspen_proposed',
+        'criteria': [
+            {'key': 'value', 'label': 'Value', 'weight': 0.7},
+            {'key': 'risk', 'label': 'Risk', 'weight': 0.3},
+        ],
+    }
+    result = agent._guard_mutation_tool(
+        'generate_scorecard', user_turn_count=2, mutations_this_turn=0,
+        user_message='Re-score with that.', session=session,
+    )
+
+    assert result['code'] == 'rubric_approval_required'
+    assert result['confirmation_required'] is True
+    assert '- Value: weight 70%' in result['confirmation']
+    assert '- Risk: weight 30%' in result['confirmation']
+    assert result['actions'][0] == {
+        'label': 'Approve rubric', 'value': 'Approve this rubric',
+    }
+    reply = agent._finalize_agent_reply(
+        'Re-scoring now.', '', [], user_id='u', thread_id='t',
+        executed_actions=[{'tool': 'generate_scorecard', 'result': result}],
+    )
+    assert reply == result['confirmation']
+
+
 def test_plain_looks_good_approves_conversational_criteria_summary(app, db, test_user):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions, save_user_sessions
@@ -2059,7 +2134,10 @@ def test_blocked_queue_reply_requires_rubric_approval_instead_of_claiming_it_was
         'Queued 2 ideas.', '', [], user_id=test_user.id, thread_id='blocked-queue',
         executed_actions=[{'tool': 'queue_scorecards', 'result': result}],
     )
-    assert reply == 'Approve the proposed rubric to continue scoring, then try again.'
+    assert 'Approve this proposed scoring rubric to continue scoring:' in reply
+    assert '- Value: weight 60%' in reply
+    assert '- Risk: weight 40%' in reply
+    assert result['actions'][0]['label'] == 'Approve rubric'
 
 
 def test_active_decision_kit_adds_required_gates_to_a_custom_proposed_rubric(app, db, test_user):

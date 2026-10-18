@@ -3506,7 +3506,10 @@ def _finalize_agent_reply(
     blocked_scoring = _blocked_scoring_action(executed_actions)
     if blocked_scoring:
         if str(blocked_scoring.get("code") or "") == "rubric_approval_required":
-            return "Approve the proposed rubric to continue scoring, then try again."
+            return str(
+                blocked_scoring.get("confirmation")
+                or "Approve the proposed rubric to continue scoring, then try again."
+            )
         return str(blocked_scoring.get("error") or "Scoring did not start.")
     for action in executed_actions or []:
         if not isinstance(action, dict) or action.get("tool") != "queue_scorecards":
@@ -3776,7 +3779,11 @@ def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn, use
     if normalized_tool in _EXEMPT_MUTATION_TOOLS and normalized_tool != "queue_scorecards":
         return None
     explicit_score = bool(re.search(
-        r"\b(?:score|rescore|re-score)\s+(?:it|this|them|these|all|now)(?:\s+now)?\b",
+        r"\b(?:"
+        r"score\s+(?:(?:it|this|them|these|all|now)(?:\s+now)?|again)"
+        r"|re-?score(?:\s+(?:(?:it|this|them|these|all|now)(?:\s+now)?|again|with\s+that))?"
+        r"|update\s+(?:the\s+)?score"
+        r")\b",
         str(user_message or ""), re.I,
     ))
     _ensure_session_decision_kit_gates(session)
@@ -3789,26 +3796,50 @@ def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn, use
             "I couldn’t verify and save the fact update, so I did not re-score. Your existing scorecard is unchanged. Try again.",
             code="fact_update_required",
         )
-    from ..decision_state import rubric_is_approved
+    from ..decision_state import rubric_is_approved, rubric_is_scoring_authorized
     if score_tool and explicit_score and isinstance(session, dict):
         session["scoring_intent"] = {"status": "requested", "source": "user"}
     if score_tool and rubric_ready and not rubric_is_approved(rubric):
         # An explicit score request may use Jaspen's standard proposal without
         # falsely recording it as user-approved. If the user has already seen
         # the full rubric, the same instruction also approves that exact rubric.
-        if explicit_score and rubric.get("presented_at"):
+        # Authorization remains attached to the exact rubric that was scored,
+        # so later fact corrections can re-score without inventing approval. A
+        # replacement proposal has no authorization and cannot inherit it.
+        if rubric_is_scoring_authorized(rubric):
+            session["scoring_with_proposed_rubric"] = True
+        elif explicit_score and rubric.get("presented_at") and not session.get("scoring_with_proposed_rubric"):
             rubric["approved_by_user_at"] = _iso_now()
             rubric["approval_status"] = "approved"
             rubric["source"] = "user"
-        elif explicit_score and rubric.get("source") == "jaspen_proposed":
+        elif explicit_score and rubric.get("source") == "jaspen_proposed" and not session.get("scoring_with_proposed_rubric"):
             rubric["scoring_authorized_by"] = "explicit_score_request"
             rubric["scoring_authorized_at"] = _iso_now()
             session["scoring_with_proposed_rubric"] = True
         else:
-            return _tool_error(
-                "The scoring rubric is proposed and needs the user's approval before scoring.",
-                code="rubric_approval_required",
-            )
+            lines = ["Approve this proposed scoring rubric to continue scoring:"]
+            for item in rubric.get("criteria") or []:
+                if not isinstance(item, dict):
+                    continue
+                label = item.get("label") or item.get("key") or "Criterion"
+                if item.get("gate"):
+                    lines.append(f"- {label}: required gate")
+                else:
+                    weight = int(round(float(item.get("weight") or 0) * 100))
+                    lines.append(f"- {label}: weight {weight}%")
+            lines.append("Approve this rubric, or tell me what to change.")
+            return {
+                "ok": False,
+                "code": "rubric_approval_required",
+                "error": "The scoring rubric is proposed and needs the user's approval before scoring.",
+                "confirmation_required": True,
+                "confirmation": "\n".join(lines),
+                "rubric": copy.deepcopy(rubric),
+                "actions": [
+                    {"label": "Approve rubric", "value": "Approve this rubric"},
+                    {"label": "Change rubric", "value": "Change the rubric"},
+                ],
+            }
     if normalized_tool == "queue_scorecards":
         return None
     if user_turn_count <= 1 and not (score_tool and explicit_score and rubric_ready):
