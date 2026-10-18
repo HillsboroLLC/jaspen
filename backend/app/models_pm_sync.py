@@ -48,6 +48,9 @@ class PmSyncBinding(db.Model):
     )
 
     def to_dict(self):
+        from app.pm_sync.access import binding_owner_payload
+
+        config = self.config or {}
         return {
             "id": self.id,
             "thread_id": self.thread_id,
@@ -60,9 +63,12 @@ class PmSyncBinding(db.Model):
             "field_policy_overrides": self.field_policy_overrides or {},
             "policy_set_by_user_id": self.policy_set_by_user_id,
             "policy_set_at": _utc_iso(self.policy_set_at),
-            "config": self.config or {},
+            "config": config,
             "user_map": self.user_map or {},
             "status": self.status,
+            "sync_owner": binding_owner_payload(self),
+            "sync_warning_code": config.get("sync_warning_code"),
+            "pause_reason": config.get("pause_reason"),
             "last_pull_at": _utc_iso(self.last_pull_at),
             "last_push_at": _utc_iso(self.last_push_at),
             "last_success_at": _utc_iso(self.last_success_at),

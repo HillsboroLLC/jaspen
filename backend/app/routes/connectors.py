@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 from flask import Blueprint, current_app, jsonify, redirect, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
-from app import limiter
+from app import db, limiter
 from app.admin_audit import append_user_audit_event
 from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_operation
 from app.billing_config import to_public_plan
@@ -1085,6 +1085,13 @@ def update_connector(connector_id):
                 }), 400
 
     saved = update_connector_settings(user.id, connector_id, updates)
+    if connector_id == "jira_sync":
+        from app.pm_sync.access import pause_personal_bindings, resume_personal_bindings
+        if desired_status == "disconnected":
+            pause_personal_bindings(user.id, connector_id, "credential_disconnected")
+        elif desired_status == "connected":
+            resume_personal_bindings(user.id, connector_id)
+        db.session.commit()
     _, updated_views = _connector_views_for_user(user)
     updated_view = next((item for item in updated_views if item["id"] == connector_id), None)
 

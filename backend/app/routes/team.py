@@ -461,6 +461,17 @@ def remove_member(member_id):
         return jsonify({"error": "Use leave-organization flow to remove yourself"}), 400
 
     removed_user = User.query.get(target.user_id)
+    from app.models_pm_sync import PmSyncBinding
+    from app.pm_sync.access import mark_binding
+    for binding in PmSyncBinding.query.filter_by(
+        user_id=str(target.user_id), organization_id=str(org.id)
+    ).all():
+        mark_binding(
+            binding,
+            status="paused",
+            warning_code="sync_owner_left_organization",
+            pause_reason="sync_owner_left_organization",
+        )
     db.session.delete(target)
     if removed_user and removed_user.active_organization_id == org.id:
         removed_user.active_organization_id = None

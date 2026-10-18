@@ -381,6 +381,9 @@ def ensure_task_parent(
 
 
 def push_binding(binding, plan=None, trigger="send"):
+    from app.pm_sync.access import enforce_binding_owner
+
+    enforce_binding_owner(binding)
     if binding.status == "paused":
         raise ValueError("This Jira sync is paused.")
     if plan is None:

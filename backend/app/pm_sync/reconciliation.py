@@ -102,6 +102,9 @@ def _log(binding, trigger, result):
 
 
 def reconcile_binding(binding, trigger="sync_now"):
+    from app.pm_sync.access import enforce_binding_owner, mark_binding
+
+    enforce_binding_owner(binding)
     if binding.mode == "push_only":
         return push_binding(binding, trigger=trigger)
     plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key)
@@ -300,6 +303,12 @@ def reconcile_binding(binding, trigger="sync_now"):
         result["errors"].extend(pushed.get("errors") or [])
     now = datetime.utcnow(); binding.last_pull_at = now; binding.last_push_at = now
     binding.status = "partial" if result["conflicts"] else ("error" if result["errors"] else "active")
+    if result["errors"]:
+        mark_binding(binding, status=binding.status, warning_code="sync_failed")
+    elif result["conflicts"]:
+        mark_binding(binding, status=binding.status, warning_code="sync_conflict")
+    else:
+        mark_binding(binding, status="active")
     if not result["errors"] and not result["conflicts"]:
         binding.last_success_at = now; binding.failure_count = 0; binding.next_retry_at = None
     _log(binding, trigger, result); db.session.commit()

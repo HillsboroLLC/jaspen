@@ -707,6 +707,17 @@ def remove_team_member(org_id, member_id):
     if str(target.user_id) == str(user.id):
         return jsonify({"error": "Use leave flow to remove yourself"}), 400
 
+    from app.models_pm_sync import PmSyncBinding
+    from app.pm_sync.access import mark_binding
+    for binding in PmSyncBinding.query.filter_by(
+        user_id=str(target.user_id), organization_id=str(org.id)
+    ).all():
+        mark_binding(
+            binding,
+            status="paused",
+            warning_code="sync_owner_left_organization",
+            pause_reason="sync_owner_left_organization",
+        )
     db.session.delete(target)
     db.session.commit()
     return jsonify({"success": True}), 200

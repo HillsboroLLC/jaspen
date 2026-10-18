@@ -4,7 +4,7 @@ from unittest.mock import call, patch
 import pytest
 
 from app import db as app_db
-from app.models import ConnectorSyncLog
+from app.models import ConnectorSyncLog, Organization, OrganizationMember, User
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync.service import _sync_phases, create_binding, preview, push_binding
 from app.pm_sync.reconciliation import reconcile_binding, resolve_conflict
@@ -51,6 +51,20 @@ def test_binding_timestamps_are_serialized_as_utc(test_user):
 
     assert payload["last_success_at"] == "2026-10-13T01:26:45Z"
     assert payload["created_at"].endswith("Z")
+
+
+def test_binding_payload_identifies_personal_sync_owner(test_user):
+    binding = _binding(test_user)
+
+    payload = binding.to_dict()
+
+    assert payload["sync_owner"] == {
+        "user_id": str(test_user.id),
+        "name": "Test User",
+        "email": "test@example.com",
+        "available": True,
+    }
+    assert payload["sync_warning_code"] is None
 
 def test_preview_is_deterministic_and_counts_dependencies():
     assert preview(PLAN, group_under_epics=True) == {
@@ -956,6 +970,63 @@ def test_linked_binding_auth_failure_requires_reconnect(client, auth_headers, te
     assert response.get_json()["code"] == "JIRA_RECONNECT_REQUIRED"
     app_db.session.refresh(binding)
     assert binding.status == "reconnect_required"
+    assert binding.config["sync_warning_code"] == "authorization_expired"
+
+
+def test_teammate_cannot_read_or_trigger_another_persons_binding(
+    client, auth_headers, admin_user,
+):
+    binding = _binding(admin_user)
+
+    detail = client.get(f"/api/v1/pm-sync/bindings/{binding.id}", headers=auth_headers)
+    sync = client.post(f"/api/v1/pm-sync/bindings/{binding.id}/sync", headers=auth_headers)
+
+    assert detail.status_code == 404
+    assert sync.status_code == 404
+
+
+def test_owner_leaving_organization_pauses_binding_without_touching_jira(test_user):
+    from app.pm_sync.service import push_binding
+
+    org = Organization(name="Acme", slug="acme-pm-sync", owner_user_id=test_user.id, plan_key="team")
+    app_db.session.add(org)
+    app_db.session.flush()
+    membership = OrganizationMember(
+        organization_id=org.id, user_id=test_user.id, role="owner", status="active",
+    )
+    app_db.session.add(membership)
+    test_user.active_organization_id = org.id
+    binding = _binding(test_user)
+    binding.organization_id = org.id
+    app_db.session.commit()
+    app_db.session.delete(membership)
+    app_db.session.commit()
+
+    with patch("app.pm_sync.service.jira_adapter.assert_connected") as connected:
+        with pytest.raises(PermissionError, match="sync_owner_left_organization"):
+            push_binding(binding, PLAN)
+
+    connected.assert_not_called()
+    app_db.session.refresh(binding)
+    assert binding.status == "paused"
+    assert binding.config["pause_reason"] == "sync_owner_left_organization"
+    assert PmSyncLink.query.filter_by(binding_id=binding.id).count() == 0
+
+
+def test_disconnect_pauses_personal_jira_bindings(client, auth_headers, test_user):
+    binding = _binding(test_user)
+
+    response = client.patch(
+        "/api/v1/connectors/jira_sync",
+        headers=auth_headers,
+        json={"connection_status": "disconnected"},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    app_db.session.refresh(binding)
+    assert binding.status == "paused"
+    assert binding.config["pause_reason"] == "credential_disconnected"
+    assert PmSyncLink.query.filter_by(binding_id=binding.id).count() == 0
 
 
 def test_failed_connection_never_persists_credentials(client, auth_headers):

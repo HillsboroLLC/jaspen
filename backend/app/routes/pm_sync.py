@@ -40,7 +40,8 @@ def _jira_connection(user_id):
 
 def _reconnect_response(user, binding=None):
     if binding is not None:
-        binding.status = "reconnect_required"
+        from app.pm_sync.access import mark_binding
+        mark_binding(binding, status="reconnect_required", warning_code="authorization_expired")
         db.session.commit()
     return jsonify({
         "error": "Your saved Jira connection no longer works. Enter a new API token to continue.",
@@ -104,6 +105,9 @@ def jira_connect():
             "connection_status": "connected", "lifecycle_status": "connected",
             "last_verified_at": __import__("datetime").datetime.utcnow().isoformat(),
         })
+        from app.pm_sync.access import resume_personal_bindings
+        resume_personal_bindings(user.id, "jira_sync")
+        db.session.commit()
         append_sync_audit_event(
             user.id, "jira_sync", action="config_update", status="success",
             message="Jira connection saved", metadata={"connected": True},
@@ -188,7 +192,17 @@ def list_bindings():
         query = query.filter_by(plan_key=plan_key)
     if connector_id:
         query = query.filter_by(connector_id=connector_id)
-    return jsonify({"bindings": [row.to_dict() for row in query.order_by(PmSyncBinding.created_at.desc()).all()]})
+    rows = query.order_by(PmSyncBinding.created_at.desc()).all()
+    from app.pm_sync.access import binding_owner_pause_reason, mark_binding
+    changed = False
+    for row in rows:
+        reason = binding_owner_pause_reason(row)
+        if reason and row.status != "paused":
+            mark_binding(row, status="paused", warning_code=reason, pause_reason=reason)
+            changed = True
+    if changed:
+        db.session.commit()
+    return jsonify({"bindings": [row.to_dict() for row in rows]})
 
 
 @pm_sync_bp.route("/bindings/<binding_id>", methods=["GET"])
