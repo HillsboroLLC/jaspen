@@ -225,3 +225,35 @@ it('shows the Jira default-assignee note once in sync history', async () => {
   fireEvent.click(await screen.findByText('Sync history'));
   expect(screen.getByText('Jira assigns new issues to Lydia Bailey by default; Jaspen kept its own owners')).toBeInTheDocument();
 });
+
+it('shows the personal sync owner directly under sync status', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
+    id:'bind-owner', status:'active', mode:'two_way',
+    sync_owner:{ name:'Lydia Bailey', email:'lydia@example.com', available:true },
+  }] });
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  expect(await screen.findByText('Synced by Lydia Bailey with their Jira account')).toBeInTheDocument();
+});
+
+it('shows the approved authorization and departed-owner warnings', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValueOnce({ bindings: [{
+    id:'bind-expired', status:'reconnect_required', mode:'two_way',
+    sync_warning_code:'authorization_expired',
+    sync_owner:{ name:'Avery', available:true },
+  }] });
+  const { unmount } = render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Jira needs to be reconnected by Avery before this plan can sync.'
+  );
+  unmount();
+
+  Jaspen.listPmSyncBindings.mockResolvedValueOnce({ bindings: [{
+    id:'bind-left', status:'paused', mode:'two_way',
+    pause_reason:'sync_owner_left_organization',
+    sync_owner:{ name:'Former teammate', available:true },
+  }] });
+  render(<PmSyncPanel threadId="thread-2" planKey="score-2" taskCount={3} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Sync is paused because the person who connected Jira no longer has access.'
+  );
+});

@@ -318,6 +318,32 @@ it('renders connector activity newest first with readable names', async () => {
   expect(labels).toEqual(['Portfolio evidence refreshed', 'Execution plan sync completed', 'Connection or settings saved']);
 });
 
+it('shows execution sync ownership and authorization warnings on the connector page', async () => {
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) return Promise.resolve(response({ connectors: [{
+      id:'jira_sync', label:'Jira', implementation_status:'implemented',
+      lifecycle_status:'connected', connected:true,
+      settings:{ jira_base_url:'https://acme.atlassian.net', jira_email:'owner@acme.test', jira_api_token:'__saved__' },
+      jira:{ data_project_scope:'all' },
+    }] }));
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success:true, sessions:[{ session_id:'thread-1', name:'Road decision' }] }));
+    if (String(url).includes('/api/v1/pm-sync/bindings')) return Promise.resolve(response({ bindings:[{
+      id:'binding-1', thread_id:'thread-1', plan_key:'score-1', connector_id:'jira_sync',
+      external_container_id:'JPT', status:'reconnect_required', sync_warning_code:'authorization_expired',
+      sync_owner:{ name:'Lydia Bailey', email:'owner@acme.test', available:true },
+    }] }));
+    if (String(url).includes('/api/v1/connectors/jira/projects')) return Promise.resolve(response({ success:true, projects:[] }));
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events:[] }));
+    if (String(url).includes('/health')) return Promise.resolve(response({ live_status:{ status:'healthy', message:'Connection successful' } }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+  expect(await screen.findByText('Synced by Lydia Bailey with their Jira account')).toBeInTheDocument();
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'Jira needs to be reconnected by Lydia Bailey before this plan can sync.'
+  );
+});
+
 
 it('shows connection fields immediately for Jira, Smartsheet, Salesforce, and Snowflake', async () => {
   mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };

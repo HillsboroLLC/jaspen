@@ -1706,6 +1706,16 @@ export default function ConnectorsManage() {
                             <span>{binding.external_container_id}</span>
                             <span>{binding.last_success_at ? `Last synced ${formatLocalTimestamp(binding.last_success_at)}` : 'Not synced yet'}</span>
                             <span>{String(binding.status || 'active').replace('_', ' ')}</span>
+                            <span>Synced by {binding.sync_owner?.name || binding.sync_owner?.email || 'the person who connected Jira'} with their Jira account</span>
+                            {(binding.sync_warning_code === 'authorization_expired' || binding.status === 'reconnect_required') && (
+                              <span role="alert">Jira needs to be reconnected by {binding.sync_owner?.name || binding.sync_owner?.email || 'the connection owner'} before this plan can sync.</span>
+                            )}
+                            {['sync_owner_left_organization', 'sync_owner_unavailable'].includes(binding.pause_reason || binding.sync_warning_code) && (
+                              <span role="alert">Sync is paused because the person who connected Jira no longer has access.</span>
+                            )}
+                            {binding.sync_warning_code === 'sync_failed' && (
+                              <span role="alert">Jira sync needs attention. Open the plan to retry.</span>
+                            )}
                           </li>)}
                         </ul>
                       )}

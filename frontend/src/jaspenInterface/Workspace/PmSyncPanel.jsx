@@ -19,6 +19,29 @@ const inputStyle = {
 };
 const RECONNECT_MESSAGE = 'Your saved Jira connection no longer works. Enter a new API token to continue.';
 
+export function syncOwnerLabel(binding) {
+  const owner = binding?.sync_owner || {};
+  return owner.name || owner.email || 'the person who connected Jira';
+}
+
+export function syncWarningMessage(binding) {
+  const owner = syncOwnerLabel(binding);
+  const code = binding?.sync_warning_code || binding?.pause_reason;
+  if (code === 'authorization_expired' || binding?.status === 'reconnect_required') {
+    return `Jira needs to be reconnected by ${owner} before this plan can sync.`;
+  }
+  if (code === 'sync_owner_left_organization' || code === 'sync_owner_unavailable') {
+    return 'Sync is paused because the person who connected Jira no longer has access.';
+  }
+  if (code === 'credential_disconnected') {
+    return `Jira was disconnected by ${owner}. Reconnect Jira before this plan can sync.`;
+  }
+  if (code === 'sync_failed' || binding?.status === 'error') {
+    return `Jira sync needs attention. ${owner} can retry or reconnect Jira.`;
+  }
+  return '';
+}
+
 function connectionDraft(info = {}) {
   return {
     jira_base_url: String(info?.base_url || ''),
@@ -281,13 +304,17 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     finally { setBusy(false); }
   };
 
-  if (binding && !open) return <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', maxWidth: compact ? 430 : 'none' }}>
-    <span style={{ ...buttonStyle, cursor: 'default', color: ['error', 'reconnect_required'].includes(binding.status) ? '#b91c1c' : COLOR.greenInk }}>
-      ● {binding.status === 'active' ? 'Synced with Jira' : binding.status === 'reconnect_required' ? 'Reconnect Jira' : `Jira · ${binding.status}`}{binding.last_success_at ? ` · ${new Date(binding.last_success_at).toLocaleString()}` : ''}
-    </span>
+  if (binding && !open) return <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', maxWidth: compact ? 560 : 'none' }}>
+    <div style={{ display:'grid', gap:3 }}>
+      <span style={{ ...buttonStyle, cursor: 'default', color: ['error', 'reconnect_required', 'paused'].includes(binding.status) ? '#b91c1c' : COLOR.greenInk }}>
+        ● {binding.status === 'active' ? 'Synced with Jira' : binding.status === 'reconnect_required' ? 'Reconnect Jira' : `Jira · ${binding.status}`}{binding.last_success_at ? ` · ${new Date(binding.last_success_at).toLocaleString()}` : ''}
+      </span>
+      <span style={{ color:COLOR.ink, fontSize:11.5 }}>Synced by {syncOwnerLabel(binding)} with their Jira account</span>
+      {syncWarningMessage(binding) && <span role="alert" style={{ color:'#b91c1c', fontSize:11.5 }}>{syncWarningMessage(binding)}</span>}
+    </div>
     <label style={{ ...buttonStyle, display:'inline-flex', gap:6, alignItems:'center' }}><input type="checkbox" checked={binding.mode === 'two_way'} onChange={(e) => toggleTwoWay(e.target.checked)} />Two-way sync</label>
     <button type="button" onClick={syncNow} disabled={busy} style={buttonStyle}>{busy ? 'Syncing…' : 'Sync now'}</button>
-    {binding.status === 'reconnect_required' && <button type="button" onClick={reconnectBinding} disabled={busy} style={buttonStyle}>Reconnect Jira</button>}
+    {(binding.status === 'reconnect_required' || binding.pause_reason === 'credential_disconnected') && <button type="button" onClick={reconnectBinding} disabled={busy} style={buttonStyle}>Reconnect Jira</button>}
     {binding.external_container_url && <a href={binding.external_container_url} target="_blank" rel="noreferrer" style={{ ...buttonStyle, textDecoration: 'none' }}>View in Jira</a>}
     {error && <span role="alert" style={{ color: '#b91c1c', fontSize: 11.5 }}>{error}</span>}
     {syncNotice && <span role="status" style={{ color: COLOR.greenInk, fontSize: 11.5 }}>{syncNotice}</span>}
