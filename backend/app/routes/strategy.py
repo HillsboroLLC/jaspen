@@ -5671,7 +5671,7 @@ The execution plan is valid except that these required decision-lineage sources 
 Return JSON only in this exact shape:
 {{"tasks": [{{"id": "unique-task-id", "title": "initiative-specific task title", "description": "one concise sentence", "priority": "high|medium|low", "estimated_days": 5, "suggested_role": "role", "function": "function", "activity_type": "activity type", "dependencies": [], "risk_area": "specific gap addressed", "phase": "existing phase name", "lineage": [{{"type": "exact missing source type", "ref": "exact missing source ref"}}]}}]}}
 
-Add only the minimum task or tasks needed to cover every missing source. The existing plan already has {existing_task_count} valid tasks and must remain within 10-18 tasks total. Use only exact type/ref pairs from the missing sources above; never invent lineage. Use an existing phase name from this list: {json.dumps(phase_names)}. Do not repeat or regenerate the existing plan.
+Add only the minimum task or tasks needed to cover every missing source, and return at most 2 tasks. The existing plan already has {existing_task_count} valid tasks and must remain within 10-18 tasks total. Use only exact type/ref pairs from the missing sources above; never invent lineage. Use an existing phase name from this list: {json.dumps(phase_names)}. Do not repeat or regenerate the existing plan.
 """.strip()
 
         def _merge_repair_tasks(base_plan, repair_plan):
@@ -5799,7 +5799,7 @@ Add only the minimum task or tasks needed to cover every missing source. The exi
                 and not dropped_details
             ):
                 remaining_seconds = generation_deadline - time.monotonic()
-                if remaining_seconds >= 15:
+                if remaining_seconds >= 8:
                     if usage_attempts:
                         usage_attempts[-1]['outcome'] = 'coverage_repair_required'
                         generation_usage = _merged_usage()
@@ -5813,7 +5813,7 @@ Add only the minimum task or tasks needed to cover every missing source. The exi
                     _repair_future = _repair_pool.submit(
                         _call_llm,
                         _repair_prompt(missing_sources, valid_task_count, phase_names),
-                        max_tokens=1500,
+                        max_tokens=600,
                     )
                     try:
                         repair_reply, repair_usage = _repair_future.result(timeout=remaining_seconds)

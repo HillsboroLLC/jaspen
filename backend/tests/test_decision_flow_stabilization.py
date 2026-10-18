@@ -159,6 +159,8 @@ def test_execution_plan_repairs_only_missing_lineage_coverage(app, monkeypatch):
             'input_tokens': 10, 'output_tokens': 20, 'total_tokens': 30,
         }
 
+    clock_values = iter([0, 0, 0, 42, 42, 42, 43])
+    monkeypatch.setattr(strategy, 'time', types.SimpleNamespace(monotonic=lambda: next(clock_values)))
     monkeypatch.setattr(strategy, '_strategy_generate_reply', provider)
     plan, usage, success, error = strategy._generate_ai_wbs_suggestion(
         None, 'model', scorecard={'project_name': 'Proposal'}, instruction='',
@@ -170,7 +172,8 @@ def test_execution_plan_repairs_only_missing_lineage_coverage(app, monkeypatch):
     )
 
     assert success and error is None
-    assert [max_tokens for _prompt, max_tokens in calls] == [8000, 1500]
+    assert [max_tokens for _prompt, max_tokens in calls] == [8000, 600]
+    assert 'return at most 2 tasks' in calls[1][0]
     assert 'Do not repeat or regenerate the existing plan' in calls[1][0]
     assert len(plan['tasks']) == 17
     assert len(plan['phases']) == 4
@@ -2723,7 +2726,7 @@ def test_execution_provider_failure_cannot_create_or_overwrite_plan(client, db, 
     assert 'plan built' not in decision.final_decision.lower()
 
 
-def test_execution_plan_skips_repair_when_budget_has_under_15_seconds(
+def test_execution_plan_skips_repair_after_50_seconds_used(
     client, db, test_user, auth_headers, monkeypatch,
 ):
     strategy, _ = modules()
@@ -2746,7 +2749,7 @@ def test_execution_plan_skips_repair_when_budget_has_under_15_seconds(
             'input_tokens': 10, 'output_tokens': 20, 'total_tokens': 30,
         }
 
-    clock_values = iter([0, 0, 0, 41, 41])
+    clock_values = iter([0, 0, 0, 50, 50])
     monkeypatch.setattr(strategy, 'time', types.SimpleNamespace(monotonic=lambda: next(clock_values)))
     monkeypatch.setattr(strategy, '_strategy_generate_reply', provider)
     initial_credits = test_user.credits_remaining
