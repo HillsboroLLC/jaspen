@@ -5650,7 +5650,7 @@ Rules:
                 latest['component_usages'] = [dict(item) for item in usage_attempts]
             return latest
 
-        def _call_llm(attempt_prompt):
+        def _call_llm(attempt_prompt, *, max_tokens=8000):
             with app.app_context():
                 return _strategy_generate_reply(
                     [{"role": "user", "content": attempt_prompt}],
@@ -5660,8 +5660,53 @@ Rules:
                     strategy_objective=strategy_objective,
                     operation_type='execution_plan',
                     temperature=0,  # Deterministic — same scorecard/scenario/instruction → same plan
-                    max_tokens=8000,
+                    max_tokens=max_tokens,
                 )
+
+        def _repair_prompt(missing_sources, existing_task_count, phase_names):
+            return f"""
+The execution plan is valid except that these required decision-lineage sources are not covered:
+{json.dumps(missing_sources, indent=2)}
+
+Return JSON only in this exact shape:
+{{"tasks": [{{"id": "unique-task-id", "title": "initiative-specific task title", "description": "one concise sentence", "priority": "high|medium|low", "estimated_days": 5, "suggested_role": "role", "function": "function", "activity_type": "activity type", "dependencies": [], "risk_area": "specific gap addressed", "phase": "existing phase name", "lineage": [{{"type": "exact missing source type", "ref": "exact missing source ref"}}]}}]}}
+
+Add only the minimum task or tasks needed to cover every missing source. The existing plan already has {existing_task_count} valid tasks and must remain within 10-18 tasks total. Use only exact type/ref pairs from the missing sources above; never invent lineage. Use an existing phase name from this list: {json.dumps(phase_names)}. Do not repeat or regenerate the existing plan.
+""".strip()
+
+        def _merge_repair_tasks(base_plan, repair_plan):
+            repair_tasks = []
+            if isinstance(repair_plan.get('phases'), list):
+                for phase in repair_plan['phases']:
+                    if not isinstance(phase, dict):
+                        continue
+                    phase_name = str(phase.get('name') or '').strip()
+                    for task in phase.get('tasks') or []:
+                        if isinstance(task, dict):
+                            repair_tasks.append({**task, 'phase': task.get('phase') or phase_name})
+            else:
+                repair_tasks = [task for task in repair_plan.get('tasks') or [] if isinstance(task, dict)]
+
+            merged = dict(base_plan)
+            if isinstance(base_plan.get('phases'), list):
+                phases = [
+                    {**phase, 'tasks': list(phase.get('tasks') or [])}
+                    for phase in base_plan['phases']
+                    if isinstance(phase, dict)
+                ]
+                phase_by_name = {
+                    str(phase.get('name') or '').strip(): phase for phase in phases
+                    if str(phase.get('name') or '').strip()
+                }
+                fallback_phase = phases[-1] if phases else None
+                for task in repair_tasks:
+                    target = phase_by_name.get(str(task.get('phase') or '').strip()) or fallback_phase
+                    if target is not None:
+                        target['tasks'].append(task)
+                merged['phases'] = phases
+            else:
+                merged['tasks'] = list(base_plan.get('tasks') or []) + repair_tasks
+            return merged
 
         retry_note = ''
         generation_deadline = time.monotonic() + 55
@@ -5745,6 +5790,84 @@ Rules:
                 })
                 generation_usage = _merged_usage()
             valid_task_count = int((lineage_result or {}).get('valid_task_count') or 0)
+            missing_sources = list((lineage_result or {}).get('missing_sources') or [])
+            dropped_details = list((lineage_result or {}).get('dropped_task_details') or [])
+            if (
+                validated is None
+                and valid_task_count >= 10
+                and missing_sources
+                and not dropped_details
+            ):
+                remaining_seconds = generation_deadline - time.monotonic()
+                if remaining_seconds >= 15:
+                    if usage_attempts:
+                        usage_attempts[-1]['outcome'] = 'coverage_repair_required'
+                        generation_usage = _merged_usage()
+                    phase_names = [
+                        str(phase.get('name') or '').strip()
+                        for phase in parsed.get('phases') or []
+                        if isinstance(phase, dict) and str(phase.get('name') or '').strip()
+                    ]
+                    repair_started = time.monotonic()
+                    _repair_pool = ThreadPoolExecutor(max_workers=1)
+                    _repair_future = _repair_pool.submit(
+                        _call_llm,
+                        _repair_prompt(missing_sources, valid_task_count, phase_names),
+                        max_tokens=1500,
+                    )
+                    try:
+                        repair_reply, repair_usage = _repair_future.result(timeout=remaining_seconds)
+                    except _FuturesTimeout:
+                        _repair_future.cancel()
+                        raise ValueError('wbs_ai_timeout')
+                    except Exception as provider_error:
+                        failed_usage = dict(getattr(provider_error, 'jaspen_usage', {}) or {})
+                        failed_usage.update({
+                            'attempt': len(usage_attempts) + 1,
+                            'attempt_type': 'coverage_repair',
+                            'duration_ms': max(0, int((time.monotonic() - repair_started) * 1000)),
+                            'outcome': 'provider_error',
+                        })
+                        usage_attempts.append(failed_usage)
+                        generation_usage = _merged_usage()
+                        provider_error.jaspen_usage = generation_usage
+                        raise
+                    finally:
+                        _repair_pool.shutdown(wait=False, cancel_futures=True)
+                    repair_usage = dict(repair_usage or {})
+                    repair_usage.update({
+                        'attempt': len(usage_attempts) + 1,
+                        'attempt_type': 'coverage_repair',
+                        'duration_ms': max(0, int((time.monotonic() - repair_started) * 1000)),
+                    })
+                    usage_attempts.append(repair_usage)
+                    generation_usage = _merged_usage()
+                    try:
+                        repair_parsed = _extract_json_object(repair_reply)
+                    except (TypeError, ValueError) as parse_error:
+                        repair_usage['outcome'] = 'malformed_json'
+                        generation_usage = _merged_usage()
+                        error = ValueError('invalid_wbs_response')
+                        error.__cause__ = parse_error
+                        raise error
+                    if not isinstance(repair_parsed, dict):
+                        repair_usage['outcome'] = 'malformed_json'
+                        generation_usage = _merged_usage()
+                        raise ValueError('invalid_wbs_response')
+                    parsed = _merge_repair_tasks(parsed, repair_parsed)
+                    validated, lineage_result = validate_plan_lineage(parsed, lineage_sources or [])
+                    repaired_task_count = int((lineage_result or {}).get('valid_task_count') or 0)
+                    repair_usage.update({
+                        'outcome': 'repair_accepted' if validated is not None and repaired_task_count <= 18 else 'repair_rejected',
+                        'lineage_valid_task_count': repaired_task_count,
+                        'lineage_dropped_tasks': list((lineage_result or {}).get('dropped_task_details') or []),
+                        'lineage_missing_sources': list((lineage_result or {}).get('missing_sources') or []),
+                    })
+                    generation_usage = _merged_usage()
+                    if repaired_task_count > 18:
+                        validated = None
+                        lineage_result = {**(lineage_result or {}), 'code': 'invalid_plan_lineage'}
+                    valid_task_count = repaired_task_count
             if valid_task_count < 10:
                 if usage_attempts:
                     usage_attempts[-1]['outcome'] = 'insufficient_valid_tasks'
@@ -5775,7 +5898,11 @@ Rules:
                 error.lineage_result = lineage_result
                 raise error
             if usage_attempts:
-                usage_attempts[-1]['outcome'] = 'accepted'
+                usage_attempts[-1]['outcome'] = (
+                    'repair_accepted'
+                    if usage_attempts[-1].get('attempt_type') == 'coverage_repair'
+                    else 'accepted'
+                )
                 generation_usage = _merged_usage()
             validated = assign_team_owners(validated, team or [])
             validated['lineage_sources'] = list(lineage_sources or [])
@@ -7923,6 +8050,7 @@ def generate_ai_wbs(thread_id):
                 'plan_attempts': [
                     {
                         'attempt': item.get('attempt'),
+                        'attempt_type': item.get('attempt_type') or 'generation',
                         'duration_ms': item.get('duration_ms'),
                         'output_tokens': int(item.get('output_tokens') or 0),
                         'stop_reason': item.get('stop_reason'),
@@ -8029,6 +8157,14 @@ def generate_ai_wbs(thread_id):
             if not _save_scenarios(user_id, all_data):
                 raise RuntimeError('Failed to persist generated execution plan.')
             plan_persisted = True
+            if recorded_decision:
+                from ..decision_records import record_execution_plan_decision
+                decision_record = record_execution_plan_decision(
+                    user, thread_id, current_scorecard,
+                    decision_kit=decision_kit, plan_built=True,
+                )
+                recorded_decision['id'] = decision_record.id
+                recorded_decision['final_decision'] = decision_record.final_decision
             # Register the plan as a Session Artifact on the originating idea so
             # it shows up in the artifacts list even though it was built from the
             # workspace CTA / trade-off table rather than the chat tool.

@@ -719,7 +719,7 @@ def find_execution_plan_decision(user, thread_id, option_key, *, decision_kit=No
     return None
 
 
-def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=None):
+def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=None, plan_built=False):
     """Record the user's explicit Build-plan choice through the shared writer.
 
     Clicking the acknowledged Build action is a human decision signal.  This
@@ -761,10 +761,31 @@ def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=N
             'override_reason': kit_verdict.get('override_reason'),
         } if kit_verdict.get('override_of') else None
         record.decision_type = (record.record or {}).get('decision_kit') or record.decision_type
+    decision_text = (
+        f'Moving forward with {option_name} — execution plan built.'
+        if plan_built else f'Moving forward with {option_name}.'
+    )
+    prior = current_option_decision(record, option_key)
+    if (
+        plan_built
+        and prior is not None
+        and prior.source == 'build_execution_plan'
+        and prior.final_decision == f'Moving forward with {option_name}.'
+    ):
+        # This is completion metadata for the same human decision, not a new
+        # decision event. Update it only after the caller has saved the plan.
+        now = datetime.utcnow()
+        prior.final_decision = decision_text
+        prior.updated_at = now
+        record.updated_at = now
+        _sync_option_decision_summary(record)
+        db.session.commit()
+        return prior
+
     option_decision, _created_decision = record_option_decision(
         record,
         option_key,
-        f'Moving forward with {option_name} — execution plan built.',
+        decision_text,
         decided_by_user_id=user.id,
         source='build_execution_plan',
         option_name=option_name,

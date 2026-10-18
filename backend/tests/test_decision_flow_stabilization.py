@@ -1,6 +1,7 @@
 """Targeted regressions for decision-flow trust boundaries; no live providers."""
 import json
 import sys
+import types
 import pytest
 from flask import current_app
 from app.models import AIOperation, AIProviderAttempt, Scorecard, UsageEvent
@@ -129,6 +130,55 @@ def test_execution_plan_retries_once_when_lineage_validation_leaves_too_few_task
     assert second_attempt['attempt'] == 2
     assert second_attempt['lineage_valid_task_count'] == 12
     assert second_attempt['outcome'] == 'accepted'
+
+
+def test_execution_plan_repairs_only_missing_lineage_coverage(app, monkeypatch):
+    strategy, _ = modules()
+    calls = []
+    initial = _phased_lineage_plan(task_count=16, phase_count=4, ref='r1')
+    repair = {'tasks': [{
+        'id': 'repair-commercial-risk',
+        'title': 'Resolve Proposal contract commercial risk',
+        'description': 'Close the contract commercial risk before approval.',
+        'priority': 'high',
+        'estimated_days': 3,
+        'suggested_role': 'Commercial Lead',
+        'function': 'Legal',
+        'activity_type': 'risk_management',
+        'dependencies': [],
+        'risk_area': 'Contract commercial risk',
+        'phase': 'Phase 4',
+        'lineage': [{'type': 'weak_criterion', 'ref': 'contract_commercial_risk'}],
+    }]}
+
+    def provider(messages, **kwargs):
+        calls.append((messages[0]['content'], kwargs['max_tokens']))
+        response = initial if len(calls) == 1 else repair
+        return json.dumps(response), {
+            'provider': 'anthropic', 'stop_reason': 'end_turn',
+            'input_tokens': 10, 'output_tokens': 20, 'total_tokens': 30,
+        }
+
+    monkeypatch.setattr(strategy, '_strategy_generate_reply', provider)
+    plan, usage, success, error = strategy._generate_ai_wbs_suggestion(
+        None, 'model', scorecard={'project_name': 'Proposal'}, instruction='',
+        model_selection={'llm_model': 'model'}, return_usage=True,
+        lineage_sources=[
+            {'type': 'recommendation', 'ref': 'r1', 'label': 'Prepare', 'required': True},
+            {'type': 'weak_criterion', 'ref': 'contract_commercial_risk', 'label': 'Commercial risk', 'required': True},
+        ],
+    )
+
+    assert success and error is None
+    assert [max_tokens for _prompt, max_tokens in calls] == [8000, 1500]
+    assert 'Do not repeat or regenerate the existing plan' in calls[1][0]
+    assert len(plan['tasks']) == 17
+    assert len(plan['phases']) == 4
+    assert plan['lineage_validation']['missing_sources'] == []
+    assert [item['outcome'] for item in usage['component_usages']] == [
+        'coverage_repair_required', 'repair_accepted',
+    ]
+    assert usage['component_usages'][1]['attempt_type'] == 'coverage_repair'
 
 
 def test_execution_plan_retries_truncated_json_with_compact_descriptions(app, monkeypatch):
@@ -2608,7 +2658,10 @@ def test_execution_route_persists_ai_generated_plan(client, db, test_user, auth_
     assert strategy._resolve_thread_wbs(stored, 'planner-card')['generation_status'] == 'ai_generated'
     decision = DecisionRecord.query.filter_by(thread_id=tid).one()
     assert decision.final_decision is None
-    option_decision = OptionDecision.query.filter_by(decision_record_id=decision.id).one()
+    option_decision = OptionDecision.query.filter_by(
+        decision_record_id=decision.id, superseded_at=None,
+    ).one()
+    assert OptionDecision.query.filter_by(decision_record_id=decision.id).count() == 1
     assert option_decision.option_key == 'scorecard:planner-card'
     assert option_decision.final_decision == 'Moving forward with Proposal — execution plan built.'
     assert option_decision.source == 'build_execution_plan'
@@ -2616,6 +2669,7 @@ def test_execution_route_persists_ai_generated_plan(client, db, test_user, auth_
 
 @pytest.mark.parametrize('has_existing_plan', [False, True])
 def test_execution_provider_failure_cannot_create_or_overwrite_plan(client, db, test_user, auth_headers, monkeypatch, has_existing_plan):
+    from app.models_decision_record import DecisionRecord, OptionDecision
     strategy, _ = modules()
     tid = f"planner-route-failure-{'existing' if has_existing_plan else 'empty'}"
     card = {'id': 'planner-card', 'project_name': 'Proposal', 'jaspen_score': 61}
@@ -2660,6 +2714,56 @@ def test_execution_provider_failure_cannot_create_or_overwrite_plan(client, db, 
     assert row.status == 'degraded'
     assert row.metadata_json['generation_failed'] is True
     assert row.charged_credits == 0
+    assert test_user.credits_remaining == initial_credits
+    record = DecisionRecord.query.filter_by(thread_id=tid).one()
+    decision = OptionDecision.query.filter_by(
+        decision_record_id=record.id, option_key='scorecard:planner-card', superseded_at=None,
+    ).one()
+    assert decision.final_decision == 'Moving forward with Proposal.'
+    assert 'plan built' not in decision.final_decision.lower()
+
+
+def test_execution_plan_skips_repair_when_budget_has_under_15_seconds(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    strategy, _ = modules()
+    tid = 'planner-route-repair-budget-expired'
+    card = {
+        'id': 'planner-card', 'project_name': 'Proposal', 'jaspen_score': 61,
+        'recommendations': [{'id': 'r1', 'text': 'Prepare the response'}],
+        'dimensions': {'contract_commercial_risk': {'score': 40}},
+    }
+    seed_thread(test_user, tid, [card])
+    upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=card)
+    db.session.commit()
+    mock_accounting(monkeypatch)
+    calls = []
+
+    def provider(*_args, **_kwargs):
+        calls.append(True)
+        return json.dumps(_phased_lineage_plan(task_count=16, phase_count=4, ref='r1')), {
+            'provider': 'anthropic', 'stop_reason': 'end_turn',
+            'input_tokens': 10, 'output_tokens': 20, 'total_tokens': 30,
+        }
+
+    clock_values = iter([0, 0, 0, 41, 41])
+    monkeypatch.setattr(strategy, 'time', types.SimpleNamespace(monotonic=lambda: next(clock_values)))
+    monkeypatch.setattr(strategy, '_strategy_generate_reply', provider)
+    initial_credits = test_user.credits_remaining
+
+    response = client.post(
+        f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers,
+        json={'commit': True, 'scorecard_id': 'planner-card', 'record_decision': {'acknowledged': True}},
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()['code'] == 'execution_plan_generation_failed'
+    assert calls == [True]
+    stored_thread = strategy._load_scenarios(test_user.id).get(tid)
+    assert stored_thread is None or strategy._resolve_thread_wbs(stored_thread, 'planner-card') is None
+    operation = AIOperation.query.filter_by(thread_id=tid, operation_type='execution_plan').one()
+    assert operation.charged_credits == 0
+    assert operation.metadata_json['plan_attempts'][0]['outcome'] == 'lineage_rejected'
     assert test_user.credits_remaining == initial_credits
 
 
@@ -2992,7 +3096,7 @@ def test_chat_execution_plan_confirms_records_and_does_not_reprompt_for_regenera
     assert record.final_decision is None
     from app.models_decision_record import OptionDecision
     option_decision = OptionDecision.query.filter_by(decision_record_id=record.id).one()
-    assert option_decision.final_decision == 'Moving forward with General expansion — execution plan built.'
+    assert option_decision.final_decision == 'Moving forward with General expansion.'
     assert option_decision.option_key == 'option-general'
     assert option_decision.source == 'build_execution_plan'
 

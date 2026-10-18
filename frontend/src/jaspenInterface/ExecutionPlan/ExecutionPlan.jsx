@@ -115,7 +115,7 @@ export default function ExecutionPlan() {
   const location = useLocation();
   const navigate = useNavigate();
   const { toasts, showToast, dismissToast } = useToast();
-  const { generateExecutionPlan, executionPlanDecisionDialog } = useExecutionPlanBuild();
+  const { generateExecutionPlan, executionPlanDecisionDialog, executionPlanFailure } = useExecutionPlanBuild();
 
   const [threadId, setThreadId] = useState(() => getThreadIdFromSearch(window.location.search));
   const [threadBundle, setThreadBundle] = useState(null);
@@ -624,6 +624,20 @@ export default function ExecutionPlan() {
           </div>
           {pageActions}
         </header>
+
+        {executionPlanFailure && (
+          <div className="int-card execution-plan-build-error" role="alert" style={{ marginBottom: 16 }}>
+            <p style={{ margin: '0 0 12px' }}>{executionPlanFailure}</p>
+            <button
+              type="button"
+              className="int-btn int-btn-primary"
+              onClick={() => { void handleGeneratePlan('Generate execution plan from current scorecard.', { confirmRegenerate: hasExistingPlan }); }}
+              disabled={!threadId || planBusy}
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
         {!threadId ? (
           <div className="int-card execution-plan-empty">

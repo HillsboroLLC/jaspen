@@ -19,6 +19,7 @@ const isDecisionRequired = (error) => (
 export function useExecutionPlanBuild() {
   const { user, updateUiPreferences } = useAuth();
   const [confirmation, setConfirmation] = useState(null);
+  const [executionPlanFailure, setExecutionPlanFailure] = useState(null);
   const resolverRef = useRef(null);
 
   const finishConfirmation = useCallback((result) => {
@@ -39,6 +40,7 @@ export function useExecutionPlanBuild() {
   }), []);
 
   const generateExecutionPlan = useCallback(async (threadId, payload = {}, options = {}) => {
+    setExecutionPlanFailure(null);
     const committedPayload = { ...payload };
     const skipConfirmation = Boolean(user?.ui_preferences?.skip_plan_decision_confirm);
     if (skipConfirmation && committedPayload.commit !== false) {
@@ -51,7 +53,12 @@ export function useExecutionPlanBuild() {
     try {
       return await Jaspen.generateAiWbs(threadId, committedPayload, options);
     } catch (error) {
-      if (!isDecisionRequired(error) || committedPayload.commit === false) throw error;
+      if (!isDecisionRequired(error) || committedPayload.commit === false) {
+        if (error?.status === 503 && error?.data?.code === 'execution_plan_generation_failed') {
+          setExecutionPlanFailure(error.data.error || "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.");
+        }
+        throw error;
+      }
       const accepted = await askForDecision(error.data || {});
       if (!accepted?.acknowledged) return { cancelled: true };
       if (accepted.skipNextTime && typeof updateUiPreferences === 'function') {
@@ -61,13 +68,20 @@ export function useExecutionPlanBuild() {
           // Preference persistence must never block the confirmed plan build.
         }
       }
-      return Jaspen.generateAiWbs(threadId, {
-        ...committedPayload,
-        record_decision: {
-          acknowledged: true,
-          option_key: accepted.optionKey || error?.data?.option_key || null,
-        },
-      }, options);
+      try {
+        return await Jaspen.generateAiWbs(threadId, {
+          ...committedPayload,
+          record_decision: {
+            acknowledged: true,
+            option_key: accepted.optionKey || error?.data?.option_key || null,
+          },
+        }, options);
+      } catch (buildError) {
+        if (buildError?.status === 503 && buildError?.data?.code === 'execution_plan_generation_failed') {
+          setExecutionPlanFailure(buildError.data.error || "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.");
+        }
+        throw buildError;
+      }
     }
   }, [askForDecision, updateUiPreferences, user?.ui_preferences?.skip_plan_decision_confirm]);
 
@@ -111,5 +125,5 @@ export function useExecutionPlanBuild() {
     </div>
   ) : null;
 
-  return { generateExecutionPlan, executionPlanDecisionDialog };
+  return { generateExecutionPlan, executionPlanDecisionDialog, executionPlanFailure };
 }

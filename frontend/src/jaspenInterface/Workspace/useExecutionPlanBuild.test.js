@@ -22,6 +22,12 @@ describe('execution plan build entry points', () => {
     expect(shared).toContain('acknowledged: true');
     expect(shared).toContain('skip_plan_decision_confirm');
     expect(shared).toContain("overriding Jaspen&apos;s No-Bid recommendation");
+    expect(shared).toContain("execution_plan_generation_failed");
+
+    const executionPlan = fs.readFileSync(path.join(srcRoot, 'ExecutionPlan', 'ExecutionPlan.jsx'), 'utf8');
+    expect(executionPlan).toContain('executionPlanFailure');
+    expect(executionPlan).toContain('role="alert"');
+    expect(executionPlan).toContain('Retry');
   });
 
   test('execution workspace suppresses plan counts while authoritative data loads', () => {
