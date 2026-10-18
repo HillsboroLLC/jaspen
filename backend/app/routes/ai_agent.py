@@ -6623,6 +6623,15 @@ def _rubric_approval_from_message(message, criteria=None, existing_rubric=None):
         return True
     if len(labels) == 1 and re.search(r"\bscore\s+on\b.{0,80}\balone\b", text):
         return True
+    if (
+        len(labels) == 1
+        and matched_labels
+        and re.search(
+            r"\b(?:score|evaluate|judge)\s+(?:it\s+)?(?:only|solely)\s+(?:on|using)\b",
+            text,
+        )
+    ):
+        return True
     if not re.search(r"\b(?:approve|approved|looks good|use (?:this|that|the) rubric|accept (?:this|that|the) rubric)\b", text):
         return False
     if not isinstance(existing_rubric, dict) or not (

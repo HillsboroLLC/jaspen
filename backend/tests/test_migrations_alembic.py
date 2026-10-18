@@ -847,6 +847,19 @@ def test_scorecard_reuse_migration_backfills_identity_and_adds_indexes(tmp_path)
                 'reuse_provenance': {'source_scorecard_id': 'prior', 'root_scorecard_id': 'root'},
             })),
         )
+        conn.executemany(
+            'INSERT INTO scorecards VALUES (?, ?, ?, ?, ?, ?)',
+            [
+                (
+                    f'unrelated-{index}', 'org-1', 'user-1', None,
+                    '2026-10-17 11:00:00', json.dumps({
+                        'decision_fingerprint': f'unrelated-state-{index}',
+                        'decision_state_reusable': True,
+                    }),
+                )
+                for index in range(3000)
+            ],
+        )
         conn.commit()
     finally:
         conn.close()
@@ -867,9 +880,11 @@ def test_scorecard_reuse_migration_backfills_identity_and_adds_indexes(tmp_path)
             'AND decision_fingerprint = ? AND decision_state_reusable = 1 AND archived_at IS NULL '
             'ORDER BY updated_at DESC', ('org-1', 'abc123'),
         ).fetchall()
+        row_count = conn.execute('SELECT COUNT(*) FROM scorecards').fetchone()[0]
     finally:
         conn.close()
 
     assert row == ('abc123', 1, 'prior', 'root')
+    assert row_count == 3001
     assert 'ix_scorecards_org_reuse_lookup' in indexes
     assert any('INDEX' in str(step[-1]).upper() for step in plan)

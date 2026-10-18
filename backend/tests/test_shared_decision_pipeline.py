@@ -1363,7 +1363,7 @@ def test_user_defined_single_criterion_is_approved_without_confirmation(app, tes
         'set_scoring_rubric',
         {'criteria': [{'label': 'Price', 'weight': 100}]},
         user=test_user, user_id=test_user.id, thread_id='single-user-rubric',
-        user_message='Score only on Price, weight 100%.',
+        user_message='Score only on Price.',
     )
 
     assert result['ok'] is True
