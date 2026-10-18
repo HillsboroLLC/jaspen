@@ -2699,6 +2699,88 @@ def _mark_scorecard_evidence_state(payload):
     return payload
 
 
+def _criteria_with_supplied_information(attributes, context_notes, kit):
+    """Return criterion keys with explicitly scoped, non-assumed input."""
+    supported = set()
+    field_definitions = {
+        str(field.get("key") or ""): field
+        for field in ((kit or {}).get("fields") or [])
+        if isinstance(field, dict) and field.get("key")
+    }
+    for key, entry in (attributes or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        source = str(entry.get("source") or "").strip().lower()
+        if source == "assumed" or not str(entry.get("evidence") or "").strip():
+            continue
+        definition = field_definitions.get(str(key)) or {}
+        for criterion_key in [*(definition.get("affects") or []), *(entry.get("affects") or [])]:
+            if str(criterion_key).strip():
+                supported.add(str(criterion_key).strip())
+    for note in context_notes or []:
+        if not isinstance(note, dict):
+            continue
+        source = str(note.get("source") or "").strip().lower()
+        if source == "assumed" or not str(note.get("evidence") or "").strip():
+            continue
+        for criterion_key in note.get("affects") or []:
+            if str(criterion_key).strip():
+                supported.add(str(criterion_key).strip())
+    return supported
+
+
+def _apply_neutral_unknown_criteria(payload, criteria, supported_criteria):
+    """Make every valid but unsupported weighted judgment a visible neutral 45."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("dimensions"), dict):
+        return payload
+    criteria_by_key = {
+        str(item.get("key")): item
+        for item in (criteria or [])
+        if isinstance(item, dict) and item.get("key") and not item.get("gate")
+    }
+    neutral = []
+    for key, definition in criteria_by_key.items():
+        dim = payload["dimensions"].get(key)
+        if not isinstance(dim, dict):
+            continue
+        references = dim.get("evidence_references") if isinstance(dim.get("evidence_references"), list) else []
+        if references:
+            continue
+        if key in (supported_criteria or set()):
+            # A schema-scoped fact/note is real input even when the provider
+            # failed to repeat its excerpt. Do not let the visible rationale
+            # contradict information Jaspen demonstrably received.
+            dim["evidence_status"] = "input_supplied"
+            dim["rationale"] = "Judged using the supplied information for this criterion."
+            continue
+        previous_score = dim.get("score")
+        label = str(dim.get("label") or definition.get("label") or key).strip()
+        dim.update({
+            "score": 45,
+            "raw_score": 45,
+            "confidence": "assumed",
+            "source": "assumed",
+            "evidence_status": "assumed",
+            "rationale": "Assumed: neutral 45, no information yet.",
+        })
+        if not str(dim.get("what_would_improve") or "").strip():
+            dim["what_would_improve"] = f"Provide information that establishes {label}."
+        neutral.append({
+            "key": key,
+            "label": label,
+            "score": 45,
+            "confidence": "assumed",
+            "what_would_improve": dim.get("what_would_improve"),
+        })
+        if previous_score != 45:
+            current_app.logger.info(
+                "scorecard_neutral_value_adjusted criterion=%s from=%s to=45",
+                key, previous_score,
+            )
+    payload["neutral_criteria"] = neutral
+    return payload
+
+
 _MODEL_NUMERIC_GROUPS = {
     "financial_impact": (
         "ebitda_at_risk", "potential_loss", "roi_opportunity",
@@ -3070,6 +3152,7 @@ def _generate_jaspen_scorecard(
     routing_signals=None,
     structured_context=None,
     attributes=None,
+    context_notes=None,
     decision_kit=None,
     decision_kit_version=None,
     kit_context=None,
@@ -3224,18 +3307,24 @@ def _generate_jaspen_scorecard(
     # against the same text, so a quote counts only when it demonstrably
     # appears in what the user provided.
     attributes = dict(attributes or {})
+    context_notes = [dict(note) for note in (context_notes or []) if isinstance(note, dict)]
     canonical_quotes = [
         str(entry.get("evidence") or "").strip()
         for entry in attributes.values()
         if isinstance(entry, dict) and str(entry.get("evidence") or "").strip()
     ]
+    canonical_quotes.extend(
+        str(note.get("evidence") or "").strip()
+        for note in context_notes
+        if str(note.get("evidence") or "").strip()
+    )
     # Once facts are canonical, the judge sees those facts and only their
     # verified provenance excerpts. Unnormalized conversation prose cannot
     # become a hidden scoring input or invalidate fingerprint reuse.
-    corpus_text = "\n".join(canonical_quotes) if attributes else str(evidence_corpus or "").strip()
+    corpus_text = "\n".join(canonical_quotes) if (attributes or context_notes) else str(evidence_corpus or "").strip()
     verification_text = (
         _evidence_verification_text("", corpus_text)
-        if attributes
+        if (attributes or context_notes)
         else _evidence_verification_text(project_description, corpus_text)
     )
     # The judge sees one stable identity string in both single and batch mode.
@@ -3269,7 +3358,7 @@ Rules:
 - For each dimension, identify the source: "conversation" (explicitly stated), "connector" (from connected data source), "inferred" (logical derivation), or "assumed" (industry/pattern-based).
 - For any dimension with confidence "low" or "assumed", populate what_would_improve with a specific, actionable suggestion.
 - EVIDENCE QUOTES: populate "evidence" with the exact passages from the input that support the score. Quote verbatim, do not paraphrase, and do not quote your own words back. If nothing in the input supports the score, return an empty list rather than inventing a quote. Every quote is checked against the input and silently discarded if it is not found there, so a fabricated one buys nothing and an accurate one becomes part of the record.
-- MISSING-VARIABLE PENALTY (critical): the score must reward how well-evidenced an idea is, not how good it sounds. Score only what THIS idea actually gives you — never borrow context from other ideas. When the inputs needed to judge a dimension are absent or only "assumed", that dimension's score MUST be depressed, not given the benefit of the doubt:
+- MISSING INFORMATION (critical): Score only what THIS idea actually gives you — never borrow context from other ideas. When a criterion has no supporting information, return exactly 45 with confidence "assumed", source "assumed", and explain what would firm it up. This is a neutral placeholder, not a positive or negative judgment. When supporting information exists, judge it honestly, including scores below 45 when the evidence supports them:
     - confidence "high"   → no penalty.
     - confidence "medium" → cap that dimension at 75.
     - confidence "low"    → cap that dimension at 60.
@@ -3340,7 +3429,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
         ) - {""}
         for gate in approved_gates
     }
-    if attributes or decision_kit or approved_gates:
+    if attributes or context_notes or decision_kit or approved_gates:
         # Build this once here for every caller. Call-site object ordering and
         # extra prose must not alter the judge contract.
         structured_context = {
@@ -3360,6 +3449,16 @@ The executive_summary must read like a concise leadership briefing. It should ne
                 for key, entry in attributes.items()
                 if isinstance(entry, dict) and entry.get("evidence")
             ],
+            "context_notes": [
+                {
+                    "label": note.get("label"),
+                    "value": note.get("value"),
+                    "source": "user-stated" if str(note.get("source") or "").lower() == "user" else note.get("source"),
+                    "evidence": note.get("evidence"),
+                    "affects": note.get("affects") or [],
+                }
+                for note in context_notes
+            ],
         }
         if decision_kit:
             from ..decision_metrics import calculate_metrics
@@ -3375,7 +3474,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
         analysis_prompt += (
             "\n\nCANONICAL STRUCTURED FACTS (authoritative; do not recompute metrics):\n"
             + json.dumps(structured_context, indent=2, default=str)
-            + "\nJudge the weighted criteria only from these canonical facts. The source excerpts are provenance for those facts, not an independent input. "
+            + "\nJudge the weighted criteria from these canonical facts and attributed context notes. Treat a user-stated context note as evidence for the criteria named in affects, cite its exact excerpt, and never claim there is no information about a fact the user stated. The source excerpts are provenance for those inputs, not an independent input. "
               "For every approved gate, judge PASS, FAIL, or UNKNOWN and cite the exact relevant excerpt from canonical_gate_evidence in evidence, with a rationale in basis. "
               "Return top-level gates as [{key,status,confidence,source,evidence,basis}] for approved gate criteria only. "
               "Do not emit attributes, metrics, a recommendation, or any arithmetic; code supplies those."
@@ -3409,7 +3508,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
                 model_selection=model_selection, strategy_objective=strategy_objective,
                 rubric=rubric, return_usage=return_usage, evidence_corpus=evidence_corpus,
                 routing_signals=routing_signals, structured_context=structured_context,
-                attributes=attributes, decision_kit=decision_kit,
+                attributes=attributes, context_notes=context_notes, decision_kit=decision_kit,
                 decision_kit_version=decision_kit_version, kit_context=kit_context,
                 option_key=option_key, option_name=option_name, _attempt=1,
                 _failed_attempt_usages=[generation_usage], _retry_issue=issue,
@@ -3471,7 +3570,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
                 model_selection=model_selection, strategy_objective=strategy_objective,
                 rubric=rubric, return_usage=return_usage, evidence_corpus=evidence_corpus,
                 routing_signals=routing_signals, structured_context=structured_context,
-                attributes=attributes, decision_kit=decision_kit,
+                attributes=attributes, context_notes=context_notes, decision_kit=decision_kit,
                 decision_kit_version=decision_kit_version, kit_context=kit_context,
                 option_key=option_key, option_name=option_name, _attempt=1,
                 _failed_attempt_usages=[generation_usage], _retry_issue=str(exc),
@@ -3534,7 +3633,7 @@ The executive_summary must read like a concise leadership briefing. It should ne
                 model_selection=model_selection, strategy_objective=strategy_objective,
                 rubric=rubric, return_usage=return_usage, evidence_corpus=evidence_corpus,
                 routing_signals=routing_signals, structured_context=structured_context,
-                attributes=attributes, decision_kit=decision_kit,
+                attributes=attributes, context_notes=context_notes, decision_kit=decision_kit,
                 decision_kit_version=decision_kit_version, kit_context=kit_context,
                 option_key=option_key, option_name=option_name, _attempt=1,
                 _failed_attempt_usages=[generation_usage], _retry_issue=str(exc),
@@ -3545,6 +3644,11 @@ The executive_summary must read like a concise leadership briefing. It should ne
             "failover": {"attempted_providers": list(_failed_attempt_usages or [])},
         }
         raise
+    parsed = _apply_neutral_unknown_criteria(
+        parsed,
+        rubric_criteria or [{"key": key, "label": key.replace("_", " ")} for key in weights],
+        _criteria_with_supplied_information(attributes, context_notes, kit),
+    )
     for dim in (parsed.get("dimensions") or {}).values():
         if isinstance(dim, dict):
             dim.pop("_provider_reasoning_missing", None)
@@ -3709,6 +3813,10 @@ def _generate_batch_scorecards(
             option_name=name,
             rejected_fields=rejected_fields,
         )
+        context_notes = [
+            dict(note) for note in (item.get("context_notes") or [])
+            if isinstance(note, dict)
+        ]
         from ..decision_fingerprint import scoring_fingerprint
         from ..decision_state import canonical_decision_state, stable_option_identity, state_is_reusable
         option_key = stable_option_identity(item.get("option_key"), name)
@@ -3743,6 +3851,7 @@ def _generate_batch_scorecards(
                     return_usage=True,
                     evidence_corpus=scoped_corpus,
                     attributes=attributes,
+                    context_notes=context_notes,
                     decision_kit=decision_kit,
                     decision_kit_version=decision_kit_version,
                     kit_context=kit_context,
@@ -3753,6 +3862,7 @@ def _generate_batch_scorecards(
                 return None, usage
             card = dict(card)
             card["attributes"] = attributes
+            card["context_notes"] = context_notes
             card["rejected_attributes"] = rejected_fields
             card["decision_fingerprint"] = fingerprint
             card["decision_state"] = state

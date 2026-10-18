@@ -699,6 +699,8 @@ _SYSTEM_PROMPT_PREFIX = (
     "When the user asks to build an execution plan, call generate_execution_plan. If it returns confirmation_required, ask its confirmation question conversationally and do not claim the plan exists yet. On the user's affirmative reply, call generate_execution_plan again with decision_acknowledged=true and the returned option_key. "
     "When the user asks to start the plan on a specific date or shift the whole schedule (e.g. 'start this plan July 1', 'push the kickoff back two weeks'), call set_execution_start_date with the new start_date (YYYY-MM-DD) — it slides every task by the same delta and preserves manual per-task adjustments. "
     "Use your judgment about when to score. A confirmation, an acknowledgment, or a pure question about an existing scorecard never warrants a tool call. "
+    "When a scoring result lists neutral_criteria, name those criteria in the same reply, say you used a neutral 45 because there is no information on them yet, explain neutral in one plain sentence for a newcomer, and offer to help fill the gaps one short question at a time. Keep this to one short, helpful paragraph in your own words. "
+    "If you propose scoring before the user has asked for it, you may first offer the choice to fill the gaps or score now with clearly labeled neutral values. Once the user asks to score, score immediately; never add a confirmation or information-gathering gate. "
     "POST-TOOL CONFIRMATION: After any tool call succeeds, your confirmation message must describe ONLY the action you just completed in this turn — derive it strictly from the tool result returned to you, not from the conversation history. Do not reference, repeat, or re-describe actions from previous turns. "
     "Refer to ideas by their actual name (not placeholders like 'Scenario A' or 'Original'). Keep the conversation natural — one exchange at a time. "
     "RANKING: If the user asks to rank, compare, or summarize all the ideas modeled in this conversation, "
@@ -5510,7 +5512,12 @@ def _partition_unknown_fact_notes(rejected_fields, source_text=""):
                 "label": str((item or {}).get("field") or "Additional context").strip(),
                 "value": (item or {}).get("value"),
                 "source": (item or {}).get("source") or "user",
+                "attribution": "user-stated" if source == "user" else source,
                 "evidence": evidence,
+                "affects": [
+                    str(key).strip() for key in ((item or {}).get("affects") or [])
+                    if str(key).strip()
+                ],
                 "reason": "not_in_active_decision_kit",
             })
         else:
@@ -7068,7 +7075,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 prepared_field = attach_relative_reference(field, session)
                 key, entry = normalize_fact_entry(field.get("key"), prepared_field, kit=kit)
             except ValueError as exc:
-                rejected_fields.append({"field": str(field.get("key") or ""), "value": field.get("value"), "source": source, "evidence": evidence, "reason": str(exc)})
+                rejected_fields.append({
+                    "field": str(field.get("key") or ""), "value": field.get("value"),
+                    "source": source, "evidence": evidence,
+                    "affects": field.get("affects") or [], "reason": str(exc),
+                })
                 continue
             if source == "user":
                 grounded = ground_option_user_evidence(
@@ -7286,15 +7297,13 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             else:
                 attributes = dict(stored_attributes or {})
                 context_notes = []
-            if queue_kit and not attributes and not context_notes:
-                error = _tool_error(
-                    f"Canonical facts for {name} could not be saved, so the RFP batch was not started. Try again.",
-                    code="canonical_facts_required",
-                )
-                error["retryable"] = True
-                error["action"] = {"type": "retry", "label": "Retry"}
-                error["rejected_fields"] = rejected_attributes
-                return error
+            stored_notes = (
+                (_queue_session.get("option_context_notes_by_key") or {}).get(option_key)
+                if isinstance(_queue_session.get("option_context_notes_by_key"), dict)
+                else None
+            )
+            if isinstance(stored_notes, list):
+                context_notes = [dict(note) for note in stored_notes if isinstance(note, dict)]
             if attributes:
                 store_option_attributes(_queue_session, option_key, attributes, name)
             queue.append({
@@ -7514,6 +7523,13 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             attributes.pop(field_key, None)
         context_notes, rejected_fields = _partition_unknown_fact_notes(rejected_fields, scoped_evidence_corpus)
         _store_option_context_notes(session, option_key, context_notes)
+        stored_context_notes = (
+            (session.get("option_context_notes_by_key") or {}).get(option_key)
+            if isinstance(session.get("option_context_notes_by_key"), dict)
+            else None
+        )
+        if isinstance(stored_context_notes, list):
+            context_notes = [dict(note) for note in stored_context_notes if isinstance(note, dict)]
         if session.get("decision_kit_preserve_existing_facts"):
             # A human-confirmed kit change may alter which fields the overlay
             # understands, but it cannot delete established canonical facts.
@@ -7538,15 +7554,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             rejected_store[option_identity] = rejected_fields
             session["rejected_option_attributes"] = rejected_store
             current_app.logger.warning("Rejected %d non-canonical fact(s) while scoring option %s", len(rejected_fields), option_identity)
-        if kit and not attributes and not context_notes:
-            error = _tool_error(
-                "Canonical facts could not be established for this RFP option, so scoring was not started. Try again.",
-                code="canonical_facts_required",
-            )
-            error["retryable"] = True
-            error["action"] = {"type": "retry", "label": "Retry"}
-            error["rejected_fields"] = rejected_fields
-            return error
         sessions[session_key or thread_id] = session
         if not save_user_sessions(user_id, sessions):
             error = _tool_error(
@@ -7605,6 +7612,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "rescored": False,
                 "reused_stored_result": True,
                 "credits_charged": 0,
+                "neutral_criteria": rescore_target.get("neutral_criteria") or [],
             })
         from ..scorecards import find_scorecard_by_fingerprint, reuse_provenance
         reuse_row = None
@@ -7653,6 +7661,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     # The user's own turns, not the summary this tool wrote.
                     evidence_corpus=scoped_evidence_corpus,
                     attributes=attributes,
+                    context_notes=context_notes,
                     decision_kit=decision_kit,
                     decision_kit_version=decision_kit_version,
                     kit_context=session.get("kit_context") if isinstance(session.get("kit_context"), dict) else {},
@@ -7670,6 +7679,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     "decision_kit": decision_kit,
                     "decision_kit_version": decision_kit_version,
                     "attributes": attributes,
+                    "context_notes": context_notes,
                 },
                 model_type=model_selection["model_type"],
                 max_tokens=4000,
@@ -7859,6 +7869,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     "evaluation_id": evaluation_id,
                     "selected_scorecard_id": keep_id,
                     "rescored": True,
+                    "neutral_criteria": updated.get("neutral_criteria") or [],
                 })
             if not reused_source_id:
                 reverse_customer_operation_charge(
@@ -7953,6 +7964,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "tool": tool_name,
             "confirmation": f"Generated scorecard '{requested_name}' ({int(round(float(scorecard.get('jaspen_score') or 0)))}).",
             "scorecard": scorecard,
+            "neutral_criteria": scorecard.get("neutral_criteria") or [],
             "evaluation_id": evaluation_id,
             "artifact": {
                 "type": "scorecard",

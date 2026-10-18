@@ -51,6 +51,13 @@ KIT = {
         {"key": "incumbent", "label": "Incumbent", "type": "text"},
         {"key": "competitors", "label": "Competitors", "type": "list"},
         {"key": "relationship", "label": "Relationship", "type": "enum"},
+        {
+            "key": "past_project_experience",
+            "label": "Relevant past-project experience",
+            "aliases": ["similar_project_experience", "relevant_experience", "past_performance"],
+            "type": "text",
+            "affects": ["qualifications_past_performance"],
+        },
         {"key": "mandatory_requirements", "label": "Mandatory requirements", "type": "list", "role": "requirements", "affects": ["qualifications_past_performance"]},
         {"key": "team", "label": "Pursuit team", "type": "team", "role": "owners", "affects": ["delivery_capability_capacity"]},
     ],

@@ -134,9 +134,28 @@ def test_unknown_kit_fields_are_partitioned_into_auditable_notes(app):
     notes, invalid = ai_agent._partition_unknown_fact_notes(rejected, "Our local partner history is strong; margin is unclear.")
     assert notes == [{
         "label": "local_partner_history", "value": "Strong", "source": "user",
-        "evidence": "local partner history is strong", "reason": "not_in_active_decision_kit",
+        "attribution": "user-stated", "evidence": "local partner history is strong",
+        "affects": [], "reason": "not_in_active_decision_kit",
     }]
     assert invalid == [rejected[1]]
+
+
+def test_rfp_similar_jobs_maps_to_past_project_experience(app):
+    from app.decision_facts import normalize_fact_entry
+    from app.decision_kits import get_decision_kit
+
+    key, fact = normalize_fact_entry(
+        "similar_project_experience",
+        {
+            "value": "Three similar water main jobs in the last two years",
+            "source": "user",
+            "evidence": "We have done three similar water main jobs in the last two years.",
+        },
+        kit=get_decision_kit("rfp_bid"),
+    )
+
+    assert key == "past_project_experience"
+    assert fact["source"] == "user"
 
 
 def test_tradeoff_tolerates_null_display_overrides(app, db, test_user, monkeypatch):

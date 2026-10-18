@@ -1911,6 +1911,7 @@ def test_first_turn_score_now_with_user_owned_rubric_scores_immediately(app, db,
         'jaspen_score': 62, 'score_category': 'Good',
         'dimensions': {'financial_value': {'score': 62, 'confidence': 'assumed'}},
         'gates': [],
+        'neutral_criteria': [{'key': 'delivery_confidence', 'label': 'Delivery Confidence', 'score': 45}],
     }, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1}))
     scored, _ = agent._execute_local_tool(
         'generate_scorecard', {'name': 'Boulder', 'idea_description': 'Evaluate Boulder.'},
@@ -1919,6 +1920,7 @@ def test_first_turn_score_now_with_user_owned_rubric_scores_immediately(app, db,
     )
     assert scored['ok'], scored
     assert scored['scorecard']['jaspen_score'] == 62
+    assert scored['neutral_criteria'] == scored['scorecard']['neutral_criteria']
 
 
 def test_blocked_score_cannot_keep_success_narration(app):
@@ -2264,10 +2266,20 @@ def test_rfp_queue_stops_when_canonical_fact_persistence_fails(app, db, test_use
     assert result['action'] == {'type': 'retry', 'label': 'Retry'}
 
 
-def test_rfp_single_score_cannot_fall_back_to_raw_prose_without_canonical_facts(app, db, test_user):
-    _, agent = modules()
+def test_rfp_single_score_with_no_canonical_facts_uses_neutral_values(app, db, test_user, monkeypatch):
+    strategy, agent = modules()
     tid = 'rfp-no-raw-prose-fallback'
     seed_rfp_thread(test_user, tid)
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(strategy, '_generate_jaspen_scorecard', lambda *a, **k: ({
+        'jaspen_score': 45,
+        'score_category': 'Fair',
+        'dimensions': {},
+        'gates': [],
+        'neutral_criteria': [
+            {'key': 'delivery_capability_capacity', 'label': 'Delivery capability & capacity', 'score': 45},
+        ],
+    }, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1}))
 
     result = agent._execute_mutation_tool(
         'generate_scorecard',
@@ -2275,10 +2287,9 @@ def test_rfp_single_score_cannot_fall_back_to_raw_prose_without_canonical_facts(
         user=test_user, user_id=test_user.id, thread_id=tid,
     )
 
-    assert result['ok'] is False
-    assert result['code'] == 'canonical_facts_required'
-    assert result['retryable'] is True
-    assert result['action'] == {'type': 'retry', 'label': 'Retry'}
+    assert result['ok'] is True
+    assert result['scorecard']['jaspen_score'] == 45
+    assert result['neutral_criteria'][0]['label'] == 'Delivery capability & capacity'
 
 
 def test_empty_batch_is_failed_retryable_preserves_queue_and_charges_zero(client, db, test_user, auth_headers, monkeypatch):

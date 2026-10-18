@@ -684,6 +684,7 @@ def normalize_option_facts(
                     "value": raw_entry.get("value"),
                     "source": raw_entry.get("source"),
                     "evidence": raw_entry.get("evidence"),
+                    "affects": raw_entry.get("affects") or [],
                     "reason": str(exc),
                 })
             continue

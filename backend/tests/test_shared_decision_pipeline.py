@@ -357,6 +357,100 @@ def test_missing_win_probability_scores_with_assumed_confidence(app, monkeypatch
     assert card["jaspen_score"] == 52
 
 
+def test_user_stated_context_reaches_judge_and_only_unknown_criteria_become_neutral(
+    app, monkeypatch, caplog,
+):
+    from app.routes import strategy
+
+    quote = "We have done three similar water main jobs in the last two years."
+    rubric = {"approval_status": "approved", "criteria": [
+        {"key": "qualifications_past_performance", "label": "Qualifications & past performance", "weight": 0.4},
+        {"key": "delivery_capability_capacity", "label": "Delivery capability & capacity", "weight": 0.3},
+        {"key": "strategic_fit_relationship", "label": "Strategic fit & relationship", "weight": 0.3},
+    ]}
+    response = {"dimensions": {
+        "qualifications_past_performance": {
+            "score": 30, "confidence": "medium", "source": "conversation",
+            "evidence": [], "rationale": "The source material contains no information about relevant past projects.",
+        },
+        "delivery_capability_capacity": {
+            "score": 0, "confidence": "assumed", "source": "assumed", "evidence": [],
+            "rationale": "No information.", "what_would_improve": "Provide team and capacity evidence.",
+        },
+        "strategic_fit_relationship": {
+            "score": 0, "confidence": "assumed", "source": "assumed", "evidence": [],
+            "rationale": "No information.", "what_would_improve": "Describe the client relationship.",
+        },
+    }, "gates": []}
+    prompts = []
+
+    def provider(messages, **_kwargs):
+        prompts.append(messages[0]["content"])
+        return json.dumps(response), {"provider": "test"}
+
+    monkeypatch.setattr(strategy, "_strategy_generate_reply", provider)
+    with caplog.at_level("INFO"):
+        card = strategy._generate_jaspen_scorecard(
+            None, "Water main RFP", "test", rubric=rubric,
+            attributes={"past_project_experience": {
+                "value": "Three similar water main jobs in the last two years",
+                "source": "user", "evidence": quote,
+            }},
+            context_notes=[{
+                "label": "local_project_history", "value": "three similar jobs",
+                "source": "user", "attribution": "user-stated", "evidence": quote,
+                "affects": ["qualifications_past_performance"],
+            }],
+            decision_kit="rfp_bid", decision_kit_version=1,
+        )
+
+    assert quote in prompts[0]
+    assert '"past_project_experience"' in prompts[0]
+    assert '"source": "user-stated"' in prompts[0]
+    assert "no information" not in card["dimensions"]["qualifications_past_performance"]["rationale"].lower()
+    assert card["dimensions"]["qualifications_past_performance"]["score"] == 30
+    assert card["dimensions"]["delivery_capability_capacity"]["score"] == 45
+    assert card["dimensions"]["strategic_fit_relationship"]["score"] == 45
+    assert [item["key"] for item in card["neutral_criteria"]] == [
+        "delivery_capability_capacity", "strategic_fit_relationship",
+    ]
+    assert any("scorecard_neutral_value_adjusted" in message for message in caplog.messages)
+
+
+def test_failed_gate_does_not_zero_unrelated_unknown_criterion(app, monkeypatch):
+    from app.routes import strategy
+
+    quote = "Surety declined."
+    rubric = {"approval_status": "approved", "criteria": [
+        {"key": "surety_confirmation", "label": "Surety", "gate": True, "gate_rule": "Surety is confirmed"},
+        {"key": "strategic_fit_relationship", "label": "Strategic fit & relationship", "weight": 1.0},
+    ]}
+    response = {
+        "dimensions": {"strategic_fit_relationship": {
+            "score": 0, "confidence": "assumed", "source": "assumed", "evidence": [],
+            "rationale": "No information.", "what_would_improve": "Describe the relationship.",
+        }},
+        "gates": [{
+            "key": "surety_confirmation", "status": "fail", "confidence": "medium",
+            "source": "conversation", "evidence": [quote], "basis": "Surety was declined.",
+        }],
+    }
+    monkeypatch.setattr(
+        strategy, "_strategy_generate_reply",
+        lambda *a, **k: (json.dumps(response), {"provider": "test"}),
+    )
+
+    card = strategy._generate_jaspen_scorecard(
+        None, "Option A", "test", rubric=rubric,
+        attributes={"surety_status": {"value": "declined", "source": "user", "evidence": quote}},
+        decision_kit="rfp_bid", decision_kit_version=1,
+    )
+
+    assert card["gates"][0]["status"] == "fail"
+    assert card["dimensions"]["strategic_fit_relationship"]["score"] == 45
+    assert card["neutral_criteria"][0]["key"] == "strategic_fit_relationship"
+
+
 def test_batch_uses_the_same_scorer_and_result_as_single(app, monkeypatch):
     from app.routes import strategy
 
