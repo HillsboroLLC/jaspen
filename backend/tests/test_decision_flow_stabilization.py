@@ -2820,17 +2820,14 @@ def test_execution_route_persists_ai_generated_plan(client, db, test_user, auth_
             None,
         ),
     )
-    blocked = client.post(
+    response = client.post(
         f'/api/v1/strategy/threads/{tid}/ai-wbs',
         headers=auth_headers,
         json={'commit': True, 'scorecard_id': 'planner-card'},
     )
-    assert blocked.status_code == 409
-    assert blocked.get_json()['code'] == 'recorded_advancing_decision_required'
-    assert blocked.get_json()['option_name'] == 'Proposal'
-    assert blocked.get_json()['action'] == 'record_decision'
-    response = client.post(f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers, json={'commit': True, 'scorecard_id': 'planner-card', 'record_decision': {'acknowledged': True}})
     assert response.status_code == 200, response.get_json()
+    assert response.get_json()['decision_recorded'] is True
+    assert response.get_json()['decision']['override'] is False
     plan = response.get_json()['project_wbs']
     assert plan['ai_generated'] is True
     assert plan['generation_status'] == 'ai_generated'
@@ -2874,7 +2871,7 @@ def test_execution_provider_failure_cannot_create_or_overwrite_plan(client, db, 
     monkeypatch.setattr(strategy, '_strategy_generate_reply', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('provider unavailable')))
 
     initial_credits = test_user.credits_remaining
-    response = client.post(f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers, json={'commit': True, 'force': True, 'scorecard_id': 'planner-card', 'record_decision': {'acknowledged': True}})
+    response = client.post(f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers, json={'commit': True, 'force': True, 'scorecard_id': 'planner-card'})
 
     assert response.status_code == 503, response.get_json()
     assert response.get_json() == {
@@ -2897,12 +2894,65 @@ def test_execution_provider_failure_cannot_create_or_overwrite_plan(client, db, 
     assert row.metadata_json['generation_failed'] is True
     assert row.charged_credits == 0
     assert test_user.credits_remaining == initial_credits
+    assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
+
+
+@pytest.mark.parametrize(
+    ('recommendation', 'gates', 'expected_labels'),
+    [
+        ({'verdict_key': 'decline', 'label': 'No-Bid'}, [], []),
+        ({'verdict_key': 'advance', 'label': 'Bid'}, [
+            {'key': 'surety', 'label': 'Surety / bond confirmation', 'status': 'fail'},
+        ], ['Surety / bond confirmation']),
+    ],
+)
+def test_execution_plan_override_requires_acknowledgement_and_records_after_save(
+    client, db, test_user, auth_headers, monkeypatch, recommendation, gates, expected_labels,
+):
+    from app.models_decision_record import DecisionRecord, OptionDecision
+    strategy, _ = modules()
+    tid = f"planner-override-{recommendation['verdict_key']}-{len(gates)}"
+    card = {
+        'id': 'planner-card', 'project_name': 'Proposal', 'jaspen_score': 61,
+        'recommendation': recommendation, 'gates': gates,
+        'recommendations': [{'id': 'rec-1', 'text': 'Resolve the compliance response'}],
+    }
+    seed_thread(test_user, tid, [card])
+    upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=card)
+    db.session.commit()
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(
+        strategy,
+        '_generate_ai_wbs_suggestion',
+        lambda *args, **kwargs: (
+            {'tasks': [{'id': '1', 'title': 'Resolve the Proposal compliance response', 'estimated_days': 1, 'lineage': [
+                {'type': item['type'], 'ref': item['ref']} for item in kwargs.get('lineage_sources', []) if item.get('required')
+            ]}]},
+            {'provider': 'anthropic', 'model': 'claude-test', 'input_tokens': 12, 'output_tokens': 15, 'total_tokens': 27},
+            True,
+            None,
+        ),
+    )
+
+    blocked = client.post(
+        f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers,
+        json={'commit': True, 'scorecard_id': 'planner-card'},
+    )
+    assert blocked.status_code == 409
+    assert blocked.get_json()['override'] is True
+    assert blocked.get_json()['failed_check_labels'] == expected_labels
+    assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
+
+    allowed = client.post(
+        f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers,
+        json={'commit': True, 'scorecard_id': 'planner-card', 'record_decision': {'acknowledged': True}},
+    )
+    assert allowed.status_code == 200, allowed.get_json()
+    assert allowed.get_json()['decision']['override'] is True
     record = DecisionRecord.query.filter_by(thread_id=tid).one()
-    decision = OptionDecision.query.filter_by(
-        decision_record_id=record.id, option_key='scorecard:planner-card', superseded_at=None,
-    ).one()
-    assert decision.final_decision == 'Moving forward with Proposal.'
-    assert 'plan built' not in decision.final_decision.lower()
+    decision = OptionDecision.query.filter_by(decision_record_id=record.id, superseded_at=None).one()
+    assert decision.override_info
+    assert decision.final_decision == 'Moving forward with Proposal — execution plan built.'
 
 
 def test_execution_plan_skips_repair_after_50_seconds_used(

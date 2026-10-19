@@ -74,8 +74,9 @@ async function api(path, options = {}) {
   return data;
 }
 
-export default function RecordDecisionPanel({ threadId, alternatives = [], selectedAlternative = null, decisionKit = null, scorecard = null }) {
-  const optionKey = String(scorecard?.option_key || '').trim();
+export default function RecordDecisionPanel({ threadId, alternatives = [], selectedAlternative = null, decisionKit = null, scorecard = null, displayMode = 'full' }) {
+  const scorecardId = String(scorecard?.id || scorecard?.analysis_id || '').trim();
+  const optionKey = String(scorecard?.option_key || (scorecardId ? `scorecard:${scorecardId}` : '')).trim();
   const [record, setRecord] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
@@ -115,6 +116,16 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
   }, [threadId, optionKey]);
 
   React.useEffect(() => { void load(); }, [load]);
+  React.useEffect(() => {
+    const refreshAfterBuild = (event) => {
+      const detail = event?.detail || {};
+      if (String(detail.threadId || '') !== String(threadId || '')) return;
+      if (detail.option_key && optionKey && String(detail.option_key) !== optionKey) return;
+      void load();
+    };
+    window.addEventListener('jaspen:decision-recorded', refreshAfterBuild);
+    return () => window.removeEventListener('jaspen:decision-recorded', refreshAfterBuild);
+  }, [load, optionKey, threadId]);
 
   // Only records this user may already see can be offered as a predecessor.
   // The search endpoint is permission-scoped, so an inaccessible record is
@@ -261,6 +272,32 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
   const outcomes = Array.isArray(record.outcomes) ? record.outcomes : [];
   const lessons = Array.isArray(record.lessons_learned) ? record.lessons_learned : [];
   const hasOutcome = outcomes.length > 0;
+  const buildDecision = record.option_decision?.source === 'build_execution_plan';
+  const buildOverride = Boolean(record.option_decision?.override_info);
+  const recordedOptionName = record.option_decision?.option_name || selectedAlternative || 'this option';
+  const recordedLine = buildOverride
+    ? `Decision recorded: pursuing ${recordedOptionName} despite Jaspen's No-Bid`
+    : `Decision recorded: moving forward with ${recordedOptionName}`;
+
+  if (displayMode === 'line' && (!decided || !buildDecision)) return null;
+
+  if (displayMode === 'line' && !open) {
+    return (
+      <div
+        data-testid="recorded-plan-decision-line"
+        style={{ fontSize: 12.5, color: buildOverride ? '#b45309' : SLATE, marginTop: 6 }}
+      >
+        {recordedLine} ·{' '}
+        <button
+          type="button"
+          onClick={beginRecording}
+          style={{ border: 0, padding: 0, background: 'transparent', color: 'inherit', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
+        >
+          Change
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -282,6 +319,21 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
 
       {decided ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {buildDecision && (
+            <div
+              data-testid="recorded-plan-decision-line"
+              style={{ fontSize: 12.5, color: buildOverride ? '#b45309' : SLATE, lineHeight: 1.5 }}
+            >
+              {recordedLine} ·{' '}
+              <button
+                type="button"
+                onClick={beginRecording}
+                style={{ border: 0, padding: 0, background: 'transparent', color: 'inherit', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
+              >
+                Change
+              </button>
+            </div>
+          )}
           <div style={{ fontSize: 13.5, color: NAVY, lineHeight: 1.5 }}>
             {record.final_decision}
           </div>

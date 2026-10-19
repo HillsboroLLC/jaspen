@@ -720,12 +720,12 @@ def find_execution_plan_decision(user, thread_id, option_key, *, decision_kit=No
 
 
 def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=None, plan_built=False):
-    """Record the user's explicit Build-plan choice through the shared writer.
+    """Record the user's successful Build-plan choice through the shared writer.
 
-    Clicking the acknowledged Build action is a human decision signal.  This
-    helper deliberately composes ``create_or_refresh_record`` and the shared
-    option-decision writer so execution planning cannot grow a second,
-    incompatible decision-record implementation.
+    A successfully saved plan is the human decision signal. This helper
+    deliberately composes ``create_or_refresh_record`` and the shared option-
+    decision writer so execution planning cannot grow a second, incompatible
+    decision-record implementation.
     """
     card = scorecard if isinstance(scorecard, dict) else {}
     option_name = str(
@@ -734,12 +734,27 @@ def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=N
     scorecard_id = str(card.get('id') or card.get('analysis_id') or '').strip()
     option_key = execution_option_key(card)
     recommendation = card.get('recommendation') if isinstance(card.get('recommendation'), dict) else {}
+    failed_checks = [
+        str(gate.get('label') or gate.get('key')).strip()
+        for gate in (card.get('gates') or [])
+        if isinstance(gate, dict)
+        and str(gate.get('status') or '').strip().lower() == 'fail'
+        and str(gate.get('label') or gate.get('key') or '').strip()
+    ]
+    recommended_key = str(recommendation.get('verdict_key') or '').strip()
+    is_override = recommended_key == 'decline' or bool(failed_checks)
+    override_reason = 'User explicitly chose Build plan anyway.' if is_override else None
 
     record, _created = create_or_refresh_record(user, thread_id)
     kit_verdict = None
-    override_info = None
+    override_info = ({
+        'override_of': (
+            'decline' if recommended_key == 'decline' else 'failed_required_check'
+        ),
+        'override_reason': override_reason,
+        'failed_check_labels': failed_checks,
+    } if is_override else None)
     if decision_kit:
-        recommended_key = str(recommendation.get('verdict_key') or '').strip()
         verdict_key = recommended_key if recommended_key in {'advance', 'advance_with_conditions'} else 'advance'
         vocabulary = decision_kit.get('verdict_vocabulary') or {}
         kit_verdict = {
@@ -750,16 +765,13 @@ def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=N
             'recommendation_snapshot': recommendation,
             'conditions_accepted': [],
             'source': 'build_execution_plan',
-            'override_of': 'decline' if recommended_key == 'decline' else None,
-            'override_reason': (
-                'User explicitly chose Build execution plan.'
-                if recommended_key == 'decline' else None
+            'override_of': (
+                'decline' if recommended_key == 'decline' else
+                'failed_required_check' if failed_checks else None
             ),
+            'override_reason': override_reason,
+            'failed_check_labels': failed_checks,
         }
-        override_info = {
-            'override_of': kit_verdict.get('override_of'),
-            'override_reason': kit_verdict.get('override_reason'),
-        } if kit_verdict.get('override_of') else None
         record.decision_type = (record.record or {}).get('decision_kit') or record.decision_type
     decision_text = (
         f'Moving forward with {option_name} — execution plan built.'
@@ -789,7 +801,7 @@ def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=N
         decided_by_user_id=user.id,
         source='build_execution_plan',
         option_name=option_name,
-        rationale=(kit_verdict or {}).get('override_reason'),
+        rationale=override_reason,
         kit_verdict=kit_verdict,
         override_info=override_info,
     )

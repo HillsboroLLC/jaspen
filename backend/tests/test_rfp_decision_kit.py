@@ -359,6 +359,7 @@ def test_only_human_recorded_bid_unlocks_rfp_execution_plan(client, db, test_use
     card = {
         "id": "rfp-card", "analysis_id": "rfp-card", "option_key": "opt-rfp",
         "project_name": "JeffCo RFP", "jaspen_score": 70, "dimensions": {},
+        "recommendation": {"verdict_key": "decline", "label": "No-Bid"},
         "attributes": {"submission_due": attr("2026-11-14")},
         "decision_kit": "rfp_bid", "decision_kit_version": 1,
     }
@@ -398,7 +399,10 @@ def test_only_human_recorded_bid_unlocks_rfp_execution_plan(client, db, test_use
         ]}),
         {"provider": "anthropic", "model": "test", "input_tokens": 1, "output_tokens": 1},
     ))
-    allowed = client.post(f"/api/v1/strategy/threads/{thread_id}/ai-wbs", headers=auth_headers, json={"commit": True, "scorecard_id": "rfp-card"})
+    allowed = client.post(f"/api/v1/strategy/threads/{thread_id}/ai-wbs", headers=auth_headers, json={
+        "commit": True, "scorecard_id": "rfp-card",
+        "record_decision": {"acknowledged": True, "option_key": "opt-rfp"},
+    })
     assert allowed.status_code == 200, allowed.get_json()
     assert allowed.get_json()["project_wbs"]["tasks"], allowed.get_json()
     assert allowed.get_json()["project_wbs"]["tasks"][0]["lineage"][0]["ref"] == record.id

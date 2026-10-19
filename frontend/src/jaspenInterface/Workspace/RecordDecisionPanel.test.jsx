@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
 import RecordDecisionPanel from './RecordDecisionPanel';
 
 jest.mock('../../shared/auth/http', () => ({
@@ -39,6 +39,69 @@ afterEach(() => {
 });
 
 describe('RecordDecisionPanel', () => {
+  it.each([
+    [null, 'Decision recorded: moving forward with Proposal · Change'],
+    [{ override_of: 'decline' }, "Decision recorded: pursuing Proposal despite Jaspen's No-Bid · Change"],
+  ])('shows the exact build decision line and Change opens the existing panel', async (overrideInfo, expected) => {
+    global.fetch = mockFetch([
+      ['/search', () => ({ results: [] })],
+      ['?thread_id=', () => ({
+        records: [{
+          ...PENDING_RECORD,
+          current_state: 'current',
+          final_decision: 'Moving forward with Proposal — execution plan built.',
+          option_decision: {
+            source: 'build_execution_plan',
+            option_name: 'Proposal',
+            override_info: overrideInfo,
+          },
+        }],
+      })],
+    ]);
+
+    render(<RecordDecisionPanel
+      threadId="t-1"
+      selectedAlternative="Proposal"
+      scorecard={{ id: 'card-1', project_name: 'Proposal' }}
+      displayMode="line"
+    />);
+
+    expect(await screen.findByTestId('recorded-plan-decision-line')).toHaveTextContent(expected);
+    fireEvent.click(screen.getByRole('button', { name: 'Change' }));
+    expect(await screen.findByPlaceholderText(/what is the organization deciding/i)).toBeInTheDocument();
+  });
+
+  it('refreshes the decision block immediately after a successful build event', async () => {
+    let loaded = false;
+    global.fetch = mockFetch([
+      ['?thread_id=', () => ({
+        records: [loaded ? {
+          ...PENDING_RECORD,
+          current_state: 'current',
+          final_decision: 'Moving forward with Proposal — execution plan built.',
+          option_decision: { source: 'build_execution_plan', option_name: 'Proposal' },
+        } : PENDING_RECORD],
+      })],
+    ]);
+
+    render(<RecordDecisionPanel
+      threadId="t-1"
+      selectedAlternative="Proposal"
+      scorecard={{ id: 'card-1', project_name: 'Proposal' }}
+    />);
+    expect(await screen.findByText('Decision pending')).toBeInTheDocument();
+
+    loaded = true;
+    act(() => {
+      window.dispatchEvent(new CustomEvent('jaspen:decision-recorded', {
+        detail: { threadId: 't-1', option_key: 'scorecard:card-1' },
+      }));
+    });
+
+    expect(await screen.findByText(/Decision recorded: moving forward with Proposal/)).toBeInTheDocument();
+    expect(screen.queryByText('Decision pending')).not.toBeInTheDocument();
+  });
+
   it('shows the pending state without implying the recommendation is the decision', async () => {
     global.fetch = mockFetch([
       ['?thread_id=', () => ({ records: [PENDING_RECORD] })],

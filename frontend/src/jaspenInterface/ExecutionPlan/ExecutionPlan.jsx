@@ -9,6 +9,7 @@ import { useExecutionPlanBuild } from '../Workspace/useExecutionPlanBuild';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import ExecutionPlanExportButton from '../Workspace/ExecutionPlanExportButton';
 import PmSyncPanel from '../Workspace/PmSyncPanel';
+import RecordDecisionPanel from '../Workspace/RecordDecisionPanel';
 import ExecutionPanel from '../Workspace/components/ExecutionPanel';
 import { parseUIActions, ChatActionTypes } from '../../shared/hooks/useChatCommands';
 import { useToast, ToastContainer } from '../../shared/components/Toast';
@@ -621,6 +622,14 @@ export default function ExecutionPlan() {
             <p className="int-eyebrow">Execution</p>
             <h1>Execution Plan</h1>
             <p>Track tasks, owners, and milestones from this project. Use the Jaspen assistant on the left to modify the plan with natural language.</p>
+            <RecordDecisionPanel
+              threadId={threadId}
+              alternatives={[scorecardContext?.project_name || scorecardContext?.name || 'this option']}
+              selectedAlternative={scorecardContext?.project_name || scorecardContext?.name || 'this option'}
+              decisionKit={scorecardContext?.decision_kit || null}
+              scorecard={scorecardContext}
+              displayMode="line"
+            />
           </div>
           {pageActions}
         </header>

@@ -7941,6 +7941,12 @@ def generate_ai_wbs(thread_id):
             recorded_decision = {
                 'id': recorded_row.id,
                 'final_decision': recorded_row.final_decision,
+                'source': getattr(recorded_row, 'source', None),
+                'override_info': (
+                    recorded_row.override_info
+                    if isinstance(getattr(recorded_row, 'override_info', None), dict)
+                    else {}
+                ),
                 'kit_verdict': (
                     recorded_row.kit_verdict
                     if isinstance(getattr(recorded_row, 'kit_verdict', None), dict)
@@ -7949,19 +7955,34 @@ def generate_ai_wbs(thread_id):
             }
 
         record_request = payload.get('record_decision') if isinstance(payload.get('record_decision'), dict) else {}
-        if commit and recorded_decision is None and not bool(record_request.get('acknowledged')):
-            recommendation = current_scorecard.get('recommendation') if isinstance(current_scorecard.get('recommendation'), dict) else {}
+        recommendation = current_scorecard.get('recommendation') if isinstance(current_scorecard.get('recommendation'), dict) else {}
+        failed_check_labels = [
+            str(gate.get('label') or gate.get('key')).strip()
+            for gate in (current_scorecard.get('gates') or [])
+            if isinstance(gate, dict)
+            and str(gate.get('status') or '').strip().lower() == 'fail'
+            and str(gate.get('label') or gate.get('key') or '').strip()
+        ]
+        override_required = (
+            str(recommendation.get('verdict_key') or '').strip() == 'decline'
+            or bool(failed_check_labels)
+        )
+        if (
+            commit and override_required and not bool(record_request.get('acknowledged'))
+        ):
             return jsonify({
                 'success': False,
                 'code': 'recorded_advancing_decision_required',
-                'error': 'Record that you are moving forward with this option before building its execution plan.',
+                'error': 'Confirm that you want to override Jaspen\'s recommendation before building this plan.',
                 'action': 'record_decision',
+                'override': True,
+                'failed_check_labels': failed_check_labels,
                 'option_key': target_option_key or None,
                 'option_name': str(current_scorecard.get('project_name') or current_scorecard.get('name') or current_scorecard.get('label') or 'this option'),
                 'verdict': recommendation.get('verdict_key') or None,
                 'verdict_label': recommendation.get('label') or recommendation.get('verdict') or 'move forward',
             }), 409
-        if commit and recorded_decision is None:
+        if commit and record_request:
             requested_option_key = str(record_request.get('option_key') or '').strip()
             if requested_option_key and requested_option_key != target_option_key:
                 return jsonify({
@@ -7969,22 +7990,16 @@ def generate_ai_wbs(thread_id):
                     'code': 'decision_target_mismatch',
                     'error': 'The plan decision does not match this scorecard option.',
                 }), 409
-            from ..decision_records import record_execution_plan_decision
-            decision_record = record_execution_plan_decision(
-                user, thread_id, current_scorecard, decision_kit=decision_kit,
-            )
-            record_json = decision_record.record if isinstance(getattr(decision_record, 'record', None), dict) else {}
-            recorded_decision = {
-                'id': decision_record.id,
-                'final_decision': decision_record.final_decision,
-                'kit_verdict': (
-                    decision_record.kit_verdict
-                    if isinstance(getattr(decision_record, 'kit_verdict', None), dict)
-                    else record_json.get('kit_verdict') or {}
-                ),
+        option_name = str(current_scorecard.get('project_name') or current_scorecard.get('name') or current_scorecard.get('label') or 'this option')
+        lineage_decision = recorded_decision
+        if commit and lineage_decision is None:
+            # The plan must derive from the build commitment, but the durable
+            # decision is written only after the plan itself is saved.
+            lineage_decision = {
+                'id': 'successful_plan_build',
+                'final_decision': f'Moving forward with {option_name}.',
             }
-            decision_recorded_now = True
-        lineage_sources = build_lineage_sources(current_scorecard, decision_kit, recorded_decision)
+        lineage_sources = build_lineage_sources(current_scorecard, decision_kit, lineage_decision)
         attributes = current_scorecard.get('attributes') if isinstance(current_scorecard.get('attributes'), dict) else {}
         team_entry = attributes.get('team')
         recorded_team = team_entry.get('value') if isinstance(team_entry, dict) and isinstance(team_entry.get('value'), list) else []
@@ -8264,14 +8279,33 @@ def generate_ai_wbs(thread_id):
             if not _save_scenarios(user_id, all_data):
                 raise RuntimeError('Failed to persist generated execution plan.')
             plan_persisted = True
-            if recorded_decision:
+            if recorded_decision is None:
                 from ..decision_records import record_execution_plan_decision
                 decision_record = record_execution_plan_decision(
                     user, thread_id, current_scorecard,
                     decision_kit=decision_kit, plan_built=True,
                 )
-                recorded_decision['id'] = decision_record.id
+                recorded_decision = {
+                    'id': decision_record.id,
+                    'final_decision': decision_record.final_decision,
+                    'source': decision_record.source,
+                    'kit_verdict': decision_record.kit_verdict or {},
+                    'override_info': decision_record.override_info or {},
+                }
+                decision_recorded_now = True
+            elif (
+                recorded_decision.get('source') == 'build_execution_plan'
+                and recorded_decision.get('final_decision') == f'Moving forward with {option_name}.'
+            ):
+                # Complete a legacy preliminary build decision only after the
+                # plan has now been saved successfully.
+                from ..decision_records import record_execution_plan_decision
+                decision_record = record_execution_plan_decision(
+                    user, thread_id, current_scorecard,
+                    decision_kit=decision_kit, plan_built=True,
+                )
                 recorded_decision['final_decision'] = decision_record.final_decision
+                recorded_decision['override_info'] = decision_record.override_info or {}
             # Register the plan as a Session Artifact on the originating idea so
             # it shows up in the artifacts list even though it was built from the
             # workspace CTA / trade-off table rather than the chat tool.
@@ -8298,6 +8332,12 @@ def generate_ai_wbs(thread_id):
             'limits': limits,
             'decision_recorded': decision_recorded_now,
             'decision_record_id': recorded_decision.get('id') if recorded_decision else None,
+            'decision': ({
+                'option_key': target_option_key or None,
+                'option_name': option_name,
+                'override': bool((recorded_decision or {}).get('override_info')),
+                'final_decision': (recorded_decision or {}).get('final_decision'),
+            } if recorded_decision else None),
         }), 200
     except Exception as e:
         if user is not None and ai_settlement and not plan_persisted:

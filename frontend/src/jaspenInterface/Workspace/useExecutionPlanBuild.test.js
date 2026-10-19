@@ -20,8 +20,11 @@ describe('execution plan build entry points', () => {
     expect((shared.match(/Jaspen\.generateAiWbs/g) || [])).toHaveLength(2);
     expect(shared).toContain('record_decision');
     expect(shared).toContain('acknowledged: true');
-    expect(shared).toContain('skip_plan_decision_confirm');
-    expect(shared).toContain("overriding Jaspen&apos;s No-Bid recommendation");
+    expect(shared).not.toContain('skip_plan_decision_confirm');
+    expect(shared).not.toMatch(/no\[-\\s\]\?bid/);
+    expect(shared).toContain('Build a plan anyway?');
+    expect(shared).toContain("Jaspen recommended No-Bid because");
+    expect(shared).toContain('Build plan anyway');
     expect(shared).toContain("execution_plan_generation_failed");
 
     const executionPlan = fs.readFileSync(path.join(srcRoot, 'ExecutionPlan', 'ExecutionPlan.jsx'), 'utf8');

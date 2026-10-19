@@ -3388,6 +3388,9 @@ const renderInlineExecutionArtifact = (wbs, opts = {}) => {
     ? `__execution__?idea=${encodeURIComponent(execScorecardId)}`
     : '__execution__';
   const wsHref = opts.threadId ? `/workspace/${encodeURIComponent(opts.threadId)}/${execRoute}` : null;
+  const planScorecard = (opts.allSnapshots || []).find((card) => (
+    String(card?.id || card?.analysis_id || '') === execScorecardId
+  )) || null;
   return (
     <div style={{
       background: '#fff', border: '1px solid #e9ecef', borderRadius: 14,
@@ -3407,6 +3410,16 @@ const renderInlineExecutionArtifact = (wbs, opts = {}) => {
           <div style={{ fontSize: 13, color: '#5a6585', marginTop: 4 }}>
             {phases.size} phase{phases.size === 1 ? '' : 's'} · {tasks.length} task{tasks.length === 1 ? '' : 's'} · <strong style={{ color: '#161f3b' }}>{donePct}% done</strong>
           </div>
+          {planScorecard && (
+            <RecordDecisionPanel
+              threadId={opts.threadId}
+              alternatives={[ideaName || planScorecard.project_name || 'this option']}
+              selectedAlternative={ideaName || planScorecard.project_name || 'this option'}
+              decisionKit={planScorecard.decision_kit || null}
+              scorecard={planScorecard}
+              displayMode="line"
+            />
+          )}
         </div>
         <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', justifyContent:'flex-end' }}>
         <ExecutionPlanExportButton threadId={opts.threadId} scorecardId={execScorecardId} compact />
