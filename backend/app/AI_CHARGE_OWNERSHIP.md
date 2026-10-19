@@ -15,7 +15,8 @@ required by the Phase 1 specification.
 | `execution_plan_refinement` | Plan-refinement operation | A response with edits is billable only when the server validates and atomically saves all edits. A save failure reverses the settlement; the browser refreshes the saved plan instead of reapplying actions. A guidance-only reply is billable when returned usable. | Implemented |
 | `scorecard_assistant`, `portfolio_analysis`, `scenario_generation`, `strategy_generation`, `structured_generation`, `data_insights`, `report_generation`, `connector_idea_generation`, `batch_ranking`, `batch_clarification`, decision-asset email generation | Named feature route | The validated customer-visible result is returned, or persisted where that feature stores it. | Defined, subject to each route validating before settlement. |
 | `decision_kit_classification` | Conversation orchestration | Internal component of the conversation; never a second charge in addition to the owning turn. | Defined |
-| `context_summarization`, `knowledge_refresh`, `user_memory_extraction`, `feedback_digest` | Jaspen/internal | Never customer billed (`customer_visible=False`); provider cost is absorbed and reported under the operation type. | Defined |
+| `context_summarization`, `knowledge_refresh`, `feedback_digest` | Jaspen/internal | Never customer billed (`customer_visible=False`); provider cost is absorbed and reported under the operation type. | Defined |
+| `user_memory_extraction` | Jaspen/internal | Disabled and not called pending the Phase 3 memory design. | Disabled |
 | `public_intake_chat` | Jaspen/public intake | Never account billed; provider cost is classified as public-intake subsidy. | Defined |
 | Deterministic tools (fact/config changes, decision records, queue bookkeeping, cache reads) | No independent AI charge | No provider operation is created. A surrounding AI turn may own its own usable reply or completed outer mutation. | Defined |
 

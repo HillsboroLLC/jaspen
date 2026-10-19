@@ -4445,30 +4445,6 @@ def analyze_project():
                 "[decision_record] failed for thread %s", resolved_thread_id
             )
 
-        # Best-effort internal extraction through the governed AI gateway. This
-        # is synchronous so the application/DB context remains valid and its
-        # provider cost is captured before the request context disappears.
-        # Unchanged by Phase 3: personal memory and the organization's Decision
-        # Record are separate layers and both continue to run.
-        try:
-            from app.routes.ai_agent import extract_and_update_user_memory
-            _score_val = analysis_result.get('jaspen_score')
-            _industry_val = str(
-                (session.get('intake_context') or {}).get('industry')
-                or (session.get('result') or {}).get('industry')
-                or ''
-            ).strip()
-            extract_and_update_user_memory(
-                current_user_id,
-                project_name,
-                effective_description,
-                _score_val,
-                _industry_val,
-                model_selection,
-            )
-        except Exception:
-            current_app.logger.exception("Failed to update user memory")
-
         # Ensure scenario-thread storage exists, even before any scenario/WBS is created.
         all_data = _load_scenarios(current_user_id)
         td = all_data.get(resolved_thread_id)

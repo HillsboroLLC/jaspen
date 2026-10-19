@@ -2532,6 +2532,7 @@ def _save_user_memory(user_id, facts):
         current_app.logger.exception("Failed saving user memory for user %s", user_id)
 
 
+# Disabled pending the Phase 3 memory design.
 def extract_and_update_user_memory(user_id, project_name, problem_statement, score, industry, model_selection=None):
     """
     Extract key business facts from a completed project and persist them to user memory.

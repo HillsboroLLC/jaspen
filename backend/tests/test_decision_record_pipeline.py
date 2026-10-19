@@ -15,7 +15,7 @@ from app.decision_records import (
     create_or_refresh_record,
     record_final_decision,
 )
-from app.models import Scorecard, UserSession
+from app.models import AIOperation, Scorecard, UserSession
 from app.models_decision_record import DecisionRecord
 
 from tests.test_session_org_ownership import (
@@ -426,6 +426,35 @@ def test_scoring_endpoint_creates_a_decision_record(client, db, team_setup, app,
     # The model's output did NOT become the organization's decision.
     assert record.final_decision is None
     assert record.record['human_decision']['recorded'] is False
+
+
+def test_scoring_endpoint_does_not_extract_user_memory(client, db, team_setup, app, monkeypatch):
+    """Completed scoring does not invoke or create the disabled memory operation."""
+    from flask_jwt_extended import create_access_token
+    from app.routes import ai_agent
+
+    org, owner = team_setup["org"], team_setup["owner"]
+    _seed_project(db, org, owner, session_id="dr-no-memory", visibility="team")
+    _stub_scorer(monkeypatch)
+    extraction_calls = []
+    monkeypatch.setattr(
+        ai_agent,
+        'extract_and_update_user_memory',
+        lambda *_args, **_kwargs: extraction_calls.append((_args, _kwargs)),
+    )
+
+    with app.app_context():
+        headers = {"Authorization": f"Bearer {create_access_token(identity=str(owner.id))}"}
+
+    response = client.post(
+        '/api/v1/strategy/analyze',
+        headers=headers,
+        json={'thread_id': 'dr-no-memory', 'description': 'Score without memory extraction'},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert extraction_calls == []
+    assert AIOperation.query.filter_by(operation_type='user_memory_extraction').count() == 0
 
 
 def test_rescoring_through_the_endpoint_refreshes_one_record(client, db, team_setup, app, monkeypatch):
