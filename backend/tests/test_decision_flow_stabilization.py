@@ -1470,6 +1470,7 @@ def test_suggested_rfp_kit_requires_selection_then_first_approval_allows_scoring
     approval = 'Approved. Score all three bids with it now.'
     assert agent._approve_presented_rubric_for_turn(
         session, user_id=test_user.id, thread_id=tid, user_message=approval,
+        user_request_quote='Score all three bids with it now',
     ) is True
     approved = load_user_sessions(test_user.id)[tid]['scoring_rubric']
     assert approved['approval_status'] == 'approved'
@@ -1477,7 +1478,8 @@ def test_suggested_rfp_kit_requires_selection_then_first_approval_allows_scoring
     assert session['scoring_intent'] == {'status': 'requested', 'source': 'user'}
     assert agent._guard_mutation_tool(
         'queue_scorecards', user_turn_count=2, mutations_this_turn=0,
-        user_message=approval, session=session,
+        user_message=approval, user_request_quote='Score all three bids with it now',
+        session=session,
     ) is None
 
 
@@ -1559,7 +1561,8 @@ def test_score_now_uses_proposed_kit_rubric_without_approval_stop(app, db, test_
     ) is None
     assert agent._guard_mutation_tool(
         'queue_scorecards', user_turn_count=1, mutations_this_turn=0,
-        user_message=message, session=session,
+        user_message=message, user_request_quote='Score all three bids now',
+        session=session,
     ) is None
     assert session['scoring_rubric']['approval_status'] == 'proposed'
     assert session['scoring_rubric']['scoring_authorized_by'] == 'explicit_score_request'
@@ -1569,7 +1572,10 @@ def test_score_now_uses_proposed_kit_rubric_without_approval_stop(app, db, test_
         'confirmation': 'Queued all three bids for scoring.',
     })
     result, _ = agent._execute_local_tool(
-        'queue_scorecards', {'ideas': [{'name': 'A'}, {'name': 'B'}, {'name': 'C'}]},
+        'queue_scorecards', {
+            'ideas': [{'name': 'A'}, {'name': 'B'}, {'name': 'C'}],
+            'user_request_quote': 'Score all three bids now',
+        },
         readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
         user_turn_count=1, mutations_this_turn=0, user_message=message, session=session,
     )
@@ -1619,14 +1625,14 @@ def test_authorized_proposed_rubric_allows_natural_rescore_requests(app, score_r
 
     assert agent._guard_mutation_tool(
         'generate_scorecard', user_turn_count=1, mutations_this_turn=0,
-        user_message='Score it now.', session=session,
+        user_message='Score it now.', user_request_quote='Score it now', session=session,
     ) is None
     assert session['scoring_rubric']['approval_status'] == 'proposed'
     assert session['scoring_rubric']['scoring_authorized_by'] == 'explicit_score_request'
 
     assert agent._guard_mutation_tool(
         'generate_scorecard', user_turn_count=2, mutations_this_turn=0,
-        user_message=score_request, session=session,
+        user_message=score_request, user_request_quote=score_request, session=session,
     ) is None
     assert session['scoring_rubric']['approval_status'] == 'proposed'
     assert 'approved_by_user_at' not in session['scoring_rubric']
@@ -1643,7 +1649,7 @@ def test_changed_rubric_after_authorized_score_shows_criteria_and_approve_action
     }
     assert agent._guard_mutation_tool(
         'generate_scorecard', user_turn_count=1, mutations_this_turn=0,
-        user_message='Score it now.', session=session,
+        user_message='Score it now.', user_request_quote='Score it now', session=session,
     ) is None
 
     session['scoring_rubric'] = {
@@ -1656,7 +1662,8 @@ def test_changed_rubric_after_authorized_score_shows_criteria_and_approve_action
     }
     result = agent._guard_mutation_tool(
         'generate_scorecard', user_turn_count=2, mutations_this_turn=0,
-        user_message='Re-score with that.', session=session,
+        user_message='Re-score with that.', user_request_quote='Re-score with that',
+        session=session,
     )
 
     assert result['code'] == 'rubric_approval_required'
@@ -2097,7 +2104,11 @@ def test_first_turn_score_now_with_user_owned_rubric_scores_immediately(app, db,
         'neutral_criteria': [{'key': 'delivery_confidence', 'label': 'Delivery Confidence', 'score': 45}],
     }, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1}))
     scored, _ = agent._execute_local_tool(
-        'generate_scorecard', {'name': 'Boulder', 'idea_description': 'Evaluate Boulder.'},
+        'generate_scorecard', {
+            'name': 'Boulder',
+            'idea_description': 'Evaluate Boulder.',
+            'user_request_quote': 'Score it now',
+        },
         readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
         user_turn_count=1, mutations_this_turn=count, user_message=message, session=session,
     )

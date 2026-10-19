@@ -638,7 +638,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "PROSE ARITHMETIC: any derived figure you state in prose must show its components inline the first time — write '$23k base + $13.8k bonus = ~$36.8k more per year', not just the total — and every time period must be explicit (per month, per year, over 3 years). Never silently assume a missing input is zero or unchanged (e.g. the current job's bonus): either make it your one question, or state the assumption inline and invite correction ('assuming your current role has no bonus — tell me if that's wrong'). If you are not confident in a calculation, give a range and the driver of the uncertainty instead of a precise-sounding number. "
     "SCORING & CONFIDENCE — follow these exactly: "
     "(1) Confidence is informational and NEVER a gate. The SCORE CONFIDENCE block at the end of this prompt states how confident Jaspen is in a score it could produce right now; it does NOT decide whether you are allowed to score. "
-    "(2) When the user asks you to score, rank, or compare — or scoring is the obvious next step — do it immediately. NEVER refuse, defer, or say you are 'in intake mode' or 'still gathering context'. Score with the confidence you currently have and state that confidence in plain language. "
+    "(2) When the user asks you to score, rank, or compare — or scoring is the obvious next step — do it immediately. For generate_scorecard or queue_scorecards, include user_request_quote as a short exact quote from the user's latest message only when the user asked to score in any wording (including a reply such as 'go ahead' or 'yes' after you asked whether to score); omit it when you are proposing scoring on your own initiative. NEVER refuse, defer, or say you are 'in intake mode' or 'still gathering context'. Score with the confidence you currently have and state that confidence in plain language. "
     "(3) NEVER claim a scorecard is generating, updating, or has been updated unless you actually called the tool to do so. Describe only changes you really made, and do not reference buttons, tabs, or other UI. "
     "(4) BE A PROACTIVE INTERVIEWER, not a passive scorer. When the user brings an idea or a set of options but the criteria, weights, or key context are thin or missing, lead a short guided survey to build the scoring WITH them: ask focused, ONE-AT-A-TIME questions — what criteria matter most and their rough weights, whether to group them (e.g. Impact vs Fit), what constraints or must-haves apply, and which connector or upload could ground a weak dimension. You MAY propose a sensible starter rubric for them to approve or edit, but it is THEIRS — never impose criteria. Keep it conversational and always moving: ask the single highest-value next question, not a checklist, and acknowledge what they just told you. Asking good questions is how you build confidence — but it is NEVER a gate: the moment the user says score (or has given enough to proceed), score immediately and stop interviewing. "
     "When the user asks 'what would make you more confident', 'how can I improve my score', 'what else do you need', or similar: respond with a ranked list of 1–3 specific actions they could take, each naming the scoring dimension it would strengthen, the data or connector that would help, and a brief estimate of the confidence improvement (e.g. 'Connecting your CRM would move Financial Viability from assumed to evidence-backed, likely pushing it from 58 to 75+'). Be specific and actionable — never generic. Whenever a first scorecard lands, end your reply by opening this door in one sentence — e.g. 'This is a 61 at modest confidence — ask me what would raise the score, or what would make me more certain.' "
@@ -3609,7 +3609,17 @@ def _apply_charge_ownership_to_turn_usage(usage, mutations):
     return usage
 
 
-def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn, user_message="", session=None):
+def verify_user_quote(quote, latest_user_message):
+    normalized_quote = str(quote or "").strip()
+    if len(normalized_quote) < 2:
+        return False
+    return normalized_quote.casefold() in str(latest_user_message or "").casefold()
+
+
+def _guard_mutation_tool(
+    tool_name, *, user_turn_count, mutations_this_turn, user_message="",
+    user_request_quote=None, session=None,
+):
     if not _is_mutation_tool(tool_name):
         return None
     normalized_tool = str(tool_name or "").strip()
@@ -3619,14 +3629,7 @@ def _guard_mutation_tool(tool_name, *, user_turn_count, mutations_this_turn, use
     # rubric approval guard before recording work for /score-next.
     if normalized_tool in _EXEMPT_MUTATION_TOOLS and normalized_tool != "queue_scorecards":
         return None
-    explicit_score = bool(re.search(
-        r"\b(?:"
-        r"score\s+(?:(?:it|this|them|these|all|now)(?:\s+now)?|again)"
-        r"|re-?score(?:\s+(?:(?:it|this|them|these|all|now)(?:\s+now)?|again|with\s+that))?"
-        r"|update\s+(?:the\s+)?score"
-        r")\b",
-        str(user_message or ""), re.I,
-    ))
+    explicit_score = verify_user_quote(user_request_quote, user_message)
     _ensure_session_decision_kit_gates(session)
     rubric = (session or {}).get("scoring_rubric") if isinstance(session, dict) else None
     rubric_ready = bool(isinstance(rubric, dict) and rubric.get("criteria"))
@@ -4870,6 +4873,10 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
         user_turn_count=user_turn_count,
         mutations_this_turn=mutations_this_turn,
         user_message=user_message,
+        user_request_quote=(
+            tool_input.get("user_request_quote")
+            if isinstance(tool_input, dict) else None
+        ),
         session=session,
     )
     if mutation_guard:
@@ -5922,6 +5929,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                             "type": "boolean",
                             "description": "Set true only when the user explicitly chooses Score fresh. This bypasses stored judgment reuse and incurs the normal scoring cost.",
                         },
+                        "user_request_quote": {
+                            "type": "string",
+                            "description": "A short exact quote from the user's latest message when the user asked to score, in any wording (including 'go ahead' or 'yes' in reply to Jaspen asking whether to score). Omit when Jaspen is proposing scoring on its own initiative.",
+                        },
                     },
                     "required": ["idea_description", "name"],
                     "additionalProperties": False,
@@ -6089,6 +6100,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                                 "required": ["name"],
                                 "additionalProperties": False,
                             },
+                        },
+                        "user_request_quote": {
+                            "type": "string",
+                            "description": "A short exact quote from the user's latest message when the user asked to score, in any wording (including 'go ahead' or 'yes' in reply to Jaspen asking whether to score). Omit when Jaspen is proposing scoring on its own initiative.",
                         },
                     },
                     "required": ["ideas"],
@@ -6495,7 +6510,7 @@ def _refresh_decision_record_after_score(user, thread_id):
         return None
 
 
-def _rubric_approval_from_message(message, criteria=None, existing_rubric=None):
+def _rubric_approval_from_message(message, criteria=None, existing_rubric=None, user_request_quote=None):
     text = str(message or "").strip().lower()
     labels = [
         str(item.get("label") or "").strip().lower()
@@ -6503,7 +6518,7 @@ def _rubric_approval_from_message(message, criteria=None, existing_rubric=None):
         if isinstance(item, dict) and not item.get("gate")
     ]
     matched_labels = [label for label in labels if label and label in text]
-    explicit_score = bool(re.search(r"\b(?:score|rescore|re-score)\s+(?:it|this|them|these|all|now)(?:\s+now)?\b", text))
+    explicit_score = verify_user_quote(user_request_quote, message)
     stated_weights = re.findall(r"\b\d+(?:\.\d+)?\s*%?", text)
     if len(matched_labels) >= 1 and _message_supplies_weighted_rubric(message) and (
         re.search(r"\d+(?:\.\d+)?\s*%", text)
@@ -6531,7 +6546,7 @@ def _rubric_approval_from_message(message, criteria=None, existing_rubric=None):
     return rubric_identity(existing_rubric)["criteria"] == rubric_identity({"criteria": criteria})["criteria"]
 
 
-def _approve_presented_rubric_for_turn(session, *, user_id, thread_id, user_message):
+def _approve_presented_rubric_for_turn(session, *, user_id, thread_id, user_message, user_request_quote=None):
     """Approve the exact displayed proposal before a provider handles a turn.
 
     Approval is a user action, so the application owns it. Requiring the model
@@ -6559,11 +6574,7 @@ def _approve_presented_rubric_for_turn(session, *, user_id, thread_id, user_mess
         text,
         re.I,
     ))
-    explicit_score = bool(re.search(
-        r"\b(?:score|rescore|re-score)\s+(?:(?:it|this|them|these|all|now)(?:\s+now)?|on\b.{0,80}\balone\b)",
-        text,
-        re.I,
-    ))
+    explicit_score = verify_user_quote(user_request_quote, user_message)
     if not (explicit_approval or explicit_score):
         return False
 

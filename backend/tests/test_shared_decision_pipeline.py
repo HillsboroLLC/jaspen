@@ -943,13 +943,84 @@ def test_score_it_now_bypasses_first_turn_confirmation_when_rubric_is_ready(app)
     }}
     assert agent._guard_mutation_tool(
         "generate_scorecard", user_turn_count=1, mutations_this_turn=0,
-        user_message="Score it now", session=ready,
+        user_message="Score it now", user_request_quote="Score it now", session=ready,
     ) is None
     blocked = agent._guard_mutation_tool(
         "generate_scorecard", user_turn_count=1, mutations_this_turn=0,
         user_message="Tell me about it", session=ready,
     )
     assert blocked["code"] == "confirmation_required"
+
+
+@pytest.mark.parametrize('latest_message,user_request_quote', [
+    ('Score the options', 'Score the options'),
+    ('Can you score Bid A and Bid B?', 'score Bid A and Bid B'),
+    ('That works, score both options', 'score both options'),
+    ('Run the numbers', 'Run the numbers'),
+    ('Go ahead', 'Go ahead'),
+])
+def test_verified_user_quote_allows_any_scoring_wording_on_first_turn(
+    app, latest_message, user_request_quote,
+):
+    from app.routes import ai_agent as agent
+
+    session = {'scoring_rubric': {
+        'criteria': [{'key': 'fit', 'weight': 1}],
+        'approval_status': 'proposed',
+        'presented_at': '2026-10-19T12:00:00Z',
+    }}
+
+    assert agent.verify_user_quote(user_request_quote, latest_message) is True
+    assert agent._guard_mutation_tool(
+        'generate_scorecard', user_turn_count=1, mutations_this_turn=0,
+        user_message=latest_message, user_request_quote=user_request_quote,
+        session=session,
+    ) is None
+    assert session['scoring_intent'] == {'status': 'requested', 'source': 'user'}
+
+
+def test_verify_user_quote_trims_ignores_case_and_requires_two_characters(app):
+    from app.routes import ai_agent as agent
+
+    assert agent.verify_user_quote('  SCORE THE OPTIONS  ', 'Please score the options now.') is True
+    assert agent.verify_user_quote('x', 'x') is False
+    assert agent.verify_user_quote('score these', 'Tell me about these options') is False
+
+
+@pytest.mark.parametrize('user_request_quote', [None, 'Score the options'])
+def test_missing_or_unverified_user_quote_keeps_scoring_on_proposal_path(
+    app, user_request_quote,
+):
+    from app.routes import ai_agent as agent
+
+    session = {'scoring_rubric': {
+        'criteria': [{'key': 'fit', 'label': 'Fit', 'weight': 1}],
+        'approval_status': 'proposed',
+        'source': 'jaspen_proposed',
+    }}
+    result = agent._guard_mutation_tool(
+        'generate_scorecard', user_turn_count=2, mutations_this_turn=0,
+        user_message='Tell me about the options', user_request_quote=user_request_quote,
+        session=session,
+    )
+
+    assert result['code'] == 'rubric_approval_required'
+    assert result['confirmation_required'] is True
+    assert result['actions'][0]['label'] == 'Approve rubric'
+    assert 'scoring_intent' not in session
+
+
+def test_scoring_tool_schemas_offer_optional_user_request_quote(app):
+    from app.routes import ai_agent as agent
+
+    tools = {
+        item['name']: item
+        for item in agent._anthropic_tool_definitions(enable_mutation_tools=True)
+    }
+    for tool_name in ('generate_scorecard', 'queue_scorecards'):
+        schema = tools[tool_name]['input_schema']
+        assert schema['properties']['user_request_quote']['type'] == 'string'
+        assert 'user_request_quote' not in schema['required']
 
 
 def test_proposed_rubric_is_not_self_approved_and_same_turn_score_approves(app, test_user, monkeypatch):
@@ -975,7 +1046,7 @@ def test_proposed_rubric_is_not_self_approved_and_same_turn_score_approves(app, 
     assert shown_session["scoring_rubric"]["presented_at"]
     assert agent._guard_mutation_tool(
         "generate_scorecard", user_turn_count=2, mutations_this_turn=0,
-        user_message="Score it now", session=shown_session,
+        user_message="Score it now", user_request_quote="Score it now", session=shown_session,
     ) is None
     approved = shown_session["scoring_rubric"]
     assert approved["approval_status"] == "approved"
@@ -993,7 +1064,7 @@ def test_proposed_rubric_is_not_self_approved_and_same_turn_score_approves(app, 
     assert result["ok"] and session["scoring_rubric"]["approved_by_user_at"]
     assert agent._guard_mutation_tool(
         "generate_scorecard", user_turn_count=1, mutations_this_turn=0,
-        user_message="Score it now", session=session,
+        user_message="Score it now", user_request_quote="Score it now", session=session,
     ) is None
 
 
@@ -1163,7 +1234,7 @@ def test_score_intent_is_structured_and_unseen_rubric_is_not_approved(app):
     }}
     error = agent._guard_mutation_tool(
         "generate_scorecard", user_turn_count=2, mutations_this_turn=0,
-        user_message="Score it now", session=session,
+        user_message="Score it now", user_request_quote="Score it now", session=session,
     )
     assert error["code"] == "rubric_approval_required"
     assert session["scoring_intent"] == {"status": "requested", "source": "user"}
@@ -1526,4 +1597,5 @@ def test_jaspen_proposed_single_criterion_requires_approved_confirmation(app, te
     agent._apply_rubric_action_to_session(shown, [{'result': result}])
     assert agent._rubric_approval_from_message(
         'Score on Price alone', shown['scoring_rubric']['criteria'], shown['scoring_rubric'],
+        user_request_quote='Score on Price alone',
     ) is True
