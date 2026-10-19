@@ -1,18 +1,11 @@
 import pytest
 
 
-def _judge(
-    kit, confidence, quote, *, change_requested=False, change_quote="",
-    confirms_pending_change=False, confirm_quote="",
-):
+def _judge(kit, confidence, quote):
     return {
         "kit": kit,
         "confidence": confidence,
         "evidence_quote": quote,
-        "change_requested": change_requested,
-        "change_quote": change_quote,
-        "confirms_pending_change": confirms_pending_change,
-        "confirm_quote": confirm_quote,
     }
 
 
@@ -107,6 +100,22 @@ def test_locked_kit_cannot_silently_flip_on_later_score_request(app):
     assert session.get("decision_kit_change_pending") is None
 
 
+@pytest.mark.parametrize("session", [
+    {"active_evaluation_scorecard_id": "card-1"},
+    {"decision_kit": "rfp_bid", "decision_kit_locked": True},
+])
+def test_established_or_locked_session_skips_classifier(app, monkeypatch, session):
+    from app.routes import ai_agent
+
+    def unexpected_call(*_args, **_kwargs):
+        raise AssertionError("classifier must not run")
+
+    monkeypatch.setattr(ai_agent, "_classify_decision_kit", unexpected_call)
+    assert ai_agent._decision_kit_judgment_for_turn(
+        session, "Can we switch kits?", {"llm_model": "test"},
+    ) is None
+
+
 def test_suggested_kit_reaches_manual_canonical_identity_only_after_click(app):
     from app.decision_fingerprint import scoring_fingerprint
     from app.routes import ai_agent
@@ -143,29 +152,21 @@ def test_explicit_change_on_established_decision_requires_confirmation(app):
         "decision_kit_locked": True,
     }
     message = "Change this Decision Kit to vendor selection."
-    ai_agent._apply_rfp_decision_context(
-        session,
-        message,
-        judgment=_judge(
-            "rfp_vendor_selection", "high", "vendor selection",
-            change_requested=True, change_quote="Change this Decision Kit",
-        ),
+    result = ai_agent._execute_decision_kit_change_tool(
+        "request_decision_kit_change",
+        {"target": "rfp_vendor_selection", "user_request_quote": "Change this Decision Kit"},
+        session=session,
+        user_message=message,
     )
+    assert result["confirmation_required"] is True
     assert session["decision_kit"] == "rfp_bid"
     assert session["decision_kit_change_pending"]["target"] == "rfp_vendor_selection"
 
 
-def test_kit_change_and_confirmation_require_verified_model_quotes(app):
+def test_kit_change_and_confirmation_require_verified_quotes(app):
     from app.routes import ai_agent
 
     request = "Can we switch this to vendor selection?"
-    requested = ai_agent._validated_decision_kit_judgment(
-        _judge(
-            "rfp_vendor_selection", "high", "vendor selection",
-            change_requested=True, change_quote=request,
-        ),
-        request,
-    )
     session = {
         "active_evaluation_scorecard_id": "card-1",
         "decision_kit": "rfp_bid",
@@ -173,19 +174,24 @@ def test_kit_change_and_confirmation_require_verified_model_quotes(app):
         "decision_kit_family": "rfp",
         "decision_kit_locked": True,
     }
-    ai_agent._apply_rfp_decision_context(session, request, judgment=requested)
+    requested = ai_agent._execute_decision_kit_change_tool(
+        "request_decision_kit_change",
+        {"target": "rfp_vendor_selection", "user_request_quote": request},
+        session=session,
+        user_message=request,
+    )
+    assert requested["ok"] is True
     assert session["decision_kit"] == "rfp_bid"
     assert session["decision_kit_change_pending"]["target"] == "rfp_vendor_selection"
 
     confirmation = "Yes, make that change."
-    confirmed = ai_agent._validated_decision_kit_judgment(
-        _judge(
-            "none", "high", "",
-            confirms_pending_change=True, confirm_quote=confirmation,
-        ),
-        confirmation,
+    confirmed = ai_agent._execute_decision_kit_change_tool(
+        "confirm_decision_kit_change",
+        {"user_request_quote": confirmation},
+        session=session,
+        user_message=confirmation,
     )
-    ai_agent._apply_rfp_decision_context(session, confirmation, judgment=confirmed)
+    assert confirmed["ok"] is True
     assert session["decision_kit"] == "rfp_vendor_selection"
     assert session["decision_kit_source"] == "user_confirmed"
     assert session.get("decision_kit_change_pending") is None
@@ -195,13 +201,6 @@ def test_verified_change_quote_applies_immediately_to_unlocked_kit(app):
     from app.routes import ai_agent
 
     message = "Can we switch this to vendor selection?"
-    judgment = ai_agent._validated_decision_kit_judgment(
-        _judge(
-            "rfp_vendor_selection", "high", "vendor selection",
-            change_requested=True, change_quote=message,
-        ),
-        message,
-    )
     session = {
         "decision_kit": "rfp_bid",
         "decision_kit_version": 1,
@@ -209,39 +208,65 @@ def test_verified_change_quote_applies_immediately_to_unlocked_kit(app):
         "decision_kit_locked": False,
     }
 
-    ai_agent._apply_rfp_decision_context(session, message, judgment=judgment)
+    result = ai_agent._execute_decision_kit_change_tool(
+        "request_decision_kit_change",
+        {"target": "rfp_vendor_selection", "user_request_quote": message},
+        session=session,
+        user_message=message,
+    )
 
+    assert result["ok"] is True
     assert session["decision_kit"] == "rfp_vendor_selection"
     assert session["decision_kit_source"] == "user"
     assert session["decision_kit_remap_required"] is True
     assert session.get("decision_kit_change_pending") is None
 
 
-def test_unverified_kit_change_and_confirmation_quotes_change_nothing(app):
+def test_cancel_with_verified_quote_drops_pending_change(app):
     from app.routes import ai_agent
 
-    message = "Can we switch this to vendor selection?"
-    judgment = ai_agent._validated_decision_kit_judgment(
-        _judge(
-            "rfp_vendor_selection", "high", "vendor selection",
-            change_requested=True, change_quote="invented request",
-            confirms_pending_change=True, confirm_quote="invented confirmation",
-        ),
-        message,
+    session = {
+        "decision_kit": "rfp_bid",
+        "decision_kit_change_pending": {"from": "rfp_bid", "target": "rfp_vendor_selection"},
+    }
+    message = "Keep the current kit after all."
+    result = ai_agent._execute_decision_kit_change_tool(
+        "cancel_decision_kit_change",
+        {"user_request_quote": message},
+        session=session,
+        user_message=message,
     )
-    assert judgment["change_requested"] is False
-    assert judgment["confirms_pending_change"] is False
 
+    assert result["ok"] is True
+    assert session["decision_kit"] == "rfp_bid"
+    assert session.get("decision_kit_change_pending") is None
+
+
+@pytest.mark.parametrize("tool_name,tool_input", [
+    ("request_decision_kit_change", {"target": "rfp_vendor_selection", "user_request_quote": "invented request"}),
+    ("confirm_decision_kit_change", {"user_request_quote": "invented confirmation"}),
+    ("cancel_decision_kit_change", {"user_request_quote": "invented cancellation"}),
+])
+def test_unverified_kit_tool_quotes_change_nothing(app, tool_name, tool_input):
+    from app.routes import ai_agent
+
+    pending = {"from": "rfp_bid", "target": "rfp_vendor_selection"}
     session = {
         "active_evaluation_scorecard_id": "card-1",
         "decision_kit": "rfp_bid",
-        "decision_kit_version": 1,
-        "decision_kit_family": "rfp",
         "decision_kit_locked": True,
+        "decision_kit_change_pending": pending.copy(),
     }
-    ai_agent._apply_rfp_decision_context(session, message, judgment=judgment)
+    result = ai_agent._execute_decision_kit_change_tool(
+        tool_name,
+        tool_input,
+        session=session,
+        user_message="Do something else.",
+    )
+
+    assert result["ok"] is False
     assert session["decision_kit"] == "rfp_bid"
-    assert session.get("decision_kit_change_pending") is None
+    assert session["decision_kit_change_pending"] == pending
 
 
 def test_unknown_kit_fields_are_partitioned_into_auditable_notes(app):

@@ -1303,14 +1303,14 @@ def test_explicit_kit_change_on_established_decision_requires_confirmation_and_p
         'option_attributes_by_key': {'boulder': facts.copy()},
     }
 
-    agent._apply_rfp_decision_context(
-        session, 'Change this decision to the RFP vendor selection Decision Kit.',
-        judgment={
-            'kit': 'rfp_vendor_selection', 'confidence': 'high',
-            'evidence_quote': 'vendor selection',
-            'change_requested': True,
-            'change_quote': 'Change this decision',
+    agent._execute_decision_kit_change_tool(
+        'request_decision_kit_change',
+        {
+            'target': 'rfp_vendor_selection',
+            'user_request_quote': 'Change this decision',
         },
+        session=session,
+        user_message='Change this decision to the RFP vendor selection Decision Kit.',
     )
 
     assert session.get('decision_kit') is None
@@ -1318,14 +1318,11 @@ def test_explicit_kit_change_on_established_decision_requires_confirmation_and_p
     assert agent._decision_kit_change_question_needed(session) is True
     assert session['option_attributes_by_key']['boulder'] == facts
 
-    agent._apply_rfp_decision_context(
-        session,
-        'Confirm the Decision Kit change.',
-        judgment={
-            'kit': 'none', 'confidence': 'high', 'evidence_quote': '',
-            'confirms_pending_change': True,
-            'confirm_quote': 'Confirm the Decision Kit change',
-        },
+    agent._execute_decision_kit_change_tool(
+        'confirm_decision_kit_change',
+        {'user_request_quote': 'Confirm the Decision Kit change'},
+        session=session,
+        user_message='Confirm the Decision Kit change.',
     )
 
     assert session['decision_kit'] == 'rfp_vendor_selection'

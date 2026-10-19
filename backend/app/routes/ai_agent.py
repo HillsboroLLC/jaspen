@@ -566,6 +566,9 @@ _MUTATION_TOOLS = {
     "set_scoring_rubric",
     "approve_presented_rubric",
     "show_scoring_rubric",
+    "request_decision_kit_change",
+    "confirm_decision_kit_change",
+    "cancel_decision_kit_change",
     "set_option_attributes",
     "queue_scorecards",
 }
@@ -577,6 +580,9 @@ _EXEMPT_MUTATION_TOOLS = {
     "set_scoring_rubric",
     "approve_presented_rubric",
     "show_scoring_rubric",
+    "request_decision_kit_change",
+    "confirm_decision_kit_change",
+    "cancel_decision_kit_change",
     "set_option_attributes",
     "queue_scorecards",
 }
@@ -710,6 +716,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "Rules: 2-4 options with short labels; valid JSON on a single line; set allow_multi true ONLY when several answers can sensibly combine; keep allow_text true so the user can still type their own. Use at most ONE choice block per message and still ask only ONE question at a time. For genuinely open-ended questions with no discrete options, just ask in prose (no block). NEVER mention the block, the word 'choice', or its syntax in your prose — write the question naturally, then append the block.\n"
     "\n"
     "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria or directs a criteria change, FIRST call set_scoring_rubric with criteria_source='user' and user_request_quote set to a short exact quote from the user's latest message that supplies or directs those criteria. Pass their exact criteria and weights before scoring anything. If you supply or revise the criteria yourself, call set_scoring_rubric with criteria_source='jaspen' and omit user_request_quote; that rubric remains a proposal for the user to approve. When the user wants to see or review the criteria in any wording, or when you choose to show them, call show_scoring_rubric. The application renders the exact saved or starter rubric; never write out a rubric yourself. When the user approves a rubric Jaspen already showed — in any wording, including 'works for me', 'use those', or 'yes' after Jaspen asked — call approve_presented_rubric with a short exact user_request_quote from that latest message; never recreate the shown rubric through set_scoring_rubric. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. If the user names criteria or priorities without weights, preserve those criteria and ask for weights or propose weights for those same criteria; do not replace them with a generic or Decision Kit rubric. You may separately identify useful Decision Kit additions and ask whether to include them. If the user organizes the criteria into groups (e.g. 'Impact' variables vs 'Fit' variables), pass each criterion's group on the 'group' field so every option gets a sub-score per group and can be placed on a 2-group quadrant. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. Rubric configuration tools are reversible, so they are allowed on the first turn and do not count against the per-turn scoring limit.\n"
+    "DECISION KIT CHANGES: The separate Decision Kit classifier only establishes a kit during early discovery. Once a kit is established or locked, interpret change intent in this main turn. When the user asks in any wording to switch or clear the Decision Kit, call request_decision_kit_change with the target and a short exact user_request_quote from the latest message. When the user confirms a pending change, call confirm_decision_kit_change with an exact quote. When the user cancels a pending change, call cancel_decision_kit_change with an exact quote. Never claim a kit changed unless the tool succeeds.\n"
     "FIRST-TURN DECISION CONTRACT: when a conversation opens with a substantive decision — a real choice with stakes and some context, whether one option ('should I take this job offer?' with details) or several — your first reply must make the path to a scorecard visible. Do all three: (1) Name the decision and the options you will score; if the user gave only one path, propose the natural alternative yourself (e.g. 'Take the offer' vs 'Stay in current role') — comparing against the status quo is almost always the real decision. (2) Propose a starter rubric in plain prose: 3-6 weighted criteria drawn from what they told you PLUS one or two criteria they did not mention but the relevant expertise says matter (name why in half a sentence). State plainly that the rubric is theirs to edit — you propose, they decide. (3) Offer the choice explicitly, as a choice block: score now at honest confidence (missing evidence lowers confidence, never blocks a score, and you will show what would raise it), or answer your single best question first. If the opening message says score now AND supplies the criteria and weights, save that user-owned rubric as approved and score immediately. When the user explicitly asks to see or propose a rubric, show every criterion and weight and ask once. Otherwise, an explicit score request uses Jaspen’s standard proposed criteria immediately without falsely marking them user-approved; mention the criteria conversationally after scoring and invite changes. When the user later approves a shown rubric or directs a criteria change, save the user-owned version and re-score. NEVER claim scoring started unless a scoring tool succeeded. NEVER open with questions that have no visible destination. Exception: a bare one-liner with no context ('should I quit?') gets your single best scorecard-framed question, with 'score it anyway' offered as a choice option. "
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
     "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the shared scoring system, which evaluates every option against the same criteria and builds the trade-off comparison. After calling it, state only that all N were queued (name them if there are only a few). Do not promise that cards were created; the scoring operation reports success or a retryable failure separately. If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead. "
@@ -864,24 +871,10 @@ def _validated_decision_kit_judgment(payload, user_message):
         quote = source[start:start + len(quote)]
     elif kit != "none" or confidence != "high":
         raise ValueError("Decision Kit classification requires grounded evidence.")
-    change_quote = str(payload.get("change_quote") or "").strip()
-    confirm_quote = str(payload.get("confirm_quote") or "").strip()
-    change_requested = bool(
-        payload.get("change_requested") is True
-        and verify_user_quote(change_quote, user_message)
-    )
-    confirms_pending_change = bool(
-        payload.get("confirms_pending_change") is True
-        and verify_user_quote(confirm_quote, user_message)
-    )
     return {
         "kit": kit,
         "confidence": confidence,
         "evidence_quote": quote,
-        "change_requested": change_requested,
-        "change_quote": change_quote if change_requested else "",
-        "confirms_pending_change": confirms_pending_change,
-        "confirm_quote": confirm_quote if confirms_pending_change else "",
     }
 
 
@@ -891,12 +884,7 @@ def _classify_decision_kit(user_message, model_selection):
         (
             "Classify only the decision context in the user's message. Return JSON only with "
             "kit (rfp_bid, rfp_vendor_selection, or none), confidence (high, medium, low), "
-            "evidence_quote copied exactly from the user, change_requested (boolean), change_quote, "
-            "confirms_pending_change (boolean), and confirm_quote. Set change_requested true only "
-            "when the user asks to change the Decision Kit, and copy the exact words showing that "
-            "request into change_quote. Set confirms_pending_change true only when the user confirms "
-            "a previously requested Decision Kit change, and copy the exact confirming words into "
-            "confirm_quote. Use false and an empty quote when either intent is absent. rfp_bid means the user is the "
+            "and evidence_quote copied exactly from the user. rfp_bid means the user is the "
             "bidder deciding whether/how to respond or pursue. rfp_vendor_selection means the "
             "user is the buyer evaluating proposals/vendors. Use none/high for clearly unrelated "
             "decisions and none/low for genuinely ambiguous RFP context. Natural statements such "
@@ -930,9 +918,14 @@ def _prepend_pending_decision_kit_notice(session, reply):
 
 
 def _decision_kit_judgment_for_turn(session, user_message, model_selection, *, explicit_selection=None):
-    """Classify only while Discovery may still establish or explicitly change a kit."""
+    """Classify only while Discovery may still establish a kit."""
     explicit = str(explicit_selection or "").strip().lower()
     if explicit in {"rfp_bid", "rfp_vendor_selection"}:
+        return None
+    if _decision_state_established(session) or (
+        isinstance(session, dict)
+        and session.get("decision_kit_locked")
+    ):
         return None
     try:
         return _classify_decision_kit(user_message, model_selection)
@@ -949,24 +942,6 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
     judged = judgment if isinstance(judgment, dict) else None
     inferred = judged.get("kit") if judged and judged.get("kit") != "none" else None
     confidence = judged.get("confidence") if judged else None
-    pending_change = session.get("decision_kit_change_pending") if isinstance(session.get("decision_kit_change_pending"), dict) else None
-    if pending_change:
-        if re.search(r"\b(?:cancel|do not change|don't change|keep (?:it|this|the current))\b", str(user_message or ""), re.I):
-            session.pop("decision_kit_change_pending", None)
-            return
-        if judged and judged.get("confirms_pending_change"):
-            target = pending_change.get("target")
-            kit = get_decision_kit(target) if target else None
-            session["decision_kit"] = target
-            session["decision_kit_version"] = kit.get("version") if kit else None
-            session["decision_kit_family"] = "rfp" if target else None
-            session["decision_kit_source"] = "user_confirmed" if target else None
-            session["decision_kit_locked"] = True
-            session["decision_kit_rescore_required"] = True
-            session["decision_kit_preserve_existing_facts"] = True
-            session.pop("decision_kit_change_pending", None)
-            session.pop("decision_kit_conflict", None)
-            return
     if _decision_state_established(session) or (session.get("decision_kit_locked") and session.get("decision_kit")):
         current = session.get("decision_kit")
         target = inferred
@@ -977,29 +952,12 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
         # Incidental later language teaches the current turn; it cannot mutate
         # the established decision identity. Only an explicit request starts a
         # confirmation flow, and no kit/facts change before confirmation.
-        if explicit or (judged and judged.get("change_requested")):
+        if explicit:
             session["decision_kit_change_pending"] = {
                 "from": current,
                 "target": target,
                 "requested_at": _iso_now(),
             }
-        return
-    if (
-        session.get("decision_kit")
-        and inferred
-        and inferred != session.get("decision_kit")
-        and judged
-        and judged.get("change_requested")
-    ):
-        kit = get_decision_kit(inferred)
-        session["decision_kit"] = inferred
-        session["decision_kit_version"] = kit["version"]
-        session["decision_kit_family"] = "rfp"
-        session["decision_kit_source"] = "user"
-        session["decision_kit_locked"] = True
-        session["decision_kit_remap_required"] = True
-        session.pop("decision_kit_conflict", None)
-        session.pop("decision_kit_suggestion", None)
         return
     if explicit == "rfp":
         session.pop("decision_kit_suggestion", None)
@@ -1069,6 +1027,102 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
 RFP_SUBTYPE_QUESTION = "Are you responding to this RFP, or selecting a vendor?"
 DECISION_KIT_CHANGE_QUESTION = "This decision is already established. Confirm that you want to change its Decision Kit and re-score it."
 ANALYSIS_UNAVAILABLE_MESSAGE = "Jaspen’s analysis is unavailable right now. Your message is saved. Try again."
+
+
+def _execute_decision_kit_change_tool(tool_name, tool_input, *, session, user_message):
+    """Apply main-turn Decision Kit intent only after verifying the user's quote."""
+    if not isinstance(session, dict):
+        return _tool_error(
+            "The Decision Kit is not available yet. Ask the user to try again.",
+            code="decision_kit_unavailable",
+        )
+    user_request_quote = (tool_input or {}).get("user_request_quote")
+    if not verify_user_quote(user_request_quote, user_message):
+        return _tool_error(
+            "Quote the user's Decision Kit request exactly from their latest message, then ask what they want if needed.",
+            code="decision_kit_request_quote_required",
+        )
+
+    if tool_name == "cancel_decision_kit_change":
+        if not isinstance(session.get("decision_kit_change_pending"), dict):
+            return _tool_error(
+                "There is no pending Decision Kit change to cancel.",
+                code="pending_decision_kit_change_required",
+            )
+        session.pop("decision_kit_change_pending", None)
+        return {
+            "ok": True,
+            "tool": tool_name,
+            "confirmation": "The pending Decision Kit change was cancelled.",
+        }
+
+    if tool_name == "confirm_decision_kit_change":
+        pending = session.get("decision_kit_change_pending")
+        if not isinstance(pending, dict):
+            return _tool_error(
+                "There is no pending Decision Kit change to confirm.",
+                code="pending_decision_kit_change_required",
+            )
+        target = pending.get("target")
+        kit = get_decision_kit(target) if target else None
+        session["decision_kit"] = target
+        session["decision_kit_version"] = kit.get("version") if kit else None
+        session["decision_kit_family"] = "rfp" if target else None
+        session["decision_kit_source"] = "user_confirmed" if target else None
+        session["decision_kit_locked"] = bool(target)
+        session["decision_kit_rescore_required"] = True
+        session["decision_kit_preserve_existing_facts"] = True
+        session.pop("decision_kit_change_pending", None)
+        session.pop("decision_kit_conflict", None)
+        return {
+            "ok": True,
+            "tool": tool_name,
+            "decision_kit": target,
+            "confirmation": "The Decision Kit change was confirmed; the decision now requires re-scoring.",
+        }
+
+    target = str((tool_input or {}).get("target") or "").strip().lower()
+    if target not in {"rfp_bid", "rfp_vendor_selection", "none"}:
+        return _tool_error("Choose a valid Decision Kit target.", code="invalid_decision_kit")
+    target = None if target == "none" else target
+    current = session.get("decision_kit")
+    if target == current:
+        return {
+            "ok": True,
+            "tool": tool_name,
+            "decision_kit": current,
+            "confirmation": "That Decision Kit is already active.",
+        }
+    if _decision_state_established(session) or session.get("decision_kit_locked"):
+        session["decision_kit_change_pending"] = {
+            "from": current,
+            "target": target,
+            "requested_at": _iso_now(),
+        }
+        return {
+            "ok": True,
+            "tool": tool_name,
+            "decision_kit": current,
+            "pending_decision_kit": target,
+            "confirmation_required": True,
+            "confirmation": DECISION_KIT_CHANGE_QUESTION,
+        }
+
+    kit = get_decision_kit(target) if target else None
+    session["decision_kit"] = target
+    session["decision_kit_version"] = kit.get("version") if kit else None
+    session["decision_kit_family"] = "rfp" if target else None
+    session["decision_kit_source"] = "user" if target else None
+    session["decision_kit_locked"] = bool(target)
+    session["decision_kit_remap_required"] = True
+    session.pop("decision_kit_conflict", None)
+    session.pop("decision_kit_suggestion", None)
+    return {
+        "ok": True,
+        "tool": tool_name,
+        "decision_kit": target,
+        "confirmation": "The Decision Kit was updated.",
+    }
 
 
 class ConversationProviderUnavailable(RuntimeError):
@@ -4789,25 +4843,37 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
         except Exception:
             current_app.logger.exception("same-turn rubric approval persist failed")
 
-    try:
-        result = _execute_mutation_tool(
+    if tool_name in {
+        "request_decision_kit_change",
+        "confirm_decision_kit_change",
+        "cancel_decision_kit_change",
+    }:
+        result = _execute_decision_kit_change_tool(
             tool_name,
             tool_input,
-            user=user,
-            user_id=user_id,
-            thread_id=thread_id,
-            view_context=view_context,
+            session=session,
             user_message=user_message,
         )
-    except Exception as exc:
-        if tool_name != "generate_scorecard":
-            raise
-        current_app.logger.exception("generate_scorecard tool execution failed")
-        result = _scoring_tool_failure(
-            "Jaspen couldn't complete scoring. Your request is saved. Try again.",
-            code="scorecard_generation_failed",
-            error_type=type(exc).__name__,
-        )
+    else:
+        try:
+            result = _execute_mutation_tool(
+                tool_name,
+                tool_input,
+                user=user,
+                user_id=user_id,
+                thread_id=thread_id,
+                view_context=view_context,
+                user_message=user_message,
+            )
+        except Exception as exc:
+            if tool_name != "generate_scorecard":
+                raise
+            current_app.logger.exception("generate_scorecard tool execution failed")
+            result = _scoring_tool_failure(
+                "Jaspen couldn't complete scoring. Your request is saved. Try again.",
+                code="scorecard_generation_failed",
+                error_type=type(exc).__name__,
+            )
 
     if (
         tool_name in {"set_scoring_rubric", "approve_presented_rubric", "show_scoring_rubric"} and isinstance(result, dict)
@@ -5919,6 +5985,59 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                 "input_schema": {
                     "type": "object",
                     "properties": {},
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "request_decision_kit_change",
+                "description": (
+                    "Request a change to the active Decision Kit. An unlocked kit changes immediately; "
+                    "an established or locked decision creates a pending change that requires confirmation."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "enum": ["rfp_bid", "rfp_vendor_selection", "none"],
+                            "description": "The requested Decision Kit, or none to clear it.",
+                        },
+                        "user_request_quote": {
+                            "type": "string",
+                            "description": "A short exact quote from the latest user message requesting this change.",
+                        },
+                    },
+                    "required": ["target", "user_request_quote"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "confirm_decision_kit_change",
+                "description": "Confirm the pending Decision Kit change requested earlier.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "user_request_quote": {
+                            "type": "string",
+                            "description": "A short exact quote from the latest user message confirming the pending change.",
+                        },
+                    },
+                    "required": ["user_request_quote"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "cancel_decision_kit_change",
+                "description": "Cancel the pending Decision Kit change requested earlier.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "user_request_quote": {
+                            "type": "string",
+                            "description": "A short exact quote from the latest user message cancelling the pending change.",
+                        },
+                    },
+                    "required": ["user_request_quote"],
                     "additionalProperties": False,
                 },
             },
