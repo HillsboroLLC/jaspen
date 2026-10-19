@@ -565,6 +565,7 @@ _MUTATION_TOOLS = {
     "patch_scorecard",
     "set_scoring_rubric",
     "approve_presented_rubric",
+    "show_scoring_rubric",
     "set_option_attributes",
     "queue_scorecards",
 }
@@ -575,6 +576,7 @@ _MUTATION_TOOLS = {
 _EXEMPT_MUTATION_TOOLS = {
     "set_scoring_rubric",
     "approve_presented_rubric",
+    "show_scoring_rubric",
     "set_option_attributes",
     "queue_scorecards",
 }
@@ -707,7 +709,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "[[/choice]]\n"
     "Rules: 2-4 options with short labels; valid JSON on a single line; set allow_multi true ONLY when several answers can sensibly combine; keep allow_text true so the user can still type their own. Use at most ONE choice block per message and still ask only ONE question at a time. For genuinely open-ended questions with no discrete options, just ask in prose (no block). NEVER mention the block, the word 'choice', or its syntax in your prose — write the question naturally, then append the block.\n"
     "\n"
-    "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria or directs a criteria change, FIRST call set_scoring_rubric with criteria_source='user' and user_request_quote set to a short exact quote from the user's latest message that supplies or directs those criteria. Pass their exact criteria and weights before scoring anything. If you supply or revise the criteria yourself, call set_scoring_rubric with criteria_source='jaspen' and omit user_request_quote; that rubric remains a proposal for the user to approve. When the user approves a rubric Jaspen already showed — in any wording, including 'works for me', 'use those', or 'yes' after Jaspen asked — call approve_presented_rubric with a short exact user_request_quote from that latest message; never recreate the shown rubric through set_scoring_rubric. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. If the user names criteria or priorities without weights, preserve those criteria and ask for weights or propose weights for those same criteria; do not replace them with a generic or Decision Kit rubric. You may separately identify useful Decision Kit additions and ask whether to include them. If the user organizes the criteria into groups (e.g. 'Impact' variables vs 'Fit' variables), pass each criterion's group on the 'group' field so every option gets a sub-score per group and can be placed on a 2-group quadrant. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. Rubric configuration tools are reversible, so they are allowed on the first turn and do not count against the per-turn scoring limit.\n"
+    "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria or directs a criteria change, FIRST call set_scoring_rubric with criteria_source='user' and user_request_quote set to a short exact quote from the user's latest message that supplies or directs those criteria. Pass their exact criteria and weights before scoring anything. If you supply or revise the criteria yourself, call set_scoring_rubric with criteria_source='jaspen' and omit user_request_quote; that rubric remains a proposal for the user to approve. When the user wants to see or review the criteria in any wording, or when you choose to show them, call show_scoring_rubric. The application renders the exact saved or starter rubric; never write out a rubric yourself. When the user approves a rubric Jaspen already showed — in any wording, including 'works for me', 'use those', or 'yes' after Jaspen asked — call approve_presented_rubric with a short exact user_request_quote from that latest message; never recreate the shown rubric through set_scoring_rubric. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. If the user names criteria or priorities without weights, preserve those criteria and ask for weights or propose weights for those same criteria; do not replace them with a generic or Decision Kit rubric. You may separately identify useful Decision Kit additions and ask whether to include them. If the user organizes the criteria into groups (e.g. 'Impact' variables vs 'Fit' variables), pass each criterion's group on the 'group' field so every option gets a sub-score per group and can be placed on a 2-group quadrant. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. Rubric configuration tools are reversible, so they are allowed on the first turn and do not count against the per-turn scoring limit.\n"
     "FIRST-TURN DECISION CONTRACT: when a conversation opens with a substantive decision — a real choice with stakes and some context, whether one option ('should I take this job offer?' with details) or several — your first reply must make the path to a scorecard visible. Do all three: (1) Name the decision and the options you will score; if the user gave only one path, propose the natural alternative yourself (e.g. 'Take the offer' vs 'Stay in current role') — comparing against the status quo is almost always the real decision. (2) Propose a starter rubric in plain prose: 3-6 weighted criteria drawn from what they told you PLUS one or two criteria they did not mention but the relevant expertise says matter (name why in half a sentence). State plainly that the rubric is theirs to edit — you propose, they decide. (3) Offer the choice explicitly, as a choice block: score now at honest confidence (missing evidence lowers confidence, never blocks a score, and you will show what would raise it), or answer your single best question first. If the opening message says score now AND supplies the criteria and weights, save that user-owned rubric as approved and score immediately. When the user explicitly asks to see or propose a rubric, show every criterion and weight and ask once. Otherwise, an explicit score request uses Jaspen’s standard proposed criteria immediately without falsely marking them user-approved; mention the criteria conversationally after scoring and invite changes. When the user later approves a shown rubric or directs a criteria change, save the user-owned version and re-score. NEVER claim scoring started unless a scoring tool succeeded. NEVER open with questions that have no visible destination. Exception: a bare one-liner with no context ('should I quit?') gets your single best scorecard-framed question, with 'score it anyway' offered as a choice option. "
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
     "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the shared scoring system, which evaluates every option against the same criteria and builds the trade-off comparison. After calling it, state only that all N were queued (name them if there are only a few). Do not promise that cards were created; the scoring operation reports success or a retryable failure separately. If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead. "
@@ -824,53 +826,6 @@ def _message_contains_term(text, term):
     return re.search(rf"(?<!\w){pattern}(?!\w)", text) is not None
 
 
-def _infer_rfp_decision_kit(user_message):
-    """Return advisory language hints; never use this result to mutate state.
-
-    Kept for compatibility with older callers/tests.  Decision Kit ownership
-    lives at the governed model boundary in ``_classify_decision_kit``.
-    """
-    text = str(user_message or "").strip().lower()
-    if not text:
-        return None
-    vendor_patterns = (
-        r"\b(?:select(?:ing)?|choos(?:e|ing)|pick(?:ing)?|shortlist(?:ing)?)\s+(?:one\s+)?(?:a\s+)?(?:vendor|supplier|contractor|proposal|bid)\b",
-        r"\b(?:evaluat(?:e|ing)|review|compare|assess|score)\b.{0,50}\b(?:vendors?|suppliers?|contractors?|proposals?|bids?)\b",
-        r"\b(?:vendors?|suppliers?|contractors?)\b.{0,50}\b(?:proposals?|bids?)\b",
-        r"\b(?:vendor|supplier)\s+selection\b",
-        r"\bprocurement\b|\bsource\s+(?:a\s+)?vendor\b",
-    )
-    response_patterns = (
-        r"\brespond(?:ing)?\s+to\b.{0,40}\brfp\b",
-        r"\b(?:whether|decide)\s+to\s+(?:respond|bid|pursue)\b",
-        r"\b(?:help\s+(?:me|us)\s+)?decide\s+whether\s+to\s+bid\b",
-        r"\bpursu(?:e|ing)\b.{0,30}\b(?:opportunity|rfp|bid)\b",
-        r"\b(?:submit|prepare|write)\b.{0,30}\b(?:our\s+)?(?:proposal|response|bid)\b",
-        r"\bbid\s*(?:/|or|-)\s*no[- ]?bid\b|\bbid\s+on\b",
-        r"\bproposal\s+response\b|\bwin probability\b|\bpursuit cost\b",
-        r"^(?:we(?:'re| are)?\s+)?responding\.?$",
-    )
-    vendor = any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in vendor_patterns)
-    response = any(re.search(pattern, text, flags=re.IGNORECASE) for pattern in response_patterns)
-    if vendor and not response:
-        return "rfp_vendor_selection"
-    if response and not vendor:
-        return "rfp_bid"
-    return None
-
-
-def _has_rfp_decision_context(user_message):
-    """Return an advisory RFP hint; this must not select a Decision Kit."""
-    text = str(user_message or "").strip().lower()
-    if not text:
-        return False
-    return bool(
-        re.search(r"\brfp\b|\brequest for proposals?\b", text)
-        or re.search(r"\b(?:vendor|supplier|contractor)\s+(?:proposals?|bids?)\b", text)
-        or re.search(r"\b(?:evaluate|compare|select|shortlist)\b.{0,40}\bproposals?\b", text)
-    )
-
-
 def _decision_state_established(session):
     """Return whether this thread already owns a scored decision identity."""
     if not isinstance(session, dict):
@@ -888,24 +843,6 @@ def _decision_state_established(session):
         and (card.get("jaspen_score") is not None or card.get("decision_fingerprint"))
         for card in candidates
     )
-
-
-def _explicit_decision_kit_change_requested(user_message):
-    text = str(user_message or "").strip().lower()
-    return bool(re.search(
-        r"\b(?:change|switch|set|use|apply|move)\b.{0,45}\b(?:decision kit|rfp|vendor selection|bid[- /]?no[- ]?bid)\b"
-        r"|\bthis (?:decision )?(?:is|should be|needs to be)\b.{0,25}\b(?:rfp|vendor selection|bid[- /]?no[- ]?bid)\b",
-        text,
-        re.I,
-    ))
-
-
-def _confirmed_decision_kit_change(user_message):
-    return bool(re.search(
-        r"\b(?:confirm(?:ed)?|yes[, ]+(?:change|switch)|proceed with (?:the )?(?:change|switch))\b",
-        str(user_message or ""),
-        re.I,
-    ))
 
 
 def _validated_decision_kit_judgment(payload, user_message):
@@ -927,29 +864,48 @@ def _validated_decision_kit_judgment(payload, user_message):
         quote = source[start:start + len(quote)]
     elif kit != "none" or confidence != "high":
         raise ValueError("Decision Kit classification requires grounded evidence.")
-    return {"kit": kit, "confidence": confidence, "evidence_quote": quote}
+    change_quote = str(payload.get("change_quote") or "").strip()
+    confirm_quote = str(payload.get("confirm_quote") or "").strip()
+    change_requested = bool(
+        payload.get("change_requested") is True
+        and verify_user_quote(change_quote, user_message)
+    )
+    confirms_pending_change = bool(
+        payload.get("confirms_pending_change") is True
+        and verify_user_quote(confirm_quote, user_message)
+    )
+    return {
+        "kit": kit,
+        "confidence": confidence,
+        "evidence_quote": quote,
+        "change_requested": change_requested,
+        "change_quote": change_quote if change_requested else "",
+        "confirms_pending_change": confirms_pending_change,
+        "confirm_quote": confirm_quote if confirms_pending_change else "",
+    }
 
 
 def _classify_decision_kit(user_message, model_selection):
     """Let the governed model understand intent; validate its bounded result."""
-    hints = {
-        "rfp_language_present": _has_rfp_decision_context(user_message),
-        "legacy_side_hint": _infer_rfp_decision_kit(user_message),
-    }
     payload, _usage = _anthropic_json_completion(
         (
             "Classify only the decision context in the user's message. Return JSON only with "
             "kit (rfp_bid, rfp_vendor_selection, or none), confidence (high, medium, low), "
-            "and evidence_quote copied exactly from the user. rfp_bid means the user is the "
+            "evidence_quote copied exactly from the user, change_requested (boolean), change_quote, "
+            "confirms_pending_change (boolean), and confirm_quote. Set change_requested true only "
+            "when the user asks to change the Decision Kit, and copy the exact words showing that "
+            "request into change_quote. Set confirms_pending_change true only when the user confirms "
+            "a previously requested Decision Kit change, and copy the exact confirming words into "
+            "confirm_quote. Use false and an empty quote when either intent is absent. rfp_bid means the user is the "
             "bidder deciding whether/how to respond or pursue. rfp_vendor_selection means the "
             "user is the buyer evaluating proposals/vendors. Use none/high for clearly unrelated "
             "decisions and none/low for genuinely ambiguous RFP context. Natural statements such "
             "as 'we are the bidder' or 'we are selecting a vendor' resolve the side. The supplied "
-            "regex hints are advisory and may be wrong. Never infer facts, scores, or arithmetic."
+            "quotes must be exact excerpts of the latest user message. Never infer facts, scores, or arithmetic."
         ),
-        json.dumps({"user_message": str(user_message or ""), "advisory_hints": hints}),
+        json.dumps({"user_message": str(user_message or "")}),
         model_name=_anthropic_model_for_selection(model_selection),
-        max_tokens=220,
+        max_tokens=320,
         temperature=0,
         model_selection=model_selection,
         operation_type="decision_kit_classification",
@@ -976,12 +932,7 @@ def _prepend_pending_decision_kit_notice(session, reply):
 def _decision_kit_judgment_for_turn(session, user_message, model_selection, *, explicit_selection=None):
     """Classify only while Discovery may still establish or explicitly change a kit."""
     explicit = str(explicit_selection or "").strip().lower()
-    locked = bool(isinstance(session, dict) and session.get("decision_kit_locked"))
     if explicit in {"rfp_bid", "rfp_vendor_selection"}:
-        return None
-    if _decision_state_established(session) and not _explicit_decision_kit_change_requested(user_message):
-        return None
-    if locked and not _explicit_decision_kit_change_requested(user_message):
         return None
     try:
         return _classify_decision_kit(user_message, model_selection)
@@ -1003,7 +954,7 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
         if re.search(r"\b(?:cancel|do not change|don't change|keep (?:it|this|the current))\b", str(user_message or ""), re.I):
             session.pop("decision_kit_change_pending", None)
             return
-        if _confirmed_decision_kit_change(user_message):
+        if judged and judged.get("confirms_pending_change"):
             target = pending_change.get("target")
             kit = get_decision_kit(target) if target else None
             session["decision_kit"] = target
@@ -1026,12 +977,29 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
         # Incidental later language teaches the current turn; it cannot mutate
         # the established decision identity. Only an explicit request starts a
         # confirmation flow, and no kit/facts change before confirmation.
-        if explicit or _explicit_decision_kit_change_requested(user_message):
+        if explicit or (judged and judged.get("change_requested")):
             session["decision_kit_change_pending"] = {
                 "from": current,
                 "target": target,
                 "requested_at": _iso_now(),
             }
+        return
+    if (
+        session.get("decision_kit")
+        and inferred
+        and inferred != session.get("decision_kit")
+        and judged
+        and judged.get("change_requested")
+    ):
+        kit = get_decision_kit(inferred)
+        session["decision_kit"] = inferred
+        session["decision_kit_version"] = kit["version"]
+        session["decision_kit_family"] = "rfp"
+        session["decision_kit_source"] = "user"
+        session["decision_kit_locked"] = True
+        session["decision_kit_remap_required"] = True
+        session.pop("decision_kit_conflict", None)
+        session.pop("decision_kit_suggestion", None)
         return
     if explicit == "rfp":
         session.pop("decision_kit_suggestion", None)
@@ -1117,21 +1085,6 @@ def _rfp_subtype_question_needed(session):
 
 def _decision_kit_change_question_needed(session):
     return bool(isinstance(session, dict) and isinstance(session.get("decision_kit_change_pending"), dict))
-
-
-def _rubric_proposal_requested(user_message):
-    text = str(user_message or "")
-    return bool(
-        re.search(
-            r"\b(?:show|propose|suggest|recommend|draft|create|build|review|explain|list)\b"
-            r".{0,45}\b(?:rubric|criteria|weights?|weighting)\b",
-            text,
-            re.I,
-        )
-        or re.search(r"\b(?:need|want)\b.{0,30}\b(?:rubric|criteria|weights?)\b", text, re.I)
-        or re.search(r"\bwhat\s+(?:is|are)\s+(?:the\s+)?(?:rubric|criteria|weights?)\b", text, re.I)
-        or re.search(r"\bwhat\s+(?:are|will)\s+you\s+scor(?:e|ing)\s+(?:this|these|them|it)?\s*on\b", text, re.I)
-    )
 
 
 def _format_human_list(items):
@@ -1259,8 +1212,6 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
     """Persist and render the exact application rubric before approval."""
     if not isinstance(session, dict) or not user_id or not thread_id:
         return None
-    if not _rubric_proposal_requested(user_message):
-        return None
     _ensure_session_decision_kit_gates(session)
     current = session.get("scoring_rubric")
     if isinstance(current, dict) and current.get("criteria"):
@@ -1283,8 +1234,6 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
             ], kit)
             rubric_label = f"{kit.get('label') or 'Decision Kit'} rubric"
         else:
-            if not _rubric_proposal_requested(user_message):
-                return None
             from .strategy import default_objective_rubric
             criteria = default_objective_rubric(session.get("strategy_objective"))
             rubric_label = "scoring rubric"
@@ -2497,7 +2446,7 @@ def _mutation_result_summary(tool_name, result_payload):
         return {}
 
     summary = {"confirmation": str(result_payload.get("confirmation") or "").strip()}
-    if tool_name in {"set_scoring_rubric", "approve_presented_rubric"}:
+    if tool_name in {"set_scoring_rubric", "approve_presented_rubric", "show_scoring_rubric"}:
         rubric = result_payload.get("rubric") if isinstance(result_payload.get("rubric"), dict) else {}
         summary["rubric"] = {
             "approval_status": rubric.get("approval_status"),
@@ -4861,7 +4810,7 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
         )
 
     if (
-        tool_name in {"set_scoring_rubric", "approve_presented_rubric"} and isinstance(result, dict)
+        tool_name in {"set_scoring_rubric", "approve_presented_rubric", "show_scoring_rubric"} and isinstance(result, dict)
         and result.get("ok") and isinstance(session, dict)
         and isinstance(result.get("rubric"), dict)
     ):
@@ -5961,6 +5910,19 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                 },
             },
             {
+                "name": "show_scoring_rubric",
+                "description": (
+                    "Render the exact scoring rubric stored for this thread, or the canonical starter rubric "
+                    "when none is stored, and mark it presented. Use when the user wants to see or review the "
+                    "criteria in any wording, or when showing the rubric would help. Never write out the rubric yourself."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            },
+            {
                 "name": "set_option_attributes",
                 "description": "Semantically extract and store canonical structured facts for one option with provenance. Equivalent paraphrases must produce the same field/value/source; do not copy wording into identity. Use only values explicitly stated by the user, supported by a document, or clearly labeled as assumptions. For a relative date, put structured data in value as {relative:{amount:<integer>,unit:<days|weeks|months|business_days>}} and quote the user's exact relative-date words in evidence; code resolves the date from that message's timestamp. This does not change scores; an existing scored option is marked for holistic re-score.",
                 "input_schema": {
@@ -6556,6 +6518,33 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "tool": tool_name,
             "rubric": approved,
             "confirmation": "The presented scoring rubric is approved exactly as shown.",
+        }
+
+    if tool_name == "show_scoring_rubric":
+        sessions = load_user_sessions(user_id) or {}
+        _session_key, stored_session = _resolve_user_session(sessions, thread_id)
+        if not isinstance(stored_session, dict):
+            return _tool_error(
+                "The scoring rubric is not available yet. Ask the user to try again.",
+                code="rubric_unavailable",
+            )
+        rendered = _present_decision_kit_rubric(
+            stored_session,
+            user_id=user_id,
+            thread_id=thread_id,
+            user_message=user_message,
+        )
+        rubric = stored_session.get("scoring_rubric")
+        if not rendered or not isinstance(rubric, dict):
+            return _tool_error(
+                "The scoring rubric could not be shown yet. Ask the user to try again.",
+                code="rubric_unavailable",
+            )
+        return {
+            "ok": True,
+            "tool": tool_name,
+            "rubric": rubric,
+            "confirmation": rendered,
         }
 
     if tool_name == "set_scoring_rubric":
@@ -10069,15 +10058,6 @@ def _generate_assistant_reply(
             [],
             None,
         )
-    rubric_proposal = _present_decision_kit_rubric(
-        session, user_id=user_id, thread_id=thread_id, user_message=user_message,
-    )
-    if rubric_proposal:
-        return (
-            rubric_proposal,
-            {"provider": "deterministic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-            [], [], None,
-        )
     if attachments:
         legacy_model = _anthropic_model_for_selection(model_selection)
         legacy_routes = [{
@@ -10295,18 +10275,6 @@ def _stream_assistant_reply_events(
                 "undo_snapshot": None,
             })
         yield {"type": "delta", "text": RFP_SUBTYPE_QUESTION}
-        return
-    rubric_proposal = _present_decision_kit_rubric(
-        session, user_id=user_id, thread_id=thread_id, user_message=user_message,
-    )
-    if rubric_proposal:
-        if isinstance(state, dict):
-            state.update({
-                "reply": rubric_proposal,
-                "usage": {"provider": "deterministic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-                "actions": [], "mutations": [], "undo_snapshot": None,
-            })
-        yield {"type": "delta", "text": rubric_proposal}
         return
     if attachments:
         legacy_model = _anthropic_model_for_selection(model_selection)
@@ -10990,7 +10958,7 @@ def _apply_rubric_action_to_session(session, actions):
         if not result.get("ok"):
             continue
         tool = str(result.get("tool") or "")
-        if tool in {"set_scoring_rubric", "approve_presented_rubric"}:
+        if tool in {"set_scoring_rubric", "approve_presented_rubric", "show_scoring_rubric"}:
             rubric = result.get("rubric")
             if isinstance(rubric, dict) and isinstance(rubric.get("criteria"), list):
                 from ..decision_state import rubric_is_approved

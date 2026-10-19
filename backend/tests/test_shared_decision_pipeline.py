@@ -1027,6 +1027,44 @@ def test_scoring_tool_schemas_offer_optional_user_request_quote(app):
     assert 'criteria_source' in rubric_schema['required']
     approval_schema = tools['approve_presented_rubric']['input_schema']
     assert approval_schema['required'] == ['user_request_quote']
+    show_schema = tools['show_scoring_rubric']['input_schema']
+    assert show_schema['properties'] == {}
+    assert show_schema['additionalProperties'] is False
+
+
+def test_show_scoring_rubric_renders_exact_stored_rubric_and_marks_presented(app, db, test_user):
+    from app.routes import ai_agent as agent
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    thread_id = 'show-exact-rubric'
+    stored = {
+        'criteria': [
+            {'key': 'price', 'label': 'Price', 'weight': 0.65},
+            {'key': 'speed', 'label': 'Speed', 'weight': 0.35},
+        ],
+        'source': 'jaspen_proposed',
+        'approval_status': 'proposed',
+        'created_at': '2026-10-19T11:59:00Z',
+    }
+    assert save_user_sessions(test_user.id, {thread_id: {
+        'session_id': thread_id,
+        'scoring_rubric': stored,
+    }})
+
+    result = agent._execute_mutation_tool(
+        'show_scoring_rubric', {},
+        user=test_user, user_id=test_user.id, thread_id=thread_id,
+        user_message='What yardsticks are we using?',
+    )
+
+    assert result['ok'] is True
+    assert '- Price: weight 65%' in result['confirmation']
+    assert '- Speed: weight 35%' in result['confirmation']
+    assert result['rubric']['criteria'] == stored['criteria']
+    durable = load_user_sessions(test_user.id)[thread_id]['scoring_rubric']
+    assert durable['criteria'] == stored['criteria']
+    assert durable['created_at'] == stored['created_at']
+    assert durable['presented_at']
 
 
 def test_approve_presented_rubric_requires_verified_quote_and_exact_stored_rubric(app, db, test_user):
@@ -1712,9 +1750,9 @@ def test_user_defined_single_criterion_is_approved_without_confirmation(app, tes
     ) is None
 
 
-def test_jaspen_proposed_single_criterion_requires_approved_confirmation(app, test_user):
+def test_jaspen_proposed_single_criterion_requires_approved_confirmation(app, test_user, monkeypatch):
     from app.routes import ai_agent as agent
-    from app.routes.sessions import save_user_sessions
+    from app.routes.sessions import load_user_sessions, save_user_sessions
 
     thread_id = 'single-proposed-rubric'
     assert save_user_sessions(test_user.id, {thread_id: {
@@ -1740,3 +1778,39 @@ def test_jaspen_proposed_single_criterion_requires_approved_confirmation(app, te
     assert [item['label'] for item in result['rubric']['criteria'] if not item.get('gate')] == ['Price']
     assert any(item.get('gate') for item in result['rubric']['criteria'])
     assert result['actions'][0]['label'] == 'Score on Price alone'
+
+    sessions = load_user_sessions(test_user.id)
+    agent._apply_rubric_action_to_session(sessions[thread_id], [{'result': result}])
+    assert save_user_sessions(test_user.id, sessions)
+
+    confirmation = 'Score on Price alone'
+    approved = agent._execute_mutation_tool(
+        'approve_presented_rubric',
+        {'user_request_quote': confirmation},
+        user=test_user, user_id=test_user.id, thread_id=thread_id,
+        user_message=confirmation,
+    )
+    assert approved['ok'] is True
+    assert approved['rubric']['approval_status'] == 'approved'
+    assert agent._guard_mutation_tool(
+        'generate_scorecard', user_turn_count=2, mutations_this_turn=0,
+        user_message=confirmation, user_request_quote=confirmation,
+        session={'scoring_rubric': approved['rubric']},
+    ) is None
+
+    monkeypatch.setattr(agent, '_execute_mutation_tool', lambda *args, **kwargs: {
+        'ok': True,
+        'tool': 'generate_scorecard',
+        'confirmation': 'Price-only scorecard created.',
+    })
+    scored, _ = agent._execute_local_tool(
+        'generate_scorecard', {
+            'name': 'Option A',
+            'idea_description': 'Evaluate Option A on Price alone.',
+            'user_request_quote': confirmation,
+        },
+        readiness={}, user=test_user, user_id=test_user.id, thread_id=thread_id,
+        user_turn_count=2, mutations_this_turn=0, user_message=confirmation,
+        session={'scoring_rubric': approved['rubric']},
+    )
+    assert scored['ok'] is True

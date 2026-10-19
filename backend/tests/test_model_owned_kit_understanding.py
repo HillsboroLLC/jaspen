@@ -1,8 +1,19 @@
 import pytest
 
 
-def _judge(kit, confidence, quote):
-    return {"kit": kit, "confidence": confidence, "evidence_quote": quote}
+def _judge(
+    kit, confidence, quote, *, change_requested=False, change_quote="",
+    confirms_pending_change=False, confirm_quote="",
+):
+    return {
+        "kit": kit,
+        "confidence": confidence,
+        "evidence_quote": quote,
+        "change_requested": change_requested,
+        "change_quote": change_quote,
+        "confirms_pending_change": confirms_pending_change,
+        "confirm_quote": confirm_quote,
+    }
 
 
 @pytest.mark.parametrize(
@@ -35,6 +46,23 @@ def test_classifier_rejects_a_quote_not_present_in_the_user_message(app, monkeyp
     )
     with pytest.raises(ValueError, match="not in the user message"):
         ai_agent._classify_decision_kit("We are the bidder.", {"llm_model": "test"})
+
+
+def test_classifier_receives_no_keyword_hints(app, monkeypatch):
+    from app.routes import ai_agent
+
+    captured = {}
+
+    def fake_completion(system_prompt, user_payload, **_kwargs):
+        captured["system_prompt"] = system_prompt
+        captured["payload"] = user_payload
+        return _judge("none", "high", ""), {}
+
+    monkeypatch.setattr(ai_agent, "_anthropic_json_completion", fake_completion)
+    ai_agent._classify_decision_kit("Help me think this through.", {"llm_model": "test"})
+
+    assert "advisory_hints" not in captured["payload"]
+    assert "regex hints" not in captured["system_prompt"]
 
 
 def test_low_confidence_rfp_is_suggested_and_never_auto_applied(app):
@@ -118,10 +146,102 @@ def test_explicit_change_on_established_decision_requires_confirmation(app):
     ai_agent._apply_rfp_decision_context(
         session,
         message,
-        judgment=_judge("rfp_vendor_selection", "high", "vendor selection"),
+        judgment=_judge(
+            "rfp_vendor_selection", "high", "vendor selection",
+            change_requested=True, change_quote="Change this Decision Kit",
+        ),
     )
     assert session["decision_kit"] == "rfp_bid"
     assert session["decision_kit_change_pending"]["target"] == "rfp_vendor_selection"
+
+
+def test_kit_change_and_confirmation_require_verified_model_quotes(app):
+    from app.routes import ai_agent
+
+    request = "Can we switch this to vendor selection?"
+    requested = ai_agent._validated_decision_kit_judgment(
+        _judge(
+            "rfp_vendor_selection", "high", "vendor selection",
+            change_requested=True, change_quote=request,
+        ),
+        request,
+    )
+    session = {
+        "active_evaluation_scorecard_id": "card-1",
+        "decision_kit": "rfp_bid",
+        "decision_kit_version": 1,
+        "decision_kit_family": "rfp",
+        "decision_kit_locked": True,
+    }
+    ai_agent._apply_rfp_decision_context(session, request, judgment=requested)
+    assert session["decision_kit"] == "rfp_bid"
+    assert session["decision_kit_change_pending"]["target"] == "rfp_vendor_selection"
+
+    confirmation = "Yes, make that change."
+    confirmed = ai_agent._validated_decision_kit_judgment(
+        _judge(
+            "none", "high", "",
+            confirms_pending_change=True, confirm_quote=confirmation,
+        ),
+        confirmation,
+    )
+    ai_agent._apply_rfp_decision_context(session, confirmation, judgment=confirmed)
+    assert session["decision_kit"] == "rfp_vendor_selection"
+    assert session["decision_kit_source"] == "user_confirmed"
+    assert session.get("decision_kit_change_pending") is None
+
+
+def test_verified_change_quote_applies_immediately_to_unlocked_kit(app):
+    from app.routes import ai_agent
+
+    message = "Can we switch this to vendor selection?"
+    judgment = ai_agent._validated_decision_kit_judgment(
+        _judge(
+            "rfp_vendor_selection", "high", "vendor selection",
+            change_requested=True, change_quote=message,
+        ),
+        message,
+    )
+    session = {
+        "decision_kit": "rfp_bid",
+        "decision_kit_version": 1,
+        "decision_kit_family": "rfp",
+        "decision_kit_locked": False,
+    }
+
+    ai_agent._apply_rfp_decision_context(session, message, judgment=judgment)
+
+    assert session["decision_kit"] == "rfp_vendor_selection"
+    assert session["decision_kit_source"] == "user"
+    assert session["decision_kit_remap_required"] is True
+    assert session.get("decision_kit_change_pending") is None
+
+
+def test_unverified_kit_change_and_confirmation_quotes_change_nothing(app):
+    from app.routes import ai_agent
+
+    message = "Can we switch this to vendor selection?"
+    judgment = ai_agent._validated_decision_kit_judgment(
+        _judge(
+            "rfp_vendor_selection", "high", "vendor selection",
+            change_requested=True, change_quote="invented request",
+            confirms_pending_change=True, confirm_quote="invented confirmation",
+        ),
+        message,
+    )
+    assert judgment["change_requested"] is False
+    assert judgment["confirms_pending_change"] is False
+
+    session = {
+        "active_evaluation_scorecard_id": "card-1",
+        "decision_kit": "rfp_bid",
+        "decision_kit_version": 1,
+        "decision_kit_family": "rfp",
+        "decision_kit_locked": True,
+    }
+    ai_agent._apply_rfp_decision_context(session, message, judgment=judgment)
+    assert session["decision_kit"] == "rfp_bid"
+    assert session.get("decision_kit_change_pending") is None
 
 
 def test_unknown_kit_fields_are_partitioned_into_auditable_notes(app):

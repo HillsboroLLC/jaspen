@@ -272,27 +272,6 @@ class TestHomepageHandoffIntegration:
         assert stored["decision_kit"] is None
         assert stored["decision_kit_family"] == "rfp"
 
-    @pytest.mark.parametrize("message", [
-        "Should we respond to the state’s RFP?",
-        "Should we pursue this opportunity?",
-        "Help me decide whether to bid.",
-        "We received an RFP and need to decide whether to respond.",
-    ])
-    def test_common_response_side_phrasing_resolves_rfp_bid(self, message):
-        from app.routes.ai_agent import _infer_rfp_decision_kit
-
-        assert _infer_rfp_decision_kit(message) == "rfp_bid"
-
-    @pytest.mark.parametrize("message", [
-        "Our committee is evaluating three contractor bids.",
-        "We received vendor proposals and need to select one.",
-        "Help us evaluate these proposals.",
-    ])
-    def test_common_buyer_side_phrasing_resolves_vendor_selection(self, message):
-        from app.routes.ai_agent import _infer_rfp_decision_kit
-
-        assert _infer_rfp_decision_kit(message) == "rfp_vendor_selection"
-
     def test_rfp_selection_persists_through_new_thread_and_subtype_resolves_in_discovery(
         self, client, db, monkeypatch
     ):

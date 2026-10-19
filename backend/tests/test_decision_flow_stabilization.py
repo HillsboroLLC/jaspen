@@ -1308,6 +1308,8 @@ def test_explicit_kit_change_on_established_decision_requires_confirmation_and_p
         judgment={
             'kit': 'rfp_vendor_selection', 'confidence': 'high',
             'evidence_quote': 'vendor selection',
+            'change_requested': True,
+            'change_quote': 'Change this decision',
         },
     )
 
@@ -1316,7 +1318,15 @@ def test_explicit_kit_change_on_established_decision_requires_confirmation_and_p
     assert agent._decision_kit_change_question_needed(session) is True
     assert session['option_attributes_by_key']['boulder'] == facts
 
-    agent._apply_rfp_decision_context(session, 'Confirm the Decision Kit change.')
+    agent._apply_rfp_decision_context(
+        session,
+        'Confirm the Decision Kit change.',
+        judgment={
+            'kit': 'none', 'confidence': 'high', 'evidence_quote': '',
+            'confirms_pending_change': True,
+            'confirm_quote': 'Confirm the Decision Kit change',
+        },
+    )
 
     assert session['decision_kit'] == 'rfp_vendor_selection'
     assert session['decision_kit_source'] == 'user_confirmed'
@@ -1357,7 +1367,7 @@ def test_proposed_rubric_is_visible_with_weights_before_approval(app, db, test_u
     assert session['scoring_rubric']['presented_at']
 
 
-def test_decision_kit_starter_rubric_is_persisted_and_rendered_before_provider_runs(app, db, test_user, monkeypatch):
+def test_decision_kit_starter_rubric_is_persisted_and_rendered_by_tool(app, db, test_user):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions, save_user_sessions
     tid = 'kit-rubric-before-provider'
@@ -1368,18 +1378,13 @@ def test_decision_kit_starter_rubric_is_persisted_and_rendered_before_provider_r
         'decision_kit_family': 'rfp',
     })
     assert save_user_sessions(test_user.id, sessions)
-    session = load_user_sessions(test_user.id)[tid]
-    monkeypatch.setattr(
-        agent, '_resolve_governed_routes',
-        lambda *a, **k: pytest.fail('provider routing must not run before the rubric is shown'),
+    result = agent._execute_mutation_tool(
+        'show_scoring_rubric', {}, user=test_user, user_id=test_user.id,
+        thread_id=tid, user_message='Show me the rubric for this RFP.',
     )
 
-    reply, usage, actions, _, _ = agent._generate_assistant_reply(
-        'Show me the rubric for this RFP.', [], {}, {'llm_model': 'test'},
-        session=session, user=test_user, user_id=test_user.id, thread_id=tid,
-    )
-
-    assert usage['provider'] == 'deterministic' and actions == []
+    assert result['ok'] is True
+    reply = result['confirmation']
     assert 'Win probability & competitive position: weight 20%' in reply
     assert 'Contract & commercial risk: weight 10%' in reply
     durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
@@ -1392,7 +1397,7 @@ def test_decision_kit_starter_rubric_is_persisted_and_rendered_before_provider_r
     assert 'Surety / bond confirmation: required gate' in reply
 
 
-def test_suggested_rfp_kit_requires_selection_then_first_approval_allows_scoring(app, db, test_user, monkeypatch):
+def test_suggested_rfp_kit_requires_selection_then_first_approval_allows_scoring(app, db, test_user):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions, save_user_sessions
 
@@ -1439,17 +1444,13 @@ def test_suggested_rfp_kit_requires_selection_then_first_approval_allows_scoring
     }
     sessions[tid] = session
     assert save_user_sessions(test_user.id, sessions)
-    monkeypatch.setattr(
-        agent, '_resolve_governed_routes',
-        lambda *a, **k: pytest.fail('provider must not author or present the kit rubric'),
+    shown = agent._execute_mutation_tool(
+        'show_scoring_rubric', {}, user=test_user, user_id=test_user.id,
+        thread_id=tid, user_message=first_message,
     )
 
-    reply, usage, actions, _, _ = agent._generate_assistant_reply(
-        first_message, [], {}, {'llm_model': 'test'},
-        session=session, user=test_user, user_id=test_user.id, thread_id=tid,
-    )
-
-    assert usage['provider'] == 'deterministic' and actions == []
+    assert shown['ok'] is True
+    reply = shown['confirmation']
     assert 'Win probability & competitive position: weight 20%' in reply
     assert 'Surety / bond confirmation: required gate' in reply
     displayed = load_user_sessions(test_user.id)[tid]['scoring_rubric']
@@ -1476,7 +1477,7 @@ def test_suggested_rfp_kit_requires_selection_then_first_approval_allows_scoring
     assert session['scoring_intent'] == {'status': 'requested', 'source': 'user'}
 
 
-def test_rfp_proposal_acknowledges_supplied_facts_without_calling_them_weights(app, db, test_user, monkeypatch):
+def test_rfp_proposal_acknowledges_supplied_facts_without_calling_them_weights(app, db, test_user):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions, save_user_sessions
 
@@ -1496,18 +1497,13 @@ def test_rfp_proposal_acknowledges_supplied_facts_without_calling_them_weights(a
         sessions[tid], user_message=message,
     ) is True
     assert save_user_sessions(test_user.id, sessions)
-    session = load_user_sessions(test_user.id)[tid]
-    monkeypatch.setattr(
-        agent, '_resolve_governed_routes',
-        lambda *a, **k: pytest.fail('provider must not replace the saved proposal'),
+    shown = agent._execute_mutation_tool(
+        'show_scoring_rubric', {}, user=test_user, user_id=test_user.id,
+        thread_id=tid, user_message=message,
     )
 
-    reply, usage, actions, _, _ = agent._generate_assistant_reply(
-        message, [], {}, {'llm_model': 'test'},
-        session=session, user=test_user, user_id=test_user.id, thread_id=tid,
-    )
-
-    assert usage['provider'] == 'deterministic' and actions == []
+    assert shown['ok'] is True
+    reply = shown['confirmation']
     assert 'You already supplied decision inputs for' in reply
     assert 'Contract value' in reply and 'Win probability' in reply
     assert 'Expected margin' in reply and 'Pursuit cost' in reply
@@ -1546,9 +1542,6 @@ def test_score_now_uses_proposed_kit_rubric_without_approval_stop(app, db, test_
     sessions[tid] = session
     assert save_user_sessions(test_user.id, sessions)
 
-    assert agent._present_decision_kit_rubric(
-        session, user_id=test_user.id, thread_id=tid, user_message=message,
-    ) is None
     assert agent._guard_mutation_tool(
         'queue_scorecards', user_turn_count=1, mutations_this_turn=0,
         user_message=message, user_request_quote='Score all three bids now',
@@ -1557,6 +1550,7 @@ def test_score_now_uses_proposed_kit_rubric_without_approval_stop(app, db, test_
     assert session['scoring_rubric']['approval_status'] == 'proposed'
     assert session['scoring_rubric']['scoring_authorized_by'] == 'explicit_score_request'
 
+    execute_mutation_tool = agent._execute_mutation_tool
     monkeypatch.setattr(agent, '_execute_mutation_tool', lambda *a, **k: {
         'ok': True,
         'confirmation': 'Queued all three bids for scoring.',
@@ -1585,10 +1579,12 @@ def test_score_now_uses_proposed_kit_rubric_without_approval_stop(app, db, test_
     durable = load_user_sessions(test_user.id)[tid]
     assert durable['scoring_rubric']['criteria_summary_presented_at']
 
-    detail = agent._present_decision_kit_rubric(
-        durable, user_id=test_user.id, thread_id=tid,
-        user_message='Show me the rubric and weights.',
+    shown = execute_mutation_tool(
+        'show_scoring_rubric', {}, user=test_user, user_id=test_user.id,
+        thread_id=tid, user_message='Show me the rubric and weights.',
     )
+    assert shown['ok'] is True
+    detail = shown['confirmation']
     assert 'Here are the standard RFP response rubric criteria I used:' in detail
     assert 'Win probability & competitive position: weight 20%' in detail
     assert 'approve' not in detail.lower()
@@ -1733,23 +1729,18 @@ def test_plain_language_criteria_change_becomes_user_owned(app, db, test_user):
     assert durable['approval_status'] == 'approved'
 
 
-def test_general_objective_rubric_is_persisted_and_rendered_in_full(app, db, test_user, monkeypatch):
+def test_general_objective_rubric_is_persisted_and_rendered_in_full(app, db, test_user):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions
     tid = 'general-rubric-before-provider'
     seed_thread(test_user, tid)
-    session = load_user_sessions(test_user.id)[tid]
-    monkeypatch.setattr(
-        agent, '_resolve_governed_routes',
-        lambda *a, **k: pytest.fail('provider must not author the application rubric'),
+    shown = agent._execute_mutation_tool(
+        'show_scoring_rubric', {}, user=test_user, user_id=test_user.id,
+        thread_id=tid, user_message='Show me the scoring rubric and weights.',
     )
 
-    reply, usage, actions, _, _ = agent._generate_assistant_reply(
-        'Show me the scoring rubric and weights.', [], {}, {'llm_model': 'test'},
-        session=session, user=test_user, user_id=test_user.id, thread_id=tid,
-    )
-
-    assert usage['provider'] == 'deterministic' and actions == []
+    assert shown['ok'] is True
+    reply = shown['confirmation']
     expected = [
         'Market opportunity: weight 18%', 'Financial viability: weight 20%',
         'Execution readiness: weight 18%', 'Strategic alignment: weight 16%',
@@ -1763,7 +1754,7 @@ def test_general_objective_rubric_is_persisted_and_rendered_in_full(app, db, tes
     assert not [item for item in durable['criteria'] if item.get('gate')]
 
 
-def test_streaming_inferred_rfp_renders_all_starter_criteria_without_provider(app, db, test_user, monkeypatch):
+def test_inferred_rfp_show_tool_renders_all_starter_criteria(app, db, test_user):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions, save_user_sessions
     tid = 'streaming-inferred-rfp-rubric'
@@ -1774,21 +1765,14 @@ def test_streaming_inferred_rfp_renders_all_starter_criteria_without_provider(ap
         'decision_kit_family': 'rfp', 'decision_kit_source': 'discovery_inference',
     })
     assert save_user_sessions(test_user.id, sessions)
-    session = load_user_sessions(test_user.id)[tid]
-    monkeypatch.setattr(
-        agent, '_resolve_governed_routes',
-        lambda *a, **k: pytest.fail('provider must not render the starter rubric'),
+    shown = agent._execute_mutation_tool(
+        'show_scoring_rubric', {}, user=test_user, user_id=test_user.id,
+        thread_id=tid,
+        user_message='We received vendor proposals and need to select one. Show me the rubric.',
     )
-    state = {}
 
-    events = list(agent._stream_assistant_reply_events(
-        'We received vendor proposals and need to select one. Show me the rubric.', [], {},
-        {'llm_model': 'test'}, session=session, state=state,
-        user=test_user, user_id=test_user.id, thread_id=tid,
-    ))
-
-    reply = state['reply']
-    assert events == [{'type': 'delta', 'text': reply}]
+    assert shown['ok'] is True
+    reply = shown['confirmation']
     expected = [
         'Functional / technical fit: weight 25%', 'Total cost of ownership: weight 20%',
         'Implementation risk & timeline: weight 20%', 'Vendor viability & references: weight 15%',
