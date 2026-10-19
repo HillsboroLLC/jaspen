@@ -171,7 +171,13 @@ class TestHomepageHandoffIntegration:
         assert injection_events[0]["user_message"] == message
         assert injection_events[0]["injection_signals"]
 
-    def test_continue_no_longer_blocks_a_topic_gate_message(self, client, db, monkeypatch):
+    @pytest.mark.parametrize("message", [
+        "tell me a joke",
+        "Weather delays could push the pour by two weeks, what does that do to the bid?",
+        "Is it worth taking the vacation rental property in Breckenridge?",
+        "Our movie theater lease is up, renew or relocate?",
+    ])
+    def test_continue_no_longer_blocks_a_topic_gate_message(self, client, db, monkeypatch, message):
         from app.routes import ai_agent
 
         _signup(client)
@@ -199,13 +205,14 @@ class TestHomepageHandoffIntegration:
         assert started.status_code == 200, started.get_data(as_text=True)
 
         response = client.post("/api/v1/ai-agent/conversation/continue", json={
-            "message": "tell me a joke",
+            "message": message,
             "thread_id": thread_id,
         })
 
         assert response.status_code == 200, response.get_data(as_text=True)
-        assert calls == ["Help me think through a consequential decision.", "tell me a joke"]
+        assert calls == ["Help me think through a consequential decision.", message]
         assert response.get_json()["reply"] == "Provider handled the user message."
+        assert "I can help best with your current initiative" not in response.get_json()["reply"]
 
     def test_new_thread_is_persisted_before_first_turn_tools(self, client, db, monkeypatch):
         from app.routes import ai_agent
@@ -462,11 +469,9 @@ class TestHomepageHandoffIntegration:
         # The workspace must open under the SAME objective the homepage's
         # readiness promise was computed with. HOMEPAGE_CONTEXT is full of
         # delivery/on-time language — without the explicit objective in the
-        # payload, conversation/start's inference returns "speed" (verified
-        # directly against _infer_strategy_objective_from_message), so the
-        # thread would open as Speed to Market instead of the Balanced the
-        # visitor was shown. Field observed in the wild: a cost-heavy brief
-        # opened as Cost Optimization via this same inference path.
+        # payload, conversation/start historically inferred "speed", so the
+        # thread opened as Speed to Market instead of the Balanced the visitor
+        # was shown. A cost-heavy brief similarly opened as Cost Optimization.
         assert data.get("strategy_objective") == "balanced"
 
     def test_handoff_readiness_matches_public_analyze(self, app, client, db, monkeypatch):

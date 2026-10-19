@@ -454,16 +454,6 @@ OBJECTIVE_SHIFT_CONTEXT_TERMS = (
     "worth it",
 )
 
-OBJECTIVE_SHIFT_OFFTOPIC_TERMS = (
-    "dating",
-    "vacation",
-    "birthday",
-    "recipe",
-    "movie",
-    "weather",
-    "pet",
-)
-
 SIMPLE_TURN_PHRASES = (
     "yes",
     "no",
@@ -830,42 +820,6 @@ def _message_contains_term(text, term):
         return False
     pattern = re.escape(str(term).strip().lower()).replace(r"\ ", r"[\s\-_]+")
     return re.search(rf"(?<!\w){pattern}(?!\w)", text) is not None
-
-
-def _infer_strategy_objective_from_message(user_message):
-    text = str(user_message or "").strip().lower()
-    if not text:
-        return None
-
-    for prefix in OBJECTIVE_SHIFT_INTENT_PREFIXES:
-        if prefix in text:
-            for alias, objective in STRATEGY_OBJECTIVE_ALIASES.items():
-                if _message_contains_term(text, alias):
-                    return objective
-
-    has_context_signal = any(_message_contains_term(text, term) for term in OBJECTIVE_SHIFT_CONTEXT_TERMS)
-    has_offtopic_signal = any(_message_contains_term(text, term) for term in OBJECTIVE_SHIFT_OFFTOPIC_TERMS)
-    if has_offtopic_signal and not has_context_signal:
-        return None
-
-    scores = {objective: 0 for objective in STRATEGY_OBJECTIVE_OPTIONS}
-    for objective, keywords in OBJECTIVE_SHIFT_KEYWORDS.items():
-        for keyword in keywords:
-            if _message_contains_term(text, keyword):
-                scores[objective] += 1
-
-    if not has_context_signal and sum(scores.values()) < 2:
-        return None
-
-    best_objective = max(scores, key=scores.get)
-    best_score = scores.get(best_objective, 0)
-    if best_score <= 0:
-        return None
-
-    top_matches = [objective for objective, value in scores.items() if value == best_score]
-    if len(top_matches) > 1:
-        return None
-    return best_objective
 
 
 def _infer_rfp_decision_kit(user_message):
@@ -1435,33 +1389,6 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
     else:
         lines.append("Does this reflect what matters, or would you like to change the criteria or weights?")
     return "\n".join(lines)
-
-
-def _is_objective_offtopic_turn(user_message):
-    text = str(user_message or "").strip().lower()
-    if not text:
-        return False
-    has_context_signal = (
-        any(_message_contains_term(text, term) for term in OBJECTIVE_SHIFT_CONTEXT_TERMS)
-        or bool(_DECISION_SIGNAL_AMOUNT_RE.search(text))
-    )
-    has_offtopic_signal = any(_message_contains_term(text, term) for term in OBJECTIVE_SHIFT_OFFTOPIC_TERMS)
-    return bool(has_offtopic_signal and not has_context_signal)
-
-
-def _objective_refocus_reply(strategy_objective):
-    objective = normalize_strategy_objective(strategy_objective)
-    next_questions = {
-        "cost": "What cost or ROI decision should we focus on next?",
-        "speed": "What timeline or delivery blocker should we tackle next?",
-        "growth": "What growth outcome should we optimize next?",
-        "balanced": "What project decision should we focus on next?",
-    }
-    next_question = next_questions.get(objective, next_questions["balanced"])
-    return (
-        "I can help best with your current initiative, scorecard, scenarios, and execution plan. "
-        f"{next_question}"
-    )
 
 
 _PROCESSING_INTENT_TERMS = frozenset([
@@ -12928,71 +12855,6 @@ def conversation_continue():
             "retryable": True,
             "action": {"type": "retry", "label": "Retry"},
         }), 500
-    if _is_objective_offtopic_turn(user_message):
-        assistant_reply = _objective_refocus_reply(session.get("strategy_objective"))
-        chat_history.append(_assistant_chat_entry(assistant_reply))
-        assistant_message_index = len(chat_history) - 1
-        session["chat_history"] = chat_history
-        session["model_type"] = model_selection["model_type"]
-        session["timestamp"] = _iso_now()
-        session["status"] = "in_progress"
-        sessions[thread_id] = session
-        if not save_user_sessions(user_id, sessions):
-            return jsonify({"error": "Failed to persist conversation state"}), 500
-
-        payload = {
-            "thread_id": thread_id,
-            "session_id": thread_id,
-            "reply": assistant_reply,
-            "message": assistant_reply,
-            "assistant_message_index": assistant_message_index,
-            "model_type": model_selection["model_type"],
-            "allowed_model_types": model_selection["allowed_model_types"],
-            "actions": [],
-            "mutations": [],
-            "tool_results": [],
-            "undo_available": False,
-            "usage": _public_usage_payload(
-                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-                model_type=model_selection["model_type"],
-                credits_charged=0,
-                credits_remaining=user.credits_remaining,
-                user=user,
-            ),
-            "context_budget": get_context_budget(effective_plan_key(user, current_app.config)),
-            "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
-            "readiness": {
-                "percent": readiness["overall"]["percent"],
-                "categories": readiness["categories"],
-                "items": readiness.get("items", []),
-                "checklist_summary": readiness.get("checklist_summary", {}),
-                "version": readiness.get("version"),
-                "updated_at": _iso_now(),
-            },
-            "status": "gathering_info",
-            "strategy_objective": session.get("strategy_objective") or "balanced",
-            "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-            "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-            "organization_id": session.get("organization_id"),
-            "visibility": session.get("visibility") or "private",
-            "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-        }
-        if stream_requested:
-            @stream_with_context
-            def event_stream():
-                yield _sse_payload({"type": "done", **payload})
-
-            return Response(
-                event_stream(),
-                mimetype="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "X-Accel-Buffering": "no",
-                    "Connection": "keep-alive",
-                },
-            )
-        return jsonify(payload), 200
-
     context_budget = get_context_budget(effective_plan_key(user, current_app.config))
     preflight_token_hint = _preflight_token_hint_for_conversation(
         user_message,
