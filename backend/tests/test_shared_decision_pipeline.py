@@ -1021,6 +1021,142 @@ def test_scoring_tool_schemas_offer_optional_user_request_quote(app):
         schema = tools[tool_name]['input_schema']
         assert schema['properties']['user_request_quote']['type'] == 'string'
         assert 'user_request_quote' not in schema['required']
+    rubric_schema = tools['set_scoring_rubric']['input_schema']
+    assert rubric_schema['properties']['criteria_source']['enum'] == ['user', 'jaspen']
+    assert rubric_schema['properties']['user_request_quote']['type'] == 'string'
+    assert 'criteria_source' in rubric_schema['required']
+    approval_schema = tools['approve_presented_rubric']['input_schema']
+    assert approval_schema['required'] == ['user_request_quote']
+
+
+def test_approve_presented_rubric_requires_verified_quote_and_exact_stored_rubric(app, db, test_user):
+    from app.routes import ai_agent as agent
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    thread_id = 'explicit-rubric-approval'
+    stored = {
+        'criteria': [
+            {'key': 'price', 'label': 'Price', 'weight': 0.5},
+            {'key': 'speed', 'label': 'Speed', 'weight': 0.5},
+        ],
+        'source': 'jaspen_proposed',
+        'approval_status': 'proposed',
+        'presented_at': '2026-10-19T12:00:00Z',
+        'created_at': '2026-10-19T11:59:00Z',
+    }
+    assert save_user_sessions(test_user.id, {thread_id: {
+        'session_id': thread_id,
+        'scoring_rubric': stored,
+    }})
+
+    rejected = agent._execute_mutation_tool(
+        'approve_presented_rubric', {'user_request_quote': 'looks good'},
+        user=test_user, user_id=test_user.id, thread_id=thread_id,
+        user_message='works for me',
+    )
+    assert rejected['ok'] is False
+    assert rejected['code'] == 'rubric_approval_quote_required'
+    assert load_user_sessions(test_user.id)[thread_id]['scoring_rubric'] == stored
+
+    approved = agent._execute_mutation_tool(
+        'approve_presented_rubric', {'user_request_quote': 'works for me'},
+        user=test_user, user_id=test_user.id, thread_id=thread_id,
+        user_message='works for me',
+    )
+    assert approved['ok'] is True
+    assert approved['rubric']['criteria'] == stored['criteria']
+    assert approved['rubric']['created_at'] == stored['created_at']
+    assert approved['rubric']['approval_status'] == 'approved'
+    assert approved['rubric']['source'] == 'user'
+    assert approved['rubric']['approved_by_user_at']
+
+
+def test_approve_presented_rubric_without_presented_rubric_is_non_blocking_error(app, test_user):
+    from app.routes import ai_agent as agent
+    from app.routes.sessions import save_user_sessions
+
+    thread_id = 'unshown-rubric-approval'
+    assert save_user_sessions(test_user.id, {thread_id: {
+        'session_id': thread_id,
+        'scoring_rubric': {
+            'criteria': [{'key': 'price', 'label': 'Price', 'weight': 1.0}],
+            'source': 'jaspen_proposed',
+            'approval_status': 'proposed',
+        },
+    }})
+    result = agent._execute_mutation_tool(
+        'approve_presented_rubric', {'user_request_quote': 'yes'},
+        user=test_user, user_id=test_user.id, thread_id=thread_id,
+        user_message='yes',
+    )
+    assert result['ok'] is False
+    assert result['code'] == 'presented_rubric_required'
+    assert result.get('confirmation_required') is not True
+
+
+def test_user_owned_rubric_requires_source_and_verified_quote(app, test_user):
+    from app.routes import ai_agent as agent
+
+    message = 'price 50, speed 50'
+    criteria = [{'label': 'Price', 'weight': 50}, {'label': 'Speed', 'weight': 50}]
+    approved = agent._execute_mutation_tool(
+        'set_scoring_rubric', {
+            'criteria': criteria,
+            'criteria_source': 'user',
+            'user_request_quote': message,
+        },
+        user=test_user, user_id=test_user.id, thread_id='quoted-user-rubric',
+        user_message=message,
+    )
+    assert approved['rubric']['approval_status'] == 'approved'
+    assert approved['rubric']['source'] == 'user'
+    assert [item['weight'] for item in approved['rubric']['criteria']] == [0.5, 0.5]
+
+    proposed = agent._execute_mutation_tool(
+        'set_scoring_rubric', {
+            'criteria': criteria,
+            'criteria_source': 'user',
+            'user_request_quote': 'cost 50, speed 50',
+        },
+        user=test_user, user_id=test_user.id, thread_id='unquoted-user-rubric',
+        user_message=message,
+    )
+    assert proposed['rubric']['approval_status'] == 'proposed'
+    assert proposed['rubric']['source'] == 'jaspen_proposed'
+
+
+def test_user_owned_rubric_replaces_kit_starter_proposal(app, test_user):
+    from app.routes import ai_agent as agent
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    thread_id = 'replace-kit-starter'
+    session = {
+        'session_id': thread_id,
+        'decision_kit': 'rfp_bid',
+        'decision_kit_version': 1,
+    }
+    assert agent._ensure_decision_kit_starter_rubric(
+        session, user_message='price 50, speed 50',
+    ) is True
+    assert session['scoring_rubric']['approval_status'] == 'proposed'
+    assert save_user_sessions(test_user.id, {thread_id: session})
+
+    result = agent._execute_mutation_tool(
+        'set_scoring_rubric', {
+            'criteria': [
+                {'label': 'Price', 'weight': 50},
+                {'label': 'Speed', 'weight': 50},
+            ],
+            'criteria_source': 'user',
+            'user_request_quote': 'price 50, speed 50',
+        },
+        user=test_user, user_id=test_user.id, thread_id=thread_id,
+        user_message='price 50, speed 50',
+    )
+    assert result['rubric']['approval_status'] == 'approved'
+    durable = load_user_sessions(test_user.id)[thread_id]['scoring_rubric']
+    assert durable['source'] == 'user'
+    assert [item['label'] for item in durable['criteria'] if not item.get('gate')] == ['Price', 'Speed']
 
 
 def test_proposed_rubric_is_not_self_approved_and_same_turn_score_approves(app, test_user, monkeypatch):
@@ -1553,7 +1689,11 @@ def test_user_defined_single_criterion_is_approved_without_confirmation(app, tes
 
     result = agent._execute_mutation_tool(
         'set_scoring_rubric',
-        {'criteria': [{'label': 'Price', 'weight': 100}]},
+        {
+            'criteria': [{'label': 'Price', 'weight': 100}],
+            'criteria_source': 'user',
+            'user_request_quote': 'Score only on Price',
+        },
         user=test_user, user_id=test_user.id, thread_id='single-user-rubric',
         user_message='Score only on Price.',
     )
@@ -1565,6 +1705,11 @@ def test_user_defined_single_criterion_is_approved_without_confirmation(app, tes
     assert len(weighted) == 1
     assert weighted[0]['key'] == 'price'
     assert weighted[0]['weight'] == 1.0
+    assert agent._guard_mutation_tool(
+        'generate_scorecard', user_turn_count=1, mutations_this_turn=0,
+        user_message='Score only on Price.', user_request_quote='Score only on Price',
+        session={'scoring_rubric': result['rubric']},
+    ) is None
 
 
 def test_jaspen_proposed_single_criterion_requires_approved_confirmation(app, test_user):
@@ -1579,7 +1724,10 @@ def test_jaspen_proposed_single_criterion_requires_approved_confirmation(app, te
     }})
     result = agent._execute_mutation_tool(
         'set_scoring_rubric',
-        {'criteria': [{'label': 'Price', 'weight': 100}]},
+        {
+            'criteria': [{'label': 'Price', 'weight': 100}],
+            'criteria_source': 'jaspen',
+        },
         user=test_user, user_id=test_user.id, thread_id=thread_id,
         user_message='I suggest price as the criterion.',
     )
@@ -1592,10 +1740,3 @@ def test_jaspen_proposed_single_criterion_requires_approved_confirmation(app, te
     assert [item['label'] for item in result['rubric']['criteria'] if not item.get('gate')] == ['Price']
     assert any(item.get('gate') for item in result['rubric']['criteria'])
     assert result['actions'][0]['label'] == 'Score on Price alone'
-
-    shown = {}
-    agent._apply_rubric_action_to_session(shown, [{'result': result}])
-    assert agent._rubric_approval_from_message(
-        'Score on Price alone', shown['scoring_rubric']['criteria'], shown['scoring_rubric'],
-        user_request_quote='Score on Price alone',
-    ) is True

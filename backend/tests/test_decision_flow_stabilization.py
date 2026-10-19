@@ -829,17 +829,6 @@ def test_live_rfp_prompt_queues_unlabeled_values_and_shared_surety_for_every_opt
         assert gates['surety_confirmation'] == 'pass'
 
 
-def test_rfp_fact_percentages_do_not_masquerade_as_a_custom_rubric(app):
-    _, agent = modules()
-
-    assert agent._message_supplies_weighted_rubric(
-        'Denver: win probability 35%, expected margin 18%. Adams: win probability 40%, margin 20%.'
-    ) is False
-    assert agent._message_supplies_weighted_rubric(
-        'Use financial value 60% and delivery confidence 40%.'
-    ) is True
-
-
 def test_model_title_expansion_keeps_code_owned_option_identity_and_facts(app, db, test_user, monkeypatch):
     strategy, agent = modules()
     tid = 'stable-option-identity'
@@ -1346,7 +1335,7 @@ def test_proposed_rubric_is_visible_with_weights_before_approval(app, db, test_u
         'set_scoring_rubric', {'criteria': [
             {'label': 'Financial Value', 'weight': 60},
             {'label': 'Delivery Confidence', 'weight': 40},
-        ]},
+        ], 'criteria_source': 'jaspen'},
         readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
         user_turn_count=1, mutations_this_turn=0,
         user_message='Help me evaluate this option.', session=session,
@@ -1468,19 +1457,23 @@ def test_suggested_rfp_kit_requires_selection_then_first_approval_allows_scoring
     assert displayed['created_at'] == proposed['created_at']
 
     approval = 'Approved. Score all three bids with it now.'
-    assert agent._approve_presented_rubric_for_turn(
-        session, user_id=test_user.id, thread_id=tid, user_message=approval,
-        user_request_quote='Score all three bids with it now',
-    ) is True
+    result = agent._execute_mutation_tool(
+        'approve_presented_rubric',
+        {'user_request_quote': 'Approved'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+        user_message=approval,
+    )
+    assert result['ok'] is True
+    session['scoring_rubric'] = result['rubric']
     approved = load_user_sessions(test_user.id)[tid]['scoring_rubric']
     assert approved['approval_status'] == 'approved'
     assert approved['criteria'] == displayed['criteria']
-    assert session['scoring_intent'] == {'status': 'requested', 'source': 'user'}
     assert agent._guard_mutation_tool(
         'queue_scorecards', user_turn_count=2, mutations_this_turn=0,
         user_message=approval, user_request_quote='Score all three bids with it now',
         session=session,
     ) is None
+    assert session['scoring_intent'] == {'status': 'requested', 'source': 'user'}
 
 
 def test_rfp_proposal_acknowledges_supplied_facts_without_calling_them_weights(app, db, test_user, monkeypatch):
@@ -1523,7 +1516,7 @@ def test_rfp_proposal_acknowledges_supplied_facts_without_calling_them_weights(a
     assert 'Win probability & competitive position: 20%' not in reply
 
 
-def test_user_owned_unweighted_criteria_are_not_replaced_by_kit_starter():
+def test_kit_session_always_gets_proposed_starter_rubric():
     _, agent = modules()
     session = {'decision_kit': 'rfp_bid', 'decision_kit_version': 1}
     message = (
@@ -1531,12 +1524,9 @@ def test_user_owned_unweighted_criteria_are_not_replaced_by_kit_starter():
         'Suggest weights for those criteria.'
     )
 
-    assert agent._message_supplies_rubric_guidance(message) is True
-    assert agent._ensure_decision_kit_starter_rubric(session, user_message=message) is False
-    assert 'scoring_rubric' not in session
-    assert agent._present_decision_kit_rubric(
-        session, user_id='user', thread_id='thread', user_message=message,
-    ) is None
+    assert agent._ensure_decision_kit_starter_rubric(session, user_message=message) is True
+    assert session['scoring_rubric']['approval_status'] == 'proposed'
+    assert session['scoring_rubric']['source'] == 'jaspen_proposed'
 
 
 def test_score_now_uses_proposed_kit_rubric_without_approval_stop(app, db, test_user, monkeypatch):
@@ -1699,9 +1689,12 @@ def test_plain_looks_good_approves_conversational_criteria_summary(app, db, test
     assert save_user_sessions(test_user.id, sessions)
     session = load_user_sessions(test_user.id)[tid]
 
-    assert agent._approve_presented_rubric_for_turn(
-        session, user_id=test_user.id, thread_id=tid, user_message='Looks good.',
-    ) is True
+    result = agent._execute_mutation_tool(
+        'approve_presented_rubric', {'user_request_quote': 'Looks good'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+        user_message='Looks good.',
+    )
+    assert result['ok'] is True
     assert load_user_sessions(test_user.id)[tid]['scoring_rubric']['approval_status'] == 'approved'
 
 
@@ -1727,7 +1720,7 @@ def test_plain_language_criteria_change_becomes_user_owned(app, db, test_user):
         'set_scoring_rubric', {'criteria': [
             {'label': 'Price', 'weight': 70},
             {'label': 'Delivery', 'weight': 30},
-        ]},
+        ], 'criteria_source': 'user', 'user_request_quote': 'Price matters most'},
         user=test_user, user_id=test_user.id, thread_id=tid,
         user_message='Price matters most. Make it 70% and delivery 30%, then re-score.',
     )
@@ -1816,7 +1809,7 @@ def test_provider_cannot_add_unspoken_rubric_meaning(app, db, test_user):
         'set_scoring_rubric', {'criteria': [
             {'label': 'Financial Value', 'weight': 60, 'description': 'Use a secret model rule.'},
             {'label': 'Delivery Confidence', 'weight': 40, 'description': 'Another secret rule.'},
-        ]},
+        ], 'criteria_source': 'user', 'user_request_quote': 'Use Financial Value 60% and Delivery Confidence 40%'},
         user=test_user, user_id=test_user.id, thread_id=tid,
         user_message='Use Financial Value 60% and Delivery Confidence 40%. Score it now.',
     )
@@ -1824,7 +1817,7 @@ def test_provider_cannot_add_unspoken_rubric_meaning(app, db, test_user):
     assert all(item['description'] is None for item in result['rubric']['criteria'])
 
 
-def test_plain_approval_persists_exact_presented_rubric_before_provider(app, db, test_user, monkeypatch):
+def test_plain_approval_is_not_phrase_matched_before_provider(app, db, test_user, monkeypatch):
     _, agent = modules()
     from app.routes.sessions import load_user_sessions, save_user_sessions
 
@@ -1852,10 +1845,10 @@ def test_plain_approval_persists_exact_presented_rubric_before_provider(app, db,
     def provider(*args, **kwargs):
         active = kwargs['session']['scoring_rubric']
         durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
-        assert active['approval_status'] == 'approved'
-        assert durable['approval_status'] == 'approved'
+        assert active['approval_status'] == 'proposed'
+        assert durable['approval_status'] == 'proposed'
         assert active['criteria'] == criteria == durable['criteria']
-        return 'Scoring started.', {'provider': 'anthropic', 'model': 'test-model'}, [], [], None
+        return 'I will apply your approval.', {'provider': 'anthropic', 'model': 'test-model'}, [], [], None
 
     monkeypatch.setattr(agent, '_generate_assistant_reply_anthropic', provider)
     reply, _, _, _, _ = agent._generate_assistant_reply(
@@ -1864,12 +1857,12 @@ def test_plain_approval_persists_exact_presented_rubric_before_provider(app, db,
         user_id=test_user.id, thread_id=tid,
     )
 
-    approved = load_user_sessions(test_user.id)[tid]['scoring_rubric']
-    assert reply == 'Scoring started.'
-    assert approved['criteria'] == criteria
-    assert approved['source'] == 'user'
-    assert approved['approval_status'] == 'approved'
-    assert approved['approved_by_user_at']
+    unchanged = load_user_sessions(test_user.id)[tid]['scoring_rubric']
+    assert reply == 'I will apply your approval.'
+    assert unchanged['criteria'] == criteria
+    assert unchanged['source'] == 'jaspen_proposed'
+    assert unchanged['approval_status'] == 'proposed'
+    assert 'approved_by_user_at' not in unchanged
 
 
 def test_common_canonical_fact_update_survives_active_decision_kit(app, db, test_user):
@@ -2091,7 +2084,7 @@ def test_first_turn_score_now_with_user_owned_rubric_scores_immediately(app, db,
         'set_scoring_rubric', {'criteria': [
             {'label': 'Financial Value', 'weight': 60},
             {'label': 'Delivery Confidence', 'weight': 40},
-        ]},
+        ], 'criteria_source': 'user', 'user_request_quote': 'Use Financial Value 60% and Delivery Confidence 40%'},
         readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
         user_turn_count=1, mutations_this_turn=0, user_message=message, session=session,
     )
@@ -3210,33 +3203,6 @@ def test_narration_failure_keeps_completed_action_but_marks_degraded(app, test_u
     assert mutations[0]['success']
     assert usage['degraded'] and usage['error_code'] == 'narration_failed'
     assert 'Queued all seven.' in reply
-
-
-def test_fact_percentages_with_a_rubric_request_are_not_a_custom_rubric():
-    from app.routes.ai_agent import _message_supplies_weighted_rubric
-
-    rfp = (
-        "Bid 1: contract value $2,400,000, our win probability is 35%, expected margin 18%, "
-        "pursuit cost $45,000. Bid 2: win probability 40%, margin 20%. "
-        "Propose a scoring rubric for me to approve before you score."
-    )
-    assert _message_supplies_weighted_rubric(rfp) is False
-    assert _message_supplies_weighted_rubric(
-        "Use my rubric: Cost 40%, Foot traffic 35%, Lease flexibility 25%. Score it now."
-    ) is True
-
-
-def test_option_edits_are_not_criteria_changes():
-    from app.routes.ai_agent import _message_directs_rubric_change
-
-    for message in (
-        "Remove Bid 3 from the comparison.",
-        "Add a fourth option: Aurora library renovation.",
-        "Replace the Adams County bid with Boulder.",
-    ):
-        assert _message_directs_rubric_change(message) is False, message
-    for message in ("Price matters most.", "Make delivery 30%.", "Drop strategic fit.", "Add a criterion for safety record."):
-        assert _message_directs_rubric_change(message) is True, message
 
 
 def test_chat_execution_plan_confirms_records_and_does_not_reprompt_for_regenerate(app, db, test_user, monkeypatch):

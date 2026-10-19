@@ -564,6 +564,7 @@ _MUTATION_TOOLS = {
     "rename_thread",
     "patch_scorecard",
     "set_scoring_rubric",
+    "approve_presented_rubric",
     "set_option_attributes",
     "queue_scorecards",
 }
@@ -573,6 +574,7 @@ _MUTATION_TOOLS = {
 # via the /score-next endpoint, so it doesn't belong under the per-turn scoring cap.
 _EXEMPT_MUTATION_TOOLS = {
     "set_scoring_rubric",
+    "approve_presented_rubric",
     "set_option_attributes",
     "queue_scorecards",
 }
@@ -705,7 +707,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "[[/choice]]\n"
     "Rules: 2-4 options with short labels; valid JSON on a single line; set allow_multi true ONLY when several answers can sensibly combine; keep allow_text true so the user can still type their own. Use at most ONE choice block per message and still ask only ONE question at a time. For genuinely open-ended questions with no discrete options, just ask in prose (no block). NEVER mention the block, the word 'choice', or its syntax in your prose — write the question naturally, then append the block.\n"
     "\n"
-    "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria and weights (e.g. a list of factors each with a percentage), FIRST call set_scoring_rubric with those exact criteria and weights before scoring anything. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. If the user names criteria or priorities without weights, preserve those criteria and ask for weights or propose weights for those same criteria; do not replace them with a generic or Decision Kit rubric. You may separately identify useful Decision Kit additions and ask whether to include them. If the user organizes the criteria into groups (e.g. 'Impact' variables vs 'Fit' variables), pass each criterion's group on the 'group' field so every option gets a sub-score per group and can be placed on a 2-group quadrant. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. set_scoring_rubric is reversible configuration, so it is allowed on the first turn and does not count against the per-turn scoring limit.\n"
+    "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria or directs a criteria change, FIRST call set_scoring_rubric with criteria_source='user' and user_request_quote set to a short exact quote from the user's latest message that supplies or directs those criteria. Pass their exact criteria and weights before scoring anything. If you supply or revise the criteria yourself, call set_scoring_rubric with criteria_source='jaspen' and omit user_request_quote; that rubric remains a proposal for the user to approve. When the user approves a rubric Jaspen already showed — in any wording, including 'works for me', 'use those', or 'yes' after Jaspen asked — call approve_presented_rubric with a short exact user_request_quote from that latest message; never recreate the shown rubric through set_scoring_rubric. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. If the user names criteria or priorities without weights, preserve those criteria and ask for weights or propose weights for those same criteria; do not replace them with a generic or Decision Kit rubric. You may separately identify useful Decision Kit additions and ask whether to include them. If the user organizes the criteria into groups (e.g. 'Impact' variables vs 'Fit' variables), pass each criterion's group on the 'group' field so every option gets a sub-score per group and can be placed on a 2-group quadrant. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. Rubric configuration tools are reversible, so they are allowed on the first turn and do not count against the per-turn scoring limit.\n"
     "FIRST-TURN DECISION CONTRACT: when a conversation opens with a substantive decision — a real choice with stakes and some context, whether one option ('should I take this job offer?' with details) or several — your first reply must make the path to a scorecard visible. Do all three: (1) Name the decision and the options you will score; if the user gave only one path, propose the natural alternative yourself (e.g. 'Take the offer' vs 'Stay in current role') — comparing against the status quo is almost always the real decision. (2) Propose a starter rubric in plain prose: 3-6 weighted criteria drawn from what they told you PLUS one or two criteria they did not mention but the relevant expertise says matter (name why in half a sentence). State plainly that the rubric is theirs to edit — you propose, they decide. (3) Offer the choice explicitly, as a choice block: score now at honest confidence (missing evidence lowers confidence, never blocks a score, and you will show what would raise it), or answer your single best question first. If the opening message says score now AND supplies the criteria and weights, save that user-owned rubric as approved and score immediately. When the user explicitly asks to see or propose a rubric, show every criterion and weight and ask once. Otherwise, an explicit score request uses Jaspen’s standard proposed criteria immediately without falsely marking them user-approved; mention the criteria conversationally after scoring and invite changes. When the user later approves a shown rubric or directs a criteria change, save the user-owned version and re-score. NEVER claim scoring started unless a scoring tool succeeded. NEVER open with questions that have no visible destination. Exception: a bare one-liner with no context ('should I quit?') gets your single best scorecard-framed question, with 'score it anyway' offered as a choice option. "
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
     "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the shared scoring system, which evaluates every option against the same criteria and builds the trade-off comparison. After calling it, state only that all N were queued (name them if there are only a few). Do not promise that cards were created; the scoring operation reports success or a retryable failure separately. If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead. "
@@ -1117,37 +1119,6 @@ def _decision_kit_change_question_needed(session):
     return bool(isinstance(session, dict) and isinstance(session.get("decision_kit_change_pending"), dict))
 
 
-def _message_supplies_weighted_rubric(user_message):
-    text = str(user_message or "")
-    percentage_count = len(re.findall(r"\b\d+(?:\.\d+)?\s*%", text))
-    if percentage_count < 1:
-        return False
-    # Ordinary option facts often contain several percentages. They are not a
-    # user-authored rubric, even when the same message asks Jaspen to propose
-    # one ("propose a rubric" + "win probability 35%, margin 18%"). Require at
-    # least two percentage-bearing clauses that are not recognizable
-    # probability, margin, rate, or participation facts.
-    fact_terms = re.compile(r"\b(?:win\s+probability|probability|margin|rate|participation)\b", re.I)
-    weighted_percentages = 0
-    for clause in re.split(r"[,;\n]+", text):
-        if fact_terms.search(clause):
-            continue
-        weighted_percentages += len(re.findall(r"\b\d+(?:\.\d+)?\s*%", clause))
-    if weighted_percentages >= 2:
-        return True
-    # One criterion is user-owned only when the user unmistakably defines the
-    # scoring contract. A passing percentage fact must never collapse a rubric.
-    return bool(
-        weighted_percentages == 1
-        and re.search(
-            r"\b(?:rubric|criterion|criteria|score\s+(?:only\s+)?(?:on|using)|"
-            r"evaluate\s+(?:only\s+)?(?:on|using)|weight)\b",
-            text,
-            re.I,
-        )
-    )
-
-
 def _rubric_proposal_requested(user_message):
     text = str(user_message or "")
     return bool(
@@ -1161,36 +1132,6 @@ def _rubric_proposal_requested(user_message):
         or re.search(r"\bwhat\s+(?:is|are)\s+(?:the\s+)?(?:rubric|criteria|weights?)\b", text, re.I)
         or re.search(r"\bwhat\s+(?:are|will)\s+you\s+scor(?:e|ing)\s+(?:this|these|them|it)?\s*on\b", text, re.I)
     )
-
-
-def _message_directs_rubric_change(user_message):
-    """A user instruction that changes criteria is approval of that change."""
-    text = str(user_message or "")
-    if re.search(r"\b(?:suggest|propose|recommend|what would you)\b", text, re.I):
-        return False
-    return bool(re.search(
-        r"\b(?:prioriti[sz]e|matters? most|care most about)\b"
-        # Adding or removing an OPTION ("remove Bid 3") is not a criteria
-        # change; require a criteria word or a known criterion name.
-        r"|\b(?:add|drop|remove|exclude|replace)\b.{0,35}\b(?:criterion|criteria|factor|rubric|weights?|strategic fit|win probability|financial|delivery|qualifications|contract risk|commercial risk|cost|price|speed|risk)\b"
-        r"|\b(?:make|set|change|increase|decrease|raise|lower)\b.{0,45}\b\d+(?:\.\d+)?\s*%"
-        r"|\b(?:weight|weigh)\b.{0,35}\b(?:more|less|heavier|higher|lower|\d+(?:\.\d+)?\s*%)",
-        text,
-        re.I,
-    ))
-
-
-def _message_supplies_rubric_guidance(user_message):
-    """Recognize user-owned criteria even when the user has not assigned weights."""
-    text = str(user_message or "")
-    return bool(re.search(
-        r"\b(?:my|our)\s+(?:rubric|criteria|priorities)\b"
-        r"|\b(?:rubric|criteria|factors|priorities)\s+(?:is|are|includes?|:)"
-        r"|\b(?:use|judge|evaluate|score|compare)\b.{0,45}\b(?:based on|using|criteria|factors)\b"
-        r"|\b(?:prioriti[sz]e|care most about|matters? most)\b",
-        text,
-        re.I,
-    ))
 
 
 def _format_human_list(items):
@@ -1296,8 +1237,6 @@ def _ensure_decision_kit_starter_rubric(session, *, user_message=""):
     current = session.get("scoring_rubric")
     if isinstance(current, dict) and current.get("criteria"):
         return _ensure_session_decision_kit_gates(session)
-    if _message_supplies_weighted_rubric(user_message) or _message_supplies_rubric_guidance(user_message):
-        return False
     kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
     if not kit:
         return False
@@ -1333,8 +1272,6 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
         rubric_label = f"{kit.get('label') or 'Decision Kit'} rubric" if kit else "scoring rubric"
         rubric = current
     else:
-        if _message_supplies_weighted_rubric(user_message) or _message_supplies_rubric_guidance(user_message):
-            return None
         kit = (
             get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
             if session.get("decision_kit") else None
@@ -2560,7 +2497,7 @@ def _mutation_result_summary(tool_name, result_payload):
         return {}
 
     summary = {"confirmation": str(result_payload.get("confirmation") or "").strip()}
-    if tool_name == "set_scoring_rubric":
+    if tool_name in {"set_scoring_rubric", "approve_presented_rubric"}:
         rubric = result_payload.get("rubric") if isinstance(result_payload.get("rubric"), dict) else {}
         summary["rubric"] = {
             "approval_status": rubric.get("approval_status"),
@@ -4924,7 +4861,7 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
         )
 
     if (
-        tool_name == "set_scoring_rubric" and isinstance(result, dict)
+        tool_name in {"set_scoring_rubric", "approve_presented_rubric"} and isinstance(result, dict)
         and result.get("ok") and isinstance(session, dict)
         and isinstance(result.get("rubric"), dict)
     ):
@@ -5991,8 +5928,35 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                                 "additionalProperties": False,
                             },
                         },
+                        "criteria_source": {
+                            "type": "string",
+                            "enum": ["user", "jaspen"],
+                            "description": "Set to 'user' only when the latest user message supplies or directs these criteria; otherwise set to 'jaspen'.",
+                        },
+                        "user_request_quote": {
+                            "type": "string",
+                            "description": "A short exact quote from the user's latest message that supplies or directs the criteria. Required for criteria_source='user'; omit for criteria_source='jaspen'.",
+                        },
                     },
-                    "required": ["criteria"],
+                    "required": ["criteria", "criteria_source"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "approve_presented_rubric",
+                "description": (
+                    "Approve the exact scoring rubric already shown to the user. Use this when the latest "
+                    "message approves the shown rubric in any wording. Never resend or alter criteria with this tool."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "user_request_quote": {
+                            "type": "string",
+                            "description": "A short exact quote from the user's latest message showing approval, including replies such as 'works for me', 'use those', or 'yes'.",
+                        },
+                    },
+                    "required": ["user_request_quote"],
                     "additionalProperties": False,
                 },
             },
@@ -6510,96 +6474,6 @@ def _refresh_decision_record_after_score(user, thread_id):
         return None
 
 
-def _rubric_approval_from_message(message, criteria=None, existing_rubric=None, user_request_quote=None):
-    text = str(message or "").strip().lower()
-    labels = [
-        str(item.get("label") or "").strip().lower()
-        for item in (criteria or [])
-        if isinstance(item, dict) and not item.get("gate")
-    ]
-    matched_labels = [label for label in labels if label and label in text]
-    explicit_score = verify_user_quote(user_request_quote, message)
-    stated_weights = re.findall(r"\b\d+(?:\.\d+)?\s*%?", text)
-    if len(matched_labels) >= 1 and _message_supplies_weighted_rubric(message) and (
-        re.search(r"\d+(?:\.\d+)?\s*%", text)
-        or (explicit_score and len(stated_weights) >= 1)
-    ):
-        return True
-    if len(labels) == 1 and re.search(r"\bscore\s+on\b.{0,80}\balone\b", text):
-        return True
-    if (
-        len(labels) == 1
-        and matched_labels
-        and re.search(
-            r"\b(?:score|evaluate|judge)\s+(?:it\s+)?(?:only|solely)\s+(?:on|using)\b",
-            text,
-        )
-    ):
-        return True
-    if not re.search(r"\b(?:approve|approved|looks good|use (?:this|that|the) rubric|accept (?:this|that|the) rubric)\b", text):
-        return False
-    if not isinstance(existing_rubric, dict) or not (
-        existing_rubric.get("presented_at") or existing_rubric.get("criteria_summary_presented_at")
-    ):
-        return False
-    from ..decision_state import rubric_identity
-    return rubric_identity(existing_rubric)["criteria"] == rubric_identity({"criteria": criteria})["criteria"]
-
-
-def _approve_presented_rubric_for_turn(session, *, user_id, thread_id, user_message, user_request_quote=None):
-    """Approve the exact displayed proposal before a provider handles a turn.
-
-    Approval is a user action, so the application owns it. Requiring the model
-    to echo the proposal through ``set_scoring_rubric`` lets harmless payload
-    differences turn an explicit approval into a new proposal. This changes
-    only a rubric already persisted with ``presented_at``; weighted criteria
-    supplied in the current message still use the normal capture path.
-    """
-    if not isinstance(session, dict):
-        return False
-    _ensure_session_decision_kit_gates(session)
-    rubric = session.get("scoring_rubric")
-    from ..decision_state import rubric_is_approved
-    if (
-        not isinstance(rubric, dict)
-        or not isinstance(rubric.get("criteria"), list)
-        or not (rubric.get("presented_at") or rubric.get("criteria_summary_presented_at"))
-        or rubric_is_approved(rubric)
-        or _message_supplies_weighted_rubric(user_message)
-    ):
-        return False
-    text = str(user_message or "")
-    explicit_approval = bool(re.search(
-        r"\b(?:approve|approved|looks good|use (?:this|that|the) rubric|accept (?:this|that|the) rubric)\b",
-        text,
-        re.I,
-    ))
-    explicit_score = verify_user_quote(user_request_quote, user_message)
-    if not (explicit_approval or explicit_score):
-        return False
-
-    approved = copy.deepcopy(rubric)
-    approved["approval_status"] = "approved"
-    approved["source"] = "user"
-    approved["approved_by_user_at"] = _iso_now()
-
-    sessions = load_user_sessions(user_id) or {}
-    key, durable = _resolve_user_session(sessions, thread_id)
-    if not isinstance(durable, dict):
-        return False
-    durable["scoring_rubric"] = approved
-    sessions[key or thread_id] = durable
-    if not save_user_sessions(user_id, sessions):
-        current_app.logger.error(
-            "Explicit rubric approval could not be persisted for thread %s", thread_id
-        )
-        return False
-    session["scoring_rubric"] = approved
-    if explicit_score:
-        session["scoring_intent"] = {"status": "requested", "source": "user"}
-    return True
-
-
 def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None, user_message=""):
     if not user:
         return _tool_error("User context missing.")
@@ -6646,6 +6520,43 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         _sanitize_deltas,
         _save_scenarios,
     )
+
+    if tool_name == "approve_presented_rubric":
+        user_request_quote = tool_input.get("user_request_quote")
+        if not verify_user_quote(user_request_quote, user_message):
+            return _tool_error(
+                "Quote the user's approval exactly from their latest message, then ask them to approve the shown rubric if needed.",
+                code="rubric_approval_quote_required",
+            )
+        sessions = load_user_sessions(user_id) or {}
+        session_key, session = _resolve_user_session(sessions, thread_id)
+        rubric = session.get("scoring_rubric") if isinstance(session, dict) else None
+        if (
+            not isinstance(rubric, dict)
+            or not isinstance(rubric.get("criteria"), list)
+            or not (rubric.get("presented_at") or rubric.get("criteria_summary_presented_at"))
+        ):
+            return _tool_error(
+                "No presented scoring rubric is available to approve. Show the rubric first, then ask the user to approve it.",
+                code="presented_rubric_required",
+            )
+        approved = copy.deepcopy(rubric)
+        approved["approval_status"] = "approved"
+        approved["source"] = "user"
+        approved["approved_by_user_at"] = _iso_now()
+        session["scoring_rubric"] = approved
+        sessions[session_key or thread_id] = session
+        if not save_user_sessions(user_id, sessions):
+            return _tool_error(
+                "The rubric approval could not be saved. Ask the user to try again.",
+                code="rubric_approval_save_failed",
+            )
+        return {
+            "ok": True,
+            "tool": tool_name,
+            "rubric": approved,
+            "confirmation": "The presented scoring rubric is approved exactly as shown.",
+        }
 
     if tool_name == "set_scoring_rubric":
         # Be liberal in what we accept — models phrase this tool's input many
@@ -6750,12 +6661,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         )
         criteria = _rubric_with_required_kit_gates(criteria, active_kit)
         existing_rubric = _sess.get("scoring_rubric") if isinstance(_sess, dict) and isinstance(_sess.get("scoring_rubric"), dict) else None
+        criteria_source = str(tool_input.get("criteria_source") or "jaspen").strip().lower()
         user_approved = bool(
-            _rubric_approval_from_message(user_message, criteria, existing_rubric)
-            or (
-                isinstance(existing_rubric, dict)
-                and _message_directs_rubric_change(user_message)
-            )
+            criteria_source == "user"
+            and verify_user_quote(tool_input.get("user_request_quote"), user_message)
         )
         from ..decision_state import rubric_identity, rubric_is_approved
         same_as_existing = bool(
@@ -10160,9 +10069,6 @@ def _generate_assistant_reply(
             [],
             None,
         )
-    _approve_presented_rubric_for_turn(
-        session, user_id=user_id, thread_id=thread_id, user_message=user_message,
-    )
     rubric_proposal = _present_decision_kit_rubric(
         session, user_id=user_id, thread_id=thread_id, user_message=user_message,
     )
@@ -10390,9 +10296,6 @@ def _stream_assistant_reply_events(
             })
         yield {"type": "delta", "text": RFP_SUBTYPE_QUESTION}
         return
-    _approve_presented_rubric_for_turn(
-        session, user_id=user_id, thread_id=thread_id, user_message=user_message,
-    )
     rubric_proposal = _present_decision_kit_rubric(
         session, user_id=user_id, thread_id=thread_id, user_message=user_message,
     )
@@ -11087,7 +10990,7 @@ def _apply_rubric_action_to_session(session, actions):
         if not result.get("ok"):
             continue
         tool = str(result.get("tool") or "")
-        if tool == "set_scoring_rubric":
+        if tool in {"set_scoring_rubric", "approve_presented_rubric"}:
             rubric = result.get("rubric")
             if isinstance(rubric, dict) and isinstance(rubric.get("criteria"), list):
                 from ..decision_state import rubric_is_approved
