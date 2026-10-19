@@ -737,39 +737,9 @@ _SYSTEM_PROMPT_PREFIX = (
 )
 
 # ─── Topic Scope Guardrail ─────────────────────────────────────────────────
-_OFF_TOPIC_PATTERNS = [
-    r"\b(recipe|cook(ing)?|movie|film|tv show|sports? (score|team)|horoscope|dating|relationship advice)\b",
-    r"\b(write me a (poem|song|story|joke)|tell me a (joke|story))\b",
-    r"\b(debug (my )?code|fix (my )?bug|write (a )?function for|leetcode|programming challenge)\b",
-    r"\b(what (ai|model|llm) are you|who made you|are you (gpt|gemini|claude))\b",
-]
-
-_BUSINESS_SIGNALS = [
-    "revenue", "cost", "margin", "kpi", "metric", "objective", "strategy", "goal",
-    "initiative", "project", "plan", "budget", "forecast", "pipeline", "process",
-    "team", "customer", "product", "market", "growth", "efficiency", "data",
-    "snowflake", "salesforce", "connector", "insight", "analysis", "report",
-    "risk", "opportunity", "priority", "roadmap", "quarter", "q1", "q2", "q3", "q4",
-    "roi", "okr", "kr", "baseline", "target", "benchmark",
-]
-_BUSINESS_ADJACENT_SIGNALS = [
-    "morale", "culture", "engagement", "burnout", "retention", "hiring", "staffing",
-    "leadership", "manager", "stakeholder", "workplace", "meeting", "communication",
-    "conflict", "performance", "accountability", "change management", "org design",
-    "organizational", "team dynamic", "employee", "workload",
-]
-_PERSONAL_TOPIC_PATTERNS = [
-    r"\b(my (boyfriend|girlfriend|husband|wife|partner|ex)|dating life|romantic relationship)\b",
-    r"\b(i am|i'm)\s+(lonely|depressed|anxious|anxiety|stressed|heartbroken)\b",
-    r"\b(family drama|personal life|marriage advice|breakup|therapy advice)\b",
-]
-
 # Decision-signal terms: a message containing any of these is a consequential
-# decision (business, professional, or personal-financial), never chit-chat or
-# emotional support — even when it also mentions a spouse/partner. Checked by
-# BOTH off-topic guards (_is_objective_offtopic_turn and _is_off_topic) so a
-# message like "my husband and I are deciding whether to buy land" is never
-# ejected by either one.
+# decision (business, professional, or personal-financial). The objective-shift
+# guard uses these signals to avoid redirecting a decision-bearing turn.
 _DECISION_SIGNAL_TERMS = (
     "decide", "decision", "deciding", "choose", "option", "offer", "buy",
     "purchase", "worth it",
@@ -785,16 +755,6 @@ def _has_decision_signal(text):
         return True
     return any(_message_contains_term(text, term) for term in _DECISION_SIGNAL_TERMS)
 
-_OFF_TOPIC_RESPONSE = (
-    "I'm focused on decision intelligence — I'm here to help you weigh a consequential decision, "
-    "business, professional, or personal, and walk away with a scored, defensible recommendation. "
-    "What decision would you like to work on?"
-)
-_OFF_TOPIC_PERSONAL_RESPONSE = (
-    "I can't help with relationship or emotional support directly, but if there's a decision "
-    "underneath this — a choice you need to make, with options and stakes — bring me that and "
-    "I'll help you weigh it."
-)
 CONNECTOR_CONTEXT_SNAPSHOT_TTL_SECONDS = 30 * 60
 CONNECTOR_CONTEXT_MAX_CONNECTORS = 4
 CONNECTOR_CONTEXT_MAX_ALERTS = 4
@@ -1502,56 +1462,6 @@ def _objective_refocus_reply(strategy_objective):
         "I can help best with your current initiative, scorecard, scenarios, and execution plan. "
         f"{next_question}"
     )
-
-
-def _is_off_topic(message):
-    """
-    Returns (is_off_topic, reason).
-    Uses lightweight semantic scoring:
-    - allow business and business-adjacent workplace topics
-    - block personal-only requests
-    - block clear non-business requests
-    """
-    text = str(message or "").strip().lower()
-    if not text:
-        return False, ""
-
-    business_hits = sum(1 for signal in _BUSINESS_SIGNALS if _message_contains_term(text, signal))
-    adjacent_hits = sum(1 for signal in _BUSINESS_ADJACENT_SIGNALS if _message_contains_term(text, signal))
-    if (business_hits + adjacent_hits) > 0:
-        return False, ""
-
-    # A consequential decision (business, professional, or personal-financial)
-    # is always in scope, even when it also mentions a spouse/partner/family —
-    # e.g. "my husband and I are deciding whether to buy land" must reach the
-    # model, not be ejected as a personal topic.
-    if _has_decision_signal(text):
-        return False, ""
-
-    personal_hits = sum(1 for pattern in _PERSONAL_TOPIC_PATTERNS if re.search(pattern, text))
-    if personal_hits > 0:
-        return True, "personal_topic"
-
-    off_topic_hits = sum(1 for pattern in _OFF_TOPIC_PATTERNS if re.search(pattern, text))
-    if off_topic_hits > 0:
-        return True, "off_topic_pattern"
-
-    semantic_non_business_terms = [
-        "recipe", "movie", "film", "tv show", "sports", "horoscope", "joke",
-        "poem", "song", "story", "leetcode", "programming challenge", "debug my code",
-        "celebrity", "vacation", "weekend plans",
-    ]
-    semantic_hits = sum(1 for term in semantic_non_business_terms if _message_contains_term(text, term))
-    if len(text.split()) >= 10 and semantic_hits >= 2:
-        return True, "off_topic_semantic"
-
-    return False, ""
-
-
-def _off_topic_reply(reason):
-    if str(reason or "").strip() == "personal_topic":
-        return _OFF_TOPIC_PERSONAL_RESPONSE
-    return _OFF_TOPIC_RESPONSE
 
 
 _PROCESSING_INTENT_TERMS = frozenset([
@@ -12410,56 +12320,6 @@ def conversation_start():
     if not isinstance(chat_history, list):
         chat_history = []
 
-    stripped_for_check = re.sub(r"\[[^\]]+context\].*?---\n\n", "", user_message, flags=re.IGNORECASE | re.DOTALL).strip()
-    off_topic, off_topic_reason = _is_off_topic(stripped_for_check)
-    if off_topic:
-        guardrail_reply = _off_topic_reply(off_topic_reason)
-        current_readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else _compute_readiness(
-            chat_history,
-            session.get("strategy_objective"),
-        )
-        payload = {
-            "thread_id": thread_id,
-            "session_id": thread_id,
-            "reply": guardrail_reply,
-            "message": guardrail_reply,
-            "model_type": model_selection["model_type"],
-            "allowed_model_types": model_selection["allowed_model_types"],
-            "actions": [],
-            "mutations": [],
-            "tool_results": [],
-            "undo_available": False,
-            "usage": _public_usage_payload(
-                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-                model_type=model_selection["model_type"],
-                credits_charged=0,
-                credits_remaining=user.credits_remaining,
-                user=user,
-            ),
-            "context_budget": get_context_budget(effective_plan_key(user, current_app.config)),
-            "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
-            "readiness": {
-                "percent": ((current_readiness.get("overall") or {}).get("percent")) if isinstance(current_readiness, dict) else 0,
-                "categories": current_readiness.get("categories", []) if isinstance(current_readiness, dict) else [],
-                "items": current_readiness.get("items", []) if isinstance(current_readiness, dict) else [],
-                "checklist_summary": current_readiness.get("checklist_summary", {}) if isinstance(current_readiness, dict) else {},
-                "version": current_readiness.get("version") if isinstance(current_readiness, dict) else None,
-                "updated_at": _iso_now(),
-            },
-            "status": "gathering_info",
-            "strategy_objective": session.get("strategy_objective") or "balanced",
-            "decision_kit": session.get("decision_kit"),
-            "decision_kit_family": session.get("decision_kit_family"),
-            "decision_kit_suggestion": session.get("decision_kit_suggestion"),
-            "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-            "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-            "organization_id": session.get("organization_id"),
-            "visibility": session.get("visibility") or "private",
-            "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-            "guardrail_triggered": True,
-        }
-        return jsonify(payload), 200
-
     session.pop(PENDING_MUTATION_UNDO_KEY, None)
     _append_user_turn_unless_retry(session, chat_history, user_message, attachments=attachments)
     previous_readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else None
@@ -12485,89 +12345,6 @@ def conversation_start():
             "retryable": True,
             "action": {"type": "retry", "label": "Retry"},
         }), 500
-    if _is_objective_offtopic_turn(user_message):
-        assistant_reply = _objective_refocus_reply(session.get("strategy_objective"))
-        chat_history.append(_assistant_chat_entry(assistant_reply))
-        assistant_message_index = len(chat_history) - 1
-        session["chat_history"] = chat_history
-        session["name"] = name
-        session["model_type"] = model_selection["model_type"]
-        session["timestamp"] = _iso_now()
-        session["status"] = "in_progress"
-        session["readiness"] = readiness
-        sessions[thread_id] = session
-        if not save_user_sessions(user_id, sessions):
-            return jsonify({"error": "Failed to persist conversation state"}), 500
-
-        if session_created:
-            _audit_ai_agent_event(
-                "session.created",
-                user=user,
-                details={
-                    "thread_id": thread_id,
-                    "name": name,
-                    "model_type": model_selection["model_type"],
-                    "stream": bool(stream_requested),
-                    "source": "conversation_start",
-                },
-            )
-
-        payload = {
-            "thread_id": thread_id,
-            "session_id": thread_id,
-            "reply": assistant_reply,
-            "message": assistant_reply,
-            "assistant_message_index": assistant_message_index,
-            "model_type": model_selection["model_type"],
-            "allowed_model_types": model_selection["allowed_model_types"],
-            "actions": [],
-            "mutations": [],
-            "tool_results": [],
-            "undo_available": False,
-            "usage": _public_usage_payload(
-                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-                model_type=model_selection["model_type"],
-                credits_charged=0,
-                credits_remaining=user.credits_remaining,
-                user=user,
-            ),
-            "context_budget": get_context_budget(effective_plan_key(user, current_app.config)),
-            "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
-            "readiness": {
-                "percent": readiness["overall"]["percent"],
-                "categories": readiness["categories"],
-                "items": readiness.get("items", []),
-                "checklist_summary": readiness.get("checklist_summary", {}),
-                "version": readiness.get("version"),
-                "updated_at": _iso_now(),
-            },
-            "status": "gathering_info",
-            "strategy_objective": session.get("strategy_objective") or "balanced",
-            "decision_kit": session.get("decision_kit"),
-            "decision_kit_family": session.get("decision_kit_family"),
-            "decision_kit_suggestion": session.get("decision_kit_suggestion"),
-            "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-            "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-            "organization_id": session.get("organization_id"),
-            "visibility": session.get("visibility") or "private",
-            "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-        }
-        if stream_requested:
-            @stream_with_context
-            def event_stream():
-                yield _sse_payload({"type": "done", **payload})
-
-            return Response(
-                event_stream(),
-                mimetype="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "X-Accel-Buffering": "no",
-                    "Connection": "keep-alive",
-                },
-            )
-        return jsonify(payload), 200
-
     context_budget = get_context_budget(effective_plan_key(user, current_app.config))
     preflight_token_hint = _preflight_token_hint_for_conversation(
         user_message,
@@ -13129,53 +12906,6 @@ def conversation_continue():
     chat_history = session.get("chat_history")
     if not isinstance(chat_history, list):
         chat_history = []
-
-    stripped_for_check = re.sub(r"\[[^\]]+context\].*?---\n\n", "", user_message, flags=re.IGNORECASE | re.DOTALL).strip()
-    off_topic, off_topic_reason = _is_off_topic(stripped_for_check)
-    if off_topic:
-        guardrail_reply = _off_topic_reply(off_topic_reason)
-        current_readiness = session.get("readiness") if isinstance(session.get("readiness"), dict) else _compute_readiness(
-            chat_history,
-            session.get("strategy_objective"),
-        )
-        payload = {
-            "thread_id": thread_id,
-            "session_id": thread_id,
-            "reply": guardrail_reply,
-            "message": guardrail_reply,
-            "model_type": model_selection["model_type"],
-            "allowed_model_types": model_selection["allowed_model_types"],
-            "actions": [],
-            "mutations": [],
-            "tool_results": [],
-            "undo_available": False,
-            "usage": _public_usage_payload(
-                {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-                model_type=model_selection["model_type"],
-                credits_charged=0,
-                credits_remaining=user.credits_remaining,
-                user=user,
-            ),
-            "context_budget": get_context_budget(effective_plan_key(user, current_app.config)),
-            "credits": _public_credits_payload(charged=0, remaining=user.credits_remaining),
-            "readiness": {
-                "percent": ((current_readiness.get("overall") or {}).get("percent")) if isinstance(current_readiness, dict) else 0,
-                "categories": current_readiness.get("categories", []) if isinstance(current_readiness, dict) else [],
-                "items": current_readiness.get("items", []) if isinstance(current_readiness, dict) else [],
-                "checklist_summary": current_readiness.get("checklist_summary", {}) if isinstance(current_readiness, dict) else {},
-                "version": current_readiness.get("version") if isinstance(current_readiness, dict) else None,
-                "updated_at": _iso_now(),
-            },
-            "status": "gathering_info",
-            "strategy_objective": session.get("strategy_objective") or "balanced",
-            "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-            "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-            "organization_id": session.get("organization_id"),
-            "visibility": session.get("visibility") or "private",
-            "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-            "guardrail_triggered": True,
-        }
-        return jsonify(payload), 200
 
     session.pop(PENDING_MUTATION_UNDO_KEY, None)
     _append_user_turn_unless_retry(session, chat_history, user_message, attachments=attachments)
