@@ -3535,6 +3535,151 @@ def test_chat_execution_plan_confirms_records_and_does_not_reprompt_for_regenera
     assert len(provider_calls) == 2
 
 
+def test_chat_decision_tool_records_verified_non_override(app, db, test_user):
+    from app.models_decision_record import DecisionRecord, OptionDecision
+
+    _, agent = modules()
+    tid = 'chat-natural-decision'
+    card = {
+        'id': 'natural-card',
+        'option_key': 'option-natural',
+        'project_name': 'Natural expansion',
+        'recommendation': {'verdict_key': 'advance', 'label': 'Proceed'},
+    }
+    seed_thread(test_user, tid, [card])
+    upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=card)
+    db.session.commit()
+
+    result = agent._execute_mutation_tool(
+        'record_option_decision',
+        {
+            'option_key': 'option-natural',
+            'decision': 'declined',
+            'user_request_quote': 'We passed on Natural expansion.',
+        },
+        user=test_user,
+        user_id=test_user.id,
+        thread_id=tid,
+        user_message='We passed on Natural expansion.',
+    )
+
+    assert result['ok'] is True
+    assert result.get('confirmation_required') is not True
+    record = DecisionRecord.query.filter_by(thread_id=tid).one()
+    decision = OptionDecision.query.filter_by(decision_record_id=record.id).one()
+    assert decision.option_key == 'option-natural'
+    assert decision.final_decision == 'Declined Natural expansion.'
+    assert decision.source == 'manual'
+    assert decision.override_info is None
+
+
+def test_chat_decision_tool_rejects_unverified_quote_without_recording(app, db, test_user):
+    from app.models_decision_record import DecisionRecord
+
+    _, agent = modules()
+    tid = 'chat-unverified-decision'
+    card = {
+        'id': 'unverified-card',
+        'option_key': 'option-unverified',
+        'project_name': 'Unverified expansion',
+    }
+    seed_thread(test_user, tid, [card])
+    upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=card)
+    db.session.commit()
+
+    result = agent._execute_mutation_tool(
+        'record_option_decision',
+        {
+            'option_key': 'option-unverified',
+            'decision': 'moving_forward',
+            'user_request_quote': 'We are moving forward.',
+        },
+        user=test_user,
+        user_id=test_user.id,
+        thread_id=tid,
+        user_message='Tell me what you recommend.',
+    )
+
+    assert result['ok'] is False
+    assert result['code'] == 'decision_quote_required'
+    assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
+
+
+def test_chat_override_confirms_then_records_override_through_conversation(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    from app.models_decision_record import DecisionRecord, OptionDecision
+
+    _, agent = modules()
+    tid = 'chat-natural-override'
+    card = {
+        'id': 'override-card',
+        'option_key': 'option-override',
+        'project_name': 'Override proposal',
+        'recommendation': {'verdict_key': 'decline', 'label': 'No-Bid'},
+    }
+    seed_thread(test_user, tid, [card])
+    upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=card)
+    db.session.commit()
+    monkeypatch.setattr(
+        agent,
+        '_resolve_governed_routes',
+        lambda *_args, **_kwargs: ([{'provider': 'anthropic', 'model': 'test-model'}], {}),
+    )
+    monkeypatch.setattr(agent, '_reserve_preflight_credits', lambda *a, **k: {'ok': True, 'reserved': 0})
+    monkeypatch.setattr(agent, '_settle_reserved_credits', lambda *a, **k: {'ok': True, 'charged': 0, 'remaining': 300})
+    monkeypatch.setattr(agent, '_persist_credit_deduction', lambda *a, **k: None)
+
+    def provider(user_message, *_args, **kwargs):
+        result, _count = agent._execute_local_tool(
+            'record_option_decision',
+            {
+                'option_key': 'option-override',
+                'decision': 'moving_forward',
+                'user_request_quote': user_message,
+            },
+            readiness={},
+            user=test_user,
+            user_id=test_user.id,
+            thread_id=tid,
+            user_turn_count=1,
+            mutations_this_turn=0,
+            user_message=user_message,
+            session=kwargs['session'],
+        )
+        return (
+            result['confirmation'],
+            {'provider': 'test', 'model': 'test-model', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2},
+            [{'tool': 'record_option_decision', 'input': {}, 'result': result}],
+            [],
+            None,
+        )
+
+    monkeypatch.setattr(agent, '_generate_assistant_reply_anthropic', provider)
+
+    first = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': "We're going to bid on Override proposal.",
+    })
+    assert first.status_code == 200, first.get_json()
+    assert first.get_json()['reply'] == "That overrides Jaspen's No-Bid; record it?"
+    assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
+
+    confirmed = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': 'Yes, record it.',
+    })
+    assert confirmed.status_code == 200, confirmed.get_json()
+    record = DecisionRecord.query.filter_by(thread_id=tid).one()
+    decision = OptionDecision.query.filter_by(decision_record_id=record.id).one()
+    assert decision.final_decision == 'Moving forward with Override proposal.'
+    assert decision.override_info == {
+        'override_of': 'decline',
+        'override_reason': "We're going to bid on Override proposal.",
+        'failed_check_labels': [],
+    }
+
+
 def test_execution_assistant_persists_edits_before_returning_success(
     client, db, test_user, auth_headers, monkeypatch
 ):

@@ -574,6 +574,7 @@ _MUTATION_TOOLS = {
     "cancel_decision_kit_change",
     "set_option_attributes",
     "queue_scorecards",
+    "record_option_decision",
 }
 # Mutation tools that are reversible config (not content generation): allowed on the
 # first turn and NOT counted toward MAX_MUTATIONS_PER_TURN. queue_scorecards just
@@ -588,6 +589,9 @@ _EXEMPT_MUTATION_TOOLS = {
     "cancel_decision_kit_change",
     "set_option_attributes",
     "queue_scorecards",
+    # A verified statement of the human's decision is itself the authority to
+    # record it; it must not be blocked by the general first-turn mutation gate.
+    "record_option_decision",
 }
 _INJECTION_PATTERNS = [
     re.compile(r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions|prompts|rules)", re.I),
@@ -701,6 +705,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea must use update_workspace_presentation for presentation, patch_scorecard for content wording/title, or generate_scorecard(rescore_scorecard_id=<open id>) for changed facts — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. Cosmetic edits MUST NOT move the score. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
     "When the user asks to build an execution plan, call generate_execution_plan. If it returns confirmation_required, ask its confirmation question conversationally and do not claim the plan exists yet. On the user's affirmative reply, call generate_execution_plan again with decision_acknowledged=true and the returned option_key. "
+    "When the user states a decision about an option in any wording, call record_option_decision and include a short exact quote from that latest message. Never record a decision the user did not state. If the tool says the decision overrides Jaspen's No-Bid or a failed required check, reflect its confirmation question once and do not say it was recorded; after the user's confirmation, call record_option_decision again with an exact quote from that confirming message. "
     "When the user asks to start the plan on a specific date or shift the whole schedule (e.g. 'start this plan July 1', 'push the kickoff back two weeks'), call set_execution_start_date with the new start_date (YYYY-MM-DD) — it slides every task by the same delta and preserves manual per-task adjustments. "
     "Use your judgment about when to score. A confirmation, an acknowledgment, or a pure question about an existing scorecard never warrants a tool call. "
     "When a scoring result lists neutral_criteria, name those criteria in the same reply, say you used a neutral 45 because there is no information on them yet, explain neutral in one plain sentence for a newcomer, and offer to help fill the gaps one short question at a time. Keep this to one short, helpful paragraph in your own words. "
@@ -2592,6 +2597,16 @@ def _mutation_result_summary(tool_name, result_payload):
             summary["task_count"] = len(tasks)
         if isinstance(result_payload.get("sync_status"), dict):
             summary["sync_status"] = result_payload.get("sync_status")
+    elif tool_name == "record_option_decision":
+        option_decision = (
+            result_payload.get("option_decision")
+            if isinstance(result_payload.get("option_decision"), dict) else {}
+        )
+        summary.update({
+            "option_key": result_payload.get("option_key") or option_decision.get("option_key"),
+            "decision": option_decision.get("final_decision"),
+            "confirmation_required": bool(result_payload.get("confirmation_required")),
+        })
     elif tool_name == "set_execution_start_date":
         summary.update({
             "start_date": result_payload.get("start_date"),
@@ -4959,6 +4974,11 @@ def _execute_local_tool(tool_name, tool_input, *, readiness, user, user_id, thre
             session["_fact_update_failure"] = {
                 "code": (result or {}).get("code") if isinstance(result, dict) else "fact_update_failed",
             }
+    if tool_name == "record_option_decision" and isinstance(session, dict) and isinstance(result, dict):
+        if isinstance(result.get("pending_option_decision"), dict):
+            session["pending_option_decision"] = result["pending_option_decision"]
+        if result.get("clear_pending_option_decision"):
+            session.pop("pending_option_decision", None)
 
     # Only a mutation that actually SUCCEEDED counts toward the per-turn cap.
     # A malformed or rejected call (e.g. a generate_scorecard missing a field)
@@ -6447,6 +6467,39 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                 },
             },
             {
+                "name": "record_option_decision",
+                "description": (
+                    "Record a decision the user explicitly stated about an option. Use the option_key when the "
+                    "user names a specific option; otherwise omit it to use the option open on screen. Always "
+                    "include an exact quote from the user's latest message. Never infer or record a decision the "
+                    "user did not state. If the result requires override confirmation, ask its confirmation "
+                    "question and call this tool again only after the user confirms."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "option_key": {
+                            "type": "string",
+                            "description": "Stable option key. Omit to use the open/on-screen option.",
+                        },
+                        "decision": {
+                            "type": "string",
+                            "enum": ["moving_forward", "declined", "deferred"],
+                        },
+                        "user_request_quote": {
+                            "type": "string",
+                            "description": "A short exact quote from the user's latest message stating or confirming the decision.",
+                        },
+                        "rationale": {
+                            "type": "string",
+                            "description": "Optional exact quote of the rationale the user stated in the same latest message.",
+                        },
+                    },
+                    "required": ["decision", "user_request_quote"],
+                    "additionalProperties": False,
+                },
+            },
+            {
                 "name": "generate_execution_plan",
                 "description": (
                     "Generate or regenerate the detailed execution plan (WBS) for the current initiative. "
@@ -6756,6 +6809,213 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         _sanitize_deltas,
         _save_scenarios,
     )
+
+    if tool_name == "record_option_decision":
+        decision = str(tool_input.get("decision") or "").strip().lower()
+        if decision not in {"moving_forward", "declined", "deferred"}:
+            return _tool_error(
+                "Choose moving_forward, declined, or deferred.",
+                code="invalid_option_decision",
+            )
+        user_request_quote = str(tool_input.get("user_request_quote") or "").strip()
+        if not verify_user_quote(user_request_quote, user_message):
+            return _tool_error(
+                "Quote the user's decision exactly from their latest message. Nothing was recorded.",
+                code="decision_quote_required",
+            )
+
+        sessions = load_user_sessions(user_id) or {}
+        session_key, stored_session = _resolve_user_session(sessions, thread_id)
+        if not isinstance(stored_session, dict):
+            return _tool_error(
+                "No open decision context was found for this conversation.",
+                code="decision_context_required",
+            )
+        cards = _collect_session_scorecards(
+            stored_session, user_id=user_id, thread_id=thread_id,
+        )
+        from ..decision_records import (
+            create_or_refresh_record,
+            execution_option_key,
+            record_option_decision as write_option_decision,
+        )
+
+        wanted_key = str(tool_input.get("option_key") or "").strip()
+        active_scorecard_id = (
+            view_active_scorecard_id
+            or str(stored_session.get("active_evaluation_scorecard_id") or "").strip()
+            or None
+        )
+        scorecard = None
+        if wanted_key:
+            scorecard = next(
+                (card for card in cards if execution_option_key(card) == wanted_key),
+                None,
+            )
+        elif active_scorecard_id:
+            scorecard = next((
+                card for card in cards
+                if str(card.get("id") or card.get("analysis_id") or "").strip()
+                == active_scorecard_id
+            ), None)
+        elif len(cards) == 1:
+            scorecard = cards[0]
+        if not isinstance(scorecard, dict):
+            return _tool_error(
+                "The option to record could not be matched. Provide its option_key or open it first.",
+                code="decision_option_required",
+            )
+
+        option_key = execution_option_key(scorecard)
+        option_name = str(
+            scorecard.get("project_name") or scorecard.get("name")
+            or scorecard.get("label") or "this option"
+        ).strip()
+        recommendation = (
+            scorecard.get("recommendation")
+            if isinstance(scorecard.get("recommendation"), dict) else {}
+        )
+        recommended_key = str(recommendation.get("verdict_key") or "").strip()
+        failed_checks = [
+            str(gate.get("label") or gate.get("key")).strip()
+            for gate in (scorecard.get("gates") or [])
+            if isinstance(gate, dict)
+            and str(gate.get("status") or "").strip().lower() == "fail"
+            and str(gate.get("label") or gate.get("key") or "").strip()
+        ]
+        is_override = bool(
+            decision == "moving_forward"
+            and (recommended_key == "decline" or failed_checks)
+        )
+        pending = (
+            stored_session.get("pending_option_decision")
+            if isinstance(stored_session.get("pending_option_decision"), dict) else None
+        )
+        pending_matches = bool(
+            pending
+            and pending.get("option_key") == option_key
+            and pending.get("decision") == decision
+        )
+        confirmed_override = bool(
+            is_override
+            and pending_matches
+            and user_request_quote.casefold()
+            != str(pending.get("user_request_quote") or "").strip().casefold()
+        )
+        rationale = str(tool_input.get("rationale") or "").strip()
+        if rationale and not verify_user_quote(rationale, user_message):
+            rationale = ""
+
+        if is_override and not confirmed_override:
+            pending = {
+                "option_key": option_key,
+                "option_name": option_name,
+                "decision": decision,
+                "user_request_quote": user_request_quote,
+                "rationale": rationale or None,
+                "override_of": (
+                    "decline" if recommended_key == "decline"
+                    else "failed_required_check"
+                ),
+                "failed_check_labels": failed_checks,
+            }
+            stored_session["pending_option_decision"] = pending
+            sessions[session_key or thread_id] = stored_session
+            if not save_user_sessions(user_id, sessions):
+                return _tool_error(
+                    "The override confirmation could not be saved. Nothing was recorded.",
+                    code="decision_confirmation_save_failed",
+                )
+            confirmation = (
+                "That overrides Jaspen's No-Bid; record it?"
+                if recommended_key == "decline"
+                else "That overrides a failed required check; record it?"
+            )
+            return _tool_success({
+                "tool": tool_name,
+                "confirmation_required": True,
+                "confirmation": confirmation,
+                "option_key": option_key,
+                "option_name": option_name,
+                "pending_option_decision": pending,
+            })
+
+        original_quote = (
+            str(pending.get("user_request_quote") or "").strip()
+            if confirmed_override else user_request_quote
+        )
+        if confirmed_override:
+            rationale = str(pending.get("rationale") or "").strip()
+        final_decision = {
+            "moving_forward": f"Moving forward with {option_name}.",
+            "declined": f"Declined {option_name}.",
+            "deferred": f"Deferred {option_name}.",
+        }[decision]
+        override_info = None
+        if confirmed_override:
+            override_info = {
+                "override_of": pending.get("override_of"),
+                "override_reason": rationale or original_quote,
+                "failed_check_labels": list(pending.get("failed_check_labels") or []),
+            }
+
+        decision_kit_key = stored_session.get("decision_kit")
+        decision_kit = (
+            get_decision_kit(decision_kit_key, stored_session.get("decision_kit_version"))
+            if decision_kit_key else None
+        )
+        kit_verdict = None
+        if decision_kit:
+            if decision == "moving_forward":
+                verdict_key = (
+                    recommended_key
+                    if recommended_key in {"advance", "advance_with_conditions"}
+                    else "advance"
+                )
+            elif decision == "declined":
+                verdict_key = "decline"
+            else:
+                verdict_key = "deferred"
+            vocabulary = decision_kit.get("verdict_vocabulary") or {}
+            kit_verdict = {
+                "verdict_key": verdict_key,
+                "label": vocabulary.get(verdict_key) or verdict_key,
+                "option_key": option_key,
+                "scorecard_id": str(
+                    scorecard.get("id") or scorecard.get("analysis_id") or ""
+                ).strip(),
+                "recommendation_snapshot": recommendation,
+                "source": "conversation",
+                "override_of": override_info.get("override_of") if override_info else None,
+                "override_reason": override_info.get("override_reason") if override_info else None,
+                "failed_check_labels": failed_checks,
+            }
+
+        record, _created = create_or_refresh_record(user, thread_id)
+        if decision_kit_key:
+            record.decision_type = decision_kit_key
+        row, created = write_option_decision(
+            record,
+            option_key,
+            final_decision,
+            decided_by_user_id=user.id,
+            source="manual",
+            option_name=option_name,
+            rationale=rationale or None,
+            kit_verdict=kit_verdict,
+            override_info=override_info,
+        )
+        stored_session.pop("pending_option_decision", None)
+        sessions[session_key or thread_id] = stored_session
+        save_user_sessions(user_id, sessions)
+        return _tool_success({
+            "tool": tool_name,
+            "confirmation": f"Decision recorded: {final_decision}",
+            "decision_record_id": str(record.id),
+            "option_decision": row.to_dict(),
+            "created": created,
+            "clear_pending_option_decision": True,
+        })
 
     if tool_name == "approve_presented_rubric":
         user_request_quote = tool_input.get("user_request_quote")
