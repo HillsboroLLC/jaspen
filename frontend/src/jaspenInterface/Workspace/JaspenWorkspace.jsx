@@ -349,6 +349,28 @@ function _originContextFromBundle(bundle, { limit = 24, maxLen = 4000 } = {}) {
     .slice(-limit);
 }
 
+function _workspaceOriginFromBundle(bundle, { threadId, scorecardName, maxRequestLen = 200 } = {}) {
+  const clean = (value, maxLen) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxLen);
+  const firstUserMessage = (Array.isArray(bundle?.messages) ? bundle.messages : []).find(
+    (message) => (
+      (message?.role === 'user' || message?.sender === 'user') &&
+      clean(message?.content ?? message?.text, maxRequestLen)
+    ),
+  );
+  const sessionId = clean(threadId, 120);
+  const sessionName = clean(bundle?.thread?.name, 160);
+  const openScorecardName = clean(scorecardName, 160);
+  const originRequest = clean(firstUserMessage?.content ?? firstUserMessage?.text, maxRequestLen);
+
+  return {
+    session_id: sessionId || undefined,
+    session_name: sessionName || undefined,
+    scorecard_name: openScorecardName || undefined,
+    origin_request: originRequest || undefined,
+    back_link: sessionId ? `/new?sid=${encodeURIComponent(sessionId)}` : undefined,
+  };
+}
+
 export default function JaspenWorkspace() {
   const { threadId, scorecardId } = useParams();
   const navigate = useNavigate();
@@ -1397,6 +1419,7 @@ export default function JaspenWorkspace() {
       // contextual-awareness fix: tell the agent which surface is open and
       // hand it the on-screen ideas (trade-off) or task breakdown (execution).
       const viewContext = {
+        surface: 'workspace',
         current_view: isExecution ? 'execution' : isTradeoff ? 'tradeoff' : 'scorecard',
         active_tab: isExecution ? 'execution' : isTradeoff ? 'tradeoff' : 'scorecard',
       };
@@ -1508,6 +1531,10 @@ export default function JaspenWorkspace() {
         }, {});
         viewContext.wbs_summary = { total_tasks: wbs.tasks.length, by_status: byStatus };
       }
+      viewContext.origin = _workspaceOriginFromBundle(bundle, {
+        threadId,
+        scorecardName: viewContext.active_scorecard_name || ctx.scorecard_name || displayTitle,
+      });
 
       // Conversation history (Anthropic-friendly role+content shape).
       // Prepend the originating thread conversation so the agent has BOTH the

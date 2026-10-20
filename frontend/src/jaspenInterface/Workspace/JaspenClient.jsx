@@ -575,11 +575,6 @@ export const Jaspen = {
       {
         message,
         conversation_history,
-        docType: 'strategy',
-        detailed: true,
-        phase: 3,
-        systemPrompt:
-          'You are a market analyst assisting with deep-dive Q&A on a completed Jaspen analysis. Provide conversational, helpful responses that reference the analysis context when relevant.',
         analysis_context,
         // view_context is what the backend actually grounds the prompt on
         // (current view/tab, the on-screen ideas, WBS summary). analysis_context

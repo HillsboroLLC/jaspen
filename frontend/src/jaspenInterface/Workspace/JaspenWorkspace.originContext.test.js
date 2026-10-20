@@ -1,0 +1,27 @@
+import fs from 'fs';
+import path from 'path';
+
+const workspaceSource = fs.readFileSync(path.join(__dirname, 'JaspenWorkspace.jsx'), 'utf8');
+const clientSource = fs.readFileSync(path.join(__dirname, 'JaspenClient.jsx'), 'utf8');
+
+test('workspace chat sends origin context built from its existing bundle', () => {
+  expect(workspaceSource).toContain("surface: 'workspace'");
+  expect(workspaceSource).toContain('viewContext.origin = _workspaceOriginFromBundle(bundle');
+  expect(workspaceSource).toContain('bundle?.thread?.name');
+  expect(workspaceSource).toContain("message?.role === 'user' || message?.sender === 'user'");
+  expect(workspaceSource).toContain('maxRequestLen = 200');
+  expect(workspaceSource).toContain('scorecardName: viewContext.active_scorecard_name || ctx.scorecard_name || displayTitle');
+  expect(workspaceSource).toContain('`/new?sid=${encodeURIComponent(sessionId)}`');
+});
+
+test('unified workspace chat no longer sends legacy prompt fields', () => {
+  const chatMethod = clientSource.slice(
+    clientSource.indexOf('async chat({'),
+    clientSource.indexOf('async convoStart({'),
+  );
+
+  expect(chatMethod).not.toContain('systemPrompt');
+  expect(chatMethod).not.toContain('docType');
+  expect(chatMethod).not.toContain('detailed');
+  expect(chatMethod).not.toContain('phase:');
+});

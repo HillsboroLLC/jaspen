@@ -13,6 +13,8 @@ import os
 import re
 import time
 import uuid
+from urllib.parse import unquote
+
 import requests
 
 try:
@@ -672,6 +674,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "When the user asks to modify WBS tasks, call the relevant tools instead of only describing steps. "
     "When the user asks to rename the initiative, project, or title, call rename_thread with the requested new name. "
     "EDITING THE OPEN SCORECARD: the scorecard the user has open in the workspace is directly editable through chat — edit it IN PLACE, never spawn a duplicate for a change to the idea they're viewing. "
+    "WORKSPACE MODE: When the view context says the user is in the Workspace, use judgment to keep the work on the open artifact when that is the honest path. Wording and presentation changes belong on the open scorecard in place. Re-score that same scorecard in place when the user asks for a re-score or when the underlying facts change. If the requested change genuinely needs the originating conversation — such as discussing new facts, changing criteria, or comparing additional options — say that plainly and offer the link back to the named session from the Workspace origin context. Never say a change was made unless the relevant tool succeeded. "
     "(a) For a wording / narrative tweak that does NOT change the underlying analysis (reword the executive summary, key insights, assumptions, risk or recommendation text, rationale), call patch_scorecard — it edits that field in place on the open idea and leaves the score untouched. "
     "DECISION TEST: ask 'does this change any FACT or ASSUMPTION the score depends on?' If it only changes HOW the text reads — tone, clarity, length, polish, phrasing, grammar — it is a wording tweak: use patch_scorecard and NEVER re-score. Requests like 'make it more executive-friendly', 'make it clearer / punchier / more concise', 'tighten this', 'reword', 'fix the grammar', 'change word X to Y', or 'rewrite the summary' are ALL wording tweaks — the numbers MUST NOT move. Rewriting the same facts in better prose is never a re-score. "
     "(b) For a change that DOES affect the analysis or score (a different budget, timeline, team, market, pricing, or any assumption that moves the numbers — i.e. the underlying facts change, not just the prose), call generate_scorecard with rescore_scorecard_id set to the OPEN scorecard's id (the Active scorecard ID in the workspace view context). This re-scores that SAME idea in place — you re-evaluate every dimension holistically so the score stays consistent with the new inputs. If you are unsure whether an edit is wording or a real input change, treat it as wording and use patch_scorecard. "
@@ -1656,6 +1659,38 @@ def _sanitize_view_context(raw_context):
     if current_view:
         cleaned["current_view"] = current_view
 
+    surface = str(context.get("surface") or "").strip().lower()
+    if surface == "workspace":
+        cleaned["surface"] = "workspace"
+
+    origin = context.get("origin")
+    if isinstance(origin, dict):
+        session_id = str(origin.get("session_id") or "").strip()[:120]
+        session_name = re.sub(r"\s+", " ", str(origin.get("session_name") or "")).strip()[:160]
+        scorecard_name = re.sub(r"\s+", " ", str(origin.get("scorecard_name") or "")).strip()[:160]
+        origin_request = re.sub(r"\s+", " ", str(origin.get("origin_request") or "")).strip()[:200]
+        cleaned_origin = {}
+        if session_id:
+            cleaned_origin["session_id"] = session_id
+        if session_name:
+            cleaned_origin["session_name"] = session_name
+        if scorecard_name:
+            cleaned_origin["scorecard_name"] = scorecard_name
+        if origin_request:
+            cleaned_origin["origin_request"] = origin_request
+
+        back_link = str(origin.get("back_link") or "").strip()
+        back_link_match = re.fullmatch(r"/new\?sid=([^&#]+)", back_link)
+        if (
+            session_id
+            and len(back_link) <= 256
+            and back_link_match
+            and unquote(back_link_match.group(1)) == session_id
+        ):
+            cleaned_origin["back_link"] = back_link
+        if cleaned_origin:
+            cleaned["origin"] = cleaned_origin
+
     active_tab = _normalize_tab_key(context.get("active_tab"))
     if active_tab:
         cleaned["active_tab"] = active_tab
@@ -1800,6 +1835,28 @@ def _view_context_prompt_suffix(view_context):
         return ""
 
     lines = ["Current workspace view context (from UI):"]
+    surface = normalized.get("surface")
+    if surface:
+        lines.append(f"- Surface: {surface}")
+
+    origin = (normalized.get("origin") or {}) if surface == "workspace" else {}
+    if origin:
+        session_name = str(origin.get("session_name") or "").strip()
+        origin_request = str(origin.get("origin_request") or "").strip()
+        scorecard_name = str(origin.get("scorecard_name") or "").strip()
+        back_link = str(origin.get("back_link") or "").strip()
+        origin_parts = ["- You are in the Workspace"]
+        if session_name:
+            origin_parts.append(f", opened from the Jaspen session {json.dumps(session_name)}")
+        if origin_request:
+            origin_parts.append(f" (originating request: {json.dumps(origin_request)})")
+        origin_parts.append(".")
+        lines.append("".join(origin_parts))
+        if scorecard_name:
+            lines.append(f"- Open scorecard or option: {json.dumps(scorecard_name)}")
+        if back_link:
+            lines.append(f"- Link back to the originating session: {back_link}")
+
     current_view = normalized.get("current_view")
     if current_view:
         lines.append(f"- Current view: {current_view}")
