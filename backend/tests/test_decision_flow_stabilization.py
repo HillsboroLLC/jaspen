@@ -3605,6 +3605,165 @@ def test_chat_decision_tool_rejects_unverified_quote_without_recording(app, db, 
     assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
 
 
+def mock_record_decision_conversation_provider(
+    agent, monkeypatch, test_user, thread_id, *, option_name, provider_reply,
+):
+    monkeypatch.setattr(
+        agent,
+        '_resolve_governed_routes',
+        lambda *_args, **_kwargs: ([{'provider': 'anthropic', 'model': 'test-model'}], {}),
+    )
+    monkeypatch.setattr(agent, '_reserve_preflight_credits', lambda *a, **k: {'ok': True, 'reserved': 0})
+    monkeypatch.setattr(agent, '_settle_reserved_credits', lambda *a, **k: {'ok': True, 'charged': 0, 'remaining': 300})
+    monkeypatch.setattr(agent, '_persist_credit_deduction', lambda *a, **k: None)
+
+    def provider(user_message, *_args, **kwargs):
+        result, _count = agent._execute_local_tool(
+            'record_option_decision',
+            {
+                'option_name': option_name,
+                'decision': 'moving_forward',
+                'user_request_quote': user_message,
+            },
+            readiness={},
+            user=test_user,
+            user_id=test_user.id,
+            thread_id=thread_id,
+            user_turn_count=1,
+            mutations_this_turn=0,
+            user_message=user_message,
+            session=kwargs['session'],
+        )
+        reply = provider_reply(result) if callable(provider_reply) else provider_reply
+        return (
+            reply,
+            {'provider': 'test', 'model': 'test-model', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2},
+            [{'tool': 'record_option_decision', 'input': {'option_name': option_name}, 'result': result}],
+            [],
+            None,
+        )
+
+    monkeypatch.setattr(agent, '_generate_assistant_reply_anthropic', provider)
+
+
+def test_chat_decision_matches_name_in_two_option_conversation(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    from app.models_decision_record import DecisionRecord, OptionDecision
+
+    _, agent = modules()
+    tid = 'chat-two-option-name-match'
+    cards = [
+        {
+            'id': 'hire-card', 'option_key': 'option-hire',
+            'project_name': 'Hire Full-Time Content Marketer',
+            'recommendation': {'verdict_key': 'advance', 'label': 'Proceed'},
+        },
+        {
+            'id': 'agency-card', 'option_key': 'option-agency',
+            'project_name': 'Contract Marketing Agency',
+            'recommendation': {'verdict_key': 'advance', 'label': 'Proceed'},
+        },
+    ]
+    seed_thread(test_user, tid, cards)
+    for card in cards:
+        upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=card)
+    db.session.commit()
+    mock_record_decision_conversation_provider(
+        agent, monkeypatch, test_user, tid,
+        option_name='the agency',
+        provider_reply=lambda result: result['confirmation'],
+    )
+
+    response = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': "We're going to go with the agency.",
+    })
+
+    assert response.status_code == 200, response.get_json()
+    payload = response.get_json()
+    assert payload['reply'] == 'Decision recorded: Moving forward with Contract Marketing Agency.'
+    result = payload['actions'][0]['result']
+    assert result['decision_line'] == payload['reply']
+    assert result['option_decision']['option_key'] == 'option-agency'
+    record = DecisionRecord.query.filter_by(thread_id=tid).one()
+    decision = OptionDecision.query.filter_by(decision_record_id=record.id).one()
+    assert decision.option_key == 'option-agency'
+    assert decision.final_decision == 'Moving forward with Contract Marketing Agency.'
+
+
+def test_chat_decision_ambiguous_name_lists_options_and_records_nothing(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    from app.models_decision_record import DecisionRecord
+
+    _, agent = modules()
+    tid = 'chat-ambiguous-option-name'
+    cards = [
+        {'id': 'north-card', 'option_key': 'option-north', 'project_name': 'North Agency'},
+        {'id': 'south-card', 'option_key': 'option-south', 'project_name': 'South Agency'},
+    ]
+    seed_thread(test_user, tid, cards)
+    for card in cards:
+        upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=card)
+    db.session.commit()
+    mock_record_decision_conversation_provider(
+        agent, monkeypatch, test_user, tid,
+        option_name='the agency',
+        provider_reply='I need clarification.',
+    )
+
+    response = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': "We're going with the agency.",
+    })
+
+    assert response.status_code == 200, response.get_json()
+    payload = response.get_json()
+    assert payload['reply'] == (
+        "I couldn't record that yet: which option did you mean — North Agency or South Agency?"
+    )
+    assert payload['actions'][0]['result']['non_blocking'] is True
+    assert payload['actions'][0]['result']['option_names'] == ['North Agency', 'South Agency']
+    assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
+
+
+def test_chat_decision_failure_replaces_false_recorded_reply(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    from app.models_decision_record import DecisionRecord
+
+    _, agent = modules()
+    tid = 'chat-decision-false-success'
+    cards = [
+        {'id': 'hire-card', 'option_key': 'option-hire', 'project_name': 'Hire Full-Time Content Marketer'},
+        {'id': 'agency-card', 'option_key': 'option-agency', 'project_name': 'Contract Marketing Agency'},
+    ]
+    seed_thread(test_user, tid, cards)
+    for card in cards:
+        upsert_scorecard(user_id=test_user.id, thread_id=tid, payload=card)
+    db.session.commit()
+    mock_record_decision_conversation_provider(
+        agent, monkeypatch, test_user, tid,
+        option_name='the consultancy',
+        provider_reply='Recorded: moving forward with the consultancy.',
+    )
+
+    response = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': "We're going with the consultancy.",
+    })
+
+    assert response.status_code == 200, response.get_json()
+    payload = response.get_json()
+    assert 'recorded' not in payload['reply'].casefold()
+    assert payload['reply'] == (
+        "I couldn't record that yet: which option did you mean — "
+        "Hire Full-Time Content Marketer or Contract Marketing Agency?"
+    )
+    assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
+
+
 def test_chat_override_confirms_then_records_override_through_conversation(
     client, db, test_user, auth_headers, monkeypatch,
 ):
