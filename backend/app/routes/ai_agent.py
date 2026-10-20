@@ -106,6 +106,7 @@ from app.connector_store import get_connector_settings, get_thread_sync_profile,
 from app.jira_sync import sync_wbs_to_jira
 from app.smartsheet_sync import sync_wbs_to_smartsheet
 from app.rate_limits import AI_CONVERSATION_SCOPE, shared_limit_usage
+from app.sharing import PRESENTATION_COLOR_SLOTS, PRESENTATION_TEXT_SLOTS
 
 # The deterministic decision-readiness engine lives in app.intake_readiness so
 # the unauthenticated public intake endpoint can import it WITHOUT pulling in
@@ -679,7 +680,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "When the user asks to modify WBS tasks, call the relevant tools instead of only describing steps. "
     "When the user asks to rename the initiative, project, or title, call rename_thread with the requested new name. "
     "EDITING THE OPEN SCORECARD: the scorecard the user has open in the workspace is directly editable through chat — edit it IN PLACE, never spawn a duplicate for a change to the idea they're viewing. "
-    "WORKSPACE MODE: When the view context says the user is in the Workspace, use judgment to keep the work on the open artifact when that is the honest path. Wording and presentation changes belong on the open scorecard in place. Re-score that same scorecard in place when the user asks for a re-score or when the underlying facts change. If the requested change genuinely needs the originating conversation — such as discussing new facts, changing criteria, or comparing additional options — say that plainly and offer the link back to the named session from the Workspace origin context. Never say a change was made unless the relevant tool succeeded. "
+    "WORKSPACE MODE: When the view context says the user is in the Workspace, use judgment to keep the work on the open artifact when that is the honest path. Wording and presentation changes belong on the open scorecard in place. On the one-pager layout, wording such as the headline and summary belongs in report_presentation.text, and colors belong in report_presentation.colors. The title field renames the decision itself, so use it only when the user asks to rename the decision or option. Re-score that same scorecard in place when the user asks for a re-score or when the underlying facts change. If the requested change genuinely needs the originating conversation — such as discussing new facts, changing criteria, or comparing additional options — say that plainly and offer the link back to the named session from the Workspace origin context. Never say a change was made unless the relevant tool succeeded. "
     "(a) For a wording / narrative tweak to a scorecard CONTENT field that does NOT change the underlying analysis (reword the executive summary, key insights, assumptions, risk or recommendation text, rationale), call patch_scorecard — it edits that field in place on the open idea and leaves the score untouched. For Workspace PRESENTATION changes — layout, visible sections, report wording slots, colors, custom blocks, theme, subtitle, narrative, recommended scenario, or trade-off inclusion — call update_workspace_presentation. "
     "DECISION TEST: ask 'does this change any FACT or ASSUMPTION the score depends on?' If it only changes HOW the text reads — tone, clarity, length, polish, phrasing, grammar — it is a wording tweak: use patch_scorecard and NEVER re-score. Requests like 'make it more executive-friendly', 'make it clearer / punchier / more concise', 'tighten this', 'reword', 'fix the grammar', 'change word X to Y', or 'rewrite the summary' are ALL wording tweaks — the numbers MUST NOT move. Rewriting the same facts in better prose is never a re-score. "
     "(b) For a change that DOES affect the analysis or score (a different budget, timeline, team, market, pricing, or any assumption that moves the numbers — i.e. the underlying facts change, not just the prose), call generate_scorecard with rescore_scorecard_id set to the OPEN scorecard's id (the Active scorecard ID in the workspace view context). This re-scores that SAME idea in place — you re-evaluate every dimension holistically so the score stays consistent with the new inputs. If you are unsure whether an edit is wording or a real input change, treat it as wording and use patch_scorecard. "
@@ -701,7 +702,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "When the user asks to change the idea they're viewing, edit it in place: update_workspace_presentation for presentation/layout/report styling, patch_scorecard for scorecard content wording OR for renaming the title (pass the new title in `name`), or generate_scorecard with rescore_scorecard_id to re-score that same idea. "
     "EDIT A CRITERION'S WORDING: when the user names a criterion (Strategic Fit, Risk Profile, Financial Return, any rubric criterion) and asks you to reword, clarify, expand or rewrite what it says, call patch_scorecard with `criterion_narrative` keyed by that criterion. This is the ONLY field that changes what a criterion card displays. Using add_blocks instead appends a stray section and leaves the criterion untouched, so the user is told the report changed while it visibly did not. Wording only; the score never moves. "
     "ADD OR UPDATE A PRESENTATION SECTION: use update_workspace_presentation with custom_blocks for a new or existing free-form block. Include the complete desired custom_blocks list; the tool shares the Workspace editor's validation and NEVER moves the score. "
-    "BRAND COLOR OR REPORT STYLE: use update_workspace_presentation for accent_color or report_presentation. Its readability and known-section checks are authoritative; if it rejects the change, explain that plainly or retry with a valid presentation value. "
+    "BRAND COLOR OR REPORT STYLE: use update_workspace_presentation. On the one-pager, put colors in report_presentation.colors, not legacy accent_color. Its readability and known-section checks are authoritative; if it rejects the change, explain that plainly or retry with a valid presentation value. "
     "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea must use update_workspace_presentation for presentation, patch_scorecard for content wording/title, or generate_scorecard(rescore_scorecard_id=<open id>) for changed facts — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. Cosmetic edits MUST NOT move the score. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
     "When the user asks to build an execution plan, call generate_execution_plan. If it returns confirmation_required, ask its confirmation question conversationally and do not claim the plan exists yet. On the user's affirmative reply, call generate_execution_plan again with decision_acknowledged=true and the returned option_key. "
@@ -1664,6 +1665,30 @@ def _sanitize_view_context(raw_context):
     if surface == "workspace":
         cleaned["surface"] = "workspace"
 
+    workspace_layout = str(context.get("workspace_layout") or "").strip().lower()
+    if workspace_layout in {"one-pager", "classic"}:
+        cleaned["workspace_layout"] = workspace_layout
+
+    presentation_text_slots = context.get("presentation_text_slots")
+    if isinstance(presentation_text_slots, list):
+        allowed_text_slots = set(PRESENTATION_TEXT_SLOTS)
+        cleaned_text_slots = [
+            slot for slot in presentation_text_slots
+            if isinstance(slot, str) and slot in allowed_text_slots
+        ]
+        if cleaned_text_slots:
+            cleaned["presentation_text_slots"] = list(dict.fromkeys(cleaned_text_slots))
+
+    presentation_color_slots = context.get("presentation_color_slots")
+    if isinstance(presentation_color_slots, list):
+        allowed_color_slots = set(PRESENTATION_COLOR_SLOTS)
+        cleaned_color_slots = [
+            slot for slot in presentation_color_slots
+            if isinstance(slot, str) and slot in allowed_color_slots
+        ]
+        if cleaned_color_slots:
+            cleaned["presentation_color_slots"] = list(dict.fromkeys(cleaned_color_slots))
+
     origin = context.get("origin")
     if isinstance(origin, dict):
         session_id = str(origin.get("session_id") or "").strip()[:120]
@@ -1870,6 +1895,17 @@ def _view_context_prompt_suffix(view_context):
     active_tab = normalized.get("active_tab")
     if active_tab:
         lines.append(f"- Active tab: {active_tab}")
+
+    workspace_layout = normalized.get("workspace_layout")
+    if workspace_layout:
+        lines.append(f"- Open Workspace layout: {workspace_layout}")
+    if workspace_layout == "one-pager":
+        text_slots = normalized.get("presentation_text_slots") or []
+        color_slots = normalized.get("presentation_color_slots") or []
+        if text_slots:
+            lines.append(f"- One-pager editable report_presentation text slots: {', '.join(text_slots)}.")
+        if color_slots:
+            lines.append(f"- One-pager editable report_presentation color slots: {', '.join(color_slots)}.")
 
     page_facts = str(normalized.get("page_facts") or "").strip()
     if page_facts:
@@ -6274,7 +6310,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                     "Change presentation on an editable Workspace scorecard without changing any score, dimension, "
                     "fact, metric, or gate. Use for layout, visible sections, report wording slots, colors, custom "
                     "blocks, subtitle, theme, narrative, recommended scenario, and trade-off inclusion. The same "
-                    "validation as the user's Workspace editor is applied; null removes an override. For core "
+                    "validation as the user's Workspace editor is applied; null removes an override. On the "
+                    "one-pager, put wording such as the headline and summary in report_presentation.text and put "
+                    "accent, ink, and tint colors in report_presentation.colors. The title field renames the "
+                    "decision itself, so use it only when the user asks to rename the decision or option. For core "
                     "scorecard content fields such as executive_summary, insights, assumptions, risks, "
                     "recommendations, rationale, or decision framework, use patch_scorecard instead."
                 ),
@@ -6288,7 +6327,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                         "changes": {
                             "type": "object",
                             "properties": {
-                                "title": {"type": ["string", "null"]},
+                                "title": {
+                                    "type": ["string", "null"],
+                                    "description": "Rename the decision or option itself. Do not use for a one-pager headline.",
+                                },
                                 "subtitle": {"type": ["string", "null"]},
                                 "executive_summary": {"type": ["string", "null"]},
                                 "accent_color": {"type": ["string", "null"]},
@@ -6342,7 +6384,12 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                                 },
                                 "report_presentation": {
                                     "type": ["object", "null"],
-                                    "description": "One-pager presentation object with validated colors, text slots, and layout order/hidden/evidence_variant.",
+                                    "description": (
+                                        "One-pager presentation object. Use text for headline, summary, "
+                                        "featured_question, takeaway_title, next_step_title, next_step_body, "
+                                        "brand_name, company_name, report_label, or tagline; use colors for "
+                                        "accent, ink, or tint. Layout supports order, hidden, and evidence_variant."
+                                    ),
                                 },
                             },
                             "additionalProperties": False,

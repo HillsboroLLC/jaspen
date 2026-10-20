@@ -1424,6 +1424,14 @@ export default function JaspenWorkspace() {
         active_tab: isExecution ? 'execution' : isTradeoff ? 'tradeoff' : 'scorecard',
       };
       if (isScorecard) {
+        viewContext.workspace_layout = onePagerMode ? 'one-pager' : 'classic';
+        if (onePagerMode) {
+          viewContext.presentation_text_slots = [
+            'headline', 'summary', 'featured_question', 'takeaway_title', 'next_step_title',
+            'next_step_body', 'brand_name', 'company_name', 'report_label', 'tagline',
+          ];
+          viewContext.presentation_color_slots = ['accent', 'ink', 'tint'];
+        }
         viewContext.active_scorecard_id = scorecardId;
         // Pass the active scorecard's NAME + score so the agent knows exactly
         // which idea is on screen. The session only persists one scorecard, so

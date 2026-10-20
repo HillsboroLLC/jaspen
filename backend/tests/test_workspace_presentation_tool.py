@@ -137,3 +137,22 @@ def test_tool_schema_allows_only_presentation_change_keys(app):
     assert set(changes['properties']) == _ALLOWED_OVERRIDE_KEYS
     assert changes['additionalProperties'] is False
     assert 'changes' in schema['required']
+
+
+def test_tool_schema_targets_one_pager_text_colors_and_decision_title(app):
+    from app.routes.ai_agent import _anthropic_tool_definitions
+
+    tools = {
+        item['name']: item
+        for item in _anthropic_tool_definitions(enable_mutation_tools=True)
+    }
+    tool = tools['update_workspace_presentation']
+    changes = tool['input_schema']['properties']['changes']['properties']
+
+    assert 'report_presentation.text' in tool['description']
+    assert 'report_presentation.colors' in tool['description']
+    assert 'title field renames the decision itself' in tool['description']
+    report_description = changes['report_presentation']['description']
+    for slot in ('headline', 'summary', 'accent', 'ink', 'tint'):
+        assert slot in report_description
+    assert 'Do not use for a one-pager headline' in changes['title']['description']

@@ -32,3 +32,10 @@ test('workspace presentation tool refreshes the open canvas without a reload', (
   expect(workspaceSource).toContain('setSnapshot(updated)');
   expect(workspaceSource).toContain('setOverrides(updated.display_overrides)');
 });
+
+test('workspace chat identifies the one-pager layout and its editable presentation slots', () => {
+  expect(workspaceSource).toContain("viewContext.workspace_layout = onePagerMode ? 'one-pager' : 'classic'");
+  expect(workspaceSource).toContain('viewContext.presentation_text_slots = [');
+  expect(workspaceSource).toContain("'headline', 'summary', 'featured_question'");
+  expect(workspaceSource).toContain("viewContext.presentation_color_slots = ['accent', 'ink', 'tint']");
+});

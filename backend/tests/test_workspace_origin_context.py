@@ -68,3 +68,24 @@ def test_workspace_prompt_names_the_origin_request_and_back_link(app):
     assert "Should we bid on this contract?" in suffix
     assert "Open scorecard or option: \"Bid option\"" in suffix
     assert "Link back to the originating session: /new?sid=session-123" in suffix
+
+
+def test_workspace_prompt_names_one_pager_layout_and_editable_slots(app):
+    sanitize, prompt_suffix = _context_helpers()
+    raw = {
+        "surface": "workspace",
+        "current_view": "scorecard",
+        "workspace_layout": "one-pager",
+        "presentation_text_slots": ["headline", "summary", "not_a_slot", "headline"],
+        "presentation_color_slots": ["accent", "ink", "tint", "legacy_accent"],
+    }
+
+    cleaned = sanitize(raw)
+    suffix = prompt_suffix(raw)
+
+    assert cleaned["workspace_layout"] == "one-pager"
+    assert cleaned["presentation_text_slots"] == ["headline", "summary"]
+    assert cleaned["presentation_color_slots"] == ["accent", "ink", "tint"]
+    assert "Open Workspace layout: one-pager" in suffix
+    assert "report_presentation text slots: headline, summary" in suffix
+    assert "report_presentation color slots: accent, ink, tint" in suffix
