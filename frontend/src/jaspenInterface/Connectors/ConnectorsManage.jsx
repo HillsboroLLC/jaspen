@@ -114,6 +114,21 @@ function normalizeLifecycleStatus(connector) {
   return String(connector?.lifecycle_status || (connector?.connected ? 'connected' : 'disconnected')).trim().toLowerCase();
 }
 
+function connectorVerificationState(connector, connectionCheck) {
+  const lifecycle = normalizeLifecycleStatus(connector);
+  const health = String(connector?.health?.status || '').trim().toLowerCase();
+  if (connectionCheck?.status === 'connected') return 'healthy';
+  if (connectionCheck?.status === 'checking' || connectionCheck?.status === 'error') return 'attention';
+  if (lifecycle === 'degraded' || ['failed', 'error', 'unhealthy', 'degraded', 'warning', 'warn', 'attention', 'needs_attention'].includes(health)) {
+    return 'attention';
+  }
+  if (lifecycle === 'connected' && (connector?.last_verified_at || ['healthy', 'success', 'connected'].includes(health))) {
+    return 'healthy';
+  }
+  if (connector?.connected || lifecycle === 'configured' || lifecycle === 'connected') return 'attention';
+  return 'disconnected';
+}
+
 function connectorAccountLabel(connector) {
   if (connector?.id === 'jira_sync') {
     const site = String(connector?.jira?.base_url || '').replace(/^https?:\/\//, '').replace(/\/$/, '');
@@ -722,6 +737,9 @@ export default function ConnectorsManage() {
     [planBindings, selectedConnector?.id]
   );
   const selectedConnectionCheck = selectedConnector ? connectionCheckByConnector[selectedConnector.id] : null;
+  const selectedVerificationState = selectedConnector
+    ? connectorVerificationState(selectedConnector, selectedConnectionCheck)
+    : 'disconnected';
   const selectedLastCheckedAt = selectedConnectionCheck?.checkedAt || selectedConnector?.last_verified_at || null;
   const visibleActivityRows = auditRows.slice(0, activityVisibleCount);
 
@@ -1629,7 +1647,7 @@ export default function ConnectorsManage() {
                       <ul className="connector-list">
                         {categoryConnectors.map((connector) => {
                           const implemented = connectorIsImplemented(connector);
-                          const lifecycle = normalizeLifecycleStatus(connector);
+                          const verification = connectorVerificationState(connector, connectionCheckByConnector[connector.id]);
                           const isSelected = selectedConnectorId === connector.id;
                           return (
                             <li key={connector.id}>
@@ -1644,7 +1662,7 @@ export default function ConnectorsManage() {
                                 </span>
                                 <span className="connector-list-item-label">{connector.label}</span>
                                 {implemented ? (
-                                  <span className={`connector-list-item-dot ${lifecycle === 'connected' ? 'is-on' : lifecycle === 'degraded' ? 'is-warn' : ''}`} />
+                                  <span className={`connector-list-item-dot ${verification === 'healthy' ? 'is-on' : verification === 'attention' ? 'is-warn' : ''}`} />
                                 ) : (
                                   <span className="connector-list-item-soon">Soon</span>
                                 )}
@@ -1677,7 +1695,7 @@ export default function ConnectorsManage() {
                     <>
                   <section className="connector-connection-section">
                     <div className="connector-connection-summary">
-                      <span className={`connector-status-dot ${selectedConnector.connected && selectedConnectionCheck?.status !== 'error' ? 'is-connected' : ''}`} />
+                      <span className={`connector-status-dot ${selectedVerificationState === 'healthy' ? 'is-connected' : selectedVerificationState === 'attention' ? 'is-attention' : ''}`} />
                       <div>
                         <strong>{selectedConnector.connected ? `Connected as ${connectorAccountLabel(selectedConnector)}` : `${selectedConnector.label} is not connected`}</strong>
                         <p>{selectedConnectionCheck?.status === 'checking' ? 'Checking connection…' : selectedConnectionCheck?.status === 'error' ? selectedConnectionCheck.message : `Last checked ${selectedLastCheckedAt ? formatLocalTimestamp(selectedLastCheckedAt) : 'not yet'}`}</p>

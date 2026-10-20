@@ -292,6 +292,30 @@ it('returns connected credentials to the required state when the live connection
   expect(await screen.findByRole('alert')).toHaveTextContent('The saved connection could not be verified. Reconnect and check the credentials.');
   expect(screen.getAllByText('Required to connect').length).toBeGreaterThanOrEqual(3);
   expect(screen.getByLabelText(/API token/i)).toHaveAttribute('placeholder', 'Token saved · enter a new one only to replace it');
+  expect(document.querySelectorAll('.connector-list-item-dot.is-warn')).toHaveLength(2);
+  expect(document.querySelectorAll('.connector-list-item-dot.is-on')).toHaveLength(0);
+  expect(document.querySelector('.connector-status-dot')).toHaveClass('is-attention');
+});
+
+it('shows saved-but-unverified connector rows as amber instead of green', async () => {
+  mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) return Promise.resolve(response({ connectors: [{
+      id: 'jira_sync', label: 'Jira', implementation_status: 'implemented', lifecycle_status: 'degraded', connected: false,
+      health: { status: 'failed' },
+      jira: { base_url: 'https://acme.atlassian.net', email: 'owner@acme.test', has_api_token: true, data_project_scope: 'all' },
+    }] }));
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success: true, sessions: [] }));
+    if (String(url).includes('/api/v1/pm-sync/bindings')) return Promise.resolve(response({ bindings: [] }));
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events: [] }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+
+  expect(await screen.findByText('Jira is not connected')).toBeInTheDocument();
+  expect(document.querySelectorAll('.connector-list-item-dot.is-warn')).toHaveLength(2);
+  expect(document.querySelectorAll('.connector-list-item-dot.is-on')).toHaveLength(0);
 });
 
 it('renders connector activity newest first with readable names', async () => {

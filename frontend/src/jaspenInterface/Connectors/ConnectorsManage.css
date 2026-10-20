@@ -1058,6 +1058,7 @@ body.jaspen-sidebar-open .jas-sidebar-tab {
 }
 .connector-status-dot.is-connected,
 .connector-activity-status.is-success { background: #259653; }
+.connector-status-dot.is-attention { background: #e49b18; }
 .connector-activity-status.is-failed { background: #c53b32; }
 .connector-activity-status.is-partial { background: #e49b18; }
 .connector-connect-form-actions,
