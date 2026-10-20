@@ -24,13 +24,9 @@ const MUTED = '#8a93ad';
 const ROSE = '#a0036c';
 const LINE = '#d6e9ef';
 
-// How the three derived backend states read to a person. "unknown" is a
-// truthful engineering term and a confusing product one: the decision has not
-// been made yet, so say that.
 const STATE_LABEL = {
   current: 'Current decision',
   superseded: 'Superseded',
-  unknown: 'Decision pending',
 };
 
 const OUTCOME_STATUS_OPTIONS = [
@@ -44,11 +40,10 @@ const OUTCOME_STATUS_OPTIONS = [
 const STATE_TONE = {
   current: { fg: '#0e6b3f', bg: '#e3f5ea', bd: '#10b981' },
   superseded: { fg: '#5a6585', bg: '#eef0f5', bd: '#c9cfdf' },
-  unknown: { fg: '#8a5406', bg: '#fdf2dc', bd: '#f59e0b' },
 };
 
 function StatePill({ state }) {
-  const tone = STATE_TONE[state] || STATE_TONE.unknown;
+  const tone = STATE_TONE[state] || STATE_TONE.current;
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -57,7 +52,7 @@ function StatePill({ state }) {
       fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase',
       background: tone.bg, color: tone.fg, border: `1px solid ${tone.bd}`,
     }}>
-      {STATE_LABEL[state] || STATE_LABEL.unknown}
+      {STATE_LABEL[state] || STATE_LABEL.current}
     </span>
   );
 }
@@ -74,7 +69,7 @@ async function api(path, options = {}) {
   return data;
 }
 
-export default function RecordDecisionPanel({ threadId, alternatives = [], selectedAlternative = null, decisionKit = null, scorecard = null, displayMode = 'full' }) {
+export default function RecordDecisionPanel({ threadId, alternatives = [], selectedAlternative = null, decisionKit = null, scorecard = null }) {
   const scorecardId = String(scorecard?.id || scorecard?.analysis_id || '').trim();
   const optionKey = String(scorecard?.option_key || (scorecardId ? `scorecard:${scorecardId}` : '')).trim();
   const [record, setRecord] = React.useState(null);
@@ -273,28 +268,34 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
   const lessons = Array.isArray(record.lessons_learned) ? record.lessons_learned : [];
   const hasOutcome = outcomes.length > 0;
   const buildDecision = record.option_decision?.source === 'build_execution_plan';
-  const buildOverride = Boolean(record.option_decision?.override_info);
+  const decisionOverride = Boolean(record.option_decision?.override_info);
   const recordedOptionName = record.option_decision?.option_name || selectedAlternative || 'this option';
-  const recordedLine = buildOverride
-    ? `Decision recorded: pursuing ${recordedOptionName} despite Jaspen's No-Bid`
-    : `Decision recorded: moving forward with ${recordedOptionName}`;
+  const recordedLine = buildDecision
+    ? (decisionOverride
+      ? `Decision recorded: pursuing ${recordedOptionName} despite Jaspen's No-Bid`
+      : `Decision recorded: moving forward with ${recordedOptionName}`)
+    : `Decision recorded: ${record.final_decision}`;
 
-  if (displayMode === 'line' && (!decided || !buildDecision)) return null;
+  // A Decision Record may exist as soon as scoring does. That is not a human
+  // decision signal, so every surface stays silent until a decision exists.
+  if (!decided) return null;
 
-  if (displayMode === 'line' && !open) {
+  if (!open) {
     return (
       <div
         data-testid="recorded-plan-decision-line"
-        style={{ fontSize: 12.5, color: buildOverride ? '#b45309' : SLATE, marginTop: 6 }}
+        style={{ fontSize: 12.5, color: decisionOverride ? '#b45309' : SLATE, marginTop: 6 }}
       >
-        {recordedLine} ·{' '}
-        <button
-          type="button"
-          onClick={beginRecording}
-          style={{ border: 0, padding: 0, background: 'transparent', color: 'inherit', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
-        >
-          Change
-        </button>
+        {recordedLine}
+        {canEdit && <> ·{' '}
+          <button
+            type="button"
+            onClick={beginRecording}
+            style={{ border: 0, padding: 0, background: 'transparent', color: 'inherit', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
+          >
+            Change
+          </button>
+        </>}
       </div>
     );
   }
@@ -319,21 +320,6 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
 
       {decided ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {buildDecision && (
-            <div
-              data-testid="recorded-plan-decision-line"
-              style={{ fontSize: 12.5, color: buildOverride ? '#b45309' : SLATE, lineHeight: 1.5 }}
-            >
-              {recordedLine} ·{' '}
-              <button
-                type="button"
-                onClick={beginRecording}
-                style={{ border: 0, padding: 0, background: 'transparent', color: 'inherit', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
-              >
-                Change
-              </button>
-            </div>
-          )}
           <div style={{ fontSize: 13.5, color: NAVY, lineHeight: 1.5 }}>
             {record.final_decision}
           </div>
@@ -350,12 +336,7 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
             </div>
           )}
         </div>
-      ) : (
-        <div style={{ fontSize: 12.5, color: SLATE, lineHeight: 1.5 }}>
-          {/* Never implies the recommendation is the organization's position. */}
-          Jaspen has analysed this. No decision has been recorded yet.
-        </div>
-      )}
+      ) : null}
 
       {justSaved && (
         <div role="status" style={{ fontSize: 12, color: '#0e6b3f' }}>

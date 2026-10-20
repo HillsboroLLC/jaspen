@@ -20,6 +20,16 @@ const PENDING_RECORD = {
   alternatives: ['Option A', 'Option B'],
 };
 
+const RECORDED_RECORD = {
+  ...PENDING_RECORD,
+  current_state: 'current',
+  status: 'decided',
+  final_decision: 'We will pilot in Rotterdam.',
+  decided_at: '2026-08-01T00:00:00',
+  outcomes: [],
+  lessons_learned: [],
+};
+
 function mockFetch(handlers) {
   return jest.fn(async (url, options = {}) => {
     const method = options.method || 'GET';
@@ -84,12 +94,12 @@ describe('RecordDecisionPanel', () => {
       })],
     ]);
 
-    render(<RecordDecisionPanel
+    const { container } = render(<RecordDecisionPanel
       threadId="t-1"
       selectedAlternative="Proposal"
       scorecard={{ id: 'card-1', project_name: 'Proposal' }}
     />);
-    expect(await screen.findByText('Decision pending')).toBeInTheDocument();
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
 
     loaded = true;
     act(() => {
@@ -102,26 +112,30 @@ describe('RecordDecisionPanel', () => {
     expect(screen.queryByText('Decision pending')).not.toBeInTheDocument();
   });
 
-  it('shows the pending state without implying the recommendation is the decision', async () => {
+  it.each(['full', 'line'])('renders nothing before a decision in %s mode', async (displayMode) => {
     global.fetch = mockFetch([
       ['?thread_id=', () => ({ records: [PENDING_RECORD] })],
     ]);
 
-    render(<RecordDecisionPanel threadId="t-1" alternatives={['Option A']} />);
+    const { container } = render(<RecordDecisionPanel
+      threadId="t-1"
+      alternatives={['Option A']}
+      displayMode={displayMode}
+    />);
 
-    expect(await screen.findByText('Decision pending')).toBeInTheDocument();
-    expect(screen.getByText(/No decision has been recorded yet/i)).toBeInTheDocument();
-    // The recommendation text must not be presented as the decision.
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(screen.queryByText('Decision pending')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /record decision/i })).not.toBeInTheDocument();
     expect(screen.queryByText('Pilot in one facility first.')).not.toBeInTheDocument();
   });
 
-  it('offers the record action to an editor', async () => {
+  it('shows no pending action to an editor', async () => {
     global.fetch = mockFetch([
       ['?thread_id=', () => ({ records: [PENDING_RECORD] })],
     ]);
 
-    render(<RecordDecisionPanel threadId="t-1" alternatives={['Option A']} />);
-    expect(await screen.findByRole('button', { name: /record decision/i })).toBeInTheDocument();
+    const { container } = render(<RecordDecisionPanel threadId="t-1" alternatives={['Option A']} />);
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
   });
 
   it('does not offer the action to a view-only user', async () => {
@@ -129,9 +143,9 @@ describe('RecordDecisionPanel', () => {
       ['?thread_id=', () => ({ records: [{ ...PENDING_RECORD, can_edit: false }] })],
     ]);
 
-    render(<RecordDecisionPanel threadId="t-1" />);
+    const { container } = render(<RecordDecisionPanel threadId="t-1" />);
 
-    expect(await screen.findByText('Decision pending')).toBeInTheDocument();
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
     expect(screen.queryByRole('button', { name: /record decision/i })).not.toBeInTheDocument();
   });
 
@@ -151,8 +165,7 @@ describe('RecordDecisionPanel', () => {
 
     render(<RecordDecisionPanel threadId="t-1" />);
 
-    expect(await screen.findByText('Current decision')).toBeInTheDocument();
-    expect(screen.getByText('We will pilot in Rotterdam.')).toBeInTheDocument();
+    expect(await screen.findByText('Decision recorded: We will pilot in Rotterdam.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /record/i })).not.toBeInTheDocument();
   });
 
@@ -180,7 +193,10 @@ describe('RecordDecisionPanel', () => {
       scorecard={{ option_key: 'option-adams' }}
     />);
 
-    expect(await screen.findByText('Bid with conditions — Adams County.')).toBeInTheDocument();
+    expect(await screen.findByTestId('recorded-plan-decision-line')).toHaveTextContent(
+      'Decision recorded: Bid with conditions — Adams County. · Change'
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Change' }));
     expect(screen.getByText('Proceed only if surety clears.')).toBeInTheDocument();
     expect(screen.getByText('Replaces earlier decision')).toBeInTheDocument();
     expect(urls[0]).toContain('option_key=option-adams');
@@ -198,14 +214,15 @@ describe('RecordDecisionPanel', () => {
     ]);
 
     render(<RecordDecisionPanel threadId="t-1" />);
-    expect(await screen.findByText('Superseded')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
+    expect(screen.getByText('Superseded')).toBeInTheDocument();
   });
 
   it('requires an explicit confirmation and sends the human decision text', async () => {
     const patches = [];
     global.fetch = mockFetch([
       ['/search', () => ({ results: [] })],
-      ['?thread_id=', () => ({ records: [PENDING_RECORD] })],
+      ['?thread_id=', () => ({ records: [RECORDED_RECORD] })],
       ['/rec-1', (options, method) => {
         if (method !== 'PATCH') return undefined;
         patches.push(JSON.parse(options.body));
@@ -221,7 +238,7 @@ describe('RecordDecisionPanel', () => {
 
     render(<RecordDecisionPanel threadId="t-1" alternatives={['Option A', 'Option B']} />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /record decision/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
 
     const textarea = await screen.findByPlaceholderText(/what is the organization deciding/i);
     fireEvent.change(textarea, { target: { value: 'We are choosing Option B despite the score.' } });
@@ -241,7 +258,7 @@ describe('RecordDecisionPanel', () => {
     const patches = [];
     global.fetch = mockFetch([
       ['/search', () => ({ results: [] })],
-      ['?thread_id=', () => ({ records: [PENDING_RECORD] })],
+      ['?thread_id=', () => ({ records: [RECORDED_RECORD] })],
       ['/rec-1', (options, method) => {
         if (method !== 'PATCH') return undefined;
         patches.push(JSON.parse(options.body));
@@ -250,7 +267,7 @@ describe('RecordDecisionPanel', () => {
     ]);
 
     render(<RecordDecisionPanel threadId="t-1" alternatives={['Option A']} />);
-    fireEvent.click(await screen.findByRole('button', { name: /record decision/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
 
     const textarea = await screen.findByPlaceholderText(/what is the organization deciding/i);
     fireEvent.change(textarea, { target: { value: 'We are not proceeding at all.' } });
@@ -266,7 +283,7 @@ describe('RecordDecisionPanel', () => {
     const patches = [];
     global.fetch = mockFetch([
       ['/search', () => ({ results: [] })],
-      ['?thread_id=', () => ({ records: [PENDING_RECORD] })],
+      ['?thread_id=', () => ({ records: [RECORDED_RECORD] })],
       ['/rec-1', (options, method) => {
         if (method !== 'PATCH') return undefined;
         patches.push(JSON.parse(options.body));
@@ -275,7 +292,7 @@ describe('RecordDecisionPanel', () => {
     ]);
 
     render(<RecordDecisionPanel threadId="t-1" />);
-    fireEvent.click(await screen.findByRole('button', { name: /record decision/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
     fireEvent.click(screen.getByRole('button', { name: /^review$/i }));
     fireEvent.click(screen.getByRole('button', { name: /confirm decision/i }));
 
@@ -291,11 +308,11 @@ describe('RecordDecisionPanel', () => {
           { id: 'rec-1', thread_id: 't-1', title: 'This same thread' },
         ],
       })],
-      ['?thread_id=', () => ({ records: [PENDING_RECORD] })],
+      ['?thread_id=', () => ({ records: [RECORDED_RECORD] })],
     ]);
 
     render(<RecordDecisionPanel threadId="t-1" />);
-    fireEvent.click(await screen.findByRole('button', { name: /record decision/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
 
     expect(await screen.findByText('Pricing v1')).toBeInTheDocument();
     // The record's own thread is not a predecessor of itself.
@@ -315,22 +332,14 @@ describe('RecordDecisionPanel', () => {
   });
 });
 
-const DECIDED_RECORD = {
-  ...PENDING_RECORD,
-  current_state: 'current',
-  status: 'decided',
-  final_decision: 'We will pilot in Rotterdam.',
-  decided_at: '2026-08-01T00:00:00',
-  outcomes: [],
-  lessons_learned: [],
-};
+const DECIDED_RECORD = RECORDED_RECORD;
 
 describe('RecordDecisionPanel — outcome and lesson loop', () => {
   it('does not offer outcome capture before a decision exists', async () => {
     global.fetch = mockFetch([['?thread_id=', () => ({ records: [PENDING_RECORD] })]]);
-    render(<RecordDecisionPanel threadId="t-1" />);
+    const { container } = render(<RecordDecisionPanel threadId="t-1" />);
 
-    expect(await screen.findByText('Decision pending')).toBeInTheDocument();
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
     expect(screen.queryByRole('button', { name: /record outcome/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /add lesson/i })).not.toBeInTheDocument();
   });
@@ -339,6 +348,7 @@ describe('RecordDecisionPanel — outcome and lesson loop', () => {
     global.fetch = mockFetch([['?thread_id=', () => ({ records: [DECIDED_RECORD] })]]);
     render(<RecordDecisionPanel threadId="t-1" />);
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
     expect(await screen.findByRole('button', { name: /record outcome/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /add lesson/i })).toBeInTheDocument();
     expect(screen.getByText('No outcome recorded yet.')).toBeInTheDocument();
@@ -356,6 +366,7 @@ describe('RecordDecisionPanel — outcome and lesson loop', () => {
     ]);
 
     render(<RecordDecisionPanel threadId="t-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
     fireEvent.click(await screen.findByRole('button', { name: /record outcome/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/what actually happened/i), {
@@ -385,6 +396,7 @@ describe('RecordDecisionPanel — outcome and lesson loop', () => {
     ]);
 
     render(<RecordDecisionPanel threadId="t-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
     fireEvent.click(await screen.findByRole('button', { name: /add lesson/i }));
 
     fireEvent.change(screen.getByPlaceholderText(/what should we do differently/i), {
@@ -415,6 +427,7 @@ describe('RecordDecisionPanel — outcome and lesson loop', () => {
 
     render(<RecordDecisionPanel threadId="t-1" />);
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
     expect(await screen.findByText('Too early to tell.')).toBeInTheDocument();
     expect(screen.getByText('Target met at six months.')).toBeInTheDocument();
     expect(screen.getByText('Pilot first.')).toBeInTheDocument();
@@ -434,7 +447,8 @@ describe('RecordDecisionPanel — outcome and lesson loop', () => {
 
     render(<RecordDecisionPanel threadId="t-1" />);
 
-    expect(await screen.findByText('It shipped.')).toBeInTheDocument();
+    expect(await screen.findByText('Decision recorded: We will pilot in Rotterdam.')).toBeInTheDocument();
+    expect(screen.queryByText('It shipped.')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /record outcome/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /add lesson/i })).not.toBeInTheDocument();
   });
@@ -451,6 +465,7 @@ describe('RecordDecisionPanel — outcome and lesson loop', () => {
     ]);
 
     render(<RecordDecisionPanel threadId="t-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Change' }));
     fireEvent.click(await screen.findByRole('button', { name: /record outcome/i }));
     fireEvent.click(screen.getByRole('button', { name: /save outcome/i }));
 
