@@ -105,6 +105,119 @@ def test_tool_rejects_unknown_section_low_contrast_and_analytical_fields(app, db
     assert 'jaspen_score' in analytical['error']
 
 
+def test_tool_merges_partial_one_pager_edits_and_clears_only_named_slots(
+    app, db, client, test_user, auth_headers,
+):
+    card_id = 'presentation-partial-merge-card'
+    _save_card(test_user.id, card_id)
+    url = f'/api/v1/strategy/threads/{THREAD_ID}/scorecards/{card_id}/overrides'
+    initial = client.patch(url, json={'report_presentation': {
+        'colors': {'accent': '#0f6e77', 'ink': '#263238', 'tint': '#eef5f7'},
+        'text': {
+            'headline': 'Original headline',
+            'summary': 'Keep this summary',
+            'tagline': 'Clear this tagline',
+        },
+        'layout': {'hidden': ['financials'], 'evidence_variant': 'compact'},
+    }}, headers=auth_headers)
+    assert initial.status_code == 200, initial.get_json()
+
+    headline = _run_tool(test_user, card_id, {
+        'report_presentation': {'text': {'headline': 'Updated headline'}},
+    })
+    assert headline['ok'] is True, headline
+    presentation = headline['display_overrides']['report_presentation']
+    assert presentation['text'] == {
+        'headline': 'Updated headline',
+        'summary': 'Keep this summary',
+        'tagline': 'Clear this tagline',
+    }
+    assert presentation['colors'] == {
+        'accent': '#0F6E77', 'ink': '#263238', 'tint': '#EEF5F7',
+    }
+    assert presentation['layout'] == {
+        'hidden': ['financials'], 'evidence_variant': 'compact',
+    }
+
+    accent = _run_tool(test_user, card_id, {
+        'report_presentation': {'colors': {'accent': '#0A66C2', 'ink': None}},
+    })
+    assert accent['ok'] is True, accent
+    presentation = accent['display_overrides']['report_presentation']
+    assert presentation['colors']['accent'] == '#0A66C2'
+    assert 'ink' not in presentation['colors']
+    assert presentation['colors']['tint'] == '#EEF5F7'
+    assert presentation['text']['headline'] == 'Updated headline'
+
+    cleared = _run_tool(test_user, card_id, {
+        'report_presentation': {'text': {'summary': None, 'tagline': ''}},
+    })
+    assert cleared['ok'] is True, cleared
+    presentation = cleared['display_overrides']['report_presentation']
+    assert presentation['text'] == {'headline': 'Updated headline'}
+    assert presentation['colors']['accent'] == '#0A66C2'
+    assert presentation['layout']['evidence_variant'] == 'compact'
+
+    layout = _run_tool(test_user, card_id, {
+        'report_presentation': {'layout': {'evidence_variant': 'detailed'}},
+    })
+    assert layout['ok'] is True, layout
+    presentation = layout['display_overrides']['report_presentation']
+    assert presentation['layout'] == {
+        'hidden': ['financials'], 'evidence_variant': 'detailed',
+    }
+    assert presentation['text'] == {'headline': 'Updated headline'}
+    assert presentation['colors'] == {'accent': '#0A66C2', 'tint': '#EEF5F7'}
+
+
+def test_tool_can_clear_all_report_presentation_and_revalidates_merged_colors(
+    app, db, client, test_user, auth_headers,
+):
+    card_id = 'presentation-clear-and-validate-card'
+    _save_card(test_user.id, card_id)
+    url = f'/api/v1/strategy/threads/{THREAD_ID}/scorecards/{card_id}/overrides'
+    initial = client.patch(url, json={'report_presentation': {
+        'colors': {'accent': '#0f6e77'},
+        'text': {'headline': 'Keep unless the whole object is cleared'},
+    }}, headers=auth_headers)
+    assert initial.status_code == 200, initial.get_json()
+
+    rejected = _run_tool(test_user, card_id, {
+        'report_presentation': {'colors': {'accent': '#FFFFFF'}},
+    })
+    assert rejected['ok'] is False
+    assert rejected['code'] == 'low_contrast'
+
+    current = client.get(url, headers=auth_headers).get_json()['display_overrides']
+    assert current['report_presentation']['colors']['accent'] == '#0F6E77'
+    assert current['report_presentation']['text']['headline'] == 'Keep unless the whole object is cleared'
+
+    cleared = _run_tool(test_user, card_id, {'report_presentation': None})
+    assert cleared['ok'] is True, cleared
+    assert 'report_presentation' not in cleared['display_overrides']
+
+
+def test_owner_route_still_replaces_the_full_report_presentation(
+    app, db, client, test_user, auth_headers,
+):
+    card_id = 'presentation-route-replace-card'
+    _save_card(test_user.id, card_id)
+    url = f'/api/v1/strategy/threads/{THREAD_ID}/scorecards/{card_id}/overrides'
+    initial = client.patch(url, json={'report_presentation': {
+        'colors': {'accent': '#0f6e77'},
+        'text': {'headline': 'Original headline', 'summary': 'Original summary'},
+    }}, headers=auth_headers)
+    assert initial.status_code == 200, initial.get_json()
+
+    replaced = client.patch(url, json={'report_presentation': {
+        'text': {'headline': 'Editor sends the full object'},
+    }}, headers=auth_headers)
+    assert replaced.status_code == 200, replaced.get_json()
+    assert replaced.get_json()['display_overrides']['report_presentation'] == {
+        'text': {'headline': 'Editor sends the full object'},
+    }
+
+
 def test_tool_refuses_a_scorecard_owned_by_another_user(app, db, test_user):
     other = User(
         email='workspace-owner@example.com',
