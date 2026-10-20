@@ -1689,8 +1689,8 @@ export default function JaspenChat() {
   const historySearchInputRef = useRef(null);
 
   const [analysisResult, setAnalysisResult] = useState(null);
-  const [scorecardGenerating, setScorecardGenerating] = useState(false);
-  const [autoVersionGenerating, setAutoVersionGenerating] = useState(false);
+  const scorecardGenerating = false;
+  const autoVersionGenerating = false;
   // The Trade-off tab is gated behind explicit user intent. It unlocks only
   // when the user asks to compare/rank ideas (or kicks off the session with a
   // batch ranking request). Just having multiple scorecards is not enough.
@@ -2150,8 +2150,7 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
     ).trim();
 
     if (bundleSnapshots.length > 0) {
-      // Merge: keep any local-only snapshots the backend hasn't persisted yet
-      // (e.g. a version just scored via triggerAutoVersion before the round-trip completes)
+      // Merge: keep any local-only snapshots the backend hasn't persisted yet.
       setScorecardSnapshots((prev) => {
         const bundleIds = new Set(bundleSnapshots.map((s) => String(s?.id || s?.analysis_id || '')).filter(Boolean));
         const localOnly = (Array.isArray(prev) ? prev : []).filter(
@@ -9134,83 +9133,6 @@ const handleSaveStarter = async () => {
     }
   };
 
-  // === Finish & Analyze ===
-  // Auto-scoring: called when backend signals ready_to_analyze.
-  // No busy guard, no navigation, no progress bar — scorecard appears inline in conversation.
-  async function triggerInlineScore(sid) {
-    if (!sid) return;
-    console.log('[triggerInlineScore] calling analyzeFromConversation for', sid);
-
-    // Inject a loading placeholder at the CURRENT end of the thread so the card
-    // holds its position even if the user sends more messages while scoring runs.
-    const loadingId = 'scorecard-loading';
-    setMessages((prev) => {
-      if (prev.some((m) => m.id === loadingId || m?.artifact?.type === 'scorecard' || m?.artifact?.type === 'scorecard-loading')) return prev;
-      return [...prev, { id: loadingId, role: 'ai', text: '', artifact: { type: 'scorecard-loading' } }];
-    });
-
-    setScorecardGenerating(true);
-    try {
-      const data = await Jaspen.analyzeFromConversation({
-        session_id: sid,
-        model_type: selectedModelType,
-      });
-      console.log('[triggerInlineScore] response received', data);
-
-      const raw = data?.analysis || data?.analysis_result || data || {};
-      const scoreNum = Number.parseInt(Number(raw.overall_score || raw.jaspen_score || 0), 10);
-      const score = Number.isFinite(scoreNum) ? scoreNum : 0;
-
-      const result = {
-        ...raw,
-        jaspen_score: score,
-        score_category: raw.score_category || (score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk'),
-        component_scores: raw.scores || raw.component_scores || {},
-        project_name: raw.name || raw.project_name || deriveIdeaTitle({ messages, fallback: 'Untitled Idea' }),
-        analysis_id: sid,
-        _createdAt: Date.now(),
-      };
-
-      if (!result._baseline_scorecard || typeof result._baseline_scorecard !== 'object') {
-        result._baseline_scorecard = { ...result };
-      }
-      result.selected_scorecard_id = sid;
-
-      // Replace the placeholder with the real scorecard card, in-place
-      setMessages((prev) => prev.map((m) =>
-        m.id === loadingId
-          ? { id: 'scorecard-card', role: 'ai', text: '', artifact: { type: 'scorecard', data: result } }
-          : m
-      ));
-
-      // Wire up scorecard state
-      setAnalysisResult(result);
-      const baselineSnapshot = { ...result._baseline_scorecard, id: sid, label: BASELINE_INTERNAL_LABEL, isBaseline: true, createdAt: Date.now() };
-      setScorecardSnapshots([baselineSnapshot]);
-      setSelectedScorecardId(sid);
-      setBaselineScorecardId(sid);
-      baselineRef.current = result._baseline_scorecard;
-
-      // Background refresh — don't block the UI
-      setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
-    } catch (e) {
-      console.error('[triggerInlineScore]', e);
-      // Replace placeholder with an inline error message so the user can see what failed.
-      setMessages((prev) => prev.map((m) =>
-        m.id === loadingId
-          ? {
-              id: `${loadingId}-err`,
-              role: 'ai',
-              text: 'I had enough context to score this, but the analysis call failed. Tap regenerate to retry.',
-            }
-          : m
-      ));
-      showToast('Scoring failed. Try again or rephrase the idea.', 'error');
-    } finally {
-      setScorecardGenerating(false);
-    }
-  }
-
   // Trade-off intent: phrases where the user is explicitly asking to compare,
   // rank, or weigh multiple ideas against each other. The Trade-off tab only
   // unlocks when one of these fires (or when the user kicks off the session
@@ -9219,88 +9141,6 @@ const handleSaveStarter = async () => {
 
   function detectsTradeoffIntent(userText = '') {
     return TRADEOFF_SIGNALS.test(String(userText));
-  }
-
-  // Creates a new scored version from the current conversation and appends it to snapshots.
-  // Uses create_as_version=true so the backend saves it as a scenario — baseline session
-  // result is NOT overwritten, so restoring from bundle always shows both baseline + versions.
-  async function triggerAutoVersion(sid) {
-    if (!sid || !analysisResult || autoVersionGenerating) return; // need an existing scorecard; guard re-entry
-
-    // Inject a loading placeholder immediately so it holds position in the thread
-    const loadingId = `scorecard-v-loading-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      { id: loadingId, role: 'ai', text: '', artifact: { type: 'scorecard-loading', label: 'Scoring your updated idea…' } },
-    ]);
-
-    setAutoVersionGenerating(true);
-    try {
-      // Score the current conversation state, saving as a scenario (not replacing the first)
-      const data = await Jaspen.analyzeFromConversation({
-        session_id: sid,
-        model_type: selectedModelType,
-        create_as_version: true,
-      });
-
-      const raw = data?.analysis || data?.analysis_result || data || {};
-      const scoreNum = Number.parseInt(Number(raw.overall_score || raw.jaspen_score || 0), 10);
-      const score = Number.isFinite(scoreNum) ? scoreNum : 0;
-
-      // Use the AI-generated project name as the label
-      const ideaName = raw.name || raw.project_name || deriveIdeaTitle({ messages, fallback: 'Untitled Idea' });
-      const currentSnaps = Array.isArray(scorecardSnapshots) ? scorecardSnapshots : [];
-      const snapNum = currentSnaps.length + 1;
-      const versionId = raw.id || raw.analysis_id || `${sid}-s${snapNum}-${Date.now()}`;
-
-      const newSnapshot = {
-        ...raw,
-        jaspen_score: score,
-        score_category: raw.score_category || (score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : 'At Risk'),
-        component_scores: raw.scores || raw.component_scores || {},
-        project_name: ideaName,
-        id: versionId,
-        analysis_id: versionId,
-        label: ideaName,
-        isBaseline: false,
-        createdAt: Date.now(),
-      };
-
-      // Append new snapshot — baseline stays, new one added after.
-      setScorecardSnapshots((prev) => {
-        const arr = Array.isArray(prev) ? prev : [];
-        if (arr.some((s) => String(s?.id || '') === String(versionId))) return arr;
-        return [...arr, newSnapshot];
-      });
-
-      // Replace placeholder with real scorecard card, in-place
-      setMessages((prev) => prev.map((m) =>
-        m.id === loadingId
-          ? { id: `scorecard-v${snapNum}`, role: 'ai', text: '', artifact: { type: 'scorecard', data: newSnapshot } }
-          : m
-      ));
-
-      showToast(`Scored ✓`, 'success');
-
-      // Refresh bundle so the scenario persists and survives a hard reload
-      setTimeout(() => { void refreshBundle(sid); void fetchSessions(); }, 0);
-    } catch (e) {
-      console.error('[triggerAutoVersion]', e);
-      // Replace placeholder with an inline error message so the user can see what failed
-      // and the conversation flow stays coherent.
-      setMessages((prev) => prev.map((m) =>
-        m.id === loadingId
-          ? {
-              id: `${loadingId}-err`,
-              role: 'ai',
-              text: 'I tried to score that variation but ran into an error. Tap the regenerate button or rephrase the change to try again.',
-            }
-          : m
-      ));
-      showToast('Could not score that variation. Try again.', 'error');
-    } finally {
-      setAutoVersionGenerating(false);
-    }
   }
 
   // === Input handling ===

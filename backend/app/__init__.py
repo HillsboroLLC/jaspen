@@ -597,19 +597,6 @@ def create_app():
     # Jaspen strategy blueprint
     app.logger.info("Jaspen strategy API registered successfully at /api/v1/strategy")
 
-    # Statistical Analysis blueprint
-    app.logger.info("About to register statistical analysis blueprint")
-    try:
-        app.logger.info("Attempting statistical analysis blueprint import")
-        from .statistical_analysis_api import statistical_bp
-        app.logger.info("Statistical analysis blueprint import successful; registering blueprint")
-        app.register_blueprint(statistical_bp, url_prefix='/api/v1/statistical-analysis')
-        app.logger.info("Statistical Analysis API registered successfully")
-    except ImportError as e:
-        app.logger.warning("Statistical analysis blueprint import failed: %s", e)
-    except Exception as e:
-        app.logger.exception("Unexpected error registering statistical analysis blueprint: %s", e)
-
     # Session access refusals render as themselves rather than as a generic
     # 500. Registered ahead of the catch-all Exception handler so a refusal
     # that escapes a handler still reaches the client as 404 / 403 / 409 with

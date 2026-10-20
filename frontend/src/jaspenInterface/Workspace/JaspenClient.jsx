@@ -72,7 +72,6 @@ export const endpoints = {
   // AI Agent endpoints (NEW)
   convoStart:     `${API_BASE}/api/v1/ai-agent/conversation/start`,
   convoNext:      `${API_BASE}/api/v1/ai-agent/conversation/continue`,
-  analyze:        `${API_BASE}/api/v1/ai-agent/analyze`,
   readinessSpec:  `${API_BASE}/api/v1/ai-agent/readiness/spec`,
   readinessAudit: (threadId) => `${API_BASE}/api/v1/ai-agent/readiness/audit?thread_id=${encodeURIComponent(threadId)}`,
   
@@ -984,29 +983,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       { withSid: true }
     );
   },
-async analyzeFromConversation({ session_id, transcript, deterministic = true, seed, project_name, assumptions, model_type, create_as_version = false, version_label }) {
-    const data = await postJSON(
-      endpoints.analyze,
-      {
-        thread_id: session_id,
-        // Only pass an explicit name when the caller provided one. Otherwise
-        // let the backend derive a real idea name from the conversation —
-        // never use generic placeholders like 'Baseline Analysis'.
-        ...(project_name ? { name: project_name } : {}),
-        framework_id: null, // Uses default "Jaspen Assessment"
-        model_type: model_type || undefined,
-        ...(create_as_version ? { create_as_version: true, version_label: version_label || undefined } : {}),
-      },
-      { withSid: true, sidOverride: session_id }
-    );
-
-    return {
-      analysis_result: data.analysis || data,
-      analysis_id: data.analysis?.id || session_id,
-      model_type: data.model_type || null,
-    };
-  },
-    // ---------- Thread bundle (messages + latest analysis + scenarios) ----------
+  // ---------- Thread bundle (messages + latest analysis + scenarios) ----------
   async fetchBundle(threadId, { msgLimit = 50, scnLimit = 50 } = {}) {
     if (!threadId) throw new Error('Jaspen.fetchBundle: threadId required');
 
