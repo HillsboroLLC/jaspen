@@ -95,9 +95,8 @@ export const endpoints = {
   persistUpload:  `${API_BASE}/api/v1/ai-agent/uploads`,
   downloadUpload: (fileId) => `${API_BASE}/api/v1/ai-agent/attachments/${encodeURIComponent(fileId)}/download`,
   
-  // Legacy chat (keep for now)
+  // Main Jaspen agent
   chat:       `${API_BASE}/api/v1/ai-agent/conversation/continue`,
-  chatStream: `${API_BASE}/api/v1/chat/stream`,
 
   // PROMPT ALIGNMENT: Endpoint for beginning a project from a scorecard
   beginProject: `${API_BASE}/api/v1/projects/generate/ai`,
@@ -605,7 +604,7 @@ export const Jaspen = {
     };
   },
 
-  // ---------- Conversational intake (Claude via /api/v1/chat) ----------
+  // ---------- Conversational intake (via /api/v1/ai-agent) ----------
 async convoStart({ description, project_id, model_type, strategy_objective, decision_kit, intake_context, view_context, lever_defaults, starter_id, data_context_connector_ids, attachments }) {
     // Default project_id for testing - replace with real project selection later
     const pid = project_id || 'default-jas-project';
@@ -1140,25 +1139,6 @@ async analyzeFromConversation({ session_id, transcript, deterministic = true, se
   async acceptExposure(threadId, exposure) {
     if (!threadId) throw new Error('threadId is required');
     return postJSON(endpoints.acceptedExposures(threadId), exposure, { withSid: true });
-  },
-
-  // ---------- Streaming ----------
-  streamChat({ prompt, onDelta, onDone }) {
-    const url = `${API_BASE}/api/v1/chat/stream?q=${encodeURIComponent(prompt )}&sid=${encodeURIComponent(getSid())}`;
-
-    const es = new EventSource(url, { withCredentials: true });
-
-    es.onmessage = (e) => {
-      try {
-        const { text, error } = JSON.parse(e.data);
-        if (error) return console.error(error);
-        if (text) onDelta?.(text);
-      } catch {}
-    };
-    es.addEventListener('done', () => { try { es.close(); } finally { onDone?.(); } });
-    es.onerror = () =>                 { try { es.close(); } finally { onDone?.(); } };
-
-    return () => { try { es.close(); } catch {} };
   },
 
   // ===========================

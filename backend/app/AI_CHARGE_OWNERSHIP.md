@@ -7,7 +7,7 @@ required by the Phase 1 specification.
 
 | Operation type / family | Intended charge owner | Billable completion boundary | Phase 1 status |
 |---|---|---|---|
-| `conversation`, `legacy_chat`, `statistics_guidance`, `statistics_analysis`, `tool_guidance` | Conversation route | A usable assistant reply is returned. If narration fails after an outer-owned persisted mutation, that completed mutation remains billable. | Defined |
+| `conversation` | Conversation route | A usable assistant reply is returned. If narration fails after an outer-owned persisted mutation, that completed mutation remains billable. | Defined |
 | `score_next`, `scorecard_generation` | Scorecard operation | The complete judgment passes scorecard validation and is persisted. Reuse is excluded. | Defined |
 | `score_batch` | One governed batch operation, allocated to persisted generated scorecards | The intended batch charge is divided into equal integer shares in original option order. Only generated cards that persist retain a share; rounding remainder goes to the earliest persisted cards. Failed/unpersisted shares and provider retries are absorbed. Reused cards receive no share. | Implemented |
 | `score_reuse` | Cache/reuse route | Never billable; no provider generation occurred. | Defined |

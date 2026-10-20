@@ -522,7 +522,6 @@ def create_app():
     # —— Register blueprints —— #
     from .routes.auth      import auth_bp
     from .routes.admin     import admin_bp
-    from .routes.chat      import chat_bp
     from .routes.billing   import billing_bp
     from .routes.connectors import connectors_bp
     from .routes.dashboard import dashboard_bp
@@ -556,7 +555,6 @@ def create_app():
 
     app.register_blueprint(auth_bp,      url_prefix='/api/v1/auth')
     app.register_blueprint(admin_bp,     url_prefix='/api/v1/admin')
-    app.register_blueprint(chat_bp,      url_prefix='/api/v1/chat')
     app.register_blueprint(billing_bp,   url_prefix='/api/v1/billing')
     app.register_blueprint(connectors_bp, url_prefix='/api/v1/connectors')
     app.register_blueprint(dashboard_bp, url_prefix='/api/v1/dashboard')
