@@ -439,6 +439,62 @@ def seed_rfp_thread(user, thread_id, *, decision_kit='rfp_bid', queue=None):
     }})
 
 
+def seed_established_rfp_thread(user, thread_id, *, pending=None):
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+
+    seed_rfp_thread(user, thread_id)
+    sessions = load_user_sessions(user.id)
+    sessions[thread_id]['active_evaluation_scorecard_id'] = 'aurora-card'
+    if pending is not None:
+        sessions[thread_id]['decision_kit_change_pending'] = pending
+    assert save_user_sessions(user.id, sessions)
+
+
+def mock_kit_change_conversation_provider(agent, monkeypatch, provider_calls):
+    monkeypatch.setattr(
+        agent,
+        '_resolve_governed_routes',
+        lambda *_args, **_kwargs: ([{'provider': 'anthropic', 'model': 'test-model'}], {}),
+    )
+    monkeypatch.setattr(agent, '_reserve_preflight_credits', lambda *a, **k: {'ok': True, 'reserved': 0})
+    monkeypatch.setattr(agent, '_settle_reserved_credits', lambda *a, **k: {'ok': True, 'charged': 0, 'remaining': 300})
+    monkeypatch.setattr(agent, '_persist_credit_deduction', lambda *a, **k: None)
+
+    def provider(user_message, *_args, **kwargs):
+        provider_calls.append(user_message)
+        session = kwargs['session']
+        lowered = user_message.lower()
+        if 'switch this decision kit' in lowered:
+            tool_name = 'request_decision_kit_change'
+            tool_input = {
+                'target': 'rfp_vendor_selection',
+                'user_request_quote': user_message,
+            }
+        elif lowered.startswith('yes'):
+            tool_name = 'confirm_decision_kit_change'
+            tool_input = {'user_request_quote': user_message}
+        elif lowered.startswith('no'):
+            tool_name = 'cancel_decision_kit_change'
+            tool_input = {'user_request_quote': user_message}
+        else:
+            return (
+                'The delivery date is in the scorecard. The Decision Kit change is still pending.',
+                {'provider': 'test', 'model': 'test-model', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2},
+                [], [], None,
+            )
+        result = agent._execute_decision_kit_change_tool(
+            tool_name, tool_input, session=session, user_message=user_message,
+        )
+        return (
+            result['confirmation'],
+            {'provider': 'test', 'model': 'test-model', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2},
+            [{'tool': tool_name, 'input': tool_input, 'result': result}],
+            [], None,
+        )
+
+    monkeypatch.setattr(agent, '_generate_assistant_reply_anthropic', provider)
+
+
 def test_real_single_rfp_generate_scorecard_tool_path_normalizes_aliases(app, db, test_user, monkeypatch):
     strategy, agent = modules()
     tid = 'live-single-rfp-alias'
@@ -1315,7 +1371,6 @@ def test_explicit_kit_change_on_established_decision_requires_confirmation_and_p
 
     assert session.get('decision_kit') is None
     assert session['decision_kit_change_pending']['target'] == 'rfp_vendor_selection'
-    assert agent._decision_kit_change_question_needed(session) is True
     assert session['option_attributes_by_key']['boulder'] == facts
 
     agent._execute_decision_kit_change_tool(
@@ -1331,6 +1386,144 @@ def test_explicit_kit_change_on_established_decision_requires_confirmation_and_p
     assert session['decision_kit_preserve_existing_facts'] is True
     assert session.get('decision_kit_change_pending') is None
     assert session['option_attributes_by_key']['boulder'] == facts
+
+
+def test_pending_kit_change_confirmation_runs_provider_through_full_conversation(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    _, agent = modules()
+    tid = 'pending-kit-confirm-conversation'
+    seed_established_rfp_thread(test_user, tid)
+    provider_calls = []
+    mock_kit_change_conversation_provider(agent, monkeypatch, provider_calls)
+
+    requested = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': 'Switch this Decision Kit to vendor selection.',
+    })
+    assert requested.status_code == 200, requested.get_json()
+    assert requested.get_json()['reply'] == agent.DECISION_KIT_CHANGE_QUESTION
+    pending = agent.load_user_sessions(test_user.id)[tid]
+    assert pending['decision_kit'] == 'rfp_bid'
+    assert pending['decision_kit_change_pending']['target'] == 'rfp_vendor_selection'
+
+    confirmed = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': 'Yes, switch to vendor selection.',
+    })
+    assert confirmed.status_code == 200, confirmed.get_json()
+    stored = agent.load_user_sessions(test_user.id)[tid]
+    assert provider_calls == [
+        'Switch this Decision Kit to vendor selection.',
+        'Yes, switch to vendor selection.',
+    ]
+    assert stored['decision_kit'] == 'rfp_vendor_selection'
+    assert stored['decision_kit_source'] == 'user_confirmed'
+    assert stored['decision_kit_rescore_required'] is True
+    assert stored['decision_kit_preserve_existing_facts'] is True
+    assert stored.get('decision_kit_change_pending') is None
+
+
+def test_pending_kit_change_cancellation_runs_provider_through_full_conversation(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    _, agent = modules()
+    tid = 'pending-kit-cancel-conversation'
+    seed_established_rfp_thread(test_user, tid)
+    provider_calls = []
+    mock_kit_change_conversation_provider(agent, monkeypatch, provider_calls)
+
+    requested = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': 'Switch this Decision Kit to vendor selection.',
+    })
+    assert requested.status_code == 200, requested.get_json()
+    cancelled = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': 'No, keep it.',
+    })
+    assert cancelled.status_code == 200, cancelled.get_json()
+    stored = agent.load_user_sessions(test_user.id)[tid]
+    assert provider_calls[-1] == 'No, keep it.'
+    assert stored['decision_kit'] == 'rfp_bid'
+    assert stored.get('decision_kit_change_pending') is None
+
+
+def test_unrelated_turn_while_kit_change_pending_runs_provider_normally(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    _, agent = modules()
+    tid = 'pending-kit-unrelated-conversation'
+    seed_established_rfp_thread(test_user, tid, pending={
+        'from': 'rfp_bid',
+        'target': 'rfp_vendor_selection',
+        'requested_at': '2026-10-20T12:00:00Z',
+    })
+    provider_calls = []
+    mock_kit_change_conversation_provider(agent, monkeypatch, provider_calls)
+
+    response = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': 'What delivery date did I give you?',
+    })
+    assert response.status_code == 200, response.get_json()
+    assert provider_calls == ['What delivery date did I give you?']
+    assert response.get_json()['reply'].startswith('The delivery date is in the scorecard.')
+    stored = agent.load_user_sessions(test_user.id)[tid]
+    assert stored['decision_kit_change_pending']['target'] == 'rfp_vendor_selection'
+
+
+def test_streaming_dispatch_runs_provider_while_kit_change_is_pending(app, monkeypatch):
+    _, agent = modules()
+    calls = []
+
+    def stream_provider(message, *_args, **kwargs):
+        calls.append(message)
+        kwargs['state'].update(
+            reply='Provider handled the pending change.',
+            usage={'provider': 'test', 'model': 'test-model', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2},
+            actions=[], mutations=[], undo_snapshot=None,
+        )
+        yield {'type': 'delta', 'text': 'Provider handled the pending change.'}
+
+    monkeypatch.setattr(
+        agent,
+        '_resolve_governed_routes',
+        lambda *_args, **_kwargs: ([{'provider': 'anthropic', 'model': 'test-model'}], {}),
+    )
+    monkeypatch.setattr(agent, '_stream_assistant_reply_events_anthropic', stream_provider)
+    state = {}
+    events = list(agent._stream_assistant_reply_events(
+        'Tell me what happens next.', [], {}, {'llm_model': 'test-model'},
+        session={
+            'decision_kit': 'rfp_bid',
+            'decision_kit_change_pending': {'from': 'rfp_bid', 'target': 'rfp_vendor_selection'},
+        },
+        state=state,
+    ))
+
+    assert calls == ['Tell me what happens next.']
+    assert events == [{'type': 'delta', 'text': 'Provider handled the pending change.'}]
+    assert state['reply'] == 'Provider handled the pending change.'
+
+
+def test_pending_kit_change_is_described_in_model_context(app, test_user):
+    _, agent = modules()
+    tid = 'pending-kit-prompt-context'
+    seed_established_rfp_thread(test_user, tid, pending={
+        'from': 'rfp_bid',
+        'target': 'rfp_vendor_selection',
+        'requested_at': '2026-10-20T12:00:00Z',
+    })
+
+    suffix = agent._decision_kit_prompt_suffix(test_user.id, tid)
+
+    assert '[PENDING DECISION KIT CHANGE]' in suffix
+    assert 'RFP response' in suffix
+    assert 'RFP vendor selection' in suffix
+    assert 'call confirm_decision_kit_change with an exact quote' in suffix
+    assert 'call cancel_decision_kit_change with an exact quote' in suffix
+    assert 'answer their message normally' in suffix
 
 
 def test_proposed_rubric_is_visible_with_weights_before_approval(app, db, test_user):

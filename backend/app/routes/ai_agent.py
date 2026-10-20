@@ -1140,10 +1140,6 @@ def _rfp_subtype_question_needed(session):
     )
 
 
-def _decision_kit_change_question_needed(session):
-    return bool(isinstance(session, dict) and isinstance(session.get("decision_kit_change_pending"), dict))
-
-
 def _format_human_list(items):
     values = [str(item).strip() for item in (items or []) if str(item).strip()]
     if len(values) < 2:
@@ -3787,26 +3783,44 @@ def _decision_kit_prompt_suffix(user_id, thread_id):
     try:
         sessions = load_user_sessions(user_id) or {}
         _key, session = _resolve_user_session(sessions, thread_id)
-        if not isinstance(session, dict) or not session.get("decision_kit"):
+        if not isinstance(session, dict):
             return ""
-        kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
-        hints = "; ".join(kit.get("interviewer_hints") or [])
-        canonical_fields = ", ".join(
-            str(field.get("key")) for field in (kit.get("fields") or [])
-            if isinstance(field, dict) and field.get("key")
-        )
-        return (
-            f"\n\n[DECISION KIT — {kit['label']} v{kit['version']}] "
-            "Keep Discovery → Scoring → Trade-Off → Execution unchanged. The kit is separate from the objective lens. "
-            "Use only structured attributes supplied by the user or documents; never invent numeric facts. "
-            f"When saving facts, use these canonical field keys exactly: {canonical_fields}. "
-            "Map the user's meaning to those fields even when their wording differs. If the kit was just resolved, "
-            "re-read the user-authored messages already in this thread and save all recognizable facts before scoring. "
-            "Pass additional user context with its own descriptive field label; the server will retain it as a "
-            "source-labeled note when it is not part of this kit, rather than silently discarding it. "
-            f"Highest-value missing facts: {hints}. Ask at most one or two per turn, and stop asking when the user says score. "
-            "Jaspen recommends; only the human records the decision."
-        )
+        parts = []
+        if session.get("decision_kit"):
+            kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
+            hints = "; ".join(kit.get("interviewer_hints") or [])
+            canonical_fields = ", ".join(
+                str(field.get("key")) for field in (kit.get("fields") or [])
+                if isinstance(field, dict) and field.get("key")
+            )
+            parts.append(
+                f"\n\n[DECISION KIT — {kit['label']} v{kit['version']}] "
+                "Keep Discovery → Scoring → Trade-Off → Execution unchanged. The kit is separate from the objective lens. "
+                "Use only structured attributes supplied by the user or documents; never invent numeric facts. "
+                f"When saving facts, use these canonical field keys exactly: {canonical_fields}. "
+                "Map the user's meaning to those fields even when their wording differs. If the kit was just resolved, "
+                "re-read the user-authored messages already in this thread and save all recognizable facts before scoring. "
+                "Pass additional user context with its own descriptive field label; the server will retain it as a "
+                "source-labeled note when it is not part of this kit, rather than silently discarding it. "
+                f"Highest-value missing facts: {hints}. Ask at most one or two per turn, and stop asking when the user says score. "
+                "Jaspen recommends; only the human records the decision."
+            )
+
+        pending = session.get("decision_kit_change_pending")
+        if isinstance(pending, dict):
+            current = get_decision_kit(pending.get("from")) if pending.get("from") else None
+            target = get_decision_kit(pending.get("target")) if pending.get("target") else None
+            current_label = current.get("label") if current else "no Decision Kit"
+            target_label = target.get("label") if target else "no Decision Kit"
+            parts.append(
+                "\n\n[PENDING DECISION KIT CHANGE] "
+                f"A change from {current_label} to {target_label} is waiting for the user's confirmation. "
+                "Interpret the user's intent from their latest message. If they confirm the change in any wording, "
+                "call confirm_decision_kit_change with an exact quote from that message. If they decline, cancel, or "
+                "want to keep the current kit, call cancel_decision_kit_change with an exact quote. Otherwise, answer "
+                "their message normally and briefly remind them that the Decision Kit change is still pending."
+            )
+        return "".join(parts)
     except Exception:
         current_app.logger.exception("Decision Kit prompt context failed")
         return ""
@@ -10348,12 +10362,6 @@ def _generate_assistant_reply(
         session=session,
         view_context=view_context,
     )
-    if _decision_kit_change_question_needed(session):
-        return (
-            DECISION_KIT_CHANGE_QUESTION,
-            {"provider": "deterministic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-            [], [], None,
-        )
     if _rfp_subtype_question_needed(session):
         session["rfp_subtype_question_asked"] = True
         return (
@@ -10560,15 +10568,6 @@ def _stream_assistant_reply_events(
         session=session,
         view_context=view_context,
     )
-    if _decision_kit_change_question_needed(session):
-        if isinstance(state, dict):
-            state.update({
-                "reply": DECISION_KIT_CHANGE_QUESTION,
-                "usage": {"provider": "deterministic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-                "actions": [], "mutations": [], "undo_snapshot": None,
-            })
-        yield {"type": "delta", "text": DECISION_KIT_CHANGE_QUESTION}
-        return
     if _rfp_subtype_question_needed(session):
         session["rfp_subtype_question_asked"] = True
         if isinstance(state, dict):
