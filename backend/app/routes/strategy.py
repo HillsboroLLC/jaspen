@@ -9913,6 +9913,28 @@ def _merge_display_overrides(current, patch, *, reject_unknown=False):
     for raw_key, raw_value in patch.items():
         if raw_key not in _ALLOWED_OVERRIDE_KEYS:
             continue
+        if reject_unknown and raw_key == 'report_presentation' and isinstance(raw_value, dict):
+            existing = next_overrides.get('report_presentation')
+            merged_presentation = dict(existing) if isinstance(existing, dict) else {}
+            for section in ('text', 'colors', 'layout'):
+                if section not in raw_value:
+                    continue
+                section_patch = raw_value.get(section)
+                if not isinstance(section_patch, dict):
+                    merged_presentation[section] = section_patch
+                    continue
+                current_section = merged_presentation.get(section)
+                merged_section = dict(current_section) if isinstance(current_section, dict) else {}
+                for slot, value in section_patch.items():
+                    if value is None or value == '':
+                        merged_section.pop(slot, None)
+                    else:
+                        merged_section[slot] = value
+                if merged_section:
+                    merged_presentation[section] = merged_section
+                else:
+                    merged_presentation.pop(section, None)
+            raw_value = merged_presentation
         if reject_unknown and raw_key == 'section_layout' and raw_value is not None:
             if not isinstance(raw_value, (list, tuple)):
                 raise ValueError('invalid_section_layout')
