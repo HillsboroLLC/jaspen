@@ -132,6 +132,12 @@ def request(config, method, path, payload=None, timeout=30):
     return _jira_request(config, method, path, payload=payload, timeout=timeout)
 
 
+def is_missing_issue_error(error):
+    """Identify Jira's deleted-issue response without treating other 404s alike."""
+    message = str(error or "").lower()
+    return "http 404" in message and "issue does not exist" in message
+
+
 def plan_label(binding):
     return f"jaspen_plan_{binding.id.replace('-', '')[:12]}"
 
@@ -445,8 +451,7 @@ class JiraProvider(ProjectToolProvider):
         try:
             data, _ = request(config, "GET", f"/rest/api/3/issue/{quote(external_id)}?expand=changelog&fields={','.join(fields)}", timeout=30)
         except Exception as exc:
-            response = getattr(exc, "response", None)
-            if getattr(response, "status_code", None) == 404:
+            if is_missing_issue_error(exc):
                 return {"deleted": True, "values": {}, "changed_at": {}, "version": None}
             raise
         row = data if isinstance(data, dict) else {}

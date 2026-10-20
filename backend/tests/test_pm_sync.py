@@ -6,7 +6,9 @@ import pytest
 from app import db as app_db
 from app.models import ConnectorSyncLog, Organization, OrganizationMember, User
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
-from app.pm_sync.service import _sync_phases, create_binding, preview, push_binding
+from app.pm_sync.service import (
+    _sync_phases, create_binding, preview, push_binding, recreate_missing_links, unlink_binding,
+)
 from app.pm_sync.reconciliation import reconcile_binding, resolve_conflict
 
 
@@ -872,6 +874,92 @@ def test_push_only_never_pulls_and_deleted_remote_flags_instead_of_deleting(test
     assert result["deleted"] == 1
     assert len(plan["tasks"]) == 1
     assert plan["tasks"][0]["pm_sync_state"]["state"] == "removed_in_jira"
+    assert link.state == "missing_external"
+    assert binding.status == "links_missing"
+    assert binding.config["missing_issue_count"] == 1
+
+
+def test_missing_jira_issue_is_classified_and_live_links_keep_syncing(test_user):
+    base = {"title": "Task", "description": None, "owner": None, "owner_email": None,
+            "status": "todo", "start_date": None, "due_date": None}
+    binding, missing_link = _linked_binding(test_user, base)
+    live_link = PmSyncLink(binding_id=binding.id, entity_type="task", jaspen_id="task-b",
+                           external_id="JST-2", base_snapshot=base, state="active")
+    app_db.session.add(live_link); app_db.session.commit()
+    plan = {"tasks": [{**base, "id": "task-a"}, {**base, "id": "task-b"}]}
+    provider = _Provider({"deleted": False, "values": base, "changed_at": {}, "version": None})
+
+    def ensure_identity(_config, _binding, external_id, _jaspen_id):
+        if external_id == "JST-1":
+            raise RuntimeError("HTTP 404: {'errorMessages': ['Issue does not exist']}")
+
+    provider.ensure_recovery_identity = ensure_identity
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=provider), patch(
+        "app.pm_sync.reconciliation._sync_phases", return_value={}), patch(
+        "app.pm_sync.reconciliation._save_plan"):
+        result = reconcile_binding(binding)
+
+    assert result["errors"] == []
+    assert result["deleted"] == 1
+    assert provider.get_calls == ["JST-2"]
+    assert missing_link.state == "missing_external"
+    assert live_link.state == "active"
+    assert binding.status == "links_missing"
+    assert binding.config["missing_issue_count"] == 1
+
+
+def test_recreate_clears_only_dead_links_and_creates_replacements(test_user):
+    binding = _binding(test_user)
+    missing = PmSyncLink(binding_id=binding.id, entity_type="task", jaspen_id="task-a",
+                         external_id="JST-1", base_snapshot={}, state="missing_external")
+    live = PmSyncLink(binding_id=binding.id, entity_type="task", jaspen_id="task-b",
+                      external_id="JST-2", base_snapshot={}, state="active")
+    dependency = PmSyncLink(binding_id=binding.id, entity_type="dependency", jaspen_id="task-a->task-b",
+                            external_id="link-old", base_snapshot={}, state="active")
+    app_db.session.add_all([missing, live, dependency]); app_db.session.commit()
+    calls = []
+
+    def request(_config, method, path, payload=None, timeout=30):
+        calls.append((method, path, payload))
+        if path == "/rest/api/3/issue/bulk":
+            return {"issues": [{"key": "JST-3"}], "errors": []}, {}
+        if path == "/rest/api/3/issueLink":
+            return {"id": "link-new"}, {}
+        return {}, {}
+
+    with patch("app.pm_sync.service.get_plan", return_value=(PLAN, "score-1")), patch(
+        "app.pm_sync.service.jira_adapter.assert_connected", return_value={"base_url": "https://example.atlassian.net"}), patch(
+        "app.pm_sync.service.jira_adapter.request", side_effect=request), patch(
+        "app.pm_sync.service.jira_adapter.recover_issue", return_value=None), patch(
+        "app.pm_sync.service.jira_adapter.set_identity"), patch(
+        "app.pm_sync.service.jira_adapter.sync_status"):
+        result = recreate_missing_links(binding)
+
+    assert result["created"] == 1
+    assert PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task", jaspen_id="task-a").one().external_id == "JST-3"
+    assert PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task", jaspen_id="task-b").one().external_id == "JST-2"
+    assert PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="dependency").one().external_id == "link-new"
+    assert not any(method == "PUT" and path == "/rest/api/3/issue/JST-2" for method, path, _payload in calls)
+    assert binding.config["task_issue_type"] == "Task"
+    assert binding.config["group_under_epics"] is False
+    assert binding.mode == "push_only"
+
+
+def test_unlink_stops_syncing_without_deleting_links_or_history(test_user):
+    binding = _binding(test_user)
+    link = PmSyncLink(binding_id=binding.id, entity_type="task", jaspen_id="task-a",
+                      external_id="JST-1", base_snapshot={}, state="missing_external")
+    log = ConnectorSyncLog(user_id=test_user.id, connector_id="jira_sync", thread_id="thread-1",
+                           action="pm_sync", status="failed", items_synced=0,
+                           sync_metadata={"binding_id": binding.id})
+    app_db.session.add_all([link, log]); app_db.session.commit()
+
+    unlink_binding(binding)
+
+    assert binding.status == "disconnected"
+    assert PmSyncLink.query.filter_by(binding_id=binding.id).count() == 1
+    assert ConnectorSyncLog.query.filter_by(id=log.id).one()
 
 
 def test_connection_is_validated_before_save_and_secret_is_not_returned(client, auth_headers):
@@ -980,9 +1068,13 @@ def test_teammate_cannot_read_or_trigger_another_persons_binding(
 
     detail = client.get(f"/api/v1/pm-sync/bindings/{binding.id}", headers=auth_headers)
     sync = client.post(f"/api/v1/pm-sync/bindings/{binding.id}/sync", headers=auth_headers)
+    recreate = client.post(f"/api/v1/pm-sync/bindings/{binding.id}/recreate-missing", headers=auth_headers)
+    unlink = client.post(f"/api/v1/pm-sync/bindings/{binding.id}/unlink", headers=auth_headers)
 
     assert detail.status_code == 404
     assert sync.status_code == 404
+    assert recreate.status_code == 404
+    assert unlink.status_code == 404
 
 
 def test_owner_leaving_organization_pauses_binding_without_touching_jira(test_user):
