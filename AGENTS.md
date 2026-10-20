@@ -26,6 +26,7 @@ The AI owns the conversation, the user's intent, and the judgment. The code owns
 - **No production or staging access.** Staging is disabled because it currently shares production data. Verify locally (`./scripts/dev_setup.sh`, seed user `dev@jaspen.local`).
 - **Database changes are additive,** with a downgrade, and with a server-side default for any new required column.
 - **Git:**
+  - always work in your own new worktree created from the stated base; never change the branch of, or edit files in, the main checkout (`/Users/ldbailey/Projects/jaspen-git/jaspen`). It's shared with other sessions and with Claude's live checks;
   - commit with `218708865+Bailey-Builds@users.noreply.github.com`;
   - one commit per item;
   - never push, merge, or deploy unless explicitly told to;
