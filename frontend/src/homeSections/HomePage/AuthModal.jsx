@@ -4,6 +4,7 @@ import { useAuth } from '../../shared/auth/AuthContext';
 import { API_BASE } from '../../config/apiBase';
 import FieldError from '../../shared/components/FieldError';
 import { readAuthQueryNotice } from './authStatus';
+import { addSignupReferralCodeToParams } from '../../shared/inviteLink';
 
 export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChange, initialMfaData }) {
   const { login, signup, setUser } = useAuth();
@@ -114,13 +115,7 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     setErrorDetail('');
     const redirect = getPostAuthRedirect();
     const params = new URLSearchParams({ next: redirect });
-    try {
-      const current = new URLSearchParams(window.location.search || '');
-      const referralCode = current.get('referral_code') || current.get('invite_code') || current.get('ref') || current.get('invite');
-      if (referralCode) params.set('referral_code', referralCode);
-    } catch (err) {
-      console.debug('Unable to preserve referral code for Google auth:', err);
-    }
+    addSignupReferralCodeToParams(params);
     window.location.href = `${API_BASE}/api/v1/auth/google/start?${params.toString()}`;
   };
 

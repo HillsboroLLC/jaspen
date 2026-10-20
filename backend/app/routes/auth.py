@@ -587,7 +587,15 @@ def _resolve_referring_user(referral_code):
 
     # Allow a shorter shareable invite code as long as it resolves unambiguously.
     if len(normalized) < 36:
-        matches = User.query.filter(User.referral_code.like(f'{normalized}%')).limit(2).all()
+        compact_code = normalized.replace('-', '').lower()
+        if not compact_code:
+            return None
+        matches = User.query.filter(
+            db.func.lower(db.func.replace(User.referral_code, '-', '')).startswith(
+                compact_code,
+                autoescape=True,
+            )
+        ).limit(2).all()
         if len(matches) == 1:
             return matches[0]
     return None
@@ -1663,6 +1671,7 @@ def google_callback():
     )
 
     user = User.query.filter_by(email=email).first()
+    created_user = user is None
     changed = False
 
     if not user:
@@ -1743,6 +1752,9 @@ def google_callback():
     if session_changed:
         db.session.commit()
     callback_url = _frontend_callback_url(next_path)
+    if created_user:
+        separator = '&' if '?' in callback_url else '?'
+        callback_url = f'{callback_url}{separator}signup_completed=1'
     if signed_out_other_device:
         separator = '&' if '?' in callback_url else '?'
         callback_url = f'{callback_url}{separator}signed_out_other_device=1'

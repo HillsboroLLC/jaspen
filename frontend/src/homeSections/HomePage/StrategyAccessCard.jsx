@@ -4,6 +4,7 @@ import { authFetch } from '../../shared/auth/http';
 import { API_BASE } from '../../config/apiBase';
 import { readAuthQueryNotice } from './authStatus';
 import AuthModal from './AuthModal';
+import { addSignupReferralCodeToParams } from '../../shared/inviteLink';
 import {
   readPendingIntakeContext,
   writePendingIntakeContext,
@@ -208,13 +209,7 @@ export default function StrategyAccessCard({ initialFlowMode = 'signin', heroCon
     setAuthErrorDetail('');
     const redirect = getPostAuthRedirect();
     const params = new URLSearchParams({ next: redirect });
-    try {
-      const current = new URLSearchParams(window.location.search || '');
-      const referralCode = current.get('referral_code') || current.get('invite_code') || current.get('ref') || current.get('invite');
-      if (referralCode) params.set('referral_code', referralCode);
-    } catch (error) {
-      console.debug('Unable to preserve referral code for Google auth:', error);
-    }
+    addSignupReferralCodeToParams(params);
     window.location.href = `${API_BASE}/api/v1/auth/google/start?${params.toString()}`;
   };
 
