@@ -1603,6 +1603,7 @@ export default function JaspenWorkspace() {
         const editedHere = muts.some(
           (m) => m && m.success && (
             m.tool === 'patch_scorecard'
+            || m.tool === 'update_workspace_presentation'
             || m.tool === 'generate_scorecard'
             || m.tool === 'rename_thread'
           )

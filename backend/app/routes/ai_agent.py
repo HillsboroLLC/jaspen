@@ -565,6 +565,7 @@ _MUTATION_TOOLS = {
     "set_execution_start_date",
     "rename_thread",
     "patch_scorecard",
+    "update_workspace_presentation",
     "set_scoring_rubric",
     "approve_presented_rubric",
     "show_scoring_rubric",
@@ -675,7 +676,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "When the user asks to rename the initiative, project, or title, call rename_thread with the requested new name. "
     "EDITING THE OPEN SCORECARD: the scorecard the user has open in the workspace is directly editable through chat — edit it IN PLACE, never spawn a duplicate for a change to the idea they're viewing. "
     "WORKSPACE MODE: When the view context says the user is in the Workspace, use judgment to keep the work on the open artifact when that is the honest path. Wording and presentation changes belong on the open scorecard in place. Re-score that same scorecard in place when the user asks for a re-score or when the underlying facts change. If the requested change genuinely needs the originating conversation — such as discussing new facts, changing criteria, or comparing additional options — say that plainly and offer the link back to the named session from the Workspace origin context. Never say a change was made unless the relevant tool succeeded. "
-    "(a) For a wording / narrative tweak that does NOT change the underlying analysis (reword the executive summary, key insights, assumptions, risk or recommendation text, rationale), call patch_scorecard — it edits that field in place on the open idea and leaves the score untouched. "
+    "(a) For a wording / narrative tweak to a scorecard CONTENT field that does NOT change the underlying analysis (reword the executive summary, key insights, assumptions, risk or recommendation text, rationale), call patch_scorecard — it edits that field in place on the open idea and leaves the score untouched. For Workspace PRESENTATION changes — layout, visible sections, report wording slots, colors, custom blocks, theme, subtitle, narrative, recommended scenario, or trade-off inclusion — call update_workspace_presentation. "
     "DECISION TEST: ask 'does this change any FACT or ASSUMPTION the score depends on?' If it only changes HOW the text reads — tone, clarity, length, polish, phrasing, grammar — it is a wording tweak: use patch_scorecard and NEVER re-score. Requests like 'make it more executive-friendly', 'make it clearer / punchier / more concise', 'tighten this', 'reword', 'fix the grammar', 'change word X to Y', or 'rewrite the summary' are ALL wording tweaks — the numbers MUST NOT move. Rewriting the same facts in better prose is never a re-score. "
     "(b) For a change that DOES affect the analysis or score (a different budget, timeline, team, market, pricing, or any assumption that moves the numbers — i.e. the underlying facts change, not just the prose), call generate_scorecard with rescore_scorecard_id set to the OPEN scorecard's id (the Active scorecard ID in the workspace view context). This re-scores that SAME idea in place — you re-evaluate every dimension holistically so the score stays consistent with the new inputs. If you are unsure whether an edit is wording or a real input change, treat it as wording and use patch_scorecard. "
     "You (the AI) may change scores and dimensions this way because you re-factor against all the information; never tell the user a score is 'locked' to you, and never ask which idea they mean for an edit — act on the on-screen one. Only create a brand-new scorecard (generate_scorecard WITHOUT rescore_scorecard_id) for a genuinely new idea or a side-by-side variation the user wants to keep alongside the original. "
@@ -693,12 +694,11 @@ _SYSTEM_PROMPT_PREFIX = (
     "SCORECARDS: "
     "Scorecards accumulate inline in the conversation — chat, chat, scorecard, chat, scorecard, etc. The idea the user has OPEN in the workspace is editable in place (see EDITING THE OPEN SCORECARD above). "
     "When the user proposes a genuinely NEW idea or a variation they want to keep alongside the original, call generate_scorecard (no rescore_scorecard_id). "
-    "When the user asks to change the idea they're viewing, edit it in place: patch_scorecard for wording OR for renaming the title (pass the new title in `name`), or generate_scorecard with rescore_scorecard_id to re-score that same idea. "
+    "When the user asks to change the idea they're viewing, edit it in place: update_workspace_presentation for presentation/layout/report styling, patch_scorecard for scorecard content wording OR for renaming the title (pass the new title in `name`), or generate_scorecard with rescore_scorecard_id to re-score that same idea. "
     "EDIT A CRITERION'S WORDING: when the user names a criterion (Strategic Fit, Risk Profile, Financial Return, any rubric criterion) and asks you to reword, clarify, expand or rewrite what it says, call patch_scorecard with `criterion_narrative` keyed by that criterion. This is the ONLY field that changes what a criterion card displays. Using add_blocks instead appends a stray section and leaves the criterion untouched, so the user is told the report changed while it visibly did not. Wording only; the score never moves. "
-    "ADD A SECTION: when the user wants to ADD a new section/note/block to the open scorecard that isn't one of the standard fields (e.g. 'add a section on regulatory risk', 'add a go-to-market note', 'add a block about competitors'), call patch_scorecard with `add_blocks` — a list of {heading, body}. This appends a free-form section to the card and NEVER moves the score. "
-    "FILL/UPDATE AN EXISTING SECTION: if the user asks you to populate or update a block they already created (e.g. a 'Mitigation' block), call patch_scorecard with `add_blocks` using the SAME heading — it updates that block in place rather than creating a duplicate. Do NOT fold that content into top_risks or other standard fields when the user clearly wants it in their named block. "
-    "BRAND COLOR: when the user asks for their brand color or a custom accent (e.g. 'use our brand blue #0A66C2', 'make the scorecard match our colors', 'change the accent to green'), call patch_scorecard with `accent_color` as a #RRGGBB hex. If they name a color without a hex, pick a sensible hex for it. This recolors the live scorecard and its exports; it never moves the score. "
-    "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea (wording, title rename, or re-score) must use patch_scorecard or generate_scorecard(rescore_scorecard_id=<open id>) — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. A title rename or any wording/prose edit is cosmetic: use patch_scorecard and the score MUST NOT move. "
+    "ADD OR UPDATE A PRESENTATION SECTION: use update_workspace_presentation with custom_blocks for a new or existing free-form block. Include the complete desired custom_blocks list; the tool shares the Workspace editor's validation and NEVER moves the score. "
+    "BRAND COLOR OR REPORT STYLE: use update_workspace_presentation for accent_color or report_presentation. Its readability and known-section checks are authoritative; if it rejects the change, explain that plainly or retry with a valid presentation value. "
+    "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea must use update_workspace_presentation for presentation, patch_scorecard for content wording/title, or generate_scorecard(rescore_scorecard_id=<open id>) for changed facts — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. Cosmetic edits MUST NOT move the score. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
     "When the user asks to build an execution plan, call generate_execution_plan. If it returns confirmation_required, ask its confirmation question conversationally and do not claim the plan exists yet. On the user's affirmative reply, call generate_execution_plan again with decision_acknowledged=true and the returned option_key. "
     "When the user asks to start the plan on a specific date or shift the whole schedule (e.g. 'start this plan July 1', 'push the kickoff back two weeks'), call set_execution_start_date with the new start_date (YYYY-MM-DD) — it slides every task by the same delta and preserves manual per-task adjustments. "
@@ -2028,11 +2028,11 @@ def _view_context_prompt_suffix(view_context):
         lines.append(
             "- The user is viewing a completed scorecard and can edit it through chat. "
             "Do NOT ask intake questions or ask for previously provided intake data again. "
-            "To edit the scorecard they're viewing, edit it IN PLACE: call patch_scorecard for a wording/narrative tweak "
+            "To edit the scorecard they're viewing, edit it IN PLACE: call update_workspace_presentation for layout, sections, report wording slots, colors, blocks, or similar presentation changes; call patch_scorecard for a scorecard content wording/narrative tweak "
             "(tone, clarity, length, phrasing, 'more executive-friendly', 'change word X to Y' — these NEVER move the score), "
             "or generate_scorecard with rescore_scorecard_id (the active scorecard id) to re-score that same idea ONLY when an underlying fact/assumption changes. "
             "Only call generate_scorecard WITHOUT rescore_scorecard_id for a genuinely new idea or a variation they want kept alongside this one. "
-            "Never ask which idea they mean — act on the open one. "
+            "Never ask which idea they mean — act on the open one. Never claim a presentation or content change happened unless its tool succeeded. "
             "Use your judgment: confirmations and pure questions don't need a tool call."
         )
     elif current_view == "scenario":
@@ -6213,6 +6213,90 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                 },
             },
             {
+                "name": "update_workspace_presentation",
+                "description": (
+                    "Change presentation on an editable Workspace scorecard without changing any score, dimension, "
+                    "fact, metric, or gate. Use for layout, visible sections, report wording slots, colors, custom "
+                    "blocks, subtitle, theme, narrative, recommended scenario, and trade-off inclusion. The same "
+                    "validation as the user's Workspace editor is applied; null removes an override. For core "
+                    "scorecard content fields such as executive_summary, insights, assumptions, risks, "
+                    "recommendations, rationale, or decision framework, use patch_scorecard instead."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "scorecard_id": {
+                            "type": "string",
+                            "description": "Optional editable scorecard id. Defaults to the open/on-screen scorecard.",
+                        },
+                        "changes": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": ["string", "null"]},
+                                "subtitle": {"type": ["string", "null"]},
+                                "executive_summary": {"type": ["string", "null"]},
+                                "accent_color": {"type": ["string", "null"]},
+                                "theme": {"type": ["string", "null"]},
+                                "narrative": {"type": ["string", "null"]},
+                                "tradeoff_included": {"type": ["boolean", "null"]},
+                                "top_risks": {
+                                    "anyOf": [
+                                        {"type": "array", "items": {"type": "string"}},
+                                        {"type": "string"},
+                                        {"type": "null"},
+                                    ],
+                                },
+                                "recommended_scenario": {"type": ["string", "null"]},
+                                "custom_blocks": {
+                                    "type": ["array", "null"],
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "type": {"type": "string", "enum": ["text", "callout", "quote"]},
+                                            "heading": {"type": "string"},
+                                            "body": {"type": "string"},
+                                            "x": {"type": "integer"},
+                                            "y": {"type": "integer"},
+                                            "w": {"type": "integer"},
+                                            "h": {"type": "integer"},
+                                            "cols": {"type": "integer"},
+                                        },
+                                        "additionalProperties": False,
+                                    },
+                                },
+                                "section_layout": {
+                                    "type": ["array", "null"],
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "key": {"type": "string", "enum": ["score", "executive", "dimensions", "risks", "scenario"]},
+                                            "x": {"type": "integer"},
+                                            "y": {"type": "integer"},
+                                            "w": {"type": "integer"},
+                                            "h": {"type": "integer"},
+                                            "cols": {"type": "integer"},
+                                            "dimCols": {"type": "integer"},
+                                            "collapsed": {"type": "boolean"},
+                                            "dimOrder": {"type": "array", "items": {"type": "string"}},
+                                        },
+                                        "required": ["key"],
+                                        "additionalProperties": False,
+                                    },
+                                },
+                                "report_presentation": {
+                                    "type": ["object", "null"],
+                                    "description": "One-pager presentation object with validated colors, text slots, and layout order/hidden/evidence_variant.",
+                                },
+                            },
+                            "additionalProperties": False,
+                        },
+                    },
+                    "required": ["changes"],
+                    "additionalProperties": False,
+                },
+            },
+            {
                 "name": "patch_scorecard",
                 "description": (
                     "Edit the wording of the OPEN scorecard in place — for narrative/prose tweaks that do NOT change the "
@@ -8150,6 +8234,51 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             success_payload["scorecard_id"] = _open_card_id
             success_payload["selected_scorecard_id"] = _open_card_id
         return _tool_success(success_payload)
+
+    if tool_name == "update_workspace_presentation":
+        from .strategy import update_scorecard_display_overrides
+
+        changes = tool_input.get("changes")
+        if not isinstance(changes, dict) or not changes:
+            return _tool_error(
+                "Provide at least one presentation change.",
+                code="no_presentation_changes",
+            )
+
+        target_id = (
+            str(tool_input.get("scorecard_id") or "").strip()
+            or view_active_scorecard_id
+            or thread_id
+        )
+        try:
+            result = update_scorecard_display_overrides(
+                user_id,
+                thread_id,
+                target_id,
+                changes,
+                reject_unknown=True,
+            )
+        except LookupError:
+            return _tool_error(
+                "That scorecard was not found or you do not have permission to edit it.",
+                code="scorecard_not_editable",
+            )
+        except ValueError as exc:
+            rejection = str(exc or "invalid_presentation")
+            return _tool_error(
+                f"Presentation change rejected: {rejection}.",
+                code=rejection.split(":", 1)[0],
+            )
+
+        changed_fields = sorted(str(key) for key in changes)
+        return _tool_success({
+            "tool": tool_name,
+            "confirmation": f"Updated Workspace presentation: {', '.join(changed_fields)}.",
+            "display_overrides": result["display_overrides"],
+            "updated_scorecard": result["updated_scorecard"],
+            "scorecard_id": result["scorecard_id"],
+            "selected_scorecard_id": result["scorecard_id"],
+        })
 
     if tool_name == "patch_scorecard":
         from .strategy import _merge_scorecard_patch, apply_scorecard_edit_in_place

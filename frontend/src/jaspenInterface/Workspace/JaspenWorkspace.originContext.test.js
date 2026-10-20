@@ -25,3 +25,10 @@ test('unified workspace chat no longer sends legacy prompt fields', () => {
   expect(chatMethod).not.toContain('detailed');
   expect(chatMethod).not.toContain('phase:');
 });
+
+test('workspace presentation tool refreshes the open canvas without a reload', () => {
+  expect(workspaceSource).toContain("m.tool === 'update_workspace_presentation'");
+  expect(workspaceSource).toContain('a?.result?.updated_scorecard');
+  expect(workspaceSource).toContain('setSnapshot(updated)');
+  expect(workspaceSource).toContain('setOverrides(updated.display_overrides)');
+});

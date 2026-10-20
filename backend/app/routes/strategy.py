@@ -9894,6 +9894,42 @@ def _coerce_override_value(key, value):
     return value
 
 
+def _merge_display_overrides(current, patch, *, reject_unknown=False):
+    """Validate and merge cosmetic scorecard overrides.
+
+    This is the single validation path for both the owner's PATCH endpoint and
+    the Workspace agent. The endpoint keeps its existing forward-compatible
+    behavior of ignoring unknown keys; the agent rejects them so it can never
+    claim that an unsupported (or analytical) field changed.
+    """
+    if not isinstance(patch, dict):
+        raise ValueError('invalid_overrides')
+
+    unknown = [str(key) for key in patch if key not in _ALLOWED_OVERRIDE_KEYS]
+    if reject_unknown and unknown:
+        raise ValueError(f"unsupported_override_key:{unknown[0]}")
+
+    next_overrides = dict(current) if isinstance(current, dict) else {}
+    for raw_key, raw_value in patch.items():
+        if raw_key not in _ALLOWED_OVERRIDE_KEYS:
+            continue
+        if reject_unknown and raw_key == 'section_layout' and raw_value is not None:
+            if not isinstance(raw_value, (list, tuple)):
+                raise ValueError('invalid_section_layout')
+            for entry in raw_value:
+                section_key = str(entry.get('key') or '').strip() if isinstance(entry, dict) else ''
+                if section_key not in _SECTION_LAYOUT_KEYS:
+                    raise ValueError(f"unknown_section:{section_key or 'missing'}")
+        cleaned = _coerce_override_value(raw_key, raw_value)
+        if reject_unknown and raw_value is not None and cleaned is None:
+            raise ValueError(f'invalid_override_value:{raw_key}')
+        if cleaned is None or cleaned == '':
+            next_overrides.pop(raw_key, None)
+        else:
+            next_overrides[raw_key] = cleaned
+    return next_overrides
+
+
 def _find_scorecard_carrier(user_id, thread_id, scorecard_id):
     """Return (kind, container, key, carrier) so the caller can read/write
     display_overrides on the right storage cell.
@@ -9981,6 +10017,66 @@ def _find_scorecard_carrier(user_id, thread_id, scorecard_id):
                     return ('chat_artifact', sessions, _key or thread_id, {'result': data})
 
     return (None, None, None, None)
+
+
+def update_scorecard_display_overrides(user_id, thread_id, scorecard_id, patch, *, reject_unknown=False):
+    """Apply and persist presentation overrides for an editable scorecard.
+
+    Both the HTTP route and the agent tool call this helper so carrier lookup,
+    validation, merge semantics, and persistence cannot drift apart.
+    """
+    kind, container, key, carrier = _find_scorecard_carrier(user_id, thread_id, scorecard_id)
+    if not kind or not isinstance(carrier, dict):
+        raise LookupError('scorecard_not_editable')
+
+    result_blob = carrier.get('result') if isinstance(carrier.get('result'), dict) else None
+    if not isinstance(result_blob, dict):
+        raise LookupError('scorecard_payload_missing')
+
+    current = result_blob.get('display_overrides') if isinstance(result_blob.get('display_overrides'), dict) else {}
+    next_overrides = _merge_display_overrides(current, patch, reject_unknown=reject_unknown)
+    updated_at = datetime.utcnow().isoformat()
+    result_blob['display_overrides'] = next_overrides
+    result_blob['display_overrides_updated_at'] = updated_at
+
+    if kind == 'peer':
+        upsert_scorecard(
+            user_id=user_id,
+            thread_id=thread_id,
+            payload=result_blob,
+            organization_id=getattr(carrier.get('row'), 'organization_id', None),
+            session_id=getattr(carrier.get('row'), 'session_id', None),
+            source='peer_override',
+        )
+        db.session.commit()
+    elif kind == 'baseline':
+        container[key]['result'] = result_blob
+        container[key]['timestamp'] = updated_at
+        save_user_sessions(user_id, container)
+    elif kind == 'tradeoff':
+        container[key]['tradeoff_view'] = carrier
+        container[key]['timestamp'] = updated_at
+        save_user_sessions(user_id, container)
+    elif kind == 'chat_artifact':
+        # The carrier result is the live artifact data object. Re-save the
+        # owning session so the mutation survives refresh.
+        session_entry = container.get(key) if isinstance(container, dict) else None
+        if isinstance(session_entry, dict):
+            session_entry['timestamp'] = updated_at
+            container[key] = session_entry
+            save_user_sessions(user_id, container)
+    else:
+        carrier['result'] = result_blob
+        carrier['updated_at'] = updated_at
+        _save_scenarios(user_id, container)
+
+    return {
+        'display_overrides': next_overrides,
+        'updated_scorecard': result_blob,
+        'scorecard_id': str(scorecard_id),
+        'thread_id': str(thread_id),
+        'kind': kind,
+    }
 
 
 def apply_scorecard_edit_in_place(user_id, thread_id, scorecard_id, mutate_fn):
@@ -10126,91 +10222,16 @@ def scorecard_display_overrides(thread_id, scorecard_id):
         if not isinstance(patch, dict):
             return jsonify({'error': 'Body must be a JSON object'}), 400
 
-        next_overrides = dict(current)
-        for raw_key, raw_value in patch.items():
-            if raw_key not in _ALLOWED_OVERRIDE_KEYS:
-                # ignore unknown keys rather than 400'ing — keeps the API forward-compatible
-                continue
-            try:
-                cleaned = _coerce_override_value(raw_key, raw_value)
-            except ValueError as error:
-                return jsonify({'error': 'These report edits are not supported.', 'code': str(error)}), 400
-            if cleaned is None or cleaned == '':
-                next_overrides.pop(raw_key, None)
-            else:
-                next_overrides[raw_key] = cleaned
-
-        result_blob['display_overrides'] = next_overrides
-        result_blob['display_overrides_updated_at'] = datetime.utcnow().isoformat()
-
-        if kind == 'peer':
-            upsert_scorecard(
-                user_id=user_id,
-                thread_id=thread_id,
-                payload=result_blob,
-                organization_id=getattr(carrier.get('row'), 'organization_id', None),
-                session_id=getattr(carrier.get('row'), 'session_id', None),
-                source='peer_override',
+        try:
+            result = update_scorecard_display_overrides(
+                user_id, thread_id, scorecard_id, patch, reject_unknown=False
             )
-            db.session.commit()
-        elif kind == 'baseline':
-            # container is the sessions dict, key is the session_key
-            container[key]['result'] = result_blob
-            container[key]['timestamp'] = datetime.utcnow().isoformat()
-            save_user_sessions(user_id, container)
-        elif kind == 'tradeoff':
-            # result_blob is the dict inside carrier and was mutated above.
-            container[key]['tradeoff_view'] = carrier
-            container[key]['timestamp'] = datetime.utcnow().isoformat()
-            save_user_sessions(user_id, container)
-        elif kind == 'chat_artifact':
-            # Persist overrides back into the matching assistant artifact entry
-            # in chat_history so workspace edits survive refresh even when this
-            # scorecard has not been promoted to scenario storage yet.
-            session_entry = container.get(key) if isinstance(container, dict) else None
-            if isinstance(session_entry, dict):
-                chat_history = session_entry.get('chat_history')
-                if isinstance(chat_history, list):
-                    target_id = str(scorecard_id or '').strip()
-                    for msg in chat_history:
-                        if not isinstance(msg, dict):
-                            continue
-                        artifact = msg.get('artifact') if isinstance(msg.get('artifact'), dict) else None
-                        if not isinstance(artifact, dict) or str(artifact.get('type') or '').strip() != 'scorecard':
-                            continue
-                        data = artifact.get('data') if isinstance(artifact.get('data'), dict) else None
-                        if not isinstance(data, dict):
-                            continue
-                        ids = {
-                            str(data.get('id') or '').strip(),
-                            str(data.get('analysis_id') or '').strip(),
-                            str(data.get('analysisId') or '').strip(),
-                        }
-                        if target_id and target_id in ids:
-                            data['display_overrides'] = next_overrides
-                            data['display_overrides_updated_at'] = result_blob['display_overrides_updated_at']
-                            artifact['data'] = data
-                            msg['artifact'] = artifact
-                            break
-                    session_entry['chat_history'] = chat_history
-                    result_blob_session = session_entry.get('result')
-                    if isinstance(result_blob_session, dict):
-                        result_blob_session['chat_history'] = chat_history
-                    session_entry['timestamp'] = datetime.utcnow().isoformat()
-                    container[key] = session_entry
-                    save_user_sessions(user_id, container)
-        else:
-            # container is the scenarios all_data dict
-            carrier['result'] = result_blob
-            carrier['updated_at'] = datetime.utcnow().isoformat()
-            _save_scenarios(user_id, container)
+        except ValueError as error:
+            return jsonify({'error': 'These report edits are not supported.', 'code': str(error)}), 400
 
         return jsonify({
             'success': True,
-            'display_overrides': next_overrides,
-            'scorecard_id': scorecard_id,
-            'thread_id': thread_id,
-            'kind': kind,
+            **{key: value for key, value in result.items() if key != 'updated_scorecard'},
         }), 200
 
     except Exception as e:
