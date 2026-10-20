@@ -400,6 +400,25 @@ class JiraProvider(ProjectToolProvider):
     def ensure_recovery_identity(self, config, binding, external_id, jaspen_id):
         return ensure_recovery_identity(config, binding, external_id, jaspen_id)
 
+    def find_missing_items(self, config, binding, external_ids):
+        requested = {str(external_id).strip() for external_id in external_ids if str(external_id).strip()}
+        missing = set()
+        ordered = sorted(requested)
+        for offset in range(0, len(ordered), 50):
+            chunk = ordered[offset:offset + 50]
+            quoted = ", ".join(f'"{key.replace(chr(34), chr(92) + chr(34))}"' for key in chunk)
+            data, _ = request(config, "POST", "/rest/api/3/search/jql", {
+                "jql": f"key in ({quoted})",
+                "fields": ["key"],
+                "maxResults": len(chunk),
+            }, timeout=30)
+            returned = {
+                str(issue.get("key") or "").strip().upper()
+                for issue in ((data or {}).get("issues") or []) if isinstance(issue, dict)
+            }
+            missing.update(key for key in chunk if key.upper() not in returned)
+        return missing
+
     def create_items(self, config, binding, items):
         payload = {"issueUpdates": [
             {"fields": phase_fields(row["title"], binding, entity_id=row.get("jaspen_id"))} if row.get("entity_type") == "phase"

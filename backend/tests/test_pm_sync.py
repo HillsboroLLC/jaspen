@@ -370,8 +370,9 @@ def test_jira_assignee_changelog_carries_actor_and_current_person(test_user):
 
 
 class _Provider:
-    def __init__(self, remote):
+    def __init__(self, remote, missing=None):
         self.remote = remote
+        self.missing = set(missing or [])
         self.updates = []
         self.recovery_identities = []
         self.get_calls = []
@@ -392,6 +393,9 @@ class _Provider:
 
     def ensure_recovery_identity(self, _config, _binding, external_id, jaspen_id):
         self.recovery_identities.append((external_id, jaspen_id))
+
+    def find_missing_items(self, _config, _binding, external_ids):
+        return set(external_ids) & self.missing
 
 
 def _linked_binding(test_user, base, mode="two_way", policy="latest_wins"):
@@ -500,6 +504,8 @@ def test_jira_create_keeps_unowned_task_unassigned_and_absorbs_remote_default(te
     def request(_config, method, path, payload=None, timeout=30):
         calls.append((method, path, payload))
         if path == "/rest/api/3/search/jql":
+            if str((payload or {}).get("jql") or "").startswith("key in"):
+                return {"issues": [{"key": "JST-1"}]}, {}
             return {"issues": []}, {}
         if path == "/rest/api/3/issue/bulk":
             return {"issues": [{"key": "JST-1"}], "errors": []}, {}
@@ -549,6 +555,8 @@ def test_nine_unassigned_tasks_ignore_jira_creation_default_on_repeated_syncs(te
 
     def request(_config, method, path, payload=None, timeout=30):
         if path == "/rest/api/3/search/jql":
+            if str((payload or {}).get("jql") or "").startswith("key in"):
+                return {"issues": [{"key": f"JPT-{index}"} for index in range(1, 10)]}, {}
             return {"issues": []}, {}
         if path == "/rest/api/3/issue/bulk":
             return {"issues": [{"key": f"JPT-{index}"} for index in range(1, 10)], "errors": []}, {}
@@ -887,13 +895,9 @@ def test_missing_jira_issue_is_classified_and_live_links_keep_syncing(test_user)
                            external_id="JST-2", base_snapshot=base, state="active")
     app_db.session.add(live_link); app_db.session.commit()
     plan = {"tasks": [{**base, "id": "task-a"}, {**base, "id": "task-b"}]}
-    provider = _Provider({"deleted": False, "values": base, "changed_at": {}, "version": None})
-
-    def ensure_identity(_config, _binding, external_id, _jaspen_id):
-        if external_id == "JST-1":
-            raise RuntimeError("HTTP 404: {'errorMessages': ['Issue does not exist']}")
-
-    provider.ensure_recovery_identity = ensure_identity
+    provider = _Provider({"deleted": False, "values": {**base, "status": "done"},
+        "changed_at": {"status": "2026-10-20T12:00:00Z"}, "version": "2026-10-20T12:00:00Z"},
+        missing={"JST-1"})
     with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
         "app.pm_sync.reconciliation.get_provider", return_value=provider), patch(
         "app.pm_sync.reconciliation._sync_phases", return_value={}), patch(
@@ -902,11 +906,49 @@ def test_missing_jira_issue_is_classified_and_live_links_keep_syncing(test_user)
 
     assert result["errors"] == []
     assert result["deleted"] == 1
+    assert result["pulled"] == 1
     assert provider.get_calls == ["JST-2"]
+    assert plan["tasks"][1]["status"] == "done"
     assert missing_link.state == "missing_external"
     assert live_link.state == "active"
     assert binding.status == "links_missing"
     assert binding.config["missing_issue_count"] == 1
+
+
+def test_batch_pull_counts_all_sixteen_missing_task_issue_keys(test_user):
+    from app.pm_sync.jira_adapter import JiraProvider
+
+    binding = _binding(test_user)
+    binding.mode = "two_way"
+    base = {"title": "Task", "description": None, "owner": None, "owner_email": None,
+            "status": "todo", "start_date": None, "due_date": None}
+    tasks = [{**base, "id": f"task-{index}"} for index in range(16)]
+    links = [
+        PmSyncLink(binding_id=binding.id, entity_type="task", jaspen_id=f"task-{index}",
+                   external_id=f"JST-{index + 1}", base_snapshot=base, state="active")
+        for index in range(16)
+    ]
+    dependency = PmSyncLink(binding_id=binding.id, entity_type="dependency", jaspen_id="task-0->task-1",
+                            external_id="jira-link-1", base_snapshot={}, state="missing_external")
+    app_db.session.add_all([*links, dependency]); app_db.session.commit()
+    plan = {"tasks": tasks}
+
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=JiraProvider()), patch(
+        "app.pm_sync.reconciliation._sync_phases", return_value={}), patch(
+        "app.pm_sync.reconciliation._save_plan"), patch(
+        "app.pm_sync.jira_adapter.assert_connected", return_value={"base_url": "https://example.atlassian.net"}), patch(
+        "app.pm_sync.jira_adapter.request", return_value=({"issues": []}, {})) as request:
+        result = reconcile_binding(binding)
+
+    assert result["errors"] == []
+    assert result["deleted"] == 16
+    assert binding.status == "links_missing"
+    assert binding.config["missing_issue_count"] == 16
+    assert PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task", state="missing_external").count() == 16
+    assert PmSyncLink.query.filter_by(binding_id=binding.id, state="missing_external").count() == 17
+    assert request.call_count == 1
+    assert request.call_args.args[2] == "/rest/api/3/search/jql"
 
 
 def test_recreate_clears_only_dead_links_and_creates_replacements(test_user):

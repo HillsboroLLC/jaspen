@@ -123,6 +123,17 @@ def reconcile_binding(binding, trigger="sync_now"):
           if link.entity_type == "phase" and link.state == "active" and link.external_id),
     }
     links = [link for link in all_links if link.entity_type == "task"]
+    missing_external_ids = set()
+    find_missing = getattr(provider, "find_missing_items", None)
+    if callable(find_missing):
+        try:
+            missing_external_ids = set(find_missing(
+                config, binding, {link.external_id for link in links if link.external_id}
+            ))
+        except Exception:
+            # Preserve the established per-issue path if Jira search itself is
+            # unavailable; its requests still classify missing and auth errors.
+            missing_external_ids = set()
     result = {"created": 0, "pulled": 0, "pushed": 0, "deleted": 0, "failed": 0,
               "conflicts": [], "unknown_statuses": [], "errors": []}
     result["created"] += phase_result["created"]
@@ -132,7 +143,17 @@ def reconcile_binding(binding, trigger="sync_now"):
     changed = False
     for link in links:
         task = tasks.get(link.jaspen_id)
-        if not task or not link.external_id:
+        if not link.external_id:
+            continue
+        if link.external_id in missing_external_ids:
+            link.state = "missing_external"; link.last_error = None
+            link.last_synced_at = datetime.utcnow(); result["deleted"] += 1
+            if task:
+                task["pm_sync_state"] = {"state": "removed_in_jira", "external_id": link.external_id,
+                    "detected_at": datetime.utcnow().isoformat()}
+                changed = True
+            continue
+        if not task:
             continue
         try:
             provider.ensure_recovery_identity(config, binding, link.external_id, link.jaspen_id)
@@ -313,7 +334,7 @@ def reconcile_binding(binding, trigger="sync_now"):
         result["errors"].extend(pushed.get("errors") or [])
     missing_count = PmSyncLink.query.filter_by(
         binding_id=binding.id, entity_type="task", state="missing_external"
-    ).count()
+    ).filter(PmSyncLink.external_id.isnot(None)).with_entities(PmSyncLink.external_id).distinct().count()
     config = dict(binding.config or {})
     if missing_count:
         config["missing_issue_count"] = missing_count

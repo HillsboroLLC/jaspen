@@ -29,7 +29,7 @@ export function syncWarningMessage(binding) {
   const code = binding?.sync_warning_code || binding?.pause_reason;
   const missing = Number(binding?.config?.missing_issue_count || 0);
   if (code === 'links_missing' || binding?.status === 'links_missing') {
-    return `${missing} linked Jira issue${missing === 1 ? '' : 's'} no longer exist in ${binding?.external_container_id}.`;
+    return `${missing} linked Jira issue${missing === 1 ? '' : 's'} no longer ${missing === 1 ? 'exists' : 'exist'} in ${binding?.external_container_id}.`;
   }
   if (code === 'authorization_expired' || binding?.status === 'reconnect_required') {
     return `Jira needs to be reconnected by ${owner} before this plan can sync.`;
@@ -148,8 +148,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     setBinding((current) => ({ ...(current || {}), ...(data?.result?.binding || data?.binding || {}) }));
     setLogs(data?.logs || []);
     const pulled = Number(data?.result?.pulled || 0);
-    const deleted = Number(data?.result?.deleted || 0);
-    const changed = pulled + deleted;
+    const changed = pulled;
     if (changed > 0) {
       try {
         await onPlanUpdated?.({ result: data?.result || {}, data });

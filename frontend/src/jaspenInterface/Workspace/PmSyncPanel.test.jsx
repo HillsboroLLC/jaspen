@@ -321,6 +321,49 @@ it('explains missing Jira issues and offers recreate or unlink without retry adv
   await waitFor(() => expect(Jaspen.recreateMissingPmLinks).toHaveBeenCalledWith('bind-missing'));
 });
 
+it('uses singular grammar for one missing Jira issue', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
+    id:'bind-missing', status:'links_missing', mode:'two_way', external_container_id:'JST',
+    config:{ missing_issue_count:1 }, sync_warning_code:'links_missing',
+  }] });
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('1 linked Jira issue no longer exists in JST.');
+});
+
+it('does not report missing issues as updates from Jira', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
+    id:'bind-1', status:'active', mode:'two_way', external_container_id:'JST', config:{},
+  }] });
+  Jaspen.syncPmBinding.mockResolvedValue({
+    result:{
+      binding:{ id:'bind-1', status:'links_missing', mode:'two_way', external_container_id:'JST',
+        config:{ missing_issue_count:16 }, sync_warning_code:'links_missing' },
+      pulled:0, deleted:16,
+    },
+    logs:[{ id:'log-1', status:'success', items_synced:0, created_at:'2026-10-20T12:00:00Z', sync_metadata:{} }],
+  });
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={16} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('16 linked Jira issues no longer exist in JST.');
+  expect(screen.queryByText(/Updated from Jira:/)).not.toBeInTheDocument();
+  expect(screen.getByText(/Last sync: success · 0 changes/)).toBeInTheDocument();
+});
+
+it('reports only live Jira updates when missing and live issues are mixed', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
+    id:'bind-1', status:'active', mode:'two_way', external_container_id:'JST', config:{},
+  }] });
+  Jaspen.syncPmBinding.mockResolvedValue({
+    result:{
+      binding:{ id:'bind-1', status:'links_missing', mode:'two_way', external_container_id:'JST',
+        config:{ missing_issue_count:15 }, sync_warning_code:'links_missing' },
+      pulled:1, deleted:15,
+    }, logs:[],
+  });
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={16} onPlanUpdated={jest.fn()} />);
+  expect(await screen.findByRole('status')).toHaveTextContent('Updated from Jira: 1 change');
+  expect(screen.queryByText('Updated from Jira: 16 changes')).not.toBeInTheDocument();
+});
+
 it('unlinks a missing-issue binding while keeping sync history visible', async () => {
   Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
     id:'bind-missing', status:'links_missing', mode:'two_way', external_container_id:'JST',
