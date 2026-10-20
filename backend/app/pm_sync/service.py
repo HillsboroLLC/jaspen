@@ -562,7 +562,7 @@ def push_binding(binding, plan=None, trigger="send", only_task_ids=None):
     binding.last_push_at = _now()
     missing_count = PmSyncLink.query.filter_by(
         binding_id=binding.id, entity_type="task", state="missing_external"
-    ).count()
+    ).filter(PmSyncLink.external_id.isnot(None)).with_entities(PmSyncLink.external_id).distinct().count()
     binding_config = dict(binding.config or {})
     if missing_count:
         binding_config["missing_issue_count"] = missing_count
