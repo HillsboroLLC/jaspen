@@ -44,7 +44,27 @@ export function syncWarningMessage(binding) {
 
 export function lastSyncSummary(logs) {
   const rows = Array.isArray(logs) ? logs : [];
-  return rows.find((log) => Number(log?.items_synced || 0) > 0) || rows[0] || null;
+  const latest = rows[0];
+  if (!latest) return null;
+  const latestAt = new Date(latest.created_at).getTime();
+  const actionLogs = rows.filter((log, index) => {
+    if (index === 0) return true;
+    const createdAt = new Date(log?.created_at).getTime();
+    return Number.isFinite(latestAt) && Number.isFinite(createdAt)
+      && latestAt >= createdAt && latestAt - createdAt <= 60_000;
+  });
+  const statusRank = { success: 0, partial: 1, failed: 2 };
+  const status = actionLogs.reduce((worst, log) => {
+    const candidate = String(log?.status || '').toLowerCase();
+    return (statusRank[candidate] ?? -1) > (statusRank[worst] ?? -1) ? candidate : worst;
+  }, String(latest.status || 'success').toLowerCase());
+  const conflicts = actionLogs.flatMap((log) => log?.sync_metadata?.conflicts || []);
+  return {
+    ...latest,
+    status,
+    items_synced: actionLogs.reduce((total, log) => total + (Number(log?.items_synced) || 0), 0),
+    sync_metadata: { ...(latest.sync_metadata || {}), conflicts },
+  };
 }
 
 function connectionDraft(info = {}) {
@@ -324,7 +344,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     {binding.external_container_url && <a href={binding.external_container_url} target="_blank" rel="noreferrer" style={{ ...buttonStyle, textDecoration: 'none' }}>View in Jira</a>}
     {error && <span role="alert" style={{ color: '#b91c1c', fontSize: 11.5 }}>{error}</span>}
     {syncNotice && <span role="status" style={{ color: COLOR.greenInk, fontSize: 11.5 }}>{syncNotice}</span>}
-    {summaryLog && <span style={{ color: COLOR.mute, fontSize: 11.5 }}>Last sync: {summaryLog.status} · {summaryLog.items_synced || 0} changes{(summaryLog.sync_metadata?.conflicts || []).length ? ` · ${summaryLog.sync_metadata.conflicts.length} need review` : ''}</span>}
+    {summaryLog && <span style={{ color: COLOR.mute, fontSize: 11.5 }}>Last sync: {summaryLog.status} · {summaryLog.items_synced || 0} {summaryLog.items_synced === 1 ? 'change' : 'changes'}{(summaryLog.sync_metadata?.conflicts || []).length ? ` · ${summaryLog.sync_metadata.conflicts.length} need review` : ''}</span>}
     {logs.length > 0 && <details style={{ fontSize:11.5, color:COLOR.ink }}><summary style={{ cursor:'pointer' }}>Sync history</summary><div style={{ position:'absolute', zIndex:20, background:'#fff', border:`1px solid ${COLOR.line}`, borderRadius:8, padding:10, width:330, boxShadow:'0 10px 30px rgba(22,31,59,.12)' }}>{logs.slice(0, 5).map((log) => <div key={log.id} style={{ padding:'5px 0', borderBottom:`1px solid ${COLOR.line2}` }}><strong>{log.status}</strong> · {log.items_synced || 0} changes · {log.created_at ? new Date(log.created_at).toLocaleString() : 'just now'}{(log.sync_metadata?.notes || []).map((note, index) => <div key={`note-${index}`} style={{ color:COLOR.mute }}>{note}</div>)}{(log.sync_metadata?.conflicts || []).map((conflict) => <div key={`${conflict.task_id}-${conflict.field}`} style={{ color:'#9f1239' }}>{conflict.task_id}: choose the {conflict.field} value</div>)}{(log.sync_metadata?.errors || []).map((item, index) => <div key={index} style={{ color:'#9f1239' }}>{item.error}</div>)}</div>)}</div></details>}
   </div>;
 

@@ -226,29 +226,49 @@ it('shows the Jira default-assignee note once in sync history', async () => {
   expect(screen.getByText('Jira assigns new issues to Lydia Bailey by default; Jaspen kept its own owners')).toBeInTheDocument();
 });
 
-it('shows the most recent sync pass that changed something in the Last sync summary', async () => {
-  Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
-    id: 'bind-1', status: 'paused', mode: 'two_way',
-  }] });
-  Jaspen.syncPmBinding.mockResolvedValueOnce({
-    result: { binding: { id: 'bind-1', status: 'active', mode: 'two_way' }, pulled: 1, deleted: 0 },
-    logs: [
-      { id: 'log-1', status: 'success', items_synced: 1, created_at: '2026-10-20T17:13:39Z', sync_metadata: {} },
-    ],
-  }).mockResolvedValueOnce({
-    result: { binding: { id: 'bind-1', status: 'active', mode: 'two_way' }, pulled: 0, deleted: 0 },
-    logs: [
+describe('Last sync summary', () => {
+  const renderWithLogs = (logs) => {
+    Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
+      id: 'bind-1', status: 'paused', mode: 'two_way',
+    }] });
+    Jaspen.getPmSyncBinding.mockResolvedValue({ logs });
+    render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  };
+
+  it('adds passes from the latest sync action and uses the singular label', async () => {
+    renderWithLogs([
       { id: 'log-2', status: 'success', items_synced: 0, created_at: '2026-10-20T17:13:51Z', sync_metadata: {} },
       { id: 'log-1', status: 'success', items_synced: 1, created_at: '2026-10-20T17:13:39Z', sync_metadata: {} },
-    ],
+    ]);
+
+    expect(await screen.findByText('Last sync: success · 1 change')).toBeInTheDocument();
   });
 
-  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  it('shows the worst status from the latest sync action', async () => {
+    renderWithLogs([
+      { id: 'log-2', status: 'failed', items_synced: 0, created_at: '2026-10-20T17:13:51Z', sync_metadata: {} },
+      { id: 'log-1', status: 'success', items_synced: 1, created_at: '2026-10-20T17:13:39Z', sync_metadata: {} },
+    ]);
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Sync now' }));
-  expect(await screen.findByText('Last sync: success · 1 changes')).toBeInTheDocument();
-  await waitFor(() => expect(Jaspen.syncPmBinding).toHaveBeenCalledTimes(2));
-  expect(screen.queryByText('Last sync: success · 0 changes')).not.toBeInTheDocument();
+    expect(await screen.findByText('Last sync: failed · 1 change')).toBeInTheDocument();
+  });
+
+  it('never pulls changes from an older sync action', async () => {
+    renderWithLogs([
+      { id: 'log-2', status: 'success', items_synced: 0, created_at: '2026-10-20T17:13:51Z', sync_metadata: {} },
+      { id: 'log-1', status: 'success', items_synced: 4, created_at: '2026-10-20T17:12:50Z', sync_metadata: {} },
+    ]);
+
+    expect(await screen.findByText('Last sync: success · 0 changes')).toBeInTheDocument();
+  });
+
+  it('uses the plural label for multiple changes', async () => {
+    renderWithLogs([
+      { id: 'log-1', status: 'success', items_synced: 2, created_at: '2026-10-20T17:13:51Z', sync_metadata: {} },
+    ]);
+
+    expect(await screen.findByText('Last sync: success · 2 changes')).toBeInTheDocument();
+  });
 });
 
 it('shows the personal sync owner directly under sync status', async () => {
