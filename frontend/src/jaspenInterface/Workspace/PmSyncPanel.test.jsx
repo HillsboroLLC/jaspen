@@ -6,6 +6,7 @@ import { Jaspen } from './JaspenClient';
 jest.mock('./JaspenClient', () => ({ Jaspen: {
   listPmSyncBindings: jest.fn(), listJiraProjects: jest.fn(), previewPmSync: jest.fn(),
   createPmSyncBinding: jest.fn(), syncPmBinding: jest.fn(), updatePmSyncBinding: jest.fn(),
+  recreateMissingPmLinks: jest.fn(), unlinkPmBinding: jest.fn(),
   getPmSyncBinding: jest.fn(), testJiraConnection: jest.fn(), connectJira: jest.fn(), createJiraProject: jest.fn(),
 } }));
 
@@ -301,4 +302,40 @@ it('shows the approved authorization and departed-owner warnings', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent(
     'Sync is paused because the person who connected Jira no longer has access.'
   );
+});
+
+it('explains missing Jira issues and offers recreate or unlink without retry advice', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
+    id:'bind-missing', status:'links_missing', mode:'two_way', external_container_id:'JST',
+    config:{ missing_issue_count:2 }, sync_warning_code:'links_missing',
+  }] });
+  Jaspen.recreateMissingPmLinks.mockResolvedValue({
+    binding:{ id:'bind-missing', status:'active', mode:'two_way', external_container_id:'JST', config:{} },
+    result:{ binding:{ id:'bind-missing', status:'active', mode:'two_way', external_container_id:'JST', config:{} }, errors:[] }, logs:[],
+  });
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('2 linked Jira issues no longer exist in JST.');
+  expect(screen.queryByText(/retry or reconnect/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name:'Sync now' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name:'Recreate in JST' }));
+  await waitFor(() => expect(Jaspen.recreateMissingPmLinks).toHaveBeenCalledWith('bind-missing'));
+});
+
+it('unlinks a missing-issue binding while keeping sync history visible', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValue({ bindings: [{
+    id:'bind-missing', status:'links_missing', mode:'two_way', external_container_id:'JST',
+    config:{ missing_issue_count:1 }, sync_warning_code:'links_missing',
+  }] });
+  Jaspen.getPmSyncBinding.mockResolvedValue({ logs:[{
+    id:'log-1', status:'success', items_synced:3, created_at:'2026-10-20T12:00:00Z', sync_metadata:{},
+  }] });
+  Jaspen.unlinkPmBinding.mockResolvedValue({
+    binding:{ id:'bind-missing', status:'disconnected', mode:'two_way', external_container_id:'JST', config:{} },
+    logs:[{ id:'log-1', status:'success', items_synced:3, created_at:'2026-10-20T12:00:00Z', sync_metadata:{} }],
+  });
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  fireEvent.click(await screen.findByRole('button', { name:'Unlink this plan' }));
+  await waitFor(() => expect(Jaspen.unlinkPmBinding).toHaveBeenCalledWith('bind-missing'));
+  expect(screen.getByText('Sync history')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name:'Sync now' })).not.toBeInTheDocument();
 });

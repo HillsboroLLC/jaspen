@@ -7,7 +7,10 @@ from app.models import User
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync.jira_adapter import create_project, list_projects, test_connection
 from app.pm_sync.reconciliation import list_logs, reconcile_binding
-from app.pm_sync.service import MODES, POLICIES, STATUSES, create_binding, get_plan, preview, push_binding
+from app.pm_sync.service import (
+    MODES, POLICIES, STATUSES, create_binding, get_plan, preview, push_binding,
+    recreate_missing_links, unlink_binding,
+)
 
 pm_sync_bp = Blueprint("pm_sync", __name__)
 
@@ -269,3 +272,37 @@ def sync_binding(binding_id):
         if _jira_auth_failure(exc):
             return _reconnect_response(user, binding)
         return _error(exc, 502)
+
+
+@pm_sync_bp.route("/bindings/<binding_id>/recreate-missing", methods=["POST"])
+@jwt_required()
+def recreate_missing_binding_issues(binding_id):
+    user = _user()
+    binding = _owned(binding_id, user.id) if user else None
+    if not binding:
+        return _error("Binding not found", 404)
+    try:
+        result = recreate_missing_links(binding)
+        if _result_has_auth_failure(result):
+            return _reconnect_response(user, binding)
+        return jsonify({"binding": binding.to_dict(), "result": result, "logs": list_logs(binding)})
+    except Exception as exc:
+        db.session.rollback()
+        if _jira_auth_failure(exc):
+            return _reconnect_response(user, binding)
+        return _error(exc, 502)
+
+
+@pm_sync_bp.route("/bindings/<binding_id>/unlink", methods=["POST"])
+@jwt_required()
+def unlink_plan_binding(binding_id):
+    user = _user()
+    binding = _owned(binding_id, user.id) if user else None
+    if not binding:
+        return _error("Binding not found", 404)
+    try:
+        unlink_binding(binding)
+        return jsonify({"binding": binding.to_dict(), "logs": list_logs(binding)})
+    except Exception as exc:
+        db.session.rollback()
+        return _error(exc)

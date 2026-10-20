@@ -10,7 +10,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 MODES = {"two_way", "push_only"}
 POLICIES = {"latest_wins", "prefer_external", "prefer_jaspen", "manual_review"}
-STATUSES = {"active", "paused", "error", "partial", "disconnected", "reconnect_required"}
+STATUSES = {"active", "paused", "error", "partial", "disconnected", "reconnect_required", "links_missing"}
 GENERIC_PHASE_NAMES = {"", "unphased", "execution", "execution plan", "generated plan", "plan"}
 
 
@@ -380,7 +380,7 @@ def ensure_task_parent(
     return True, expected
 
 
-def push_binding(binding, plan=None, trigger="send"):
+def push_binding(binding, plan=None, trigger="send", only_task_ids=None):
     from app.pm_sync.access import enforce_binding_owner
 
     enforce_binding_owner(binding)
@@ -390,17 +390,31 @@ def push_binding(binding, plan=None, trigger="send"):
         plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key)
     config = jira_adapter.assert_connected(binding.user_id, binding.external_container_id)
     ensure_start_date_field(binding, config)
-    tasks = [task for task in (plan.get("tasks") or []) if isinstance(task, dict) and str(task.get("id") or "").strip()]
+    all_tasks = [task for task in (plan.get("tasks") or []) if isinstance(task, dict) and str(task.get("id") or "").strip()]
+    task_filter = {str(task_id) for task_id in (only_task_ids or [])}
+    tasks = [task for task in all_tasks if not task_filter or str(task.get("id")) in task_filter]
     existing = {
         (link.entity_type, link.jaspen_id): link
         for link in PmSyncLink.query.filter_by(binding_id=binding.id).all()
     }
-    result = {"created": 0, "updated": 0, "dependencies": 0, "failed": 0, "errors": []}
-    task_parents = _sync_phases(binding, plan, config, existing, result)
+    result = {"created": 0, "updated": 0, "dependencies": 0, "failed": 0, "missing": 0, "errors": []}
+    if task_filter:
+        task_parents = {}
+        if bool((binding.config or {}).get("group_under_epics", True)):
+            for group in phase_groups(plan):
+                phase_link = existing.get(("phase", group["key"]))
+                if not phase_link or phase_link.state != "active" or not phase_link.external_id:
+                    continue
+                for task in group["tasks"]:
+                    task_id = str(task.get("id") or "")
+                    if task_id in task_filter:
+                        task_parents[task_id] = phase_link.external_id
+    else:
+        task_parents = _sync_phases(binding, plan, config, existing, result)
     linked_parent_ids = {
         *task_parents.values(),
         *(link.external_id for (entity_type, _), link in existing.items()
-          if entity_type == "phase" and link.external_id),
+          if entity_type == "phase" and link.state == "active" and link.external_id),
     }
 
     pending = []
@@ -440,6 +454,13 @@ def push_binding(binding, plan=None, trigger="send"):
                 result["updated"] += 1
             except Exception as exc:
                 db.session.rollback()
+                if link and jira_adapter.is_missing_issue_error(exc):
+                    link.state = "missing_external"
+                    link.last_error = None
+                    link.last_synced_at = _now()
+                    result["missing"] += 1
+                    db.session.commit()
+                    continue
                 result["failed"] += 1
                 result["errors"].append({"entity_type": "task", "jaspen_id": task_id, "error": str(exc)})
         else:
@@ -513,9 +534,12 @@ def push_binding(binding, plan=None, trigger="send"):
         link.jaspen_id: link.external_id for link in PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task", state="active").all()
         if link.external_id
     }
-    for task in tasks:
+    dependency_tasks = all_tasks if task_filter else tasks
+    for task in dependency_tasks:
         dependent_id = str(task["id"])
         for prerequisite_id in (task.get("depends_on") or []):
+            if task_filter and dependent_id not in task_filter and str(prerequisite_id) not in task_filter:
+                continue
             dep_id = f"{prerequisite_id}->{dependent_id}"
             if ("dependency", dep_id) in existing:
                 continue
@@ -536,10 +560,27 @@ def push_binding(binding, plan=None, trigger="send"):
                 result["errors"].append({"entity_type": "dependency", "jaspen_id": dep_id, "error": str(exc)})
 
     binding.last_push_at = _now()
+    missing_count = PmSyncLink.query.filter_by(
+        binding_id=binding.id, entity_type="task", state="missing_external"
+    ).count()
+    binding_config = dict(binding.config or {})
+    if missing_count:
+        binding_config["missing_issue_count"] = missing_count
+        binding_config["sync_warning_code"] = "links_missing"
+    else:
+        binding_config.pop("missing_issue_count", None)
+        if binding_config.get("sync_warning_code") == "links_missing":
+            binding_config.pop("sync_warning_code", None)
+    binding.config = binding_config
+    flag_modified(binding, "config")
     if result["errors"]:
         binding.status = "partial" if result["created"] or result["updated"] else "error"
         binding.failure_count = int(binding.failure_count or 0) + 1
         binding.next_retry_at = _now() + timedelta(minutes=min(60, 2 ** min(binding.failure_count, 5)))
+    elif missing_count:
+        binding.status = "links_missing"
+        binding.failure_count = 0
+        binding.next_retry_at = None
     else:
         binding.status = "active"
         binding.last_success_at = _now()
@@ -550,3 +591,47 @@ def push_binding(binding, plan=None, trigger="send"):
     result["success"] = not result["errors"]
     result["binding"] = binding.to_dict()
     return result
+
+
+def recreate_missing_links(binding):
+    """Drop only dead Jira mappings, then create replacements with this binding's settings."""
+    from app.pm_sync.access import enforce_binding_owner
+
+    enforce_binding_owner(binding)
+    missing = PmSyncLink.query.filter_by(binding_id=binding.id, state="missing_external").all()
+    if not missing:
+        raise ValueError("This plan has no missing Jira issues to recreate.")
+    missing_task_ids = {link.jaspen_id for link in missing if link.entity_type == "task"}
+    dependencies = PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="dependency").all()
+    for link in dependencies:
+        ends = set(str(link.jaspen_id or "").split("->", 1))
+        if ends & missing_task_ids:
+            db.session.delete(link)
+    for link in missing:
+        db.session.delete(link)
+    config = dict(binding.config or {})
+    config.pop("missing_issue_count", None)
+    if config.get("sync_warning_code") == "links_missing":
+        config.pop("sync_warning_code", None)
+    binding.config = config
+    binding.status = "active"
+    flag_modified(binding, "config")
+    db.session.commit()
+    return push_binding(binding, trigger="recreate_missing", only_task_ids=missing_task_ids)
+
+
+def unlink_binding(binding):
+    """Disable this plan binding while retaining its mappings and audit history."""
+    from app.pm_sync.access import enforce_binding_owner
+
+    enforce_binding_owner(binding)
+    config = dict(binding.config or {})
+    config.pop("missing_issue_count", None)
+    if config.get("sync_warning_code") == "links_missing":
+        config.pop("sync_warning_code", None)
+    binding.config = config
+    binding.status = "disconnected"
+    binding.next_retry_at = None
+    flag_modified(binding, "config")
+    db.session.commit()
+    return binding

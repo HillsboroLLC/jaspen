@@ -119,7 +119,8 @@ def reconcile_binding(binding, trigger="sync_now"):
     )
     linked_parent_ids = {
         *task_parents.values(),
-        *(link.external_id for link in all_links if link.entity_type == "phase" and link.external_id),
+        *(link.external_id for link in all_links
+          if link.entity_type == "phase" and link.state == "active" and link.external_id),
     }
     links = [link for link in all_links if link.entity_type == "task"]
     result = {"created": 0, "pulled": 0, "pushed": 0, "deleted": 0, "failed": 0,
@@ -142,7 +143,8 @@ def reconcile_binding(binding, trigger="sync_now"):
             if remote.get("deleted"):
                 task["pm_sync_state"] = {"state": "removed_in_jira", "external_id": link.external_id,
                     "detected_at": datetime.utcnow().isoformat()}
-                link.state = "removed_external"; result["deleted"] += 1; changed = True
+                link.state = "missing_external"; link.last_error = None
+                result["deleted"] += 1; changed = True
                 continue
             if remote.get("status_error"):
                 result["unknown_statuses"].append({"task_id": link.jaspen_id, "status": remote["status_error"]})
@@ -289,7 +291,15 @@ def reconcile_binding(binding, trigger="sync_now"):
                 link.jaspen_version = _iso(task.get("updated_at")); link.last_synced_at = datetime.utcnow()
                 link.state = "active"; link.last_error = None
         except Exception as exc:
-            db.session.rollback(); result["failed"] += 1
+            db.session.rollback()
+            if binding.connector_id == "jira_sync" and jira_adapter.is_missing_issue_error(exc):
+                link.state = "missing_external"; link.last_error = None
+                link.last_synced_at = datetime.utcnow()
+                task["pm_sync_state"] = {"state": "removed_in_jira", "external_id": link.external_id,
+                    "detected_at": datetime.utcnow().isoformat()}
+                result["deleted"] += 1; changed = True
+                continue
+            result["failed"] += 1
             result["errors"].append({"entity_type": "task", "jaspen_id": link.jaspen_id, "error": str(exc)})
     if changed:
         plan["tasks"] = list(tasks.values())
@@ -301,12 +311,23 @@ def reconcile_binding(binding, trigger="sync_now"):
         result["pushed"] += int(pushed.get("updated") or 0)
         result["failed"] += int(pushed.get("failed") or 0)
         result["errors"].extend(pushed.get("errors") or [])
+    missing_count = PmSyncLink.query.filter_by(
+        binding_id=binding.id, entity_type="task", state="missing_external"
+    ).count()
+    config = dict(binding.config or {})
+    if missing_count:
+        config["missing_issue_count"] = missing_count
+    else:
+        config.pop("missing_issue_count", None)
+    binding.config = config
     now = datetime.utcnow(); binding.last_pull_at = now; binding.last_push_at = now
-    binding.status = "partial" if result["conflicts"] else ("error" if result["errors"] else "active")
+    binding.status = "partial" if result["conflicts"] else ("error" if result["errors"] else ("links_missing" if missing_count else "active"))
     if result["errors"]:
         mark_binding(binding, status=binding.status, warning_code="sync_failed")
     elif result["conflicts"]:
         mark_binding(binding, status=binding.status, warning_code="sync_conflict")
+    elif missing_count:
+        mark_binding(binding, status="links_missing", warning_code="links_missing")
     else:
         mark_binding(binding, status="active")
     if not result["errors"] and not result["conflicts"]:

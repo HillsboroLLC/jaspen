@@ -27,6 +27,10 @@ export function syncOwnerLabel(binding) {
 export function syncWarningMessage(binding) {
   const owner = syncOwnerLabel(binding);
   const code = binding?.sync_warning_code || binding?.pause_reason;
+  const missing = Number(binding?.config?.missing_issue_count || 0);
+  if (code === 'links_missing' || binding?.status === 'links_missing') {
+    return `${missing} linked Jira issue${missing === 1 ? '' : 's'} no longer exist in ${binding?.external_container_id}.`;
+  }
   if (code === 'authorization_expired' || binding?.status === 'reconnect_required') {
     return `Jira needs to be reconnected by ${owner} before this plan can sync.`;
   }
@@ -170,7 +174,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
   };
   useEffect(() => { refresh(); }, [threadId, planKey]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!binding?.id || ['paused', 'reconnect_required'].includes(binding.status) || openedSync.current === binding.id) return;
+    if (!binding?.id || ['paused', 'reconnect_required', 'links_missing', 'disconnected'].includes(binding.status) || openedSync.current === binding.id) return;
     openedSync.current = binding.id;
     Jaspen.syncPmBinding(binding.id).then(applySyncResult)
       .catch((e) => {
@@ -310,7 +314,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     try {
       const data = await Jaspen.syncPmBinding(binding.id);
       await applySyncResult(data);
-      if (data?.result?.errors?.length) setError(`${data.result.failed} item(s) failed. Retry will continue from saved links.`);
+      if (data?.result?.errors?.length && data?.result?.binding?.status !== 'links_missing') setError(`${data.result.failed} item(s) failed. Retry will continue from saved links.`);
     } catch (e) {
       if (isReconnectError(e)) {
         setConnectionInfo(e?.data?.connection || null);
@@ -318,6 +322,26 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
       }
       setError(friendlyJiraError(e, 'Sync failed.'));
     }
+    finally { setBusy(false); }
+  };
+
+  const recreateMissing = async () => {
+    setBusy(true); setError(''); setSyncNotice('');
+    try {
+      const data = await Jaspen.recreateMissingPmLinks(binding.id);
+      await applySyncResult(data);
+      if (data?.result?.errors?.length) setError(`${data.result.failed} item(s) failed. Retry will continue from saved links.`);
+    } catch (e) { setError(friendlyJiraError(e, 'The missing Jira issues could not be recreated.')); }
+    finally { setBusy(false); }
+  };
+
+  const unlinkPlan = async () => {
+    setBusy(true); setError(''); setSyncNotice('');
+    try {
+      const data = await Jaspen.unlinkPmBinding(binding.id);
+      setBinding(data?.binding || { ...binding, status:'disconnected' });
+      setLogs(data?.logs || logs);
+    } catch (e) { setError(String(e?.data?.error || e?.message || e || 'The plan could not be unlinked.')); }
     finally { setBusy(false); }
   };
 
@@ -332,14 +356,16 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
 
   if (binding && !open) return <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', maxWidth: compact ? 560 : 'none' }}>
     <div style={{ display:'grid', gap:3 }}>
-      <span style={{ ...buttonStyle, cursor: 'default', color: ['error', 'reconnect_required', 'paused'].includes(binding.status) ? '#b91c1c' : COLOR.greenInk }}>
+      <span style={{ ...buttonStyle, cursor: 'default', color: ['error', 'reconnect_required', 'paused', 'links_missing'].includes(binding.status) ? '#b91c1c' : COLOR.greenInk }}>
         ● {binding.status === 'active' ? 'Synced with Jira' : binding.status === 'reconnect_required' ? 'Reconnect Jira' : `Jira · ${binding.status}`}{binding.last_success_at ? ` · ${new Date(binding.last_success_at).toLocaleString()}` : ''}
       </span>
       <span style={{ color:COLOR.ink, fontSize:11.5 }}>Synced by {syncOwnerLabel(binding)} with their Jira account</span>
       {syncWarningMessage(binding) && <span role="alert" style={{ color:'#b91c1c', fontSize:11.5 }}>{syncWarningMessage(binding)}</span>}
     </div>
-    <label style={{ ...buttonStyle, display:'inline-flex', gap:6, alignItems:'center' }}><input type="checkbox" checked={binding.mode === 'two_way'} onChange={(e) => toggleTwoWay(e.target.checked)} />Two-way sync</label>
-    <button type="button" onClick={syncNow} disabled={busy} style={buttonStyle}>{busy ? 'Syncing…' : 'Sync now'}</button>
+    {!['links_missing', 'disconnected'].includes(binding.status) && <label style={{ ...buttonStyle, display:'inline-flex', gap:6, alignItems:'center' }}><input type="checkbox" checked={binding.mode === 'two_way'} onChange={(e) => toggleTwoWay(e.target.checked)} />Two-way sync</label>}
+    {!['links_missing', 'disconnected'].includes(binding.status) && <button type="button" onClick={syncNow} disabled={busy} style={buttonStyle}>{busy ? 'Syncing…' : 'Sync now'}</button>}
+    {binding.status === 'links_missing' && <button type="button" onClick={recreateMissing} disabled={busy} style={{ ...buttonStyle, background:COLOR.rose, borderColor:COLOR.rose, color:'#fff' }}>{busy ? 'Recreating…' : `Recreate in ${binding.external_container_id}`}</button>}
+    {binding.status === 'links_missing' && <button type="button" onClick={unlinkPlan} disabled={busy} style={buttonStyle}>Unlink this plan</button>}
     {(binding.status === 'reconnect_required' || binding.pause_reason === 'credential_disconnected') && <button type="button" onClick={reconnectBinding} disabled={busy} style={buttonStyle}>Reconnect Jira</button>}
     {binding.external_container_url && <a href={binding.external_container_url} target="_blank" rel="noreferrer" style={{ ...buttonStyle, textDecoration: 'none' }}>View in Jira</a>}
     {error && <span role="alert" style={{ color: '#b91c1c', fontSize: 11.5 }}>{error}</span>}
