@@ -2909,6 +2909,7 @@ def test_execution_provider_failure_cannot_create_or_overwrite_plan(client, db, 
 def test_execution_plan_override_requires_acknowledgement_and_records_after_save(
     client, db, test_user, auth_headers, monkeypatch, recommendation, gates, expected_labels,
 ):
+    from app.decision_records import record_option_decision
     from app.models_decision_record import DecisionRecord, OptionDecision
     strategy, _ = modules()
     tid = f"planner-override-{recommendation['verdict_key']}-{len(gates)}"
@@ -2953,6 +2954,33 @@ def test_execution_plan_override_requires_acknowledgement_and_records_after_save
     decision = OptionDecision.query.filter_by(decision_record_id=record.id, superseded_at=None).one()
     assert decision.override_info
     assert decision.final_decision == 'Moving forward with Proposal — execution plan built.'
+
+    rebuilt = client.post(
+        f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers,
+        json={'commit': True, 'force': True, 'scorecard_id': 'planner-card'},
+    )
+    assert rebuilt.status_code == 200, rebuilt.get_json()
+
+    replacement, created = record_option_decision(
+        record,
+        'scorecard:planner-card',
+        'No longer moving forward with Proposal.',
+        decided_by_user_id=test_user.id,
+        source='manual',
+        option_name='Proposal',
+        override_info=None,
+    )
+    assert created is True
+    assert replacement.override_info is None
+    assert decision.superseded_at is not None
+
+    blocked_again = client.post(
+        f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers,
+        json={'commit': True, 'force': True, 'scorecard_id': 'planner-card'},
+    )
+    assert blocked_again.status_code == 409
+    assert blocked_again.get_json()['code'] == 'recorded_advancing_decision_required'
+    assert blocked_again.get_json()['override'] is True
 
 
 def test_execution_plan_skips_repair_after_50_seconds_used(

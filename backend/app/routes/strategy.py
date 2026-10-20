@@ -7968,7 +7968,9 @@ def generate_ai_wbs(thread_id):
             or bool(failed_check_labels)
         )
         if (
-            commit and override_required and not bool(record_request.get('acknowledged'))
+            commit and override_required
+            and not bool((recorded_decision or {}).get('override_info'))
+            and not bool(record_request.get('acknowledged'))
         ):
             return jsonify({
                 'success': False,
