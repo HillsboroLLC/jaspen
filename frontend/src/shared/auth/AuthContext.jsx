@@ -2,6 +2,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { API_BASE } from '../../config/apiBase';
 import { AUTH_EVENTS, authFetch as cookieAuthFetch } from './http';
+import { clearSignupReferralCode, getSignupReferralCode } from '../inviteLink';
 
 // Auto sign-out after this much continuous inactivity. The session normally
 // renews itself in the background, so without this an open tab stays logged in
@@ -188,23 +189,6 @@ const clearLegacySessionCaches = () => {
   }
 };
 
-const getSignupReferralCode = () => {
-  if (typeof window === 'undefined') return null;
-  try {
-    const params = new URLSearchParams(window.location.search || '');
-    return (
-      params.get('referral_code')
-      || params.get('invite_code')
-      || params.get('ref')
-      || params.get('invite')
-      || null
-    );
-  } catch (error) {
-    console.debug('Failed reading referral code from URL:', error);
-    return null;
-  }
-};
-
 const hasLegacySessionKeys = () => {
   for (let i = 0; i < localStorage.length; i += 1) {
     const key = localStorage.key(i);
@@ -277,6 +261,12 @@ export function AuthProvider({ children }) {
 
   // Check if user is authenticated on app load (cookie OR token)
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search || '');
+    if (params.get('signup_completed') === '1') {
+      clearSignupReferralCode();
+    } else {
+      getSignupReferralCode();
+    }
     checkAuthStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -737,6 +727,7 @@ export function AuthProvider({ children }) {
 
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
+        clearSignupReferralCode();
         if (res.status === 202 || data?.approval_required || data?.verification_required) {
           return {
             success: false,

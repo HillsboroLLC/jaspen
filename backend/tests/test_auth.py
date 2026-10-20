@@ -112,6 +112,57 @@ def test_signup_records_referral_attribution(client, db, test_user):
     assert referrer.referrals_earned == 1
 
 
+def test_signup_resolves_compact_short_referral_code_case_insensitively(client, db, test_user):
+    test_user.referral_code = "F0E7A6AB-F06E-4D11-8123-123456789ABC"
+    db.session.commit()
+
+    resp = client.post(
+        "/api/v1/auth/signup",
+        json={
+            "name": "Short Code User",
+            "email": "short-code@example.com",
+            "password": "StrongPass1",
+            "referral_code": "f0e7a6abf0",
+        },
+    )
+
+    assert resp.status_code == 201
+    created = User.query.filter_by(email="short-code@example.com").first()
+    referrer = User.query.get(test_user.id)
+    assert created.referred_by_user_id == test_user.id
+    assert created.signup_referral_code_used == test_user.referral_code
+    assert referrer.referrals_earned == 1
+
+
+def test_signup_does_not_resolve_ambiguous_compact_short_referral_code(client, db, test_user):
+    test_user.referral_code = "ABCDEF12-3456-4000-8000-000000000001"
+    other_referrer = User(
+        email="other-referrer@example.com",
+        name="Other Referrer",
+        password_hash=generate_password_hash("ValidPass1", method="pbkdf2:sha256"),
+        referral_code="ABCDEF12-3456-4000-8000-000000000002",
+    )
+    db.session.add(other_referrer)
+    db.session.commit()
+
+    resp = client.post(
+        "/api/v1/auth/signup",
+        json={
+            "name": "Ambiguous Code User",
+            "email": "ambiguous-code@example.com",
+            "password": "StrongPass1",
+            "referral_code": "abcdef1234",
+        },
+    )
+
+    assert resp.status_code == 201
+    created = User.query.filter_by(email="ambiguous-code@example.com").first()
+    assert created.referred_by_user_id is None
+    assert created.signup_referral_code_used is None
+    assert User.query.get(test_user.id).referrals_earned == 0
+    assert User.query.get(other_referrer.id).referrals_earned == 0
+
+
 def test_signup_blocks_when_open_signup_disabled_without_invite(client, app):
     original = app.config.get("OPEN_SIGNUP")
     app.config["OPEN_SIGNUP"] = False
