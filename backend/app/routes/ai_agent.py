@@ -3295,6 +3295,28 @@ def _apply_scoring_failure_state(reply, usage, executed_actions):
     return str(failure.get("error") or reply), failed_usage, failure
 
 
+def _apply_option_decision_failure_state(reply, executed_actions):
+    decision_actions = [
+        action for action in (executed_actions or [])
+        if isinstance(action, dict) and action.get("tool") == "record_option_decision"
+    ]
+    if any(
+        isinstance(action.get("result"), dict)
+        and action["result"].get("ok")
+        and action["result"].get("decision_record_id")
+        for action in decision_actions
+    ):
+        return reply, None
+    for action in decision_actions:
+        result = action.get("result") if isinstance(action.get("result"), dict) else {}
+        if not result.get("ok"):
+            return str(
+                result.get("error")
+                or "I couldn't record that decision yet."
+            ), result
+    return reply, None
+
+
 def _successful_scoring_action(executed_actions):
     for action in executed_actions or []:
         if not isinstance(action, dict) or action.get("tool") not in {"generate_scorecard", "queue_scorecards"}:
@@ -6469,8 +6491,9 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
             {
                 "name": "record_option_decision",
                 "description": (
-                    "Record a decision the user explicitly stated about an option. Use the option_key when the "
-                    "user names a specific option; otherwise omit it to use the option open on screen. Always "
+                    "Record a decision the user explicitly stated about an option. Pass option_name exactly as "
+                    "the user referred to it; use option_key as well when one is available. Otherwise the open "
+                    "option is used. Always "
                     "include an exact quote from the user's latest message. Never infer or record a decision the "
                     "user did not state. If the result requires override confirmation, ask its confirmation "
                     "question and call this tool again only after the user confirms."
@@ -6481,6 +6504,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                         "option_key": {
                             "type": "string",
                             "description": "Stable option key. Omit to use the open/on-screen option.",
+                        },
+                        "option_name": {
+                            "type": "string",
+                            "description": "The option name or short reference exactly as the user stated it, such as 'the agency'.",
                         },
                         "decision": {
                             "type": "string",
@@ -6841,6 +6868,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         )
 
         wanted_key = str(tool_input.get("option_key") or "").strip()
+        wanted_name = str(tool_input.get("option_name") or "").strip()
         active_scorecard_id = (
             view_active_scorecard_id
             or str(stored_session.get("active_evaluation_scorecard_id") or "").strip()
@@ -6852,19 +6880,71 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 (card for card in cards if execution_option_key(card) == wanted_key),
                 None,
             )
-        elif active_scorecard_id:
+        if scorecard is None and wanted_name:
+            def _matchable_option_name(value):
+                normalized = " ".join(str(value or "").strip().casefold().split())
+                for article in ("the ", "a ", "an "):
+                    if normalized.startswith(article):
+                        return normalized[len(article):].strip()
+                return normalized
+
+            wanted_match = _matchable_option_name(wanted_name)
+            named_cards = [
+                (card, str(
+                    card.get("project_name") or card.get("name")
+                    or card.get("label") or ""
+                ).strip())
+                for card in cards
+            ]
+            exact_matches = [
+                card for card, name in named_cards
+                if _matchable_option_name(name) == wanted_match
+            ]
+            contains_matches = [
+                card for card, name in named_cards
+                if wanted_match
+                and (
+                    wanted_match in _matchable_option_name(name)
+                    or _matchable_option_name(name) in wanted_match
+                )
+            ]
+            matches = exact_matches or contains_matches
+            if len(matches) == 1:
+                scorecard = matches[0]
+            elif len(matches) > 1:
+                option_names = [name for card, name in named_cards if card in matches and name]
+                if len(option_names) == 2:
+                    choices = f"{option_names[0]} or {option_names[1]}"
+                else:
+                    choices = f"{', '.join(option_names[:-1])}, or {option_names[-1]}"
+                return _tool_error(
+                    f"I couldn't record that yet: which option did you mean — {choices}?",
+                    code="decision_option_ambiguous",
+                ) | {"non_blocking": True, "option_names": option_names}
+        if scorecard is None and active_scorecard_id:
             scorecard = next((
                 card for card in cards
                 if str(card.get("id") or card.get("analysis_id") or "").strip()
                 == active_scorecard_id
             ), None)
-        elif len(cards) == 1:
+        if scorecard is None and len(cards) == 1:
             scorecard = cards[0]
         if not isinstance(scorecard, dict):
+            option_names = [
+                str(card.get("project_name") or card.get("name") or card.get("label") or "").strip()
+                for card in cards
+                if str(card.get("project_name") or card.get("name") or card.get("label") or "").strip()
+            ]
+            if len(option_names) == 2:
+                choices = f"{option_names[0]} or {option_names[1]}"
+            elif len(option_names) > 2:
+                choices = f"{', '.join(option_names[:-1])}, or {option_names[-1]}"
+            else:
+                choices = option_names[0] if option_names else "the option you want"
             return _tool_error(
-                "The option to record could not be matched. Provide its option_key or open it first.",
+                f"I couldn't record that yet: which option did you mean — {choices}?",
                 code="decision_option_required",
-            )
+            ) | {"non_blocking": True, "option_names": option_names}
 
         option_key = execution_option_key(scorecard)
         option_name = str(
@@ -7008,9 +7088,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         stored_session.pop("pending_option_decision", None)
         sessions[session_key or thread_id] = stored_session
         save_user_sessions(user_id, sessions)
+        decision_line = f"Decision recorded: {final_decision}"
         return _tool_success({
             "tool": tool_name,
-            "confirmation": f"Decision recorded: {final_decision}",
+            "confirmation": decision_line,
+            "decision_line": decision_line,
             "decision_record_id": str(record.id),
             "option_decision": row.to_dict(),
             "created": created,
@@ -12768,6 +12850,9 @@ def conversation_start():
                 assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
                     assistant_reply, usage, actions,
                 )
+                assistant_reply, _decision_failure = _apply_option_decision_failure_state(
+                    assistant_reply, actions,
+                )
                 assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
@@ -12983,6 +13068,9 @@ def conversation_start():
 
     assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
         assistant_reply, usage, actions,
+    )
+    assistant_reply, _decision_failure = _apply_option_decision_failure_state(
+        assistant_reply, actions,
     )
     usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
     assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
@@ -13351,6 +13439,9 @@ def conversation_continue():
                 assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
                     assistant_reply, usage, actions,
                 )
+                assistant_reply, _decision_failure = _apply_option_decision_failure_state(
+                    assistant_reply, actions,
+                )
                 assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
@@ -13561,6 +13652,9 @@ def conversation_continue():
 
     assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
         assistant_reply, usage, actions,
+    )
+    assistant_reply, _decision_failure = _apply_option_decision_failure_state(
+        assistant_reply, actions,
     )
     usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
     assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
