@@ -3015,6 +3015,14 @@ const renderScorecardCard = (result, opts = {}) => {
         </div>
       )}
 
+      {/* Disclosure, not conversation: criteria scored without information. */}
+      {Array.isArray(result?.neutral_criteria) && result.neutral_criteria.length > 0 && (
+        <p className="jas-scorecard-assumed-note">
+          Assumed, no information yet (neutral 45):{' '}
+          {result.neutral_criteria.map((item) => item?.label || item?.key).filter(Boolean).join(', ')}
+        </p>
+      )}
+
       {/* Two-col bottom: Where the plan is exposed | Recommended */}
       {(risks.length > 0 || recommendedScenario) && (
         <div className="jas-scorecard-bottom-cols">

@@ -7298,3 +7298,10 @@
     transform: translateY(0);
   }
 }
+
+.jas-scorecard-assumed-note {
+  margin: 10px 0 0;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: #5a6585;
+}
