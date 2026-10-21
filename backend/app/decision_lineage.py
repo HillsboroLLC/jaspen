@@ -234,3 +234,68 @@ def schedule_backward(plan, deadline, *, buffer_days=1):
     if overrun:
         output["compression_warning"] = {"message": "The derived work does not fit before the deadline.", "tasks": overrun, "shortfall_business_days": max(1, (today - min(scheduled[item][0] for item in scheduled)).days)}
     return output
+
+
+STARTER_PLAN_LABEL = "Starter plan built from your decision; ask Jaspen to refine it."
+
+# The starter plan's phases, in order, and the lineage sources each one carries.
+_STARTER_PHASES = (
+    ("Commit and confirm", ("decision_commitment", "condition", "gate", "requirement")),
+    ("Close the evidence gaps", ("weak_criterion",)),
+    ("Reduce the risks", ("risk",)),
+    ("Carry out the recommendations", ("recommendation",)),
+)
+
+
+def _starter_task_title(source):
+    label = str(source.get("label") or source.get("ref") or "").strip()
+    short = label if len(label) <= 140 else label[:137].rstrip() + "…"
+    kind = source.get("type")
+    if kind == "decision_commitment":
+        return "Confirm owners and kick off the work"
+    if kind == "condition":
+        return f"Meet the condition: {short}"
+    if kind == "gate":
+        return f"Resolve the required check: {short}"
+    if kind == "requirement":
+        return f"Secure {short}"
+    if kind == "weak_criterion":
+        return f"Strengthen the evidence for {short}"
+    if kind == "risk":
+        return f"Mitigate the risk: {short}"
+    return short
+
+
+def build_starter_plan(sources):
+    """A plan built in code from the decision's own lineage sources.
+
+    Used when the AI cannot produce a valid plan, so the user always gets one.
+    Every task traces to exactly one decision source (never generic work), and
+    no AI call is involved.
+    """
+    phases = []
+    task_count = 0
+    for phase_name, kinds in _STARTER_PHASES:
+        tasks = []
+        for source in sources or []:
+            if source.get("type") not in kinds or not source.get("ref"):
+                continue
+            label = str(source.get("label") or source.get("ref"))
+            tasks.append({
+                "id": f"starter-{task_count + 1}",
+                "title": _starter_task_title(source),
+                "description": label,
+                "priority": "high" if source.get("type") in {"condition", "gate", "requirement"} else "medium",
+                "estimated_days": 5,
+                "lineage": [{"type": source["type"], "ref": str(source["ref"])}],
+            })
+            task_count += 1
+        if tasks:
+            phases.append({"name": phase_name, "tasks": tasks})
+    note = STARTER_PLAN_LABEL
+    if task_count < 10:
+        note += (
+            f" It has {task_count} task{'' if task_count == 1 else 's'} because the decision "
+            f"has only {task_count} item{'' if task_count == 1 else 's'} to plan from so far."
+        )
+    return {"summary": note, "phases": phases}

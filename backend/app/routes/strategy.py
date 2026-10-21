@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime, timedelta
 import uuid
@@ -5621,6 +5622,9 @@ def _generate_ai_wbs_suggestion(
     return_usage=False,
     lineage_sources=None,
     team=None,
+    max_attempts=2,
+    time_budget_seconds=55,
+    attempt_timeout_seconds=None,
 ):
     scorecard_payload = scorecard if isinstance(scorecard, dict) else {}
     scenario_context = scenario_payload if isinstance(scenario_payload, dict) else {}
@@ -5816,7 +5820,7 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
             return merged
 
         retry_note = ''
-        generation_deadline = time.monotonic() + 55
+        generation_deadline = time.monotonic() + time_budget_seconds
 
         def _stop_reason(usage):
             return str((usage or {}).get('stop_reason') or '').strip().lower()
@@ -5824,18 +5828,31 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
         def _was_truncated(usage):
             return _stop_reason(usage) in {'max_tokens', 'max_output_tokens', 'length'}
 
-        for attempt_index in range(2):
+        for attempt_index in range(max_attempts):
+            attempts_remain = attempt_index < max_attempts - 1
             attempt_prompt = prompt + retry_note
             remaining_seconds = generation_deadline - time.monotonic()
             if remaining_seconds <= 1:
                 raise ValueError('wbs_ai_timeout')
+            attempt_timeout = (
+                min(remaining_seconds, attempt_timeout_seconds)
+                if attempt_timeout_seconds else remaining_seconds
+            )
             _pool = ThreadPoolExecutor(max_workers=1)
             attempt_started = time.monotonic()
             _future = _pool.submit(_call_llm, attempt_prompt)
             try:
-                raw_reply, attempt_usage = _future.result(timeout=remaining_seconds)
+                raw_reply, attempt_usage = _future.result(timeout=attempt_timeout)
             except _FuturesTimeout:
                 _future.cancel()
+                if attempts_remain and attempt_timeout < remaining_seconds:
+                    usage_attempts.append({
+                        'attempt': attempt_index + 1,
+                        'duration_ms': max(0, int((time.monotonic() - attempt_started) * 1000)),
+                        'outcome': 'timeout',
+                    })
+                    generation_usage = _merged_usage()
+                    continue
                 raise ValueError('wbs_ai_timeout')
             except Exception as provider_error:
                 failed_usage = dict(getattr(provider_error, 'jaspen_usage', {}) or {})
@@ -5846,6 +5863,8 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
                 })
                 usage_attempts.append(failed_usage)
                 generation_usage = _merged_usage()
+                if attempts_remain and max_attempts > 2:
+                    continue
                 provider_error.jaspen_usage = generation_usage
                 raise
             finally:
@@ -5864,7 +5883,7 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
                 if usage_attempts:
                     usage_attempts[-1]['outcome'] = 'truncated_json' if _was_truncated(attempt_usage) else 'malformed_json'
                     generation_usage = _merged_usage()
-                if attempt_index == 0:
+                if attempts_remain:
                     compact_note = (
                         ' The provider stopped at its output-token limit. Keep all 10-18 tasks and 4-6 phases, '
                         'but make every task description one concise sentence and keep all other text compact.'
@@ -5989,7 +6008,7 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
                         'required lineage sources not covered: '
                         + ', '.join(f"{item.get('type')}:{item.get('ref')}" for item in missing_sources if isinstance(item, dict))
                     )
-                if attempt_index == 0:
+                if attempts_remain:
                     retry_note = (
                         '\n\nRETRY REQUIRED. The prior response was rejected after deterministic lineage validation. '
                         'Use the exact same decision inputs and correct only this missing coverage:\n- '
@@ -6001,6 +6020,19 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
                 error.lineage_result = {**(lineage_result or {}), 'missing_coverage': missing_coverage}
                 raise error
             if validated is None:
+                if attempts_remain and max_attempts > 2:
+                    uncovered = ', '.join(
+                        f"{item.get('type')}:{item.get('ref')}"
+                        for item in (lineage_result or {}).get('missing_sources') or []
+                        if isinstance(item, dict)
+                    )
+                    retry_note = (
+                        '\n\nRETRY REQUIRED. The prior response was rejected after deterministic lineage validation. '
+                        'Use the exact same decision inputs. Every task must cite valid lineage'
+                        + (f', and these required sources must be covered: {uncovered}' if uncovered else '')
+                        + '. Return 10-18 specific tasks across 4-6 meaningful phases. Do not add generic padding.'
+                    )
+                    continue
                 error = ValueError('invalid_plan_lineage')
                 error.lineage_result = lineage_result
                 raise error
@@ -6453,6 +6485,7 @@ def _normalize_project_wbs(payload, existing=None):
         **{key: payload.get(key, base.get(key)) for key in (
             'ai_generated', 'ai_generated_at', 'ai_summary', 'generation_status',
             'generation_error', 'scorecard_id', 'scorecard_name', 'idea_name',
+            'starter_plan_note',
         ) if key in payload or key in base},
         'version': int(base.get('version') or payload.get('version') or 1),
         'name': str(payload.get('name') or base.get('name') or 'Execution WBS').strip(),
@@ -7831,17 +7864,134 @@ def generate_ai_wbs(thread_id):
     """
     Generate an AI-driven WBS from baseline/adopted scorecard context.
     `commit=true` writes to thread WBS; otherwise returns a preview.
+
+    With `background=true`, a committed build is checked here and then runs as
+    a background job: the response is 202 with a job id, and
+    GET /threads/<id>/ai-wbs/jobs/<job_id> reports the result. Background
+    builds always produce a plan.
+    """
+    user_id = get_jwt_identity()
+    payload = request.get_json(silent=True) or {}
+    if bool(payload.get('commit', True)) and bool(payload.get('background')):
+        early_response = _build_execution_plan(user_id, thread_id, payload, validate_only=True)
+        if early_response is not None:
+            return early_response
+        from ..models_plan_jobs import PlanBuildJob
+        job = PlanBuildJob(user_id=str(user_id), thread_id=str(thread_id), request_json=payload)
+        db.session.add(job)
+        db.session.commit()
+        _start_plan_build_job(job.id)
+        return jsonify({'job_id': job.id, 'status': 'running'}), 202
+    return _build_execution_plan(user_id, thread_id, payload)
+
+
+# A background build runs for at most a few minutes (three AI attempts within
+# _PLAN_JOB_AI_BUDGET_SECONDS, then saving). A job whose heartbeat is older than
+# this was interrupted, for example by a deploy or worker restart.
+_PLAN_JOB_AI_BUDGET_SECONDS = 240
+_PLAN_JOB_ATTEMPT_SECONDS = 80
+_PLAN_JOB_STALE_SECONDS = 330
+
+
+def _start_plan_build_job(job_id):
+    app = current_app._get_current_object()
+
+    def run():
+        with app.app_context(), app.test_request_context():
+            _run_plan_build_job(job_id)
+
+    threading.Thread(target=run, daemon=True, name=f"plan-build-{job_id[:8]}").start()
+
+
+def _run_plan_build_job(job_id):
+    from ..models_plan_jobs import PlanBuildJob
+    job = db.session.get(PlanBuildJob, job_id)
+    if job is None:
+        return
+    try:
+        response = _build_execution_plan(
+            job.user_id, job.thread_id, dict(job.request_json or {}), job_id=job.id,
+        )
+        body, status_code = response if isinstance(response, tuple) else (response, 200)
+        result = body.get_json() if hasattr(body, 'get_json') else body
+    except Exception as exc:  # noqa: BLE001
+        db.session.rollback()
+        current_app.logger.error('[plan_build_job] %s failed: %s', job_id, exc, exc_info=True)
+        result, status_code = {'error': "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed."}, 500
+    job = db.session.get(PlanBuildJob, job_id)
+    if job is None:
+        return
+    job.result_json = result if isinstance(result, dict) else {}
+    job.result_status = int(status_code or 500)
+    job.status = 'done' if job.result_status < 400 else 'failed'
+    job.finished_at = datetime.utcnow()
+    db.session.commit()
+
+
+def _release_interrupted_plan_operation(job):
+    """A dead run leaves its AI operation 'started'; free it so the resumed run
+    can reuse the same idempotency key (a finished AI result then replays
+    instead of being charged twice)."""
+    from ..models import AIOperation
+    keys = [
+        hashlib.sha256(f"{job.user_id}:{operation_type}:plan-build:{job.id}".encode('utf-8')).hexdigest()
+        for operation_type in ('execution_plan', 'execution_plan_refinement')
+    ]
+    for operation in AIOperation.query.filter(
+        AIOperation.idempotency_key.in_(keys), AIOperation.status == 'started',
+    ).all():
+        operation.status = 'failed'
+        operation.error_code = 'interrupted'
+    db.session.commit()
+
+
+@strategy_bp.route('/threads/<thread_id>/ai-wbs/jobs/<job_id>', methods=['GET'])
+@jwt_required()
+def get_ai_wbs_job(thread_id, job_id):
+    from ..models_plan_jobs import PlanBuildJob
+    user_id = str(get_jwt_identity())
+    job = PlanBuildJob.query.filter_by(id=job_id, user_id=user_id, thread_id=str(thread_id)).first()
+    if job is None:
+        return jsonify({'error': 'Plan build not found.'}), 404
+    if job.status in {'done', 'failed'}:
+        return jsonify({
+            'job_id': job.id, 'status': job.status,
+            'result': job.result_json or {}, 'result_status': job.result_status,
+        }), 200
+    cutoff = datetime.utcnow() - timedelta(seconds=_PLAN_JOB_STALE_SECONDS)
+    if job.heartbeat_at is None or job.heartbeat_at < cutoff:
+        # Claim the restart atomically so concurrent status checks start it once.
+        claimed = PlanBuildJob.query.filter(
+            PlanBuildJob.id == job.id,
+            PlanBuildJob.status == 'running',
+            PlanBuildJob.heartbeat_at < cutoff,
+        ).update({
+            PlanBuildJob.heartbeat_at: datetime.utcnow(),
+            PlanBuildJob.run_count: PlanBuildJob.run_count + 1,
+        }, synchronize_session=False)
+        db.session.commit()
+        if claimed:
+            _release_interrupted_plan_operation(job)
+            _start_plan_build_job(job.id)
+    return jsonify({'job_id': job.id, 'status': 'running'}), 200
+
+
+def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, job_id=None):
+    """Check, generate, and save an execution plan; returns a Flask response.
+
+    validate_only returns None once every check that needs no AI has passed.
+    job_id marks a background build: more AI attempts with a longer budget,
+    and a code-built starter plan if the AI still cannot produce one.
     """
     ai_settlement = None
     plan_persisted = False
     user = None
     try:
-        user_id = get_jwt_identity()
         user, plan_key, read_access_err = _require_tool_access(user_id, 'wbs_read', access='read')
         if read_access_err:
             return read_access_err
 
-        payload = request.get_json() or {}
+        payload = payload if isinstance(payload, dict) else {}
         commit = bool(payload.get('commit', True))
         if commit:
             _, plan_key, write_access_err = _require_tool_access(user_id, 'wbs_write', access='write')
@@ -8087,7 +8237,15 @@ def generate_ai_wbs(thread_id):
         if not wbs_scorecard.get('project_name') and session_name:
             wbs_scorecard['project_name'] = session_name
 
+        if validate_only:
+            return None
+
         client = get_llm_client()
+        background_attempts = {
+            'max_attempts': 3,
+            'time_budget_seconds': _PLAN_JOB_AI_BUDGET_SECONDS,
+            'attempt_timeout_seconds': _PLAN_JOB_ATTEMPT_SECONDS,
+        } if job_id else {}
         try:
             def generate_wbs():
                 raw_wbs, provider_usage, provider_success, provider_error = _generate_ai_wbs_suggestion(
@@ -8102,6 +8260,7 @@ def generate_ai_wbs(thread_id):
                     return_usage=True,
                     lineage_sources=lineage_sources,
                     team=recorded_team,
+                    **background_attempts,
                 )
                 return {
                     'wbs': raw_wbs,
@@ -8128,6 +8287,7 @@ def generate_ai_wbs(thread_id):
                 model_type=model_selection['model_type'],
                 max_tokens=8000,
                 thread_id=thread_id,
+                idempotency_key=f'plan-build:{job_id}' if job_id else None,
             )
         except AIOperationPaymentRequired as payment_error:
             return jsonify(payment_error.payload or {'error': 'Thinking Power exhausted.'}), 402
@@ -8193,6 +8353,23 @@ def generate_ai_wbs(thread_id):
             persist_ai_operation=False,
         )
         db.session.commit()
+        starter_plan = False
+        if not provider_success and job_id:
+            # Background builds always produce a plan. When the AI cannot,
+            # build one in code from the decision's own lineage sources: every
+            # task traces to the decision, and no AI call (or charge) is made.
+            from ..decision_lineage import build_starter_plan, validate_plan_lineage
+            starter = build_starter_plan(lineage_sources)
+            validated_starter, starter_lineage = validate_plan_lineage(starter, lineage_sources)
+            if validated_starter is not None:
+                raw_wbs = {
+                    **validated_starter,
+                    'summary': starter['summary'],
+                    'lineage_sources': list(lineage_sources),
+                    'lineage_validation': starter_lineage,
+                }
+                provider_success = True
+                starter_plan = True
         if not provider_success:
             return jsonify({
                 'success': False,
@@ -8208,8 +8385,10 @@ def generate_ai_wbs(thread_id):
             from ..decision_lineage import schedule_backward
             materialized = schedule_backward(materialized, deadline, buffer_days=1)
         normalized_wbs = _normalize_project_wbs({'project_wbs': materialized}, existing=None)
-        normalized_wbs['ai_generated'] = True
-        normalized_wbs['generation_status'] = 'ai_generated'
+        normalized_wbs['ai_generated'] = not starter_plan
+        normalized_wbs['generation_status'] = 'starter_plan' if starter_plan else 'ai_generated'
+        if starter_plan:
+            normalized_wbs['starter_plan_note'] = raw_wbs['summary']
         normalized_wbs['generation_error'] = provider_error
         normalized_wbs['ai_generated_at'] = datetime.utcnow().isoformat()
         normalized_wbs['ai_summary'] = str(raw_wbs.get('summary') or '').strip()

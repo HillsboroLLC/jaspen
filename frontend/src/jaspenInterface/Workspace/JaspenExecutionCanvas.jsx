@@ -27,6 +27,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import StarterPlanNote from './StarterPlanNote';
 import {
   faGripVertical, faPlus, faEllipsis, faCheck,
   faArrowRotateRight, faArrowRotateLeft, faCalendar,
@@ -1461,6 +1462,11 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
       background: COLOR.bg, minWidth: 0, overflow: 'hidden',
       fontFamily: "'Inter Tight', system-ui, sans-serif",
     }}>
+      <StarterPlanNote
+        plan={wbs}
+        onRefine={onAskJaspen ? () => onAskJaspen('Refine this starter plan into a full execution plan for this decision.') : null}
+        style={{ margin:'12px 32px 0' }}
+      />
       {wbs?.compression_warning && (
         <div role="alert" style={{ margin:'12px 32px 0', padding:'10px 14px', border:'1px solid #f59e0b', borderRadius:8, background:'#fff8e8', color:COLOR.navy, fontSize:12.5 }}>
           <strong>Deadline compression:</strong> {wbs.compression_warning.message}

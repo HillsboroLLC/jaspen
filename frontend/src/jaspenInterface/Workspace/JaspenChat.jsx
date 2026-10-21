@@ -66,6 +66,7 @@ import RecordDecisionPanel from './RecordDecisionPanel';
 import WorkspaceTips from './components/WorkspaceTips';
 import ScoreReuseNotice from './ScoreReuseNotice';
 import ScorecardExecutionPlanAction from './ScorecardExecutionPlanAction';
+import StarterPlanNote from './StarterPlanNote';
 
 // Tab components
 import ScoreDashboard   from './ScoreDashboard';
@@ -3406,6 +3407,7 @@ const renderInlineExecutionArtifact = (wbs, opts = {}) => {
           <div style={{ fontSize: 13, color: '#5a6585', marginTop: 4 }}>
             {phases.size} phase{phases.size === 1 ? '' : 's'} · {tasks.length} task{tasks.length === 1 ? '' : 's'} · <strong style={{ color: '#161f3b' }}>{donePct}% done</strong>
           </div>
+          <StarterPlanNote plan={activeWbs} style={{ marginTop: 8 }} />
           {planScorecard && (
             <RecordDecisionPanel
               threadId={opts.threadId}

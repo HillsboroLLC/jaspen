@@ -9069,6 +9069,20 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             model_type=model_selection["model_type"], max_tokens=8000, thread_id=thread_id,
         )
         provider_success = bool(generated.get("provider_success"))
+        starter_plan = False
+        if not provider_success:
+            # Plans always build: fall back to a plan made in code from the
+            # decision's own lineage sources (no AI call, no charge).
+            from ..decision_lineage import build_starter_plan, validate_plan_lineage
+            starter = build_starter_plan(lineage_sources)
+            validated_starter, starter_lineage = validate_plan_lineage(starter, lineage_sources)
+            if validated_starter is not None:
+                generated = {**generated, "wbs": {
+                    **validated_starter, "summary": starter["summary"],
+                    "lineage_sources": list(lineage_sources), "lineage_validation": starter_lineage,
+                }}
+                provider_success = True
+                starter_plan = True
         if not provider_success:
             failure = _tool_error(
                 "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.",
@@ -9083,8 +9097,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             from ..decision_lineage import schedule_backward
             materialized = schedule_backward(materialized, deadline, buffer_days=1)
         normalized_wbs = _normalize_project_wbs({"project_wbs": materialized}, existing=None)
-        normalized_wbs["ai_generated"] = True
-        normalized_wbs["generation_status"] = "ai_generated"
+        normalized_wbs["ai_generated"] = not starter_plan
+        normalized_wbs["generation_status"] = "starter_plan" if starter_plan else "ai_generated"
+        if starter_plan:
+            normalized_wbs["starter_plan_note"] = raw_wbs["summary"]
         normalized_wbs["generation_error"] = generated.get("provider_error")
         normalized_wbs["ai_generated_at"] = datetime.utcnow().isoformat()
         normalized_wbs["ai_summary"] = str(raw_wbs.get("summary") or "").strip()
@@ -9145,9 +9161,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         return _tool_success({
             "tool": tool_name,
             "confirmation": (
-                "Generated an AI execution plan. "
-                f"The plan has {len(normalized_wbs.get('tasks') or [])} tasks. "
-                "Open the Execution view to review list, board, and timeline."
+                (
+                    f"Built a starter plan from the decision ({len(normalized_wbs.get('tasks') or [])} tasks); "
+                    "the AI plan could not be completed, so tell the user it is a starter plan and offer to refine it. "
+                    if starter_plan else
+                    "Generated an AI execution plan. "
+                    f"The plan has {len(normalized_wbs.get('tasks') or [])} tasks. "
+                )
+                + "Open the Execution view to review list, board, and timeline."
             ),
             "project_wbs": normalized_wbs,
             "decision_recorded": decision_recorded_now,

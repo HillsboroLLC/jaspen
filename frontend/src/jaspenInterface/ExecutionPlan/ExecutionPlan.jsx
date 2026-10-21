@@ -9,6 +9,7 @@ import { ExecutionPlanBuildFailure, useExecutionPlanBuild } from '../Workspace/u
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import ExecutionPlanExportButton from '../Workspace/ExecutionPlanExportButton';
 import PmSyncPanel from '../Workspace/PmSyncPanel';
+import StarterPlanNote from '../Workspace/StarterPlanNote';
 import RecordDecisionPanel from '../Workspace/RecordDecisionPanel';
 import ExecutionPanel from '../Workspace/components/ExecutionPanel';
 import { parseUIActions, ChatActionTypes } from '../../shared/hooks/useChatCommands';
@@ -641,6 +642,7 @@ export default function ExecutionPlan() {
           onRetry={() => { void handleGeneratePlan('Generate execution plan from current scorecard.', { confirmRegenerate: hasExistingPlan }); }}
           style={{ marginBottom: 16 }}
         />
+        <StarterPlanNote plan={threadWbs} style={{ marginBottom: 16 }} />
 
         {!threadId ? (
           <div className="int-card execution-plan-empty">

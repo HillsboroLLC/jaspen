@@ -552,6 +552,7 @@ def create_app():
     from . import models_decision_baseline  # noqa: F401  register DecisionBaseline table with SQLAlchemy
     from . import models_challenge_event  # noqa: F401  register ChallengeEvent table with SQLAlchemy
     from . import models_pm_sync  # noqa: F401  register PM sync tables with SQLAlchemy
+    from . import models_plan_jobs  # noqa: F401  register plan build jobs with SQLAlchemy
 
     app.register_blueprint(auth_bp,      url_prefix='/api/v1/auth')
     app.register_blueprint(admin_bp,     url_prefix='/api/v1/admin')

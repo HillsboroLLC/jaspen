@@ -119,6 +119,7 @@ export const endpoints = {
   adoptScenario:    (scenarioId, threadId) => `${API_BASE}/api/v1/strategy/scenarios/${encodeURIComponent(scenarioId)}/adopt${threadId ? `?thread_id=${encodeURIComponent(threadId)}` : ''}`,
   aiScenario:       (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-scenario`,
   aiWbs:            (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-wbs`,
+  aiWbsJob:         (threadId, jobId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/ai-wbs/jobs/${encodeURIComponent(jobId)}`,
   scoreNext:        (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/score-next`,
   scoreBatch:       (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/score-batch`,
   threadWbs:        (threadId) => `${API_BASE}/api/v1/strategy/threads/${encodeURIComponent(threadId)}/wbs`,
@@ -219,6 +220,11 @@ function formatRetryAfter(seconds) {
   if (!remainder) return `${minutes} minute${minutes === 1 ? '' : 's'}`;
   return `${minutes} minute${minutes === 1 ? '' : 's'} ${remainder} second${remainder === 1 ? '' : 's'}`;
 }
+
+const PLAN_JOB_POLL_MS = 2000;
+// Longer than a background build can run, including one restart after an
+// interruption (see _PLAN_JOB_STALE_SECONDS on the server).
+const PLAN_JOB_MAX_WAIT_MS = 15 * 60 * 1000;
 
 function buildHttpError(status, data) {
   let msg = data?.message || data?.error || data?.detail || `HTTP ${status}`;
@@ -1256,11 +1262,33 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       objective_explicitly_set,
     }),
 
+  // A committed build runs as a background job on the server: the POST
+  // returns a job id at once, and this waits on the job so callers still get
+  // the finished plan (or the error) exactly as before.
   generateAiWbs: async (threadId, scenarioIdOrPayload = null, { abortSignal = null } = {}) => {
     const payload = (scenarioIdOrPayload && typeof scenarioIdOrPayload === 'object')
       ? scenarioIdOrPayload
       : { scenario_id: scenarioIdOrPayload || null };
-    return postJSON(endpoints.aiWbs(threadId), payload, { withSid: true, signal: abortSignal });
+    const background = payload.commit !== false;
+    const started = await postJSON(
+      endpoints.aiWbs(threadId),
+      background ? { ...payload, background: true } : payload,
+      { withSid: true, signal: abortSignal },
+    );
+    if (!started?.job_id) return started;
+    const deadline = Date.now() + PLAN_JOB_MAX_WAIT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, PLAN_JOB_POLL_MS));
+      if (abortSignal?.aborted) {
+        const aborted = new Error('Plan build cancelled.');
+        aborted.name = 'AbortError';
+        throw aborted;
+      }
+      const job = await getJSON(endpoints.aiWbsJob(threadId, started.job_id), { withSid: true });
+      if (job?.status === 'done') return job.result;
+      if (job?.status === 'failed') throw buildHttpError(job.result_status || 500, job.result || {});
+    }
+    throw buildHttpError(504, { error: "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed." });
   },
 
   getThreadWbs: async (threadId, scorecardId = null) => {
