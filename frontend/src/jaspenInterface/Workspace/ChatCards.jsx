@@ -206,6 +206,74 @@ export function ConfirmCard({ data, onSendText = null, showActions = false }) {
   );
 }
 
+const SOURCE_LABELS = { snowflake: 'Snowflake', salesforce: 'Salesforce' };
+
+function formatCell(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'number') return value.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+// Query results exactly as the connector returned them. The AI explains
+// them in its reply; the numbers themselves come from here.
+export function DataTableCard({ data }) {
+  const columns = Array.isArray(data?.columns) ? data.columns : [];
+  const rows = Array.isArray(data?.rows) ? data.rows : [];
+  if (!columns.length || !rows.length) return null;
+  const total = Number(data?.returned_rows) || rows.length;
+  const source = SOURCE_LABELS[data?.source] || data?.source || 'Data';
+  return (
+    <div style={{ ...cardStyle, maxWidth: 720, padding: 0, overflow: 'hidden' }} data-card="data_table">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, padding: '12px 16px 8px' }}>
+        <span style={eyebrowStyle}>{source} data</span>
+        <span style={{ fontSize: 11.5, color: C.ink, fontFamily: 'JetBrains Mono, monospace' }}>{data?.table}</span>
+      </div>
+      <div style={{ overflowX: 'auto', borderTop: `1px solid ${C.line}` }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ background: C.track }}>
+              {columns.map((column) => (
+                <th key={column} style={{ textAlign: 'left', padding: '7px 12px', color: C.navy, fontWeight: 600, whiteSpace: 'nowrap' }}>{column}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => (
+              // eslint-disable-next-line react/no-array-index-key
+              <tr key={index} style={{ borderTop: `1px solid ${C.line}` }}>
+                {columns.map((column) => {
+                  const value = row?.[column];
+                  const numeric = typeof value === 'number';
+                  const text = formatCell(value);
+                  return (
+                    <td
+                      key={column}
+                      title={text.length > 40 ? text : undefined}
+                      style={{
+                        padding: '6px 12px', color: C.navy, whiteSpace: 'nowrap',
+                        textAlign: numeric ? 'right' : 'left',
+                        fontVariantNumeric: numeric ? 'tabular-nums' : undefined,
+                        maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {text}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ padding: '8px 16px', fontSize: 11.5, color: C.ink, borderTop: `1px solid ${C.line}` }}>
+        {total > rows.length ? `Showing ${rows.length} of ${total.toLocaleString('en-US')} rows` : `${total.toLocaleString('en-US')} row${total === 1 ? '' : 's'}`}
+      </div>
+    </div>
+  );
+}
+
 // True when `message` holds the newest card of its type in the conversation,
 // so only that card offers buttons.
 export function isLatestCard(message, messages) {

@@ -918,14 +918,6 @@ def _decision_kit_notice(kit):
     return ""
 
 
-def _prepend_pending_decision_kit_notice(session, reply):
-    notice = str((session or {}).pop("decision_kit_notice_pending", "") or "").strip()
-    text = str(reply or "").strip()
-    if not notice:
-        return text
-    return f"{notice}\n\n{text}" if text else notice
-
-
 def _decision_kit_judgment_for_turn(session, user_message, model_selection, *, explicit_selection=None):
     """Classify only while Discovery may still establish a kit."""
     explicit = str(explicit_selection or "").strip().lower()
@@ -3471,55 +3463,6 @@ def _finalize_agent_reply(
     return final_reply
 
 
-def _has_successful_connector_query_action(executed_actions):
-    for action in (executed_actions or []):
-        if not isinstance(action, dict):
-            continue
-        if str(action.get("tool") or "").strip() != "query_connector_data":
-            continue
-        result = action.get("result") if isinstance(action.get("result"), dict) else {}
-        if result.get("ok"):
-            return True
-    return False
-
-
-def _looks_like_connector_deferral(reply):
-    text = str(reply or "").strip().lower()
-    if not text:
-        return True
-    markers = (
-        "i can't access",
-        "i cannot access",
-        "i could not retrieve connector rows",
-        "please confirm the connected source/table",
-        "what is the specific initiative goal",
-        "share current evidence:",
-        "i will prioritize numeric evidence",
-        "i can now compute focused cost-driver summaries",
-    )
-    return any(marker in text for marker in markers)
-
-
-def _enforce_connector_data_reply(user_id, user_message, readiness, reply, executed_actions):
-    """
-    Ensure connector-context turns return concrete numeric findings, not readiness prompts/deferrals.
-    """
-    current_reply = str(reply or "").strip()
-    if not _message_has_data_context_request(user_message):
-        return current_reply
-
-    has_query = _has_successful_connector_query_action(executed_actions)
-    needs_override = _looks_like_connector_deferral(current_reply)
-    if not has_query and not needs_override:
-        return current_reply
-
-    fallback = _direct_connector_fallback_reply(user_id, user_message, readiness)
-    fallback_text = str(fallback or "").strip()
-    if fallback_text:
-        return fallback_text
-    return current_reply
-
-
 def _exception_status_code(exc):
     status_code = getattr(exc, "status_code", None)
     if isinstance(status_code, int):
@@ -4252,179 +4195,6 @@ def _find_session_scorecard_ref(session, target_id):
         if cid and cid == tid:
             return card
     return None
-
-
-def _message_has_data_context_request(user_message):
-    text = str(user_message or "").strip().lower()
-    if not text:
-        return False
-    markers = (
-        "[data context attached:",
-        "[snowflake context]",
-        "[salesforce context]",
-        "using my connected",
-        "connected data context",
-        "query_connector_data",
-    )
-    return any(marker in text for marker in markers)
-
-
-def _fallback_reply_for_turn(user_message, readiness):
-    if _message_has_data_context_request(user_message):
-        return (
-            "I could not retrieve connector rows for that request. "
-            "Please confirm the connected source/table and try again."
-        )
-    return _next_question(readiness)
-
-
-def _infer_connector_query_params_from_message(user_message):
-    text = str(user_message or "").strip()
-    lower = text.lower()
-    connector_type = "snowflake" if "snowflake" in lower else ("salesforce" if "salesforce" in lower else "snowflake")
-    table_match = re.search(r"\b([a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_]*)\b", text)
-    table = table_match.group(1).lower() if table_match else ""
-    cols = []
-    for token in re.findall(r"\b[A-Z][A-Z0-9_]{2,}\b", text):
-        if token not in cols:
-            cols.append(token)
-        if len(cols) >= 12:
-            break
-    return {
-        "connector_type": connector_type,
-        "table": table,
-        "query_intent": text,
-        "columns": cols or None,
-        "limit": 50,
-    }
-
-
-def _direct_connector_fallback_reply(user_id, user_message, readiness):
-    if not _message_has_data_context_request(user_message):
-        return _next_question(readiness)
-    params = _infer_connector_query_params_from_message(user_message)
-    result = _execute_connector_query_tool(user_id, params)
-    if not isinstance(result, dict) or not result.get("ok"):
-        err = result.get("error") if isinstance(result, dict) else ""
-        err_text = str(err or "").strip()
-        if err_text:
-            return f"Connector query failed: {err_text}"
-        return _fallback_reply_for_turn(user_message, readiness)
-    payload = result if isinstance(result, dict) else {}
-    rows = payload.get("data") if isinstance(payload.get("data"), list) else []
-    table = str(payload.get("table") or params.get("table") or "connector data").strip()
-    cols = payload.get("columns") if isinstance(payload.get("columns"), list) else []
-    preview_rows = rows[:5]
-    lines = [
-        "**Connector Analysis Summary**",
-        f"- Source table: `{table}`",
-        f"- Rows analyzed: `{len(rows)}`",
-    ]
-    if cols:
-        lines.append(f"- Columns used: {', '.join(cols[:10])}")
-    if preview_rows:
-        lines.append("")
-        lines.append("**Top Rows Preview**")
-        for idx, row in enumerate(preview_rows, start=1):
-            if isinstance(row, dict):
-                compact = ", ".join(f"{k}={row.get(k)}" for k in list(row.keys())[:6])
-                lines.append(f"- {idx}. {compact}")
-        def _to_float(value):
-            try:
-                if value is None:
-                    return None
-                if isinstance(value, (int, float)):
-                    return float(value)
-                text = str(value).strip().replace(",", "")
-                if not text:
-                    return None
-                return float(text)
-            except Exception:
-                return None
-
-        def _avg(values):
-            nums = [v for v in values if isinstance(v, (int, float))]
-            return (sum(nums) / len(nums)) if nums else None
-
-        cost_col = None
-        preferred_cost_cols = ["L_EXTENDEDPRICE", "EXTENDEDPRICE", "TOTAL_COST", "COST", "AMOUNT", "VALUE", "PRICE"]
-        available_keys = set()
-        for row in rows:
-            if isinstance(row, dict):
-                available_keys.update(str(k) for k in row.keys())
-        for candidate in preferred_cost_cols:
-            if candidate in available_keys:
-                cost_col = candidate
-                break
-        if cost_col is None:
-            for key in available_keys:
-                key_upper = str(key).upper()
-                if any(tok in key_upper for tok in ("PRICE", "COST", "AMOUNT", "VALUE")):
-                    cost_col = key
-                    break
-
-        discount_col = "L_DISCOUNT" if "L_DISCOUNT" in available_keys else None
-        tax_col = "L_TAX" if "L_TAX" in available_keys else None
-        qty_col = "L_QUANTITY" if "L_QUANTITY" in available_keys else None
-
-        ranked = []
-        if cost_col:
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                cost_val = _to_float(row.get(cost_col))
-                if cost_val is None:
-                    continue
-                ranked.append((cost_val, row))
-            ranked.sort(key=lambda t: t[0], reverse=True)
-
-        top3 = ranked[:3]
-        if top3:
-            lines.append("")
-            lines.append("**Top 3 Cost Drivers (Numeric Evidence)**")
-            for idx, (val, row) in enumerate(top3, start=1):
-                line_no = row.get("L_LINENUMBER", "n/a") if isinstance(row, dict) else "n/a"
-                order_key = row.get("L_ORDERKEY", "n/a") if isinstance(row, dict) else "n/a"
-                qty_val = _to_float(row.get(qty_col)) if (qty_col and isinstance(row, dict)) else None
-                disc_val = _to_float(row.get(discount_col)) if (discount_col and isinstance(row, dict)) else None
-                tax_val = _to_float(row.get(tax_col)) if (tax_col and isinstance(row, dict)) else None
-                parts = [f"{idx}) {cost_col}={val:.2f} (ORDERKEY={order_key}, LINENUMBER={line_no})"]
-                if qty_val is not None:
-                    parts.append(f"{qty_col}={qty_val:.2f}")
-                if disc_val is not None:
-                    parts.append(f"{discount_col}={disc_val:.4f}")
-                if tax_val is not None:
-                    parts.append(f"{tax_col}={tax_val:.4f}")
-                lines.append(f"- {' | '.join(parts)}")
-
-            top_vals = [v for v, _ in top3]
-            avg_top = _avg(top_vals)
-            all_cost_vals = [v for v, _ in ranked]
-            avg_all = _avg(all_cost_vals)
-            lines.append("")
-            lines.append("**Executive Summary**")
-            if avg_top is not None and avg_all is not None:
-                lines.append(f"- Top-3 average `{cost_col}`: `{avg_top:.2f}` vs sampled average `{avg_all:.2f}`")
-            if discount_col:
-                discounts = [_to_float(r.get(discount_col)) for r in rows if isinstance(r, dict)]
-                avg_disc = _avg(discounts)
-                if avg_disc is not None:
-                    lines.append(f"- Average `{discount_col}`: `{avg_disc:.4f}`")
-            if tax_col:
-                taxes = [_to_float(r.get(tax_col)) for r in rows if isinstance(r, dict)]
-                avg_tax = _avg(taxes)
-                if avg_tax is not None:
-                    lines.append(f"- Average `{tax_col}`: `{avg_tax:.4f}`")
-            lines.append("")
-            lines.append("**Recommended Actions (30/60/90)**")
-            lines.append(f"- 30 days: Validate top `{cost_col}` contributors by supplier/part and flag outliers > sampled average.")
-            lines.append(f"- 60 days: Design cost-control levers for high-value lines (discount policy, quantity thresholds, sourcing shifts).")
-            lines.append(f"- 90 days: Track weekly `{cost_col}` trend and target a measurable reduction against current sampled levels.")
-        else:
-            lines.append("I could not compute numeric cost drivers from the returned rows. Try specifying cost columns.")
-    else:
-        lines.append("No rows were returned for that query. Try adjusting table/columns or filters.")
-    return "\n".join(lines)
 
 
 def _log_injection_signals(*, user, thread_id, user_message, injection_signals, source):
@@ -5905,6 +5675,23 @@ def _resolve_snowflake_table(table, allowlist, query_intent):
     return inferred or normalized_allowlist[0]
 
 
+def _data_table_card(source, table, rows, returned_rows):
+    """Query results exactly as returned, for the UI; the AI explains them."""
+    rows = [row for row in (rows or []) if isinstance(row, dict)][:20]
+    columns = []
+    for row in rows:
+        for key in row.keys():
+            if key not in columns:
+                columns.append(key)
+    return {"type": "data_table", "data": {
+        "source": source,
+        "table": table,
+        "columns": columns[:12],
+        "rows": [{key: row.get(key) for key in columns[:12]} for row in rows],
+        "returned_rows": int(returned_rows or len(rows)),
+    }}
+
+
 def _execute_connector_query_tool(user_id, tool_input):
     params = tool_input if isinstance(tool_input, dict) else {}
     connector_type = str(params.get("connector_type") or "snowflake").strip().lower()
@@ -5940,6 +5727,7 @@ def _execute_connector_query_tool(user_id, tool_input):
                 "used_columns": summary_meta.get("used_columns") if isinstance(summary_meta.get("used_columns"), list) else [],
                 "data": rows[:50],
                 "summary": f"Retrieved {len(rows)} rows from {table}.",
+                "artifact": _data_table_card("snowflake", table, rows, len(rows)),
             })
 
         if connector_type == "salesforce":
@@ -5967,6 +5755,10 @@ def _execute_connector_query_tool(user_id, tool_input):
                 "data": opportunities,
                 "top_rows": top_opps,
                 "summary": summary,
+                "artifact": _data_table_card(
+                    "salesforce", table or "salesforce.opportunities",
+                    opportunities, len(result.get("opportunities") or []),
+                ),
             })
     except Exception as exc:
         return _tool_error(str(exc), code="connector_query_failed")
@@ -9598,7 +9390,7 @@ def _generate_assistant_reply_anthropic(
     disable_mutations=False,
     allow_failover=False,
 ):
-    fallback_reply = _direct_connector_fallback_reply(user_id, user_message, readiness)
+    fallback_reply = ""
     api_key = _anthropic_api_key()
     if not api_key:
         return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
@@ -9638,11 +9430,6 @@ def _generate_assistant_reply_anthropic(
     system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
     _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
     system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc)
-    if _message_has_data_context_request(user_message):
-        system_prompt += (
-            "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
-            "answer with concrete numeric findings first. If query_connector_data is available, call it before asking any readiness follow-up."
-        )
     user_content = _anthropic_user_message_content(user_message, attachments=attachments)
     if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
         messages[-1] = {**messages[-1], "content": user_content}
@@ -9775,7 +9562,6 @@ def _generate_assistant_reply_anthropic(
             user_id=user_id,
             thread_id=thread_id,
         )
-        reply = _enforce_connector_data_reply(user_id, user_message, readiness, reply, executed_actions)
         usage = {
             "provider": "anthropic",
             "model": resolved_model_name,
@@ -9800,7 +9586,6 @@ def _generate_assistant_reply_anthropic(
                 user_id=user_id,
                 thread_id=thread_id,
             )
-            reply = _enforce_connector_data_reply(user_id, user_message, readiness, reply, executed_actions)
             usage = {
                 "degraded": True, "error_code": "narration_failed",
                 "provider": "anthropic",
@@ -9834,7 +9619,7 @@ def _stream_assistant_reply_events_anthropic(
     allow_failover=False,
 ):
     state = state if isinstance(state, dict) else {}
-    fallback_reply = _direct_connector_fallback_reply(user_id, user_message, readiness)
+    fallback_reply = ""
     state.update({
         "reply": fallback_reply,
         "usage": {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -9884,11 +9669,6 @@ def _stream_assistant_reply_events_anthropic(
     system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
     _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
     system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc)
-    if _message_has_data_context_request(user_message):
-        system_prompt += (
-            "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
-            "answer with concrete numeric findings first. If query_connector_data is available, call it before asking any readiness follow-up."
-        )
     user_content = _anthropic_user_message_content(user_message, attachments=attachments)
     if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
         messages[-1] = {**messages[-1], "content": user_content}
@@ -10141,7 +9921,7 @@ def _generate_assistant_reply_gemini(
     if not _gemini_api_key():
         raise RuntimeError("GEMINI_API_KEY not configured")
 
-    fallback_reply = _direct_connector_fallback_reply(user_id, user_message, readiness)
+    fallback_reply = ""
     messages, context_summary_text, summary_usage = _prepare_context_window(
         session,
         chat_history,
@@ -10164,11 +9944,6 @@ def _generate_assistant_reply_gemini(
     system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
     active_exec_id = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
     system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, active_exec_id)
-    if _message_has_data_context_request(user_message):
-        system_prompt += (
-            "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
-            "answer with concrete numeric findings first. If query_connector_data is available, call it before asking any readiness follow-up."
-        )
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
@@ -10242,7 +10017,6 @@ def _generate_assistant_reply_gemini(
                     user_id=user_id,
                     thread_id=thread_id,
                 )
-                reply = _enforce_connector_data_reply(user_id, user_message, readiness, reply, executed_actions)
                 total_usage["provider"] = "gemini"
                 total_usage["model"] = model_name
                 return reply, total_usage, executed_actions, executed_mutations, undo_snapshot
@@ -10317,7 +10091,6 @@ def _generate_assistant_reply_gemini(
                 user_id=user_id,
                 thread_id=thread_id,
             )
-            reply = _enforce_connector_data_reply(user_id, user_message, readiness, reply, executed_actions)
             return reply, total_usage, executed_actions, executed_mutations, undo_snapshot
         if allow_failover:
             raise
@@ -10347,7 +10120,7 @@ def _stream_assistant_reply_events_gemini(
         raise RuntimeError("GEMINI_API_KEY not configured")
 
     state = state if isinstance(state, dict) else {}
-    fallback_reply = _direct_connector_fallback_reply(user_id, user_message, readiness)
+    fallback_reply = ""
     state.update({
         "reply": fallback_reply,
         "usage": {"provider": "gemini", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
@@ -10378,11 +10151,6 @@ def _stream_assistant_reply_events_gemini(
     system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
     active_exec_id = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
     system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, active_exec_id)
-    if _message_has_data_context_request(user_message):
-        system_prompt += (
-            "\nConnector-priority instruction: because the user attached data context or requested connector analysis, "
-            "answer with concrete numeric findings first. If query_connector_data is available, call it before asking any readiness follow-up."
-        )
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
@@ -11734,7 +11502,7 @@ def _artifact_chat_entry(artifact):
     }
 
 
-def _artifact_entries_from_actions(actions, user_message=None, user_id=None, thread_id=None):
+def _artifact_entries_from_actions(actions, user_message=None, user_id=None, thread_id=None, reply=None):
     artifact_entries = []
     receipts = []
     for action in (actions if isinstance(actions, list) else []):
@@ -11793,6 +11561,16 @@ def _artifact_entries_from_actions(actions, user_message=None, user_id=None, thr
                 "retry_message": str(user_message or "").strip() or None,
             }
         entry = _artifact_chat_entry({"type": "status", "data": status})
+        if entry:
+            artifact_entries.append(entry)
+    if reply is not None and not str(reply).strip() and not artifact_entries:
+        # The AI returned nothing and nothing happened: say so as status,
+        # never with a canned question.
+        entry = _artifact_chat_entry({"type": "status", "data": {
+            "tone": "error",
+            "message": "This reply didn't finish. Your message is saved.",
+            "retry_message": str(user_message or "").strip() or None,
+        }})
         if entry:
             artifact_entries.append(entry)
     return artifact_entries
@@ -13048,14 +12826,7 @@ def conversation_start():
                     state=state,
                 ):
                     yield _sse_payload(payload)
-                assistant_reply = str(state.get("reply") or "").strip() or _direct_connector_fallback_reply(user_id, user_message, readiness)
-                assistant_reply = _enforce_connector_data_reply(
-                    user_id,
-                    user_message,
-                    readiness,
-                    assistant_reply,
-                    state.get("actions") if isinstance(state.get("actions"), list) else [],
-                )
+                assistant_reply = str(state.get("reply") or "").strip()
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
                 actions = state.get("actions") if isinstance(state.get("actions"), list) else []
                 assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
@@ -13064,11 +12835,10 @@ def conversation_start():
                 assistant_reply, _decision_failure = _apply_option_decision_failure_state(
                     assistant_reply, actions,
                 )
-                assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id)
+                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
                 _apply_rubric_action_to_session(session, actions)
 
                 credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
@@ -13284,7 +13054,6 @@ def conversation_start():
         assistant_reply, actions,
     )
     usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
-    assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
     credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
         user,
@@ -13297,7 +13066,7 @@ def conversation_start():
     credits_charged = credit_settlement["charged"]
     _persist_credit_deduction(user_id, remaining)
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
-    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id)
+    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
     _apply_rubric_action_to_session(session, actions)
     chat_history.append(_assistant_chat_entry(
         assistant_reply,
@@ -13637,14 +13406,7 @@ def conversation_continue():
                     state=state,
                 ):
                     yield _sse_payload(payload)
-                assistant_reply = str(state.get("reply") or "").strip() or _direct_connector_fallback_reply(user_id, user_message, readiness)
-                assistant_reply = _enforce_connector_data_reply(
-                    user_id,
-                    user_message,
-                    readiness,
-                    assistant_reply,
-                    state.get("actions") if isinstance(state.get("actions"), list) else [],
-                )
+                assistant_reply = str(state.get("reply") or "").strip()
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
                 actions = state.get("actions") if isinstance(state.get("actions"), list) else []
                 assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
@@ -13653,11 +13415,10 @@ def conversation_continue():
                 assistant_reply, _decision_failure = _apply_option_decision_failure_state(
                     assistant_reply, actions,
                 )
-                assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id)
+                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
                 _apply_rubric_action_to_session(session, actions)
 
                 credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
@@ -13868,7 +13629,6 @@ def conversation_continue():
         assistant_reply, actions,
     )
     usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
-    assistant_reply = _prepend_pending_decision_kit_notice(session, assistant_reply)
     credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
     credit_settlement = _settle_reserved_credits(
         user,
@@ -13881,7 +13641,7 @@ def conversation_continue():
     credits_charged = credit_settlement["charged"]
     _persist_credit_deduction(user_id, remaining)
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
-    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id)
+    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
     _apply_rubric_action_to_session(session, actions)
     chat_history.append(_assistant_chat_entry(
         assistant_reply,
@@ -15542,14 +15302,7 @@ def conversation_regenerate():
                     yield _sse_payload(payload)
 
                 yield _sse_payload({"type": "tool_status", "status": "Finalizing response..."})
-                assistant_reply = str(state.get("reply") or "").strip() or _direct_connector_fallback_reply(user_id, user_message, readiness)
-                assistant_reply = _enforce_connector_data_reply(
-                    user_id,
-                    user_message,
-                    readiness,
-                    assistant_reply,
-                    state.get("actions") if isinstance(state.get("actions"), list) else [],
-                )
+                assistant_reply = str(state.get("reply") or "").strip()
                 usage = state.get("usage") if isinstance(state.get("usage"), dict) else {
                     "provider": "heuristic",
                     "model": None,

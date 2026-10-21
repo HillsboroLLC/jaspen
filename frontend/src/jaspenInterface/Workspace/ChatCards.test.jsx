@@ -1,6 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { ConfirmCard, ReceiptsCard, RubricCard, StatusCard, isLatestCard } from './ChatCards';
+import { ConfirmCard, DataTableCard, ReceiptsCard, RubricCard, StatusCard, isLatestCard } from './ChatCards';
 
 const rubric = {
   status: 'proposed',
@@ -91,4 +91,17 @@ it('the override card names the option and what it overrides', () => {
   expect(screen.getByText("Overrides Jaspen's No-Bid.")).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Record override' }));
   expect(onSendText).toHaveBeenCalledWith('Yes, record it.');
+});
+
+it('shows query results exactly, with formatted numbers and a row count', () => {
+  render(<DataTableCard data={{
+    source: 'snowflake', table: 'sales.regions', columns: ['REGION', 'REVENUE'],
+    rows: [{ REGION: 'West', REVENUE: 1250000 }, { REGION: 'East', REVENUE: null }],
+    returned_rows: 48,
+  }} />);
+  expect(screen.getByText('Snowflake data')).toBeInTheDocument();
+  expect(screen.getByText('sales.regions')).toBeInTheDocument();
+  expect(screen.getByText('1,250,000')).toBeInTheDocument();
+  expect(screen.getByText('—')).toBeInTheDocument();
+  expect(screen.getByText('Showing 2 of 48 rows')).toBeInTheDocument();
 });
