@@ -7193,30 +7193,6 @@ def create_ai_scenario(thread_id):
         return jsonify({'error': str(e)}), 500
 
 
-def _join_labels(labels):
-    labels = list(dict.fromkeys(labels))
-    if len(labels) <= 1:
-        return ''.join(labels)
-    return ', '.join(labels[:-1]) + ' and ' + labels[-1]
-
-
-def _queued_neutral_note(batch_neutral):
-    """Explain the neutral values used across a queued batch (Constitution Art. 13/15)."""
-    entries = [item for item in batch_neutral or [] if item.get('criteria')]
-    if not entries:
-        return ''
-    shared = all(item['criteria'] == entries[0]['criteria'] for item in entries)
-    if shared:
-        listed = _join_labels(entries[0]['criteria'])
-    else:
-        listed = '; '.join(f"{item['name']}: {_join_labels(item['criteria'])}" for item in entries)
-    return (
-        f"Some criteria had no information yet, so Jaspen used a neutral 45 (labeled Assumed) for them: {listed}. "
-        "A neutral value neither helps nor hurts an option; it holds the place until you share what you know. "
-        "Want to fill these in? I can ask about them one at a time."
-    )
-
-
 @strategy_bp.route('/threads/<thread_id>/score-next', methods=['POST'])
 @jwt_required()
 @limiter.limit('60 per minute')
@@ -7395,35 +7371,10 @@ def score_next_queued(thread_id):
 
         artifact = result.get('artifact') if isinstance(result.get('artifact'), dict) else None
         entry = _artifact_chat_entry(artifact) if artifact else None
-        chat_history = session2.get('chat_history') if isinstance(session2.get('chat_history'), list) else []
         if entry:
+            chat_history = session2.get('chat_history') if isinstance(session2.get('chat_history'), list) else []
             chat_history.append(entry)
-        # Queued scoring has no AI reply of its own, so the neutral values
-        # used across the batch are explained once, after the last option.
-        scored_card = result.get('scorecard') if isinstance(result.get('scorecard'), dict) else {}
-        neutral_labels = [
-            str(item.get('label') or item.get('key') or '').strip()
-            for item in (scored_card.get('neutral_criteria') or [])
-            if isinstance(item, dict) and str(item.get('label') or item.get('key') or '').strip()
-        ]
-        batch_neutral = [
-            item for item in (session2.get('queue_neutral_criteria') or [])
-            if isinstance(item, dict)
-        ]
-        if neutral_labels:
-            batch_neutral.append({'name': name, 'criteria': neutral_labels})
-        if remaining_queue:
-            session2['queue_neutral_criteria'] = batch_neutral
-        else:
-            session2.pop('queue_neutral_criteria', None)
-            note = _queued_neutral_note(batch_neutral)
-            if note:
-                chat_history.append({
-                    'role': 'assistant',
-                    'content': note,
-                    'timestamp': datetime.utcnow().isoformat(),
-                })
-        session2['chat_history'] = chat_history
+            session2['chat_history'] = chat_history
         session2['timestamp'] = datetime.utcnow().isoformat()
         sessions2[session_key or thread_id] = session2
         save_user_sessions(user_id, sessions2)
