@@ -7502,7 +7502,14 @@ useEffect(() => {
     }));
   }, []);
 
+  // A stream reports its final payload twice (the done event, then the
+  // resolved stream), so each payload's artifacts are applied once.
+  const appliedArtifactPayloadsRef = useRef(new WeakSet());
   const appendArtifactMessagesFromPayload = useCallback((payload) => {
+    if (payload && typeof payload === 'object') {
+      if (appliedArtifactPayloadsRef.current.has(payload)) return;
+      appliedArtifactPayloadsRef.current.add(payload);
+    }
     const artifactMessages = Array.isArray(payload?.artifact_messages) ? payload.artifact_messages : [];
     if (!artifactMessages.length) return;
     const incoming = toUiMessages(artifactMessages);
@@ -7517,7 +7524,9 @@ useEffect(() => {
           const existingId = String(existing?.artifact?.data?.id || existing?.artifact?.data?.analysis_id || '').trim();
           if (!artifactType || artifactType !== existingType) return false;
           if (artifactId && existingId) return artifactId === existingId;
-          return false;
+          // Artifacts without an id (a trade-off) match on their content.
+          return !artifactId && !existingId
+            && JSON.stringify(existing?.artifact?.data ?? null) === JSON.stringify(entry?.artifact?.data ?? null);
         });
         if (!duplicate) next.push(entry);
       });
@@ -7886,12 +7895,22 @@ async function continueConversation(userText, options = {}) {
     setDecisionKit(data?.decision_kit || decisionKit || null);
     setDecisionKitSuggestion(data?.decision_kit_suggestion || null);
     setObjectiveExplicitlySet(Boolean(data?.objective_explicitly_set) || objectiveExplicitlySet);
-    await applyMutationRefreshes(data, sessionId);
 
     const updatedCollected = data?.collected_data || collectedData;
     setCollectedData(updatedCollected);
 
-    await fetchSessions();
+    // The reply is in. Refresh the derived state in the background so
+    // "Thinking…" never waits on it, and a refresh hiccup can't report the
+    // reply that already arrived as a failed conversation.
+    setBusy(false);
+    void (async () => {
+      try {
+        await applyMutationRefreshes(data, sessionId);
+        await fetchSessions();
+      } catch (refreshErr) {
+        console.error('[continueConversation] refresh after reply failed', refreshErr);
+      }
+    })();
 
     // Refresh knowledge signals in background after each turn
     void refreshKnowledgeSignals(sessionId);
