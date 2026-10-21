@@ -12545,15 +12545,13 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
         },
     }
 
+    # The idea's own words open the thread; its scorecard shows the result.
+    # Code doesn't write a reply in Jaspen's voice.
     chat_history = [
         {
             "role": "user",
-            "content": f"Promoted from batch idea upload.\n{project_description}",
-            "timestamp": generated_at,
-        },
-        {
-            "role": "assistant",
-            "content": "Imported this batch idea and generated an initial Jaspen scorecard. Open the Score and Execution tabs to review the initial plan.",
+            "content": project_description,
+            "source": "batch_idea_upload",
             "timestamp": generated_at,
         },
     ]

@@ -7624,7 +7624,7 @@ useEffect(() => {
   const setStreamingAssistantError = useCallback((messageId, fallbackText, { keepPartial = false, retryable = false } = {}) => {
     setMessages((prev) => prev.map((message) => {
       if (message.id !== messageId) return message;
-      const errorNote = fallbackText || 'Sorry — I hit an error. Please try again.';
+      const errorNote = fallbackText || "This reply didn't finish. Your message is saved. Try again.";
       const partialText = keepPartial ? String(message.text || '').trim() : '';
       return {
         ...message,
@@ -10378,11 +10378,7 @@ const handleSaveStarter = async () => {
       setView('scenario');
       setAiScenarioProposal(null);
       const score = resp?.scenario?.result?.jaspen_score ?? resp?.preview_scorecard?.jaspen_score;
-      setMessages((prev) => [
-        ...prev,
-        { role: 'ai', text: `Scenario accepted: "${aiScenarioProposal.label}"${score != null ? ` (score ${score})` : ''}.` },
-      ]);
-      showToast('AI scenario applied', 'success');
+      showToast(score != null ? `Scenario applied (score ${score})` : 'Scenario applied', 'success');
     } catch (err) {
       console.error('[acceptAiScenarioProposal] failed', err);
       showToast(err?.message || 'Failed to apply AI scenario', 'error');
@@ -10443,9 +10439,8 @@ const sendAIMessage = async () => {
             record_decision: { acknowledged: true, option_key: pendingWbsConfirmation.optionKey || null },
           });
           if (aiWbs?.plan_exists) {
-            const existsReply = `${aiWbs.scorecard_name || 'This idea'} already has an execution plan${aiWbs.task_count ? ` (${aiWbs.task_count} task${Number(aiWbs.task_count) === 1 ? '' : 's'})` : ''}. Open the current plan or generate a new one?`;
-            setMessages((prev) => [...prev, { role: 'ai', text: existsReply }]);
-            await persistSidebarExchange(aiThreadId, text, existsReply);
+            // The plan-exists dialog is the UI; nothing scripted in the chat.
+            await persistSidebarExchange(aiThreadId, text, null);
             setPlanExistsPrompt({
               threadBundleId: aiThreadId,
               scorecardId: aiWbs.scorecard_id || pendingWbsConfirmation.scorecardId || null,
@@ -10456,17 +10451,20 @@ const sendAIMessage = async () => {
             setPendingWbsConfirmation(null);
             return;
           }
-          const taskCount = Array.isArray(aiWbs?.project_wbs?.tasks) ? aiWbs.project_wbs.tasks.length : 0;
-          const wbsReply = `Generated an AI project WBS with ${taskCount} tasks. You can now refine it in the project planning views.`;
-          setMessages((prev) => [...prev, { role: 'ai', text: wbsReply }]);
-          await persistSidebarExchange(aiThreadId, text, wbsReply);
-          showToast('AI WBS generated', 'success');
+          // The plan card shows the result; nothing scripted in the chat.
+          if (aiWbs?.project_wbs && typeof aiWbs.project_wbs === 'object') {
+            setThreadWbs(aiWbs.project_wbs);
+            setMessages((prev) => [...prev, { role: 'ai', text: '', artifact: { type: 'execution_plan', data: aiWbs.project_wbs } }]);
+          }
+          await persistSidebarExchange(aiThreadId, text, null);
         } catch (wbsErr) {
           console.error('[sendAIMessage] confirmed AI WBS generation failed', wbsErr);
-          const failReply = 'I could not generate the project WBS right now. Please try again in a moment.';
-          setMessages((prev) => [...prev, { role: 'ai', text: failReply }]);
-          await persistSidebarExchange(aiThreadId, text, failReply);
-          showToast('Could not generate project WBS', 'error');
+          setMessages((prev) => [...prev, { role: 'ai', text: '', artifact: { type: 'status', data: {
+            tone: 'error',
+            message: "Jaspen couldn't finish building this plan. Your existing plan was not changed.",
+            retry_message: text,
+          } } }]);
+          await persistSidebarExchange(aiThreadId, text, null);
         } finally {
           setPendingWbsConfirmation(null);
         }
@@ -10561,7 +10559,6 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
       (resp?.project_wbs && typeof resp.project_wbs === 'object') ? resp.project_wbs
       : ((resp?.wbs && typeof resp.wbs === 'object') ? resp.wbs : null)
     );
-    const taskCount = Array.isArray(wbsPayload?.tasks) ? wbsPayload.tasks.length : 0;
     // Persist the new WBS to local state so the Execution tab unlocks
     // immediately without a reload.
     if (wbsPayload && typeof wbsPayload === 'object') {
@@ -10572,7 +10569,7 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
       ...prev,
       {
         role: 'ai',
-        text: `Built an AI execution plan. The plan has ${taskCount} task${taskCount === 1 ? '' : 's'}. It's ready in the Execution tab — or open it directly in Workspace.`,
+        text: '',
         artifact: {
           type: 'execution_plan',
           data: wbsPayload || { tasks: [] },
@@ -11817,7 +11814,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       }
     } catch (error) {
       console.error('Error sending help message:', error);
-      const errorMessage = { role: 'assistant', content: 'Sorry, I encountered an error. Please try again.' };
+      const errorMessage = { role: 'assistant', content: "This reply didn't finish. Try again." };
       setHelpMessages(prev => [...prev, errorMessage]);
     } finally {
       setHelpLoading(false);

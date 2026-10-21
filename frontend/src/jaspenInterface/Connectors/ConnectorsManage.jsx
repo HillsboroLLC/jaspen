@@ -1185,7 +1185,7 @@ export default function ConnectorsManage() {
       }
       const msg = err?.message || 'Something went wrong. Please try again.';
       setJaspenError(msg);
-      setJaspenMessages((prev) => [...prev, { role: 'assistant', text: 'I hit an issue. Please try again.' }]);
+      setJaspenMessages((prev) => [...prev, { role: 'assistant', text: "This reply didn't finish. Try again." }]);
     } finally {
       if (jaspenAbortRef.current === controller) {
         jaspenAbortRef.current = null;

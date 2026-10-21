@@ -470,7 +470,7 @@ export default function Scores() {
       setPortfolioError(message);
       setPortfolioMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: 'I hit an issue while reviewing your scored portfolio. Please try again.' },
+        { role: 'assistant', content: "This reply didn't finish. Try again." },
       ]);
     } finally {
       setPortfolioBusy(false);
