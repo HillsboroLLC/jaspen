@@ -635,6 +635,13 @@ def build_snapshot(*, artifact_type, cards, include_evidence, scorecard_id=None,
             presentation = sanitize_presentation(overrides.get('report_presentation') or {})
         except ValueError:
             presentation = {}
+        # A brand color set from chat (legacy accent_color) colors the shared
+        # one-pager too, unless the report has its own accent.
+        legacy_accent = str(overrides.get('accent_color') or '').strip()
+        if (not (presentation.get('colors') or {}).get('accent')
+                and _HEX_COLOR.match(legacy_accent)
+                and _contrast_ratio(legacy_accent, '#FFFFFF') >= 4.5):
+            presentation['colors'] = {**(presentation.get('colors') or {}), 'accent': legacy_accent.upper()}
         if presentation:
             snapshot['presentation'] = presentation
         return snapshot, card_title(card), wanted, count_evidence_passages(card)

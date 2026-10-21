@@ -23,6 +23,26 @@ export const REPORT_SECTIONS = [
 
 export const DEFAULT_COLORS = { accent: '#A0036C', ink: '#1B2342', tint: '#EEF5F7' };
 
+const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+
+// The same readability rule the server applies to presentation colors:
+// white text on the accent needs a 4.5:1 contrast ratio.
+const readableOnWhite = (hex) => {
+  const linear = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  const luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+  return 1.05 / (luminance + 0.05) >= 4.5;
+};
+
+// A brand color set from chat lives on the card's display_overrides. It colors
+// the one-pager unless the report has its own accent.
+const cardAccent = (card) => {
+  const value = String(card?.display_overrides?.accent_color || card?._accent_color || '').trim();
+  return HEX_COLOR.test(value) && readableOnWhite(value) ? value.toUpperCase() : null;
+};
+
 const OBJECTIVE_LABELS = {
   balanced: 'Balanced',
   cost: 'Cost Optimization',
@@ -441,6 +461,8 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
       : 'Record the decision in Jaspen so the execution plan can be built from it.',
   };
 
+  const accent = artifactType === 'scorecard' ? cardAccent(featured) : null;
+
   return {
     masthead: KIT_MASTHEADS[kit] || 'DECISION REPORT',
     tags,
@@ -483,13 +505,14 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
       mustHaves: mustHaves.map((c) => c.label || humanize(c.key)),
     },
     defaults,
+    baseColors: accent ? { accent } : {},
   };
 }
 
 // Owner edits win for wording, colors and layout; numbers stay derived.
 export function applyPresentation(model, presentation = {}) {
   const text = { ...model.defaults, ...(presentation.text || {}) };
-  const colors = { ...DEFAULT_COLORS, ...(presentation.colors || {}) };
+  const colors = { ...DEFAULT_COLORS, ...(model.baseColors || {}), ...(presentation.colors || {}) };
   const layout = presentation.layout || {};
   const known = REPORT_SECTIONS.map((section) => section.key);
   const saved = Array.isArray(layout.order) ? layout.order.filter((key) => known.includes(key)) : [];

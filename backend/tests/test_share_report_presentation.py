@@ -346,6 +346,30 @@ def test_workspace_saves_report_edits_on_the_scorecard_and_shares_inherit_them(c
     assert snapshot['presentation'] == {'colors': {'accent': '#0F6E77'}, 'text': {'brand_name': 'ACME BUILDERS'}}
 
 
+
+def _shared_presentation(overrides):
+    from app.sharing import ARTIFACT_SCORECARD, build_snapshot
+
+    card = {**_card('report-card-a', 'Denver Water'), 'display_overrides': overrides}
+    snapshot, *_ = build_snapshot(artifact_type=ARTIFACT_SCORECARD, cards=[card],
+                                  include_evidence=False, scorecard_id='report-card-a')
+    return snapshot.get('presentation')
+
+
+def test_shared_one_pager_uses_a_chat_brand_color_when_the_report_has_no_accent():
+    assert _shared_presentation({'accent_color': '#0a66c2'}) == {'colors': {'accent': '#0A66C2'}}
+    # The report's own accent wins; other edits are kept.
+    assert _shared_presentation({
+        'accent_color': '#0a66c2',
+        'report_presentation': {'colors': {'accent': '#0f6e77', 'tint': '#eef5f7'}, 'text': {'brand_name': 'ACME'}},
+    }) == {'colors': {'accent': '#0F6E77', 'tint': '#EEF5F7'}, 'text': {'brand_name': 'ACME'}}
+    assert _shared_presentation({
+        'accent_color': '#0a66c2', 'report_presentation': {'text': {'brand_name': 'ACME'}},
+    }) == {'colors': {'accent': '#0A66C2'}, 'text': {'brand_name': 'ACME'}}
+    # Unreadable or malformed colors fall back to the default accent.
+    assert _shared_presentation({'accent_color': '#ffff00'}) is None
+    assert _shared_presentation({'accent_color': 'blue'}) is None
+
 def test_rereading_a_card_keeps_fact_resolved_gates():
     from app.decision_processing import apply_decision_kit
 

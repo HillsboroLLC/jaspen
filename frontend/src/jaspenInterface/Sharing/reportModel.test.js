@@ -253,3 +253,19 @@ test('presentation edits change wording, colors and layout only', () => {
   expect(view.evidenceVariant).toBe('compact');
   expect(model.featured.metrics[0].value).toBe('$151,200');
 });
+
+test('a brand color set from chat colors the one-pager unless the report has its own accent', () => {
+  const card = (overrides) => ({ scorecard: bid('Denver', 64, 'Bid', { display_overrides: overrides }) });
+  const accentFor = (snap, presentation) => (
+    applyPresentation(buildReportModel({ artifactType: 'scorecard', snapshot: snap, title: 'X' }), presentation).colors.accent
+  );
+
+  expect(accentFor(card({ accent_color: '#0a66c2' }))).toBe('#0A66C2');
+  expect(accentFor({ scorecard: bid('Denver', 64, 'Bid', { _accent_color: '#0A66C2' }) })).toBe('#0A66C2');
+  expect(accentFor(card({ accent_color: '#0a66c2' }), { colors: { accent: '#0F6E77' } })).toBe('#0F6E77');
+  // Unreadable or malformed colors keep the default.
+  expect(accentFor(card({ accent_color: '#ffff00' }))).toBe('#A0036C');
+  expect(accentFor(card({ accent_color: 'blue' }))).toBe('#A0036C');
+  // A share snapshot carries the color in presentation and renders the same.
+  expect(accentFor({ scorecard: bid('Denver', 64, 'Bid') }, { colors: { accent: '#0A66C2' } })).toBe('#0A66C2');
+});
