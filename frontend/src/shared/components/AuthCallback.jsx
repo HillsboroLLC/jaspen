@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { authFetch } from "../auth/http";
+import { useAuth } from "../auth/AuthContext";
 import {
   readPendingIntakeContext,
   clearPendingIntakeContext,
@@ -13,6 +14,7 @@ import "./AuthCallback.css";
 export default function AuthCallback() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { setMfaEnforcement } = useAuth();
 
   useEffect(() => {
     let cancelled = false;
@@ -25,6 +27,23 @@ export default function AuthCallback() {
       try {
         const params = new URLSearchParams(location.search);
         const next = params.get("next") || "/new";
+
+        // Google confirmed who the user is; Jaspen's 2FA still applies. The
+        // sign-in finishes in the same challenge form as password login.
+        if (params.get("mfa") === "1") {
+          const res = await authFetch('/api/v1/auth/mfa/pending');
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data?.mfa_required && data?.pending_token) {
+            setMfaEnforcement({
+              mfaRequired: true,
+              mfaSetupRequired: Boolean(data.mfa_setup_required),
+              pendingToken: data.pending_token,
+              organizationId: data.organization_id || '',
+              organizationName: data.organization_name || '',
+            });
+          }
+          return go("/?auth=1");
+        }
 
         // If the visitor analyzed context on the homepage before Google sign-in,
         // continue that same conversation instead of losing it. Backend auth has
@@ -80,7 +99,7 @@ export default function AuthCallback() {
     return () => {
       cancelled = true;
     };
-  }, [navigate, location.search]);
+  }, [navigate, location.search, setMfaEnforcement]);
 
   return (
     <div className="auth-callback">

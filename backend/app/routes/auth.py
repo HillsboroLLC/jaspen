@@ -59,6 +59,7 @@ auth_bp = Blueprint('auth', __name__)
 GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
+GOOGLE_MFA_PENDING_COOKIE = 'jaspen_mfa_pending'
 MAX_FAILED_ATTEMPTS = 10
 LOCKOUT_DURATION_MINUTES = 15
 MFA_ROLLOUT_ENFORCE_UTC = datetime(2026, 12, 16, 0, 0, 0, tzinfo=timezone.utc)
@@ -1380,6 +1381,44 @@ def mfa_verify():
     }), 200
 
 
+@auth_bp.route('/mfa/pending', methods=['GET'])
+@limiter.limit("20 per minute")
+def mfa_pending_after_google():
+    """Hand a Google sign-in that still needs 2FA to the challenge form.
+
+    Returns the same payload password login returns when 2FA is required, and
+    clears the one-time cookie.
+    """
+    pending_token = str(request.cookies.get(GOOGLE_MFA_PENDING_COOKIE) or '').strip()
+    try:
+        decoded = decode_token(pending_token) if pending_token else {}
+    except Exception:
+        decoded = {}
+    user = User.query.get(decoded.get('sub')) if decoded.get('mfa_pending') else None
+    if not user or user.deactivated_at is not None:
+        resp = jsonify(message='Sign-in expired. Sign in again.')
+        status = 401
+    else:
+        active_org = None
+        try:
+            active_org, _membership = resolve_active_org_for_user(user)
+        except Exception:
+            active_org = None
+        resp = jsonify({
+            "mfa_required": True,
+            "mfa_setup_required": not _has_mfa_secret(user),
+            "pending_token": pending_token,
+            "organization_id": str(active_org.id) if active_org else None,
+            "organization_name": active_org.name if active_org else None,
+        })
+        status = 200
+    resp.delete_cookie(
+        GOOGLE_MFA_PENDING_COOKIE, path='/api/v1/auth/mfa',
+        domain=current_app.config.get('JWT_COOKIE_DOMAIN') or None,
+    )
+    return resp, status
+
+
 @auth_bp.route('/mfa/challenge', methods=['POST'])
 @limiter.limit("10 per minute")
 def mfa_challenge():
@@ -1726,6 +1765,36 @@ def google_callback():
         return redirect(_frontend_login_error_url('access_rejected'), code=302)
     if _access_controls().get('require_admin_approval') and approval_status == APPROVAL_PENDING:
         return redirect(_frontend_login_error_url('access_pending'), code=302)
+
+    # Google proves who the user is, not their Jaspen second factor. Users who
+    # turned 2FA on, or whose organization requires it, finish sign-in through
+    # the same challenge as password login: no session cookie is issued here.
+    # The short-lived pending token travels in its own HttpOnly cookie (never
+    # the URL), which only /mfa/pending reads.
+    mfa_org = None
+    try:
+        mfa_org, _membership = resolve_active_org_for_user(user)
+    except Exception:
+        mfa_org = Organization.query.filter_by(id=user.active_organization_id).first()
+    if user.mfa_enabled or _is_mfa_required_for_user(user, active_org=mfa_org):
+        pending_token = _create_user_access_token(
+            user,
+            expires_delta=timedelta(minutes=5),
+            additional_claims={"mfa_pending": True},
+        )
+        _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'method': 'google', 'mfa_required': True})
+        callback_url = _frontend_callback_url(next_path)
+        separator = '&' if '?' in callback_url else '?'
+        resp = redirect(f'{callback_url}{separator}mfa=1', code=302)
+        resp.set_cookie(
+            GOOGLE_MFA_PENDING_COOKIE, pending_token,
+            max_age=300, httponly=True,
+            secure=bool(current_app.config.get('JWT_COOKIE_SECURE')),
+            samesite=current_app.config.get('JWT_COOKIE_SAMESITE') or 'Lax',
+            domain=current_app.config.get('JWT_COOKIE_DOMAIN') or None,
+            path='/api/v1/auth/mfa',
+        )
+        return resp
 
     # Google returns here as a browser redirect, so there is no JSON response
     # to carry a "sign out your other device" prompt and no password to re-post

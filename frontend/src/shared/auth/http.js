@@ -69,6 +69,7 @@ const SKIP_UNAUTHORIZED_SEGMENTS = [
   '/api/v1/auth/mfa/setup',
   '/api/v1/auth/mfa/verify',
   '/api/v1/auth/mfa/challenge',
+  '/api/v1/auth/mfa/pending',
   '/api/v1/auth/google/start',
   '/api/v1/auth/google/callback',
   '/api/v1/auth/refresh',
