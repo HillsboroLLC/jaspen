@@ -3376,7 +3376,8 @@ def _apply_scoring_failure_state(reply, usage, executed_actions):
     return "", failed_usage, failure
 
 
-def _apply_option_decision_failure_state(reply, executed_actions):
+def _failed_option_decision_action(executed_actions):
+    """The decision save that failed this turn, unless another one succeeded."""
     decision_actions = [
         action for action in (executed_actions or [])
         if isinstance(action, dict) and action.get("tool") == "record_option_decision"
@@ -3387,14 +3388,20 @@ def _apply_option_decision_failure_state(reply, executed_actions):
         and action["result"].get("decision_record_id")
         for action in decision_actions
     ):
-        return reply, None
+        return None
     for action in decision_actions:
         result = action.get("result") if isinstance(action.get("result"), dict) else {}
         if not result.get("ok"):
-            return str(
-                result.get("error")
-                or "I couldn't record that decision yet."
-            ), result
+            return result
+    return None
+
+
+def _apply_option_decision_failure_state(reply, executed_actions):
+    # A failed decision save is shown as a status card with Retry. The turn's
+    # prose is withheld, because it may claim the decision was recorded.
+    failure = _failed_option_decision_action(executed_actions)
+    if failure:
+        return "", failure
     return reply, None
 
 
@@ -11742,6 +11749,36 @@ def _artifact_entries_from_actions(actions, user_message=None):
                 "retry_message": str(user_message or "").strip() or None,
             }}
         entry = _artifact_chat_entry(artifact)
+        if entry:
+            artifact_entries.append(entry)
+    decision_failure = _failed_option_decision_action(actions)
+    if decision_failure and not isinstance(decision_failure.get("artifact"), dict):
+        option_names = [
+            str(name).strip() for name in (decision_failure.get("option_names") or []) if str(name).strip()
+        ]
+        if decision_failure.get("non_blocking") and option_names:
+            # Not a failure to retry: the user picks which option they meant.
+            status = {
+                "tone": "info",
+                "message": str(decision_failure.get("error") or "Which option did you mean?"),
+                "actions": [{"label": name, "value": name} for name in option_names],
+            }
+        else:
+            # Errors about how the tool was called are instructions for the AI,
+            # not something to show the user.
+            internal = str(decision_failure.get("code") or "") in {
+                "invalid_option_decision", "decision_quote_required",
+            }
+            status = {
+                "tone": "error",
+                "message": (
+                    "This decision wasn't saved. Your message is saved."
+                    if internal or not decision_failure.get("error")
+                    else str(decision_failure["error"])
+                ),
+                "retry_message": str(user_message or "").strip() or None,
+            }
+        entry = _artifact_chat_entry({"type": "status", "data": status})
         if entry:
             artifact_entries.append(entry)
     return artifact_entries

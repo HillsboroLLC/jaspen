@@ -122,31 +122,40 @@ export function RubricCard({ data, onSendText = null, showActions = false }) {
 export function StatusCard({ data, onSendText = null, showRetry = false }) {
   const message = String(data?.message || '').trim();
   if (!message) return null;
+  // "info": nothing went wrong, the user just needs to choose (for example,
+  // which option they meant). "error": a step failed and can be retried.
+  const info = data?.tone === 'info';
+  const choices = Array.isArray(data?.actions) ? data.actions : [];
+  const palette = info
+    ? { line: C.line, bg: C.track, text: C.navy }
+    : { line: C.redLine, bg: C.redTint, text: C.red };
   return (
     <div
-      role="alert"
+      role={info ? 'status' : 'alert'}
       data-card="status"
       style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
         maxWidth: 560, padding: '9px 12px', borderRadius: 8,
-        border: `1px solid ${C.redLine}`, background: C.redTint, color: C.red,
+        border: `1px solid ${palette.line}`, background: palette.bg, color: palette.text,
         fontSize: 12.5, lineHeight: 1.4,
       }}
     >
-      <span style={{ flex: 1, minWidth: 0 }}>{message}</span>
-      {showRetry && data?.retry_message && onSendText && (
-        <button
-          type="button"
-          onClick={() => onSendText(data.retry_message)}
-          style={{
-            flex: '0 0 auto', padding: '5px 12px', borderRadius: 6,
-            border: `1px solid ${C.red}`, background: '#fff', color: C.red,
-            fontSize: 12, fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          Retry
-        </button>
-      )}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <span style={{ flex: 1, minWidth: 0 }}>{message}</span>
+        {!choices.length && showRetry && data?.retry_message && onSendText && (
+          <button
+            type="button"
+            onClick={() => onSendText(data.retry_message)}
+            style={{
+              flex: '0 0 auto', padding: '5px 12px', borderRadius: 6,
+              border: `1px solid ${palette.text}`, background: '#fff', color: palette.text,
+              fontSize: 12, fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            Retry
+          </button>
+        )}
+      </div>
+      {showRetry && <ActionButtons actions={choices} onSendText={onSendText} primaryFirst={false} />}
     </div>
   );
 }

@@ -3757,9 +3757,15 @@ def test_chat_decision_ambiguous_name_lists_options_and_records_nothing(
 
     assert response.status_code == 200, response.get_json()
     payload = response.get_json()
-    assert payload['reply'] == (
-        "I couldn't record that yet: which option did you mean — North Agency or South Agency?"
+    # Nothing was recorded, so the prose is withheld; a card asks which option.
+    assert payload['reply'] == ''
+    card = next(
+        item['artifact']['data'] for item in payload['artifact_messages']
+        if item['artifact']['type'] == 'status'
     )
+    assert card['tone'] == 'info'
+    assert card['message'] == "I couldn't record that yet: which option did you mean — North Agency or South Agency?"
+    assert [a['value'] for a in card['actions']] == ['North Agency', 'South Agency']
     assert payload['actions'][0]['result']['non_blocking'] is True
     assert payload['actions'][0]['result']['option_names'] == ['North Agency', 'South Agency']
     assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
@@ -3793,11 +3799,16 @@ def test_chat_decision_failure_replaces_false_recorded_reply(
 
     assert response.status_code == 200, response.get_json()
     payload = response.get_json()
-    assert 'recorded' not in payload['reply'].casefold()
-    assert payload['reply'] == (
-        "I couldn't record that yet: which option did you mean — "
-        "Hire Full-Time Content Marketer or Contract Marketing Agency?"
+    # The false "Recorded: …" prose is withheld; the card tells the truth.
+    assert payload['reply'] == ''
+    card = next(
+        item['artifact']['data'] for item in payload['artifact_messages']
+        if item['artifact']['type'] == 'status'
     )
+    assert 'recorded' not in card['message'].casefold()
+    assert [a['value'] for a in card['actions']] == [
+        'Hire Full-Time Content Marketer', 'Contract Marketing Agency',
+    ]
     assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
 
 
@@ -3971,3 +3982,18 @@ def test_execution_assistant_save_failure_reverses_charge_and_keeps_plan(
         {'error_code': 'plan_refinement_persistence_failed'},
     )]
     assert strategy._load_scenarios(test_user.id)[tid]['project_wbs']['tasks'][0]['title'] == 'Keep this title'
+
+
+def test_failed_decision_save_card_never_shows_tool_instructions(app):
+    _, agent = modules()
+    action = {'tool': 'record_option_decision', 'result': {
+        'ok': False, 'code': 'decision_quote_required',
+        'error': "Quote the user's decision exactly from their latest message. Nothing was recorded.",
+    }}
+    reply, failure = agent._apply_option_decision_failure_state('Recorded!', [action])
+    assert reply == '' and failure is action['result']
+    entries = agent._artifact_entries_from_actions([action], user_message="We're going with the agency.")
+    card = entries[0]['artifact']['data']
+    assert card['tone'] == 'error'
+    assert card['message'] == "This decision wasn't saved. Your message is saved."
+    assert card['retry_message'] == "We're going with the agency."

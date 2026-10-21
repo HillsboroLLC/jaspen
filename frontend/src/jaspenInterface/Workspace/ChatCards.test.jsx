@@ -60,3 +60,16 @@ it('only the newest card of a type is latest', () => {
   expect(isLatestCard(first, messages)).toBe(false);
   expect(isLatestCard(second, messages)).toBe(true);
 });
+
+it('a "which option?" card offers the options instead of Retry', () => {
+  const onSendText = jest.fn();
+  render(<StatusCard
+    data={{ tone: 'info', message: 'Which option did you mean?', actions: [{ label: 'North Agency', value: 'North Agency' }, { label: 'South Agency', value: 'South Agency' }] }}
+    onSendText={onSendText}
+    showRetry
+  />);
+  expect(screen.getByRole('status')).toHaveTextContent('Which option did you mean?');
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'South Agency' }));
+  expect(onSendText).toHaveBeenCalledWith('South Agency');
+});
