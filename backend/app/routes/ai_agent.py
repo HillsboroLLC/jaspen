@@ -726,7 +726,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "\n"
     "CUSTOM SCORING RUBRIC: If the user supplies their own scoring criteria or directs a criteria change, FIRST call set_scoring_rubric with criteria_source='user' and user_request_quote set to a short exact quote from the user's latest message that supplies or directs those criteria. Pass their exact criteria and weights before scoring anything. If you supply or revise the criteria yourself, call set_scoring_rubric with criteria_source='jaspen' and omit user_request_quote; that rubric remains a proposal for the user to approve. When the user wants to see or review the criteria in any wording, or when you choose to show them, call show_scoring_rubric. The application renders the exact saved or starter rubric; never write out a rubric yourself. When the user approves a rubric Jaspen already showed — in any wording, including 'works for me', 'use those', or 'yes' after Jaspen asked — call approve_presented_rubric with a short exact user_request_quote from that latest message; never recreate the shown rubric through set_scoring_rubric. Then confirm the saved rubric back to them in plain language (list each criterion and its normalized weight) and explain that every option's score will be the deterministic weighted sum of those criteria. Never invent, drop, or alter the user's weights — pass them exactly as given. If the user names criteria or priorities without weights, preserve those criteria and ask for weights or propose weights for those same criteria; do not replace them with a generic or Decision Kit rubric. You may separately identify useful Decision Kit additions and ask whether to include them. If the user organizes the criteria into groups (e.g. 'Impact' variables vs 'Fit' variables), pass each criterion's group on the 'group' field so every option gets a sub-score per group and can be placed on a 2-group quadrant. After the rubric is saved, follow the present-shortlist-before-scoring and batching rules below as normal. Rubric configuration tools are reversible, so they are allowed on the first turn and do not count against the per-turn scoring limit.\n"
     "DECISION KIT CHANGES: The separate Decision Kit classifier only establishes a kit during early discovery. Once a kit is established or locked, interpret change intent in this main turn. When the user asks in any wording to switch or clear the Decision Kit, call request_decision_kit_change with the target and a short exact user_request_quote from the latest message. When the user confirms a pending change, call confirm_decision_kit_change with an exact quote. When the user cancels a pending change, call cancel_decision_kit_change with an exact quote. Never claim a kit changed unless the tool succeeds.\n"
-    "FIRST-TURN DECISION CONTRACT: when a conversation opens with a substantive decision — a real choice with stakes and some context, whether one option ('should I take this job offer?' with details) or several — your first reply must make the path to a scorecard visible. Do all three: (1) Name the decision and the options you will score; if the user gave only one path, propose the natural alternative yourself (e.g. 'Take the offer' vs 'Stay in current role') — comparing against the status quo is almost always the real decision. (2) Propose a starter rubric in plain prose: 3-6 weighted criteria drawn from what they told you PLUS one or two criteria they did not mention but the relevant expertise says matter (name why in half a sentence). State plainly that the rubric is theirs to edit — you propose, they decide. (3) Offer the choice explicitly, as a choice block: score now at honest confidence (missing evidence lowers confidence, never blocks a score, and you will show what would raise it), or answer your single best question first. If the opening message says score now AND supplies the criteria and weights, save that user-owned rubric as approved and score immediately. When the user explicitly asks to see or propose a rubric, show every criterion and weight and ask once. Otherwise, an explicit score request uses Jaspen’s standard proposed criteria immediately without falsely marking them user-approved; mention the criteria conversationally after scoring and invite changes. When the user later approves a shown rubric or directs a criteria change, save the user-owned version and re-score. NEVER claim scoring started unless a scoring tool succeeded. NEVER open with questions that have no visible destination. Exception: a bare one-liner with no context ('should I quit?') gets your single best scorecard-framed question, with 'score it anyway' offered as a choice option. "
+    "FIRST-TURN DECISION CONTRACT: when a conversation opens with a substantive decision — a real choice with stakes and some context, whether one option ('should I take this job offer?' with details) or several — your first reply must make the path to a scorecard visible. Do all three: (1) Name the decision and the options you will score; if the user gave only one path, propose the natural alternative yourself (e.g. 'Take the offer' vs 'Stay in current role') — comparing against the status quo is almost always the real decision. (2) Propose a starter rubric: 3-6 weighted criteria drawn from what they told you PLUS one or two criteria they did not mention but the relevant expertise says matter. Save it by calling set_scoring_rubric with criteria_source='jaspen' so the weights are stored and shown exactly; then introduce it conversationally (why the less obvious criteria matter, in half a sentence each) without typing weights yourself. State plainly that the rubric is theirs to edit — you propose, they decide. (3) Offer the choice explicitly, as a choice block: score now at honest confidence (missing evidence lowers confidence, never blocks a score, and you will show what would raise it), or answer your single best question first. If the opening message says score now AND supplies the criteria and weights, save that user-owned rubric as approved and score immediately. When the user explicitly asks to see or propose a rubric, show every criterion and weight and ask once. Otherwise, an explicit score request uses Jaspen’s standard proposed criteria immediately without falsely marking them user-approved; mention the criteria conversationally after scoring and invite changes. When the user later approves a shown rubric or directs a criteria change, save the user-owned version and re-score. NEVER claim scoring started unless a scoring tool succeeded. NEVER open with questions that have no visible destination. Exception: a bare one-liner with no context ('should I quit?') gets your single best scorecard-framed question, with 'score it anyway' offered as a choice option. "
     "PRESENT YOUR SHORTLIST BEFORE YOU SCORE: When the user asks you to BOTH propose options AND score them (e.g. 'propose 5-6 cities, then score each'), do NOT call generate_scorecard in the same reply where you present your list. First give the full shortlist with your one-line rationale for each as your written message, then ask the user to confirm before scoring (e.g. 'Want me to score these?'). Only call the scoring tools AFTER they confirm in a later turn. This matters: if you call generate_scorecard before the user has confirmed, the system blocks it and your reply is rewritten into a bare confirmation prompt — so the user LOSES the shortlist and rationale you just wrote. Presenting first, then scoring after confirmation, keeps all of your analysis on screen. "
     "SCORING MANY IDEAS AT ONCE: To score MORE THAN ONE idea (e.g. 'score these 8 cities', 'compare these 5 vendors', an uploaded list of options), call queue_scorecards ONCE with EVERY idea — each as {name, description}. Do NOT call generate_scorecard yourself for a multi-idea request and do NOT try to score them in your reply. queue_scorecards hands the whole list to the shared scoring system, which evaluates every option against the same criteria and builds the trade-off comparison. After calling it, state only that all N were queued (name them if there are only a few). Do not promise that cards were created; the scoring operation reports success or a retryable failure separately. If a scoring rubric is set, every queued idea is scored against it. For scoring exactly ONE idea, use generate_scorecard instead. "
     "HARD RULE — multi-option requests ALWAYS batch: if the user gave two or more options to compare, you MUST use queue_scorecards for the whole set. NEVER score them one at a time with generate_scorecard, and NEVER abandon the batch midway to 'use the standard approach' — that produces a single card on the generic default rubric and breaks the comparison. If the user also gave their own criteria/weights, call set_scoring_rubric FIRST so the batch is scored on THEIR rubric, not the generic default. Only fall back to the generic default dimensions when the user has given no criteria and explicitly wants a quick score.\n"
@@ -10653,13 +10653,13 @@ def _sanitize_gate_narration(text, *, session=None, actions=None, user_id=None, 
         r"|\b(?:passes?|passed|fails?|failed)\b.*\b(?:gate|mandatory requirement)\b",
         re.I,
     )
-    kept = []
-    for sentence in re.split(r"(?<=[.!?])\s+|\n+", str(text or "")):
-        sentence = sentence.strip()
-        if not sentence or not claim_re.search(sentence):
-            if sentence:
-                kept.append(sentence)
-            continue
+    text = str(text or "")
+    if not claim_re.search(text):
+        return text.strip()
+
+    def _canonical(sentence):
+        if not claim_re.search(sentence):
+            return sentence
         matching = [
             gate for gate in gates
             if str(gate.get("key") or "").replace("_", " ").lower() in sentence.lower()
@@ -10668,11 +10668,29 @@ def _sanitize_gate_narration(text, *, session=None, actions=None, user_id=None, 
         if not matching and len(gates) == 1:
             matching = gates
         if not matching:
-            continue
+            return None
         gate = matching[0]
         canonical = str(gate.get("status") or "unknown").upper()
-        kept.append(f"{gate.get('label') or gate.get('key')}: {canonical}.")
-    return " ".join(kept).strip()
+        return f"{gate.get('label') or gate.get('key')}: {canonical}."
+
+    # Line by line so paragraphs and lists keep their shape.
+    out_lines = []
+    for raw_line in text.split("\n"):
+        if not raw_line.strip():
+            if out_lines and out_lines[-1] != "":
+                out_lines.append("")
+            continue
+        marker_match = re.match(r"^(\s*(?:[-*•]|\d{1,2}[.)])\s+)", raw_line)
+        marker = marker_match.group(1) if marker_match else re.match(r"^\s*", raw_line).group(0)
+        sentences = [
+            _canonical(sentence.strip())
+            for sentence in re.split(r"(?<=[.!?])\s+", raw_line[len(marker):])
+            if sentence.strip()
+        ]
+        sentences = [sentence for sentence in sentences if sentence]
+        if sentences:
+            out_lines.append(marker + " ".join(sentences))
+    return "\n".join(out_lines).strip()
 
 
 def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, user_id=None, thread_id=None, actions=None):
@@ -10715,12 +10733,7 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
         sources.append(json.dumps(cards, default=str))
     except Exception:
         cards = []
-    kept = []
-    removed = False
-    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
-        sentence = sentence.strip()
-        if not sentence:
-            continue
+    def _supported(sentence):
         claims = []
         for match in _NUMERIC_CLAIM_RE.finditer(sentence):
             token = match.group(0)
@@ -10738,11 +10751,60 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
             and _DERIVED_ARITHMETIC_RE.search(sentence)
             and not directly_supplied
         )
-        if invented_math or (claims and any(not _numeric_claim_supported(sentence, claim, sources) for claim in claims)):
-            removed = True
+        return not (invented_math or (claims and any(not _numeric_claim_supported(sentence, claim, sources) for claim in claims)))
+
+    # Work line by line so paragraphs and lists keep their shape, and judge
+    # each sentence on its own. units: (marker, sentence, kept) per line;
+    # None marks a blank line, which ends whatever a lead-in introduced.
+    removed = False
+    lines = []
+    for raw_line in text.split("\n"):
+        if not raw_line.strip():
+            lines.append(None)
             continue
-        kept.append(sentence)
-    cleaned = text if not removed else (" ".join(kept).strip() or "Open the scorecard for Jaspen’s verified calculations.")
+        marker_match = re.match(r"^(\s*(?:[-*•]|\d{1,2}[.)])\s+)", raw_line)
+        marker = marker_match.group(1) if marker_match else re.match(r"^\s*", raw_line).group(0)
+        body = raw_line[len(marker):]
+        units = []
+        for sentence in re.split(r"(?<=[.!?])\s+", body):
+            if sentence.strip():
+                keep = _supported(sentence.strip())
+                removed = removed or not keep
+                units.append([sentence.strip(), keep])
+        lines.append((marker, units))
+    if removed:
+        # A lead-in such as "The two options to score:" is dropped when
+        # everything it introduced (the rest of its line and the lines that
+        # follow it up to a blank line) was removed.
+        flat = []
+        for line_index, line in enumerate(lines):
+            if line is None:
+                flat.append(None)
+                continue
+            for unit in line[1]:
+                flat.append(unit)
+        for position, unit in enumerate(flat):
+            if unit is None or not unit[1] or not unit[0].rstrip().endswith(":"):
+                continue
+            introduced = []
+            for following in flat[position + 1:]:
+                if following is None:
+                    break
+                introduced.append(following)
+            if introduced and not any(item[1] for item in introduced):
+                unit[1] = False
+        out_lines = []
+        for line in lines:
+            if line is None:
+                if out_lines and out_lines[-1] != "":
+                    out_lines.append("")
+                continue
+            marker, units = line
+            kept_units = [unit[0] for unit in units if unit[1]]
+            if kept_units:
+                out_lines.append(marker + " ".join(kept_units))
+        cleaned_text = "\n".join(out_lines).strip()
+    cleaned = text if not removed else (cleaned_text or "Open the scorecard for Jaspen’s verified calculations.")
     return _sanitize_gate_narration(
         cleaned, session=session, actions=actions, user_id=user_id, thread_id=thread_id,
     )
