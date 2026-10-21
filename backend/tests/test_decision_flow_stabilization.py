@@ -13,6 +13,16 @@ def modules():
     return sys.modules['app.routes.strategy'], sys.modules['app.routes.ai_agent']
 
 
+def rubric_card_text(result):
+    """The rubric card's rows in the 'Label: weight N%' form the app renders."""
+    card = (result or {}).get('artifact') or {}
+    assert card.get('type') == 'rubric', result
+    return '\n'.join(
+        f"- {row['label']}: required gate" if row['gate'] else f"- {row['label']}: weight {row['weight_pct']}%"
+        for row in card['data']['criteria']
+    )
+
+
 def _lineage_tasks(count, *, ref='r1', start=1):
     return [
         {
@@ -1402,7 +1412,12 @@ def test_pending_kit_change_confirmation_runs_provider_through_full_conversation
         'message': 'Switch this Decision Kit to vendor selection.',
     })
     assert requested.status_code == 200, requested.get_json()
-    assert requested.get_json()['reply'] == agent.DECISION_KIT_CHANGE_QUESTION
+    confirm_cards = [
+        item['artifact'] for item in requested.get_json().get('artifact_messages') or []
+        if (item.get('artifact') or {}).get('type') == 'confirm'
+    ]
+    assert confirm_cards and confirm_cards[0]['data']['kind'] == 'decision_kit_change'
+    assert [a['label'] for a in confirm_cards[0]['data']['actions']] == ['Change kit and re-score', 'Keep current kit']
     pending = agent.load_user_sessions(test_user.id)[tid]
     assert pending['decision_kit'] == 'rfp_bid'
     assert pending['decision_kit_change_pending']['target'] == 'rfp_vendor_selection'
@@ -1574,7 +1589,7 @@ def test_decision_kit_starter_rubric_is_persisted_and_rendered_by_tool(app, db, 
     )
 
     assert result['ok'] is True
-    reply = result['confirmation']
+    reply = rubric_card_text(result)
     assert 'Win probability & competitive position: weight 20%' in reply
     assert 'Contract & commercial risk: weight 10%' in reply
     durable = load_user_sessions(test_user.id)[tid]['scoring_rubric']
@@ -1640,7 +1655,7 @@ def test_suggested_rfp_kit_requires_selection_then_first_approval_allows_scoring
     )
 
     assert shown['ok'] is True
-    reply = shown['confirmation']
+    reply = rubric_card_text(shown)
     assert 'Win probability & competitive position: weight 20%' in reply
     assert 'Surety / bond confirmation: required gate' in reply
     displayed = load_user_sessions(test_user.id)[tid]['scoring_rubric']
@@ -1693,11 +1708,13 @@ def test_rfp_proposal_acknowledges_supplied_facts_without_calling_them_weights(a
     )
 
     assert shown['ok'] is True
-    reply = shown['confirmation']
-    assert 'You already supplied decision inputs for' in reply
-    assert 'Contract value' in reply and 'Win probability' in reply
-    assert 'Expected margin' in reply and 'Pursuit cost' in reply
-    assert 'Those are evidence values, not criterion weights.' in reply
+    # The supplied-fact context is information for the AI; the rubric is a card.
+    context = shown['confirmation']
+    assert 'You already supplied decision inputs for' in context
+    assert 'Contract value' in context and 'Win probability' in context
+    assert 'Expected margin' in context and 'Pursuit cost' in context
+    assert 'Those are evidence values, not criterion weights.' in context
+    reply = rubric_card_text(shown)
     assert 'Win probability & competitive position: weight 20%' in reply
     assert 'Win probability & competitive position: 20%' not in reply
 
@@ -1762,7 +1779,8 @@ def test_score_now_uses_proposed_kit_rubric_without_approval_stop(app, db, test_
         '', '', [], user_id=test_user.id, thread_id=tid,
         executed_actions=[{'tool': 'queue_scorecards', 'result': result}],
     )
-    assert 'Queued all three bids for scoring.' in reply
+    # Queueing is shown as scoring progress in the UI, not pasted into the reply.
+    assert 'Queued' not in reply
     assert 'I’m weighing these on' in reply
     assert 'If something matters more to you, tell me and I’ll re-score.' in reply
     assert 'approve' not in reply.lower()
@@ -1774,10 +1792,10 @@ def test_score_now_uses_proposed_kit_rubric_without_approval_stop(app, db, test_
         thread_id=tid, user_message='Show me the rubric and weights.',
     )
     assert shown['ok'] is True
-    detail = shown['confirmation']
-    assert 'Here are the standard RFP response rubric criteria I used:' in detail
-    assert 'Win probability & competitive position: weight 20%' in detail
-    assert 'approve' not in detail.lower()
+    card = shown['artifact']['data']
+    assert card['status'] == 'used'  # the standard criteria already used to score
+    assert 'Win probability & competitive position: weight 20%' in rubric_card_text(shown)
+    assert card['actions'] == []
 
 
 @pytest.mark.parametrize('score_request', [
@@ -1849,11 +1867,15 @@ def test_changed_rubric_after_authorized_score_shows_criteria_and_approve_action
     assert result['actions'][0] == {
         'label': 'Approve rubric', 'value': 'Approve this rubric',
     }
+    # The rubric is shown as a card to approve; the "Re-scoring now." prose
+    # can't match the outcome, so it is withheld rather than rewritten.
+    assert '- Value: weight 70%' in rubric_card_text(result)
+    assert [a['label'] for a in result['artifact']['data']['actions']] == ['Approve rubric', 'Change rubric']
     reply = agent._finalize_agent_reply(
         'Re-scoring now.', '', [], user_id='u', thread_id='t',
         executed_actions=[{'tool': 'generate_scorecard', 'result': result}],
     )
-    assert reply == result['confirmation']
+    assert reply == ''
 
 
 def test_plain_looks_good_approves_conversational_criteria_summary(app, db, test_user):
@@ -1930,7 +1952,7 @@ def test_general_objective_rubric_is_persisted_and_rendered_in_full(app, db, tes
     )
 
     assert shown['ok'] is True
-    reply = shown['confirmation']
+    reply = rubric_card_text(shown)
     expected = [
         'Market opportunity: weight 18%', 'Financial viability: weight 20%',
         'Execution readiness: weight 18%', 'Strategic alignment: weight 16%',
@@ -1962,7 +1984,7 @@ def test_inferred_rfp_show_tool_renders_all_starter_criteria(app, db, test_user)
     )
 
     assert shown['ok'] is True
-    reply = shown['confirmation']
+    reply = rubric_card_text(shown)
     expected = [
         'Functional / technical fit: weight 25%', 'Total cost of ownership: weight 20%',
         'Implementation risk & timeline: weight 20%', 'Vendor viability & references: weight 15%',
@@ -2289,14 +2311,16 @@ def test_blocked_score_cannot_keep_success_narration(app):
     action = {'tool': 'generate_scorecard', 'result': {
         'ok': False, 'code': 'rubric_approval_required',
         'error': 'The proposed scoring rubric needs human approval before scoring.',
+        'artifact': {'type': 'rubric', 'data': {'status': 'proposed', 'criteria': [], 'actions': []}},
     }}
     reply = agent._finalize_agent_reply(
         'Now scoring your option.', '', [],
         user_id='u', thread_id='t', executed_actions=[action],
     )
-    assert reply == 'Approve the proposed rubric to continue scoring, then try again.'
-    assert 'needs human approval' not in reply.lower()
-    assert 'now scoring' not in reply.lower()
+    # The success-sounding prose is withheld; the rubric card carries the turn.
+    assert reply == ''
+    entries = agent._artifact_entries_from_actions([action], user_message='Score it')
+    assert [entry['artifact']['type'] for entry in entries] == ['rubric']
 
 
 def test_real_batch_rfp_scoring_keeps_valid_fields_when_one_is_invalid(client, db, test_user, auth_headers, monkeypatch):
@@ -2514,17 +2538,21 @@ def test_scorecard_attribute_endpoint_uses_the_same_canonical_alias_migration(
     }
 
 
-def test_successful_queue_reply_uses_only_deterministic_confirmation(app):
+def test_successful_queue_keeps_the_ai_reply_and_unverified_gate_claims_are_still_removed(app):
     _, agent = modules()
     action = {'tool': 'queue_scorecards', 'result': {
         'ok': True,
         'confirmation': 'Queued 3 options for scoring.',
     }}
     reply = agent._finalize_agent_reply(
-        'Option A passes its surety gate and the cards are coming.', '', [],
+        'Option A passes its surety gate. The cards are coming.', '', [],
         user_id='u', thread_id='t', executed_actions=[action],
     )
-    assert reply == 'Queued 3 options for scoring.'
+    # Queueing succeeded, so the AI's reply stands (no code-written confirmation)...
+    assert reply == 'Option A passes its surety gate. The cards are coming.'
+    # ...and the gate safeguard still removes a gate result nothing has computed.
+    cleaned = agent._sanitize_gate_narration(reply, session={}, actions=[action])
+    assert cleaned == 'The cards are coming.'
 
 
 def test_blocked_queue_reply_requires_rubric_approval_instead_of_claiming_it_was_queued(app, test_user):
@@ -2550,10 +2578,12 @@ def test_blocked_queue_reply_requires_rubric_approval_instead_of_claiming_it_was
         'Queued 2 ideas.', '', [], user_id=test_user.id, thread_id='blocked-queue',
         executed_actions=[{'tool': 'queue_scorecards', 'result': result}],
     )
-    assert 'Approve this proposed scoring rubric to continue scoring:' in reply
-    assert '- Value: weight 60%' in reply
-    assert '- Risk: weight 40%' in reply
-    assert result['actions'][0]['label'] == 'Approve rubric'
+    # "Queued 2 ideas." would be false, so it is withheld; the rubric card shows instead.
+    assert reply == ''
+    card_text = rubric_card_text(result)
+    assert '- Value: weight 60%' in card_text
+    assert '- Risk: weight 40%' in card_text
+    assert result['artifact']['data']['actions'][0]['label'] == 'Approve rubric'
 
 
 def test_active_decision_kit_adds_required_gates_to_a_custom_proposed_rubric(app, db, test_user):
@@ -2890,7 +2920,14 @@ def test_failed_single_scoring_turn_is_explicit_saved_retryable_and_zero_credit(
     assert payload['failure_state'] is True and payload['success'] is False
     assert payload['action'] == {'type': 'retry', 'label': 'Retry'}
     assert payload['credits']['charged'] == 0
-    assert payload['reply'] == "Jaspen couldn't complete scoring. Your request is saved. Try again."
+    # The failure is a status card with Retry; misleading prose is withheld.
+    assert payload['reply'] == ''
+    status_cards = [
+        item['artifact']['data'] for item in payload.get('artifact_messages') or []
+        if (item.get('artifact') or {}).get('type') == 'status'
+    ]
+    assert status_cards and status_cards[0]['tone'] == 'error'
+    assert status_cards[0]['retry_message'] == 'Score Aurora now.'
     stored = agent.load_user_sessions(test_user.id)[tid]
     assert any(item.get('role') == 'user' and item.get('content') == 'Score Aurora now.' for item in stored['chat_history'])
     assert not any('scorecard is coming' in str(item.get('content') or '').lower() for item in stored['chat_history'])
@@ -2955,7 +2992,7 @@ def test_streaming_single_score_failure_suppresses_normal_looking_narration(app,
     ))
 
     assert not any(event.get('type') == 'delta' and 'coming' in event.get('text', '').lower() for event in events)
-    assert state['reply'] == "Jaspen couldn't complete scoring. Your request is saved. Try again."
+    assert state['reply'] == ''
     assert state['actions'][0]['result']['failure_state'] is True
 
 

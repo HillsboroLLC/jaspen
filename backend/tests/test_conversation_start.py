@@ -285,6 +285,11 @@ class TestHomepageHandoffIntegration:
             {"kit": "none", "confidence": "low", "evidence_quote": "this RFP"}
         ))
 
+        monkeypatch.setattr(ai_agent, "_generate_assistant_reply", lambda *_args, **_kwargs: (
+            "Happy to help. Are you bidding on this RFP, or choosing between vendor proposals?",
+            {"provider": "test", "model": "test", "input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+            [], [], None,
+        ))
         started = client.post(START_URL, json={
             "message": "Help me with this RFP.",
             "thread_id": thread_id,
@@ -297,7 +302,11 @@ class TestHomepageHandoffIntegration:
         assert payload["strategy_objective"] == "growth"
         assert payload["decision_kit_family"] == "rfp"
         assert payload["decision_kit"] is None
-        assert payload["reply"] == ai_agent.RFP_SUBTYPE_QUESTION
+        # The AI asks in its own words; code only tells it what is unknown.
+        assert payload["reply"] == "Happy to help. Are you bidding on this RFP, or choosing between vendor proposals?"
+        from app.models import User
+        user_id = User.query.order_by(User.created_at.desc()).first().id
+        assert "RFP DECISION: TYPE NOT YET CLEAR" in ai_agent._decision_kit_prompt_suffix(user_id, thread_id)
 
         stored = client.get(f"/api/v1/ai-agent/threads/{thread_id}")
         assert stored.status_code == 200

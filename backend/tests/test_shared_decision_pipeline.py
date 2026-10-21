@@ -1058,8 +1058,9 @@ def test_show_scoring_rubric_renders_exact_stored_rubric_and_marks_presented(app
     )
 
     assert result['ok'] is True
-    assert '- Price: weight 65%' in result['confirmation']
-    assert '- Speed: weight 35%' in result['confirmation']
+    rows = {row['label']: row['weight_pct'] for row in result['artifact']['data']['criteria']}
+    assert result['artifact']['type'] == 'rubric'
+    assert rows == {'Price': 65, 'Speed': 35}
     assert result['rubric']['criteria'] == stored['criteria']
     durable = load_user_sessions(test_user.id)[thread_id]['scoring_rubric']
     assert durable['criteria'] == stored['criteria']

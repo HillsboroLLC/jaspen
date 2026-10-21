@@ -66,6 +66,7 @@ import RecordDecisionPanel from './RecordDecisionPanel';
 import WorkspaceTips from './components/WorkspaceTips';
 import ScoreReuseNotice from './ScoreReuseNotice';
 import ScorecardExecutionPlanAction from './ScorecardExecutionPlanAction';
+import { ConfirmCard, RubricCard, StatusCard, isLatestCard } from './ChatCards';
 import StarterPlanNote from './StarterPlanNote';
 
 // Tab components
@@ -3507,6 +3508,35 @@ const renderConversationMessage = (message, opts = {}) => {
   if (message?.artifact?.type === 'tradeoff') {
     return renderInlineTradeoffArtifact(message.artifact.data, opts);
   }
+  // Application state shown as cards: the stored rubric, a step that failed,
+  // a choice to confirm. Only the newest card of each kind offers buttons.
+  if (message?.artifact?.type === 'rubric') {
+    return (
+      <RubricCard
+        data={message.artifact.data}
+        onSendText={opts.onSendText}
+        showActions={isLatestCard(message, opts.messages)}
+      />
+    );
+  }
+  if (message?.artifact?.type === 'status') {
+    return (
+      <StatusCard
+        data={message.artifact.data}
+        onSendText={opts.onSendText}
+        showRetry={isLatestCard(message, opts.messages) && opts.lastMessage?.artifact === message.artifact}
+      />
+    );
+  }
+  if (message?.artifact?.type === 'confirm') {
+    return (
+      <ConfirmCard
+        data={message.artifact.data}
+        onSendText={opts.onSendText}
+        showActions={isLatestCard(message, opts.messages) && opts.lastMessage?.artifact === message.artifact}
+      />
+    );
+  }
   // Execution plan artifact — compact inline summary of phases / task
   // counts / progress, with Open in Workspace for the full Kanban / List /
   // Timeline canvas.
@@ -6026,6 +6056,7 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
     return normalized;
   }, [currentSessionId, sessionId, showToast]);
 
+  const [kitChangeConfirm, setKitChangeConfirm] = useState(null);
   const applyDecisionKit = useCallback(async (nextKit, options = {}) => {
     const normalized = nextKit || null;
     const persistThreadId = options.threadId || currentSessionId || sessionId || null;
@@ -6033,14 +6064,51 @@ const [initialRestorePending, setInitialRestorePending] = useState(() => Boolean
     setDecisionKitSuggestion(null);
     if (options.persist === false || !persistThreadId) return normalized;
     try {
-      await Jaspen.setThreadDecisionKit(persistThreadId, normalized, 'user');
+      await Jaspen.setThreadDecisionKit(persistThreadId, normalized, 'user', { confirm: Boolean(options.confirm) });
     } catch (err) {
-      console.error('[applyDecisionKit] persist failed', err);
       setDecisionKit(decisionKit);
+      if (err?.status === 409 && err?.data?.code === 'decision_kit_change_confirmation_required') {
+        // An established decision re-scores when its kit changes: ask first.
+        setKitChangeConfirm({ nextKit: normalized, threadId: persistThreadId });
+        return decisionKit;
+      }
+      console.error('[applyDecisionKit] persist failed', err);
       showToast(err?.message || 'Could not save the decision type.', 'error');
     }
     return normalized;
   }, [currentSessionId, decisionKit, sessionId, showToast]);
+
+  const renderKitChangeConfirm = () => {
+    if (!kitChangeConfirm) return null;
+    const close = () => setKitChangeConfirm(null);
+    return (
+      <div className="jas-modal-backdrop" role="presentation" onClick={close}>
+        <div className="jas-account-modal" role="dialog" aria-modal="true" aria-label="Change Decision Kit" onClick={(event) => event.stopPropagation()}>
+          <div className="jas-account-modal-header">
+            <h3>Change Decision Kit?</h3>
+            <button type="button" className="jas-account-modal-close" onClick={close} aria-label="Close">×</button>
+          </div>
+          <p style={{ margin: '0 0 16px', color: 'var(--color-text-secondary)' }}>
+            This decision is already scored. Changing its Decision Kit re-scores it.
+          </p>
+          <div className="jas-account-modal-actions">
+            <button type="button" className="jas-account-secondary-btn" onClick={close}>Keep current kit</button>
+            <button
+              type="button"
+              className="jas-account-portal-btn"
+              onClick={() => {
+                const { nextKit, threadId } = kitChangeConfirm;
+                close();
+                void applyDecisionKit(nextKit, { threadId, confirm: true });
+              }}
+            >
+              Change kit and re-score
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
 
   // AI drawer messages - DO NOT fabricate assistant messages
@@ -7492,6 +7560,12 @@ useEffect(() => {
   }, []);
 
   const finalizeStreamingAssistant = useCallback((messageId, finalText = '', metadata = {}) => {
+    // A withheld reply (scoring failed or was blocked, shown as a card) drops
+    // whatever text streamed before the outcome was known.
+    if (metadata?.withheld) {
+      setMessages((prev) => prev.filter((message) => message.id !== messageId));
+      return;
+    }
     setMessages((prev) => prev.map((message) => {
       if (message.id !== messageId) return message;
       const resolvedText = String(finalText || message.text || '').trim();
@@ -7619,6 +7693,7 @@ useEffect(() => {
           finalPayload = payload;
           setStreamToolStatus('');
           finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
+            withheld: payload?.reply === '' && Array.isArray(payload?.artifact_messages) && payload.artifact_messages.length > 0,
             historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
             hasMutations: Array.isArray(payload?.mutations) && payload.mutations.length > 0,
             canUndo: Boolean(payload?.undo_available),
@@ -7627,6 +7702,7 @@ useEffect(() => {
         },
       });
       finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
+            withheld: finalPayload?.reply === '' && Array.isArray(finalPayload?.artifact_messages) && finalPayload.artifact_messages.length > 0,
         historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
         hasMutations: Array.isArray(finalPayload?.mutations) && finalPayload.mutations.length > 0,
         canUndo: Boolean(finalPayload?.undo_available),
@@ -7698,6 +7774,7 @@ useEffect(() => {
           finalPayload = payload;
           setStreamToolStatus('');
           finalizeStreamingAssistant(placeholderId, payload?.reply || payload?.message || '', {
+            withheld: payload?.reply === '' && Array.isArray(payload?.artifact_messages) && payload.artifact_messages.length > 0,
             historyIndex: Number.isInteger(payload?.assistant_message_index) ? payload.assistant_message_index : null,
             hasMutations: Array.isArray(payload?.mutations) && payload.mutations.length > 0,
             canUndo: Boolean(payload?.undo_available),
@@ -7706,6 +7783,7 @@ useEffect(() => {
         },
       });
       finalizeStreamingAssistant(placeholderId, finalPayload?.reply || finalPayload?.message || '', {
+            withheld: finalPayload?.reply === '' && Array.isArray(finalPayload?.artifact_messages) && finalPayload.artifact_messages.length > 0,
         historyIndex: Number.isInteger(finalPayload?.assistant_message_index) ? finalPayload.assistant_message_index : null,
         hasMutations: Array.isArray(finalPayload?.mutations) && finalPayload.mutations.length > 0,
         canUndo: Boolean(finalPayload?.undo_available),
@@ -12086,6 +12164,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       {renderEmbeddedCheckout()}
       {renderPostAdoptWbsPrompt()}
       {renderPlanExistsPrompt()}
+      {renderKitChangeConfirm()}
       {executionPlanDecisionDialog}
 
       {/* Scorecard lightbox: dark backdrop with the same real PDF/PPTX actions
@@ -13671,6 +13750,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       />
       {renderPostAdoptWbsPrompt()}
       {renderPlanExistsPrompt()}
+      {renderKitChangeConfirm()}
       {executionPlanDecisionDialog}
       <Onboarding
         open={showOnboarding}

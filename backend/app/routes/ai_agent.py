@@ -1033,7 +1033,6 @@ def _apply_rfp_decision_context(session, user_message, *, explicit_selection=Non
         }
 
 
-RFP_SUBTYPE_QUESTION = "Are you responding to this RFP, or selecting a vendor?"
 DECISION_KIT_CHANGE_QUESTION = "This decision is already established. Confirm that you want to change its Decision Kit and re-score it."
 ANALYSIS_UNAVAILABLE_MESSAGE = "Jaspen’s analysis is unavailable right now. Your message is saved. Try again."
 
@@ -1114,7 +1113,19 @@ def _execute_decision_kit_change_tool(tool_name, tool_input, *, session, user_me
             "decision_kit": current,
             "pending_decision_kit": target,
             "confirmation_required": True,
-            "confirmation": DECISION_KIT_CHANGE_QUESTION,
+            "confirmation": (
+                "This decision is already established, so changing its Decision Kit needs the user's confirmation "
+                "and re-scores it. A confirmation card is shown; explain briefly in your own words."
+            ),
+            "artifact": {"type": "confirm", "data": {
+                "kind": "decision_kit_change",
+                "from_label": (get_decision_kit(current) or {}).get("label") if current else None,
+                "to_label": (get_decision_kit(target) or {}).get("label") if target else None,
+                "actions": [
+                    {"label": "Change kit and re-score", "value": "Yes, change the Decision Kit and re-score."},
+                    {"label": "Keep current kit", "value": "Keep the current Decision Kit."},
+                ],
+            }},
         }
 
     kit = get_decision_kit(target) if target else None
@@ -1267,6 +1278,54 @@ def _ensure_decision_kit_starter_rubric(session, *, user_message=""):
     return True
 
 
+def _rubric_card(rubric, *, kit=None):
+    """The rubric as a UI card: exact stored criteria, rendered by the app.
+
+    Code shows the rubric (labels, weights, status, choice buttons); the AI
+    talks about it in its own words.
+    """
+    from ..decision_state import rubric_is_approved, rubric_is_scoring_authorized
+    rubric = rubric if isinstance(rubric, dict) else {}
+    criteria = []
+    for item in rubric.get("criteria") or []:
+        if not isinstance(item, dict):
+            continue
+        criteria.append({
+            "label": str(item.get("label") or item.get("key") or "Criterion"),
+            "weight_pct": None if item.get("gate") else int(round(float(item.get("weight") or 0) * 100)),
+            "gate": bool(item.get("gate")),
+            "group": item.get("group") or None,
+        })
+    if rubric_is_approved(rubric):
+        status = "approved"
+    elif rubric_is_scoring_authorized(rubric):
+        status = "used"
+    else:
+        status = "proposed"
+    actions = []
+    single = rubric.get("single_criterion_confirmation") if isinstance(rubric.get("single_criterion_confirmation"), dict) else None
+    if status == "proposed" and single and single.get("status") == "required":
+        label = single.get("criterion_label") or "this criterion"
+        actions = [
+            {"label": f"Score on {label} alone", "value": f"Score on {label} alone"},
+            {"label": "Add criteria", "value": "Add criteria"},
+        ]
+    elif status == "proposed":
+        actions = [
+            {"label": "Approve rubric", "value": "Approve this rubric"},
+            {"label": "Change rubric", "value": "Change the rubric"},
+        ]
+    return {
+        "type": "rubric",
+        "data": {
+            "status": status,
+            "kit_label": (kit or {}).get("label") if isinstance(kit, dict) else None,
+            "criteria": criteria,
+            "actions": actions,
+        },
+    }
+
+
 def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
     """Persist and render the exact application rubric before approval."""
     if not isinstance(session, dict) or not user_id or not thread_id:
@@ -1314,26 +1373,11 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
         sessions[key or thread_id] = durable
         if not save_user_sessions(user_id, sessions):
             return None
-    lines = _rubric_proposal_context(user_message, kit, criteria)
-    from ..decision_state import rubric_is_approved, rubric_is_scoring_authorized
-    if rubric_is_approved(rubric):
-        lines.append(f"Here’s the {rubric_label} you’re using:")
-    elif rubric_is_scoring_authorized(rubric):
-        lines.append(f"Here are the standard {rubric_label} criteria I used:")
-    else:
-        lines.append(f"Here’s the {rubric_label} I propose for your review:")
-    for item in criteria:
-        label = item.get("label") or item.get("key")
-        if item.get("gate"):
-            lines.append(f"- {label}: required gate")
-            continue
-        weight = int(round(float(item.get("weight") or 0) * 100))
-        lines.append(f"- {label}: weight {weight}%")
-    if rubric_is_approved(rubric) or rubric_is_scoring_authorized(rubric):
-        lines.append("Tell me what you’d like to change and I’ll re-score.")
-    else:
-        lines.append("Does this reflect what matters, or would you like to change the criteria or weights?")
-    return "\n".join(lines)
+    return {
+        "card": _rubric_card(rubric, kit=kit),
+        "rubric_label": rubric_label,
+        "context": _rubric_proposal_context(user_message, kit, criteria),
+    }
 
 
 _PROCESSING_INTENT_TERMS = frozenset([
@@ -3308,12 +3352,13 @@ def _failed_scoring_action(executed_actions):
     return None
 
 
-def _blocked_scoring_action(executed_actions):
+def _scoring_outcome_card_action(executed_actions):
+    """A scoring step that failed or was blocked and is shown as a card."""
     for action in executed_actions or []:
         if not isinstance(action, dict) or action.get("tool") not in {"generate_scorecard", "queue_scorecards"}:
             continue
         result = action.get("result") if isinstance(action.get("result"), dict) else {}
-        if not result.get("ok"):
+        if not result.get("ok") and (result.get("failure_state") or isinstance(result.get("artifact"), dict)):
             return result
     return None
 
@@ -3328,7 +3373,7 @@ def _apply_scoring_failure_state(reply, usage, executed_actions):
         "generation_failed": True,
         "error_code": failure.get("code") or "scorecard_generation_failed",
     })
-    return str(failure.get("error") or reply), failed_usage, failure
+    return "", failed_usage, failure
 
 
 def _apply_option_decision_failure_state(reply, executed_actions):
@@ -3407,25 +3452,12 @@ def _finalize_agent_reply(
     thread_id,
     executed_actions=None,
 ):
-    scoring_failure = _failed_scoring_action(executed_actions)
-    if scoring_failure:
-        return str(scoring_failure.get("error") or "Jaspen couldn't complete scoring. Your request is saved. Try again.")
-    blocked_scoring = _blocked_scoring_action(executed_actions)
-    if blocked_scoring:
-        if str(blocked_scoring.get("code") or "") == "rubric_approval_required":
-            return str(
-                blocked_scoring.get("confirmation")
-                or "Approve the proposed rubric to continue scoring, then try again."
-            )
-        return str(blocked_scoring.get("error") or "Scoring did not start.")
-    for action in executed_actions or []:
-        if not isinstance(action, dict) or action.get("tool") != "queue_scorecards":
-            continue
-        result = action.get("result") if isinstance(action.get("result"), dict) else {}
-        if result.get("ok"):
-            confirmation = str(result.get("confirmation") or "The options were queued for scoring.")
-            criteria_summary = _criteria_summary_after_scoring(user_id, thread_id)
-            return f"{confirmation}\n\n{criteria_summary}" if criteria_summary else confirmation
+    # Code never writes the reply. When scoring failed or was blocked, the
+    # turn's prose can't be trusted to match the outcome, so it is withheld
+    # and the deterministic card (failure with Retry, or the rubric to
+    # approve) is what the user sees. Every other reply stands as written.
+    if _scoring_outcome_card_action(executed_actions):
+        return ""
     final_reply = str(reply or "").strip() or fallback_reply
     if tool_confirmations:
         confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
@@ -3738,8 +3770,10 @@ def _guard_mutation_tool(
                     weight = int(round(float(item.get("weight") or 0) * 100))
                     lines.append(f"- {label}: weight {weight}%")
             lines.append("Approve this rubric, or tell me what to change.")
+            rubric["presented_at"] = _iso_now()
             return {
                 "ok": False,
+                "artifact": _rubric_card(rubric),
                 "code": "rubric_approval_required",
                 "error": "The scoring rubric is proposed and needs the user's approval before scoring.",
                 "confirmation_required": True,
@@ -3859,6 +3893,13 @@ def _decision_kit_prompt_suffix(user_id, thread_id):
         if not isinstance(session, dict):
             return ""
         parts = []
+        if _rfp_subtype_question_needed(session):
+            parts.append(
+                "\n\n[RFP DECISION: TYPE NOT YET CLEAR] The user chose the RFP Decision Kit, but it is not yet clear "
+                "whether they are responding to an RFP (deciding whether to bid) or selecting a vendor from proposals. "
+                "That decides which RFP rubric applies, so find out naturally, in your own words, before scoring; "
+                "the application applies the matching kit once their answer makes it clear."
+            )
         if session.get("decision_kit"):
             kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
             hints = "; ".join(kit.get("interviewer_hints") or [])
@@ -7180,6 +7221,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "ok": True,
             "tool": tool_name,
             "rubric": approved,
+            "artifact": _rubric_card(approved),
             "confirmation": "The presented scoring rubric is approved exactly as shown.",
         }
 
@@ -7207,7 +7249,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             "ok": True,
             "tool": tool_name,
             "rubric": rubric,
-            "confirmation": rendered,
+            "artifact": rendered["card"],
+            "confirmation": (
+                f"The {rendered['rubric_label']} is shown to the user as a card with its exact criteria and weights; "
+                "do not repeat the list. " + " ".join(rendered["context"])
+            ).strip(),
         }
 
     if tool_name == "set_scoring_rubric":
@@ -7394,6 +7440,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 else f"Proposed scoring rubric saved for your review: {summary}. Approve it or edit it before scoring."
             ),
         }
+        response["artifact"] = _rubric_card(rubric_obj, kit=active_kit)
         if len(weighted_criteria) == 1 and not user_approved:
             label = weighted_criteria[0].get("label") or weighted_criteria[0].get("key") or "this criterion"
             response.update({
@@ -9673,7 +9720,7 @@ def _generate_assistant_reply_anthropic(
                     user_message=user_message,
                     session=session,
                 )
-                if isinstance(result_payload, dict) and result_payload.get("ok"):
+                if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
                     if confirmation:
                         tool_confirmations.append(confirmation)
@@ -9886,7 +9933,7 @@ def _stream_assistant_reply_events_anthropic(
                     if event.type == "content_block_delta" and getattr(event.delta, "type", None) == "text_delta":
                         text = str(getattr(event.delta, "text", "") or "")
                         if text:
-                            if _failed_scoring_action(executed_actions):
+                            if _scoring_outcome_card_action(executed_actions):
                                 continue
                             candidate_reply = "".join(streamed_reply_parts) + text
                             if _check_response_for_leak(candidate_reply):
@@ -9965,7 +10012,7 @@ def _stream_assistant_reply_events_anthropic(
                     user_message=user_message,
                     session=session,
                 )
-                if isinstance(result_payload, dict) and result_payload.get("ok"):
+                if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
                     if confirmation:
                         tool_confirmations.append(confirmation)
@@ -10221,7 +10268,7 @@ def _generate_assistant_reply_gemini(
                     user_message=user_message,
                     session=session,
                 )
-                if isinstance(result_payload, dict) and result_payload.get("ok"):
+                if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
                     if confirmation:
                         tool_confirmations.append(confirmation)
@@ -10399,7 +10446,7 @@ def _stream_assistant_reply_events_gemini(
                     continue
                 text = str(delta.get("content") or "")
                 if text:
-                    if _failed_scoring_action(executed_actions):
+                    if _scoring_outcome_card_action(executed_actions):
                         continue
                     candidate_reply = "".join(streamed_parts) + text
                     if _check_response_for_leak(candidate_reply):
@@ -10476,7 +10523,7 @@ def _stream_assistant_reply_events_gemini(
                     user_message=user_message,
                     session=session,
                 )
-                if isinstance(result_payload, dict) and result_payload.get("ok"):
+                if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
                     if confirmation:
                         tool_confirmations.append(confirmation)
@@ -10834,15 +10881,6 @@ def _generate_assistant_reply(
         session=session,
         view_context=view_context,
     )
-    if _rfp_subtype_question_needed(session):
-        session["rfp_subtype_question_asked"] = True
-        return (
-            RFP_SUBTYPE_QUESTION,
-            {"provider": "deterministic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-            [],
-            [],
-            None,
-        )
     if attachments:
         legacy_model = _anthropic_model_for_selection(model_selection)
         legacy_routes = [{
@@ -11040,18 +11078,6 @@ def _stream_assistant_reply_events(
         session=session,
         view_context=view_context,
     )
-    if _rfp_subtype_question_needed(session):
-        session["rfp_subtype_question_asked"] = True
-        if isinstance(state, dict):
-            state.update({
-                "reply": RFP_SUBTYPE_QUESTION,
-                "usage": {"provider": "deterministic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-                "actions": [],
-                "mutations": [],
-                "undo_snapshot": None,
-            })
-        yield {"type": "delta", "text": RFP_SUBTYPE_QUESTION}
-        return
     if attachments:
         legacy_model = _anthropic_model_for_selection(model_selection)
         legacy_routes = [{
@@ -11700,15 +11726,21 @@ def _artifact_chat_entry(artifact):
     }
 
 
-def _artifact_entries_from_actions(actions):
+def _artifact_entries_from_actions(actions, user_message=None):
     artifact_entries = []
     for action in (actions if isinstance(actions, list) else []):
         if not isinstance(action, dict):
             continue
         result = action.get("result") if isinstance(action.get("result"), dict) else {}
-        if not result.get("ok"):
-            continue
         artifact = result.get("artifact") if isinstance(result.get("artifact"), dict) else None
+        if not artifact and not result.get("ok") and result.get("failure_state"):
+            # A real failure is shown as a status card with Retry; the AI's
+            # reply stays its own.
+            artifact = {"type": "status", "data": {
+                "tone": "error",
+                "message": str(result.get("error") or "This step didn't finish. Your message is saved."),
+                "retry_message": str(user_message or "").strip() or None,
+            }}
         entry = _artifact_chat_entry(artifact)
         if entry:
             artifact_entries.append(entry)
@@ -12987,7 +13019,7 @@ def conversation_start():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-                artifact_messages = _artifact_entries_from_actions(actions)
+                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message)
                 _apply_rubric_action_to_session(session, actions)
 
                 credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
@@ -13216,7 +13248,7 @@ def conversation_start():
     credits_charged = credit_settlement["charged"]
     _persist_credit_deduction(user_id, remaining)
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
-    artifact_messages = _artifact_entries_from_actions(actions)
+    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message)
     _apply_rubric_action_to_session(session, actions)
     chat_history.append(_assistant_chat_entry(
         assistant_reply,
@@ -13576,7 +13608,7 @@ def conversation_continue():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-                artifact_messages = _artifact_entries_from_actions(actions)
+                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message)
                 _apply_rubric_action_to_session(session, actions)
 
                 credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
@@ -13800,7 +13832,7 @@ def conversation_continue():
     credits_charged = credit_settlement["charged"]
     _persist_credit_deduction(user_id, remaining)
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
-    artifact_messages = _artifact_entries_from_actions(actions)
+    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message)
     _apply_rubric_action_to_session(session, actions)
     chat_history.append(_assistant_chat_entry(
         assistant_reply,

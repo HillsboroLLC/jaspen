@@ -1253,8 +1253,12 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
 
   setThreadObjective: async (threadId, strategy_objective, objective_explicitly_set = true) =>
     patchThread(threadId, { strategy_objective, objective_explicitly_set }),
-  setThreadDecisionKit: async (threadId, decision_kit, decision_kit_source = 'user') =>
-    patchThread(threadId, { decision_kit, decision_kit_source }),
+  setThreadDecisionKit: async (threadId, decision_kit, decision_kit_source = 'user', { confirm = false } = {}) =>
+    patchThread(threadId, {
+      decision_kit,
+      decision_kit_source,
+      ...(confirm ? { confirm_decision_kit_change: true } : {}),
+    }),
   setThreadIntakeContext: async (threadId, intake_context = {}, strategy_objective = null, objective_explicitly_set = true) =>
     patchThread(threadId, {
       intake_context: intake_context && typeof intake_context === 'object' ? intake_context : {},
