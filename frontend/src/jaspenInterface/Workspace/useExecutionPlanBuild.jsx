@@ -5,6 +5,17 @@ import { Jaspen } from './JaspenClient';
 export const PLAN_DECISION_REQUIRED = 'recorded_advancing_decision_required';
 export const EXECUTION_PLAN_FAILURE_MESSAGE = "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.";
 
+// "Try again" is only honest when the build itself failed. A request the
+// server refused carries its own reason, and out-of-Thinking-Power already
+// raises the account-wide notice.
+const failureMessageFor = (error) => {
+  if (error?.name === 'AbortError' || error?.status === 402) return null;
+  if (typeof error?.status === 'number' && error.status < 500) {
+    return error.message || EXECUTION_PLAN_FAILURE_MESSAGE;
+  }
+  return EXECUTION_PLAN_FAILURE_MESSAGE;
+};
+
 const isDecisionRequired = (error) => (
   error?.status === 409
   && (error?.data?.code === PLAN_DECISION_REQUIRED || error?.data?.action === 'record_decision')
@@ -94,7 +105,7 @@ export function useExecutionPlanBuild() {
       return publishDecision(response, threadId);
     } catch (error) {
       if (!isDecisionRequired(error) || committedPayload.commit === false) {
-        if (committedPayload.commit !== false) setExecutionPlanFailure(EXECUTION_PLAN_FAILURE_MESSAGE);
+        if (committedPayload.commit !== false) setExecutionPlanFailure(failureMessageFor(error));
         throw error;
       }
       const accepted = await askForDecision(error.data || {});
@@ -110,7 +121,7 @@ export function useExecutionPlanBuild() {
         setExecutionPlanFailure(null);
         return publishDecision(response, threadId);
       } catch (buildError) {
-        setExecutionPlanFailure(EXECUTION_PLAN_FAILURE_MESSAGE);
+        setExecutionPlanFailure(failureMessageFor(buildError));
         throw buildError;
       }
     }

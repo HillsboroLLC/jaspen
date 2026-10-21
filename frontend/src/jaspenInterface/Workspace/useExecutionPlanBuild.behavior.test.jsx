@@ -83,3 +83,20 @@ it('keeps the standard build failure visible until a later build succeeds', asyn
     { commit: true },
   ]);
 });
+
+it('shows the server reason for a refused build and stays quiet when Thinking Power ran out', async () => {
+  Jaspen.generateAiWbs
+    .mockRejectedValueOnce({ status: 404, message: 'No scorecard context found for this thread.', data: {} })
+    .mockRejectedValueOnce({ status: 402, message: 'Thinking Power exhausted.', data: { code: 'thinking_power_exhausted' } })
+    .mockRejectedValueOnce({ name: 'TypeError', message: 'Failed to fetch' });
+  render(<Harness />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Build' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('No scorecard context found for this thread.');
+
+  fireEvent.click(screen.getByRole('button', { name: 'Build' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+
+  fireEvent.click(screen.getByRole('button', { name: 'Build' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent("Jaspen couldn't finish building this plan — try again.");
+});
