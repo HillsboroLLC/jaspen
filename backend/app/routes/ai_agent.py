@@ -12008,7 +12008,7 @@ def _find_batch_idea(ideas, idea_id):
     return None, None
 
 
-def _visible_batch_payload(batch):
+def _visible_batch_payload(batch, user=None):
     ideas = _load_batch_ideas(batch)
     columns_detected = []
     for idea in ideas:
@@ -15734,7 +15734,7 @@ def upload_batch_ideas():
     db.session.add(batch)
     db.session.commit()
 
-    payload = _visible_batch_payload(batch)
+    payload = _visible_batch_payload(batch, user=user)
     payload["columns_detected"] = columns
     _audit_ai_agent_event(
         "batch.uploaded",
