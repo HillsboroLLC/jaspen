@@ -745,9 +745,23 @@ def normalize_option_facts(
         }
         definitions = field_definitions(kit)
         for key, value, evidence in extract_candidate_facts(source_text, kit):
-            canonical, entry = normalize_fact_entry(
-                key, {"value": value, "source": "user", "evidence": evidence}, kit=kit
-            )
+            try:
+                canonical, entry = normalize_fact_entry(
+                    key, {"value": value, "source": "user", "evidence": evidence}, kit=kit
+                )
+            except ValueError as exc:
+                # An unreadable candidate (e.g. "November 20" with no year) is
+                # left out like any other rejected field; it never stops scoring.
+                if isinstance(rejected_fields, list):
+                    rejected_fields.append({
+                        "field": str(key or ""),
+                        "value": value,
+                        "source": "user",
+                        "evidence": evidence,
+                        "affects": [],
+                        "reason": str(exc),
+                    })
+                continue
             if allowed_types and str((definitions.get(canonical) or {}).get("type") or "").lower() not in allowed_types:
                 continue
             # The governed fact payload remains authoritative. Deterministic
