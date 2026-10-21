@@ -3,11 +3,52 @@ import React, { useCallback, useRef, useState } from 'react';
 import { Jaspen } from './JaspenClient';
 
 export const PLAN_DECISION_REQUIRED = 'recorded_advancing_decision_required';
+export const EXECUTION_PLAN_FAILURE_MESSAGE = "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.";
 
 const isDecisionRequired = (error) => (
   error?.status === 409
   && (error?.data?.code === PLAN_DECISION_REQUIRED || error?.data?.action === 'record_decision')
 );
+
+export function ExecutionPlanBuildFailure({ message, onRetry, busy = false, style = {} }) {
+  if (!message) return null;
+  return (
+    <div
+      role="alert"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '8px 10px',
+        border: '1px solid #dc2626',
+        borderRadius: 8,
+        background: '#fff7ed',
+        color: '#991b1b',
+        fontSize: 12.5,
+        ...style,
+      }}
+    >
+      <span>{message}</span>
+      <button
+        type="button"
+        onClick={onRetry}
+        disabled={busy}
+        style={{
+          flex: '0 0 auto',
+          padding: '5px 9px',
+          border: '1px solid #991b1b',
+          borderRadius: 6,
+          background: '#fff',
+          color: '#991b1b',
+          cursor: busy ? 'wait' : 'pointer',
+          fontWeight: 600,
+        }}
+      >
+        {busy ? 'Building plan…' : 'Retry'}
+      </button>
+    </div>
+  );
+}
 
 /**
  * The only frontend entry point for committed execution-plan generation.
@@ -45,17 +86,15 @@ export function useExecutionPlanBuild() {
   }, []);
 
   const generateExecutionPlan = useCallback(async (threadId, payload = {}, options = {}) => {
-    setExecutionPlanFailure(null);
     const committedPayload = { ...payload };
 
     try {
       const response = await Jaspen.generateAiWbs(threadId, committedPayload, options);
+      setExecutionPlanFailure(null);
       return publishDecision(response, threadId);
     } catch (error) {
       if (!isDecisionRequired(error) || committedPayload.commit === false) {
-        if (error?.status === 503 && error?.data?.code === 'execution_plan_generation_failed') {
-          setExecutionPlanFailure(error.data.error || "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.");
-        }
+        if (committedPayload.commit !== false) setExecutionPlanFailure(EXECUTION_PLAN_FAILURE_MESSAGE);
         throw error;
       }
       const accepted = await askForDecision(error.data || {});
@@ -68,11 +107,10 @@ export function useExecutionPlanBuild() {
             option_key: accepted.optionKey || error?.data?.option_key || null,
           },
         }, options);
+        setExecutionPlanFailure(null);
         return publishDecision(response, threadId);
       } catch (buildError) {
-        if (buildError?.status === 503 && buildError?.data?.code === 'execution_plan_generation_failed') {
-          setExecutionPlanFailure(buildError.data.error || "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.");
-        }
+        setExecutionPlanFailure(EXECUTION_PLAN_FAILURE_MESSAGE);
         throw buildError;
       }
     }

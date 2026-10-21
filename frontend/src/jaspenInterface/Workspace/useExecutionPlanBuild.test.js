@@ -25,12 +25,19 @@ describe('execution plan build entry points', () => {
     expect(shared).toContain('Build a plan anyway?');
     expect(shared).toContain("Jaspen recommended No-Bid because");
     expect(shared).toContain('Build plan anyway');
-    expect(shared).toContain("execution_plan_generation_failed");
+    expect(shared).toContain('EXECUTION_PLAN_FAILURE_MESSAGE');
+    expect(shared).toContain("Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.");
 
     const executionPlan = fs.readFileSync(path.join(srcRoot, 'ExecutionPlan', 'ExecutionPlan.jsx'), 'utf8');
     expect(executionPlan).toContain('executionPlanFailure');
-    expect(executionPlan).toContain('role="alert"');
-    expect(executionPlan).toContain('Retry');
+    expect(executionPlan).toContain('ExecutionPlanBuildFailure');
+
+    const chat = fs.readFileSync(path.join(srcRoot, 'Workspace', 'JaspenChat.jsx'), 'utf8');
+    const workspace = fs.readFileSync(path.join(srcRoot, 'Workspace', 'JaspenWorkspace.jsx'), 'utf8');
+    expect(chat).toContain('executionPlanFailure');
+    expect(chat).toContain('ScorecardExecutionPlanAction');
+    expect(workspace).toContain('executionPlanFailure');
+    expect(workspace).toContain('ExecutionPlanBuildFailure');
   });
 
   test('execution workspace suppresses plan counts while authoritative data loads', () => {

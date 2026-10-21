@@ -57,7 +57,7 @@ import {
   isRevisionConflict,
   REVISION_CONFLICT_MESSAGE,
 } from './JaspenClient';
-import { useExecutionPlanBuild } from './useExecutionPlanBuild';
+import { ExecutionPlanBuildFailure, useExecutionPlanBuild } from './useExecutionPlanBuild';
 import EmailResultsButton from './EmailResultsButton';
 import ShareButton from '../Sharing/ShareButton';
 import IntakeReceipt from './IntakeReceipt';
@@ -65,6 +65,7 @@ import RfpRecommendationTrace from './RfpRecommendationTrace';
 import RecordDecisionPanel from './RecordDecisionPanel';
 import WorkspaceTips from './components/WorkspaceTips';
 import ScoreReuseNotice from './ScoreReuseNotice';
+import ScorecardExecutionPlanAction from './ScorecardExecutionPlanAction';
 
 // Tab components
 import ScoreDashboard   from './ScoreDashboard';
@@ -1597,7 +1598,7 @@ export default function JaspenChat() {
     isOrgCreator,
   } = useAuth();
   const { toasts, showToast, dismissToast } = useToast();
-  const { generateExecutionPlan, executionPlanDecisionDialog } = useExecutionPlanBuild();
+  const { generateExecutionPlan, executionPlanDecisionDialog, executionPlanFailure } = useExecutionPlanBuild();
 
   // Imperative control for scenario modeling (used by interactive chat actions)
   const scenarioModelerRef = useRef(null);
@@ -1823,6 +1824,7 @@ const [aiWbsBusy, setAiWbsBusy] = useState(false);
 // Tracks which scorecard's "Build Execution Plan" CTA is in flight (so the
 // matching button on that specific card can show "Building plan…").
 const [buildingExecutionPlanFor, setBuildingExecutionPlanFor] = useState(null);
+const [failedExecutionPlanRequest, setFailedExecutionPlanRequest] = useState(null);
 const [executionDecisionRequired, setExecutionDecisionRequired] = useState(null);
 const [pendingWbsConfirmation, setPendingWbsConfirmation] = useState(null);
   const [scenarioLevers, setScenarioLevers] = useState([]);
@@ -2488,8 +2490,16 @@ const renderInlineExecutionView = () => {
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    {isBuilding ? '⏳ Building…' : 'Build Plan →'}
+                    {isBuilding ? 'Building plan…' : 'Build Plan →'}
                   </button>
+                  {failedExecutionPlanRequest && String(failedExecutionPlanRequest.scorecardId || failedExecutionPlanRequest.threadBundleId) === String(cid) && (
+                    <ExecutionPlanBuildFailure
+                      message={executionPlanFailure}
+                      busy={Boolean(isBuilding)}
+                      onRetry={() => void handleGenerateAiWbsFromScorecard(failedExecutionPlanRequest)}
+                      style={{ maxWidth: 420 }}
+                    />
+                  )}
                 </div>
               );
             })}
@@ -3122,28 +3132,15 @@ const renderScorecardCard = (result, opts = {}) => {
               Execution tab. */}
           {opts.onBuildExecutionPlan && (() => {
             const cid = result?.id || result?.analysis_id;
-            const isBuilding = opts.buildingExecutionPlanFor && String(opts.buildingExecutionPlanFor) === String(cid);
             return (
-              <button
-                className="jas-scorecard-action-primary"
-                onClick={() => opts.onBuildExecutionPlan(cid)}
-                disabled={isBuilding || opts.buildingExecutionPlanFor}
-                title="Generate an AI-authored execution plan from this scorecard"
-                style={{
-                  padding: '6px 12px',
-                  background: '#a0036c',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 6,
-                  fontSize: 12,
-                  fontWeight: 500,
-                  cursor: isBuilding ? 'wait' : 'pointer',
-                  opacity: opts.buildingExecutionPlanFor && !isBuilding ? 0.55 : 1,
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {isBuilding ? '⏳ Building plan…' : 'Build Execution Plan →'}
-              </button>
+              <ScorecardExecutionPlanAction
+                scorecardId={cid}
+                buildingExecutionPlanFor={opts.buildingExecutionPlanFor}
+                failedExecutionPlanRequest={opts.failedExecutionPlanRequest}
+                executionPlanFailure={opts.executionPlanFailure}
+                onBuildExecutionPlan={opts.onBuildExecutionPlan}
+                onRetryExecutionPlan={opts.onRetryExecutionPlan}
+              />
             );
           })()}
           {opts.onNewVersion && (
@@ -10436,6 +10433,7 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
       model_type: selectedModelType,
     });
     if (resp?.cancelled) return false;
+    setFailedExecutionPlanRequest(null);
     // A plan already exists for this idea — offer a choice instead of clobbering.
     if (resp?.plan_exists) {
       setPlanExistsPrompt({
@@ -10476,6 +10474,7 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
     return true;
   } catch (err) {
     console.error('[handleGenerateAiWbsFromScorecard] failed', err);
+    setFailedExecutionPlanRequest({ threadBundleId: tid, scorecardId: scorecardId || null, force: !!force });
     if (err?.status === 403) setBillingModalOpen(true);
     showToast(err?.message || 'Failed to build execution plan. Your existing plan was not changed.', 'error', {
       actionLabel: 'Retry',
@@ -12102,6 +12101,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                   void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid });
                 },
                 buildingExecutionPlanFor,
+                failedExecutionPlanRequest,
+                executionPlanFailure,
+                onRetryExecutionPlan: (request) => void handleGenerateAiWbsFromScorecard(request),
                 executionDecisionRequired,
                 exportBusyType,
                 onExportScorecardPdf: handleExportScorecardPdf,
@@ -12239,6 +12241,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
       onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }),
       onRegenerateExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid, force: true }),
       buildingExecutionPlanFor,
+      failedExecutionPlanRequest,
+      executionPlanFailure,
+      onRetryExecutionPlan: (request) => void handleGenerateAiWbsFromScorecard(request),
       executionDecisionRequired,
       onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
       onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),
@@ -13925,6 +13930,9 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
                     onBuildExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid }),
                     onRegenerateExecutionPlan: (cid) => void handleGenerateAiWbsFromScorecard({ threadBundleId: sessionId || currentSessionId, scorecardId: cid, force: true }),
 	                    buildingExecutionPlanFor,
+	                    failedExecutionPlanRequest,
+	                    executionPlanFailure,
+	                    onRetryExecutionPlan: (request) => void handleGenerateAiWbsFromScorecard(request),
 	                    executionDecisionRequired,
 	                    onOpenWorkspaceScorecard: (scorecard) => openWorkspaceScorecard(scorecard),
 	                    onOpenWorkspaceRoute: (threadIdValue, artifactIdValue) => openWorkspaceRoute(threadIdValue, artifactIdValue),

@@ -36,7 +36,7 @@ import { downloadRenderedWorkspacePdf } from './scorecardPdf';
 import EmailResultsButton from './EmailResultsButton';
 import ShareButton from '../Sharing/ShareButton';
 import OnePagerReport from '../Sharing/OnePagerReport';
-import { useExecutionPlanBuild } from './useExecutionPlanBuild';
+import { ExecutionPlanBuildFailure, useExecutionPlanBuild } from './useExecutionPlanBuild';
 import PmSyncPanel from './PmSyncPanel';
 
 // Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
@@ -374,7 +374,7 @@ function _workspaceOriginFromBundle(bundle, { threadId, scorecardName, maxReques
 export default function JaspenWorkspace() {
   const { threadId, scorecardId } = useParams();
   const navigate = useNavigate();
-  const { generateExecutionPlan, executionPlanDecisionDialog } = useExecutionPlanBuild();
+  const { generateExecutionPlan, executionPlanDecisionDialog, executionPlanFailure } = useExecutionPlanBuild();
 
   // View kind + which idea's execution plan is open. Every idea (scorecard)
   // has its OWN execution plan, so the execution canvas is scoped by
@@ -457,7 +457,7 @@ export default function JaspenWorkspace() {
   // source (scorecard/scenario) currently generating so per-row buttons in
   // the trade-off table can show their own spinner; `null` = idle.
   const [buildingPlan, setBuildingPlan] = useState(null);
-  const [buildPlanError, setBuildPlanError] = useState(null);
+  const [failedPlanRequest, setFailedPlanRequest] = useState(null);
   // When a plan already exists for the targeted idea, the backend returns
   // `plan_exists` instead of overwriting. We stash the details here and show a
   // modal that lets the user open the existing plan or generate a fresh one.
@@ -475,7 +475,6 @@ export default function JaspenWorkspace() {
   // and regenerates a brand-new plan for the idea.
   const buildExecutionPlan = async ({ source, scorecard_id, scenario_id, force } = {}) => {
     if (buildingPlan) return; // one at a time
-    setBuildPlanError(null);
     setBuildingPlan(source || scorecard_id || 'plan');
     try {
       const payload = { commit: true };
@@ -484,6 +483,7 @@ export default function JaspenWorkspace() {
       if (force) payload.force = true;
       const resp = await generateExecutionPlan(threadId, payload);
       if (resp?.cancelled) return;
+      setFailedPlanRequest(null);
       // A plan already exists for this idea — let the user choose rather than
       // silently overwriting it.
       if (resp?.plan_exists) {
@@ -498,9 +498,7 @@ export default function JaspenWorkspace() {
       // Open THIS idea's plan (scoped by ?idea=) so each plan stands alone.
       openExistingPlan(resp?.project_wbs?.scorecard_id || scorecard_id);
     } catch (err) {
-      setBuildPlanError(
-        (err && err.message) ? err.message : 'Could not build the execution plan. Please try again.'
-      );
+      setFailedPlanRequest({ source, scorecard_id, scenario_id, force });
     } finally {
       setBuildingPlan(null);
     }
@@ -2078,10 +2076,16 @@ export default function JaspenWorkspace() {
               className="op-btn op-btn--accent"
               onClick={() => buildExecutionPlan({ source: 'scorecard', scorecard_id: scorecardId })}
               disabled={Boolean(buildingPlan)}
-              title={buildPlanError || 'Generate an execution plan from this scorecard'}
+              title={executionPlanFailure || 'Generate an execution plan from this scorecard'}
             >
-              {buildingPlan ? 'Building…' : (buildPlanError ? 'Retry plan' : 'Build Execution Plan')}
+              {buildingPlan ? 'Building plan…' : 'Build Execution Plan'}
             </button>
+            <ExecutionPlanBuildFailure
+              message={failedPlanRequest ? executionPlanFailure : null}
+              busy={Boolean(buildingPlan)}
+              onRetry={() => buildExecutionPlan(failedPlanRequest)}
+              style={{ maxWidth: 520 }}
+            />
             <button type="button" className="op-btn op-btn--quiet" onClick={flushSave} disabled={saving} title="Save now">
               {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save'}
             </button>
@@ -2153,11 +2157,11 @@ export default function JaspenWorkspace() {
                 type="button"
                 onClick={() => buildExecutionPlan({ source: 'scorecard', scorecard_id: scorecardId })}
                 disabled={Boolean(buildingPlan)}
-                title={buildPlanError || 'Generate an execution plan from this scorecard'}
+                title={executionPlanFailure || 'Generate an execution plan from this scorecard'}
                 style={{
                   padding:'8px 12px', borderRadius:8,
-                  border: buildPlanError ? '1px solid #dc2626' : `1px solid ${ringColor}`,
-                  background:'#fff', color: buildPlanError ? '#dc2626' : ringColor,
+                  border: executionPlanFailure ? '1px solid #dc2626' : `1px solid ${ringColor}`,
+                  background:'#fff', color: executionPlanFailure ? '#dc2626' : ringColor,
                   cursor: buildingPlan ? 'wait' : 'pointer', fontSize:13, fontWeight:600,
                   opacity: buildingPlan ? 0.7 : 1,
                 }}
@@ -2167,8 +2171,16 @@ export default function JaspenWorkspace() {
                   spin={Boolean(buildingPlan)}
                   style={{ marginRight:6 }}
                 />
-                {buildingPlan ? 'Building…' : (buildPlanError ? 'Retry' : 'Build Execution Plan')}
+                {buildingPlan ? 'Building plan…' : 'Build Execution Plan'}
               </button>
+            )}
+            {isScorecard && (
+              <ExecutionPlanBuildFailure
+                message={failedPlanRequest ? executionPlanFailure : null}
+                busy={Boolean(buildingPlan)}
+                onRetry={() => buildExecutionPlan(failedPlanRequest)}
+                style={{ maxWidth: 520 }}
+              />
             )}
             {(isScorecard || isTradeoff || isExecution) && (
               <EmailResultsButton

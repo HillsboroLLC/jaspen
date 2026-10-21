@@ -5,7 +5,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheck, faCopy, faRotate, faSpinner, faThumbsDown, faThumbsUp, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import AppMenu from '../shared/AppMenu';
 import { Jaspen } from '../Workspace/JaspenClient';
-import { useExecutionPlanBuild } from '../Workspace/useExecutionPlanBuild';
+import { ExecutionPlanBuildFailure, useExecutionPlanBuild } from '../Workspace/useExecutionPlanBuild';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import ExecutionPlanExportButton from '../Workspace/ExecutionPlanExportButton';
 import PmSyncPanel from '../Workspace/PmSyncPanel';
@@ -605,8 +605,14 @@ export default function ExecutionPlan() {
         aria-disabled={!threadId || planBusy}
       >
         <FontAwesomeIcon icon={planBusy ? faSpinner : faWandMagicSparkles} spin={planBusy} />
-        <span>{planBusy ? 'Building…' : (hasExistingPlan ? 'Regenerate Plan' : 'Build Plan')}</span>
+        <span>{planBusy ? 'Building plan…' : (hasExistingPlan ? 'Regenerate Plan' : 'Build Plan')}</span>
       </button>
+      <ExecutionPlanBuildFailure
+        message={executionPlanFailure}
+        busy={planBusy}
+        onRetry={() => { void handleGeneratePlan('Generate execution plan from current scorecard.', { confirmRegenerate: hasExistingPlan }); }}
+        style={{ maxWidth: 520 }}
+      />
     </div>
   );
 
@@ -633,20 +639,6 @@ export default function ExecutionPlan() {
           </div>
           {pageActions}
         </header>
-
-        {executionPlanFailure && (
-          <div className="int-card execution-plan-build-error" role="alert" style={{ marginBottom: 16 }}>
-            <p style={{ margin: '0 0 12px' }}>{executionPlanFailure}</p>
-            <button
-              type="button"
-              className="int-btn int-btn-primary"
-              onClick={() => { void handleGeneratePlan('Generate execution plan from current scorecard.', { confirmRegenerate: hasExistingPlan }); }}
-              disabled={!threadId || planBusy}
-            >
-              Retry
-            </button>
-          </div>
-        )}
 
         {!threadId ? (
           <div className="int-card execution-plan-empty">

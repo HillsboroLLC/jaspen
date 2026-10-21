@@ -13,7 +13,7 @@ describe('single RFP scorecard decision actions', () => {
   });
 
   it('routes plan builds through the shared universal decision confirmation', () => {
-    expect(source).toContain("import { useExecutionPlanBuild } from './useExecutionPlanBuild'");
+    expect(source).toContain('useExecutionPlanBuild } from \'./useExecutionPlanBuild\'');
     expect(source).toContain('generateExecutionPlan(tid');
     expect(source).toContain('{executionPlanDecisionDialog}');
     expect(source).not.toContain('Jaspen.generateAiWbs');

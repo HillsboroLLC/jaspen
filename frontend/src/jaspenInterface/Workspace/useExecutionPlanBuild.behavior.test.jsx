@@ -8,12 +8,13 @@ jest.mock('./JaspenClient', () => ({
 }));
 
 function Harness() {
-  const { generateExecutionPlan, executionPlanDecisionDialog } = useExecutionPlanBuild();
+  const { generateExecutionPlan, executionPlanDecisionDialog, executionPlanFailure } = useExecutionPlanBuild();
   return (
     <>
-      <button type="button" onClick={() => generateExecutionPlan('thread-1', { commit: true })}>
+      <button type="button" onClick={() => { void generateExecutionPlan('thread-1', { commit: true }).catch(() => {}); }}>
         Build
       </button>
+      {executionPlanFailure && <p role="alert">{executionPlanFailure}</p>}
       {executionPlanDecisionDialog}
     </>
   );
@@ -58,4 +59,27 @@ it('shows one exact override confirmation and retries with acknowledgement', asy
     acknowledged: true,
     option_key: 'opt-1',
   });
+});
+
+it('keeps the standard build failure visible until a later build succeeds', async () => {
+  Jaspen.generateAiWbs
+    .mockRejectedValueOnce({
+      status: 503,
+      data: { code: 'execution_plan_generation_failed' },
+    })
+    .mockResolvedValueOnce({ success: true });
+  render(<Harness />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Build' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed."
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: 'Build' }));
+  await waitFor(() => expect(Jaspen.generateAiWbs).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  expect(Jaspen.generateAiWbs.mock.calls[1].slice(0, 2)).toEqual([
+    'thread-1',
+    { commit: true },
+  ]);
 });
