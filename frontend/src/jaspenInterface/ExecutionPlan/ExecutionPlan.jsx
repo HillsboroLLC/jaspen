@@ -413,7 +413,8 @@ export default function ExecutionPlan() {
       showToast(count != null ? `Execution plan generated (${count} tasks)` : 'Execution plan generated', 'success');
       return 'success';
     } catch (error) {
-      showToast(error?.message || 'Could not generate execution plan.', 'error');
+      // The failure message under the header explains it (the account-wide
+      // notice covers Thinking Power), so no second toast.
       return 'failed';
     } finally {
       setPlanBusy(false);
@@ -607,12 +608,6 @@ export default function ExecutionPlan() {
         <FontAwesomeIcon icon={planBusy ? faSpinner : faWandMagicSparkles} spin={planBusy} />
         <span>{planBusy ? 'Building plan…' : (hasExistingPlan ? 'Regenerate Plan' : 'Build Plan')}</span>
       </button>
-      <ExecutionPlanBuildFailure
-        message={executionPlanFailure}
-        busy={planBusy}
-        onRetry={() => { void handleGeneratePlan('Generate execution plan from current scorecard.', { confirmRegenerate: hasExistingPlan }); }}
-        style={{ maxWidth: 520 }}
-      />
     </div>
   );
 
@@ -639,6 +634,13 @@ export default function ExecutionPlan() {
           </div>
           {pageActions}
         </header>
+
+        <ExecutionPlanBuildFailure
+          message={executionPlanFailure}
+          busy={planBusy}
+          onRetry={() => { void handleGeneratePlan('Generate execution plan from current scorecard.', { confirmRegenerate: hasExistingPlan }); }}
+          style={{ marginBottom: 16 }}
+        />
 
         {!threadId ? (
           <div className="int-card execution-plan-empty">

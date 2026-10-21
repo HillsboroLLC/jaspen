@@ -27,31 +27,36 @@ export function ExecutionPlanBuildFailure({ message, onRetry, busy = false, styl
     <div
       role="alert"
       style={{
-        display: 'inline-flex',
+        display: 'flex',
         alignItems: 'center',
-        gap: 10,
-        padding: '8px 10px',
-        border: '1px solid #dc2626',
+        justifyContent: 'space-between',
+        gap: 12,
+        boxSizing: 'border-box',
+        width: '100%',
+        padding: '8px 12px',
+        border: '1px solid #f3d0d0',
         borderRadius: 8,
-        background: '#fff7ed',
-        color: '#991b1b',
+        background: '#fff5f5',
+        color: '#b42318',
         fontSize: 12.5,
+        lineHeight: 1.4,
         ...style,
       }}
     >
-      <span>{message}</span>
+      <span style={{ flex: 1, minWidth: 0 }}>{message}</span>
       <button
         type="button"
         onClick={onRetry}
         disabled={busy}
         style={{
           flex: '0 0 auto',
-          padding: '5px 9px',
-          border: '1px solid #991b1b',
+          padding: '5px 12px',
+          border: '1px solid #b42318',
           borderRadius: 6,
           background: '#fff',
-          color: '#991b1b',
+          color: '#b42318',
           cursor: busy ? 'wait' : 'pointer',
+          fontSize: 12,
           fontWeight: 600,
         }}
       >

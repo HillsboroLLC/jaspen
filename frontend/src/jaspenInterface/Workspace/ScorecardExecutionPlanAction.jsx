@@ -49,7 +49,7 @@ export default function ScorecardExecutionPlanAction({
           message={executionPlanFailure}
           busy={isBuilding}
           onRetry={() => onRetryExecutionPlan(failedExecutionPlanRequest)}
-          style={{ maxWidth: 520 }}
+          style={{ flexBasis: '100%' }}
         />
       )}
     </>

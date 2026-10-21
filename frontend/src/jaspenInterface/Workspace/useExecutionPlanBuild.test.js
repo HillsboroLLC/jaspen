@@ -38,6 +38,11 @@ describe('execution plan build entry points', () => {
     expect(chat).toContain('ScorecardExecutionPlanAction');
     expect(workspace).toContain('executionPlanFailure');
     expect(workspace).toContain('ExecutionPlanBuildFailure');
+
+    // One message per failure: no second toast beside the inline message.
+    expect(executionPlan).not.toContain('Could not generate execution plan.');
+    expect(chat).not.toContain('Failed to build execution plan.');
+    expect(workspace.match(/<ExecutionPlanBuildFailure/g)).toHaveLength(1);
   });
 
   test('execution workspace suppresses plan counts while authoritative data loads', () => {

@@ -242,7 +242,7 @@ describe('Last sync summary', () => {
       { id: 'log-1', status: 'success', items_synced: 1, created_at: '2026-10-20T17:13:39Z', sync_metadata: {} },
     ]);
 
-    expect(await screen.findByText('Last sync: success · 1 change')).toBeInTheDocument();
+    expect(await screen.findByText('Last sync: Synced · 1 change')).toBeInTheDocument();
   });
 
   it('shows the worst status from the latest sync action', async () => {
@@ -251,7 +251,7 @@ describe('Last sync summary', () => {
       { id: 'log-1', status: 'success', items_synced: 1, created_at: '2026-10-20T17:13:39Z', sync_metadata: {} },
     ]);
 
-    expect(await screen.findByText('Last sync: failed · 1 change')).toBeInTheDocument();
+    expect(await screen.findByText('Last sync: Failed · 1 change')).toBeInTheDocument();
   });
 
   it('never pulls changes from an older sync action', async () => {
@@ -260,7 +260,7 @@ describe('Last sync summary', () => {
       { id: 'log-1', status: 'success', items_synced: 4, created_at: '2026-10-20T17:12:50Z', sync_metadata: {} },
     ]);
 
-    expect(await screen.findByText('Last sync: success · 0 changes')).toBeInTheDocument();
+    expect(await screen.findByText('Last sync: Synced · 0 changes')).toBeInTheDocument();
   });
 
   it('uses the plural label for multiple changes', async () => {
@@ -268,7 +268,7 @@ describe('Last sync summary', () => {
       { id: 'log-1', status: 'success', items_synced: 2, created_at: '2026-10-20T17:13:51Z', sync_metadata: {} },
     ]);
 
-    expect(await screen.findByText('Last sync: success · 2 changes')).toBeInTheDocument();
+    expect(await screen.findByText('Last sync: Synced · 2 changes')).toBeInTheDocument();
   });
 });
 
@@ -315,6 +315,8 @@ it('explains missing Jira issues and offers recreate or unlink without retry adv
   });
   render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
   expect(await screen.findByRole('alert')).toHaveTextContent('2 linked Jira issues no longer exist in JST.');
+  expect(screen.getByText(/Issues missing in Jira/)).toBeInTheDocument();
+  expect(screen.queryByText(/links_missing/)).not.toBeInTheDocument();
   expect(screen.queryByText(/retry or reconnect/i)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name:'Sync now' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name:'Recreate in JST' }));
@@ -345,7 +347,7 @@ it('does not report missing issues as updates from Jira', async () => {
   render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={16} />);
   expect(await screen.findByRole('alert')).toHaveTextContent('16 linked Jira issues no longer exist in JST.');
   expect(screen.queryByText(/Updated from Jira:/)).not.toBeInTheDocument();
-  expect(screen.getByText(/Last sync: success · 0 changes/)).toBeInTheDocument();
+  expect(screen.getByText(/Last sync: Synced · 0 changes/)).toBeInTheDocument();
 });
 
 it('reports only live Jira updates when missing and live issues are mixed', async () => {

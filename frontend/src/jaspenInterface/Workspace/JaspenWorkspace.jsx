@@ -2076,16 +2076,10 @@ export default function JaspenWorkspace() {
               className="op-btn op-btn--accent"
               onClick={() => buildExecutionPlan({ source: 'scorecard', scorecard_id: scorecardId })}
               disabled={Boolean(buildingPlan)}
-              title={executionPlanFailure || 'Generate an execution plan from this scorecard'}
+              title="Generate an execution plan from this scorecard"
             >
               {buildingPlan ? 'Building plan…' : 'Build Execution Plan'}
             </button>
-            <ExecutionPlanBuildFailure
-              message={failedPlanRequest ? executionPlanFailure : null}
-              busy={Boolean(buildingPlan)}
-              onRetry={() => buildExecutionPlan(failedPlanRequest)}
-              style={{ maxWidth: 520 }}
-            />
             <button type="button" className="op-btn op-btn--quiet" onClick={flushSave} disabled={saving} title="Save now">
               {saving ? 'Saving…' : savedFlash ? 'Saved ✓' : 'Save'}
             </button>
@@ -2157,11 +2151,11 @@ export default function JaspenWorkspace() {
                 type="button"
                 onClick={() => buildExecutionPlan({ source: 'scorecard', scorecard_id: scorecardId })}
                 disabled={Boolean(buildingPlan)}
-                title={executionPlanFailure || 'Generate an execution plan from this scorecard'}
+                title="Generate an execution plan from this scorecard"
                 style={{
                   padding:'8px 12px', borderRadius:8,
-                  border: executionPlanFailure ? '1px solid #dc2626' : `1px solid ${ringColor}`,
-                  background:'#fff', color: executionPlanFailure ? '#dc2626' : ringColor,
+                  border: `1px solid ${ringColor}`,
+                  background:'#fff', color: ringColor,
                   cursor: buildingPlan ? 'wait' : 'pointer', fontSize:13, fontWeight:600,
                   opacity: buildingPlan ? 0.7 : 1,
                 }}
@@ -2173,14 +2167,6 @@ export default function JaspenWorkspace() {
                 />
                 {buildingPlan ? 'Building plan…' : 'Build Execution Plan'}
               </button>
-            )}
-            {isScorecard && (
-              <ExecutionPlanBuildFailure
-                message={failedPlanRequest ? executionPlanFailure : null}
-                busy={Boolean(buildingPlan)}
-                onRetry={() => buildExecutionPlan(failedPlanRequest)}
-                style={{ maxWidth: 520 }}
-              />
             )}
             {(isScorecard || isTradeoff || isExecution) && (
               <EmailResultsButton
@@ -2296,6 +2282,15 @@ export default function JaspenWorkspace() {
           </div>
           )}
         </div>
+
+        {isScorecard && failedPlanRequest && (
+          <ExecutionPlanBuildFailure
+            message={executionPlanFailure}
+            busy={Boolean(buildingPlan)}
+            onRetry={() => buildExecutionPlan(failedPlanRequest)}
+            style={{ borderRadius: 0, border: 'none', borderBottom: '1px solid #f3d0d0', padding: '8px 28px' }}
+          />
+        )}
 
         {onePagerMode && (saveError || exportError) && (
           <div role="alert" style={{ padding:'6px 28px', background:'#fff5f5', borderBottom:'1px solid #f3d0d0', color:'#b42318', fontSize:12 }}>

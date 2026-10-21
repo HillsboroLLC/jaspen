@@ -19,6 +19,21 @@ const inputStyle = {
 };
 const RECONNECT_MESSAGE = 'Your saved Jira connection no longer works. Enter a new API token to continue.';
 
+// Plain words for the stored sync states; the codes themselves never reach users.
+const BINDING_STATUS_LABELS = {
+  active: 'Synced with Jira',
+  partial: 'Synced · needs review',
+  links_missing: 'Issues missing in Jira',
+  error: 'Jira sync error',
+  paused: 'Jira sync paused',
+  reconnect_required: 'Reconnect Jira',
+  disconnected: 'Unlinked from Jira',
+};
+const LOG_STATUS_LABELS = { success: 'Synced', partial: 'Partly synced', failed: 'Failed' };
+
+export const bindingStatusLabel = (status) => BINDING_STATUS_LABELS[status] || 'Jira sync';
+export const syncLogStatusLabel = (status) => LOG_STATUS_LABELS[status] || 'Sync';
+
 export function syncOwnerLabel(binding) {
   const owner = binding?.sync_owner || {};
   return owner.name || owner.email || 'the person who connected Jira';
@@ -356,7 +371,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
   if (binding && !open) return <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', maxWidth: compact ? 560 : 'none' }}>
     <div style={{ display:'grid', gap:3 }}>
       <span style={{ ...buttonStyle, cursor: 'default', color: ['error', 'reconnect_required', 'paused', 'links_missing'].includes(binding.status) ? '#b91c1c' : COLOR.greenInk }}>
-        ● {binding.status === 'active' ? 'Synced with Jira' : binding.status === 'reconnect_required' ? 'Reconnect Jira' : `Jira · ${binding.status}`}{binding.last_success_at ? ` · ${new Date(binding.last_success_at).toLocaleString()}` : ''}
+        ● {bindingStatusLabel(binding.status)}{binding.last_success_at ? ` · ${new Date(binding.last_success_at).toLocaleString()}` : ''}
       </span>
       <span style={{ color:COLOR.ink, fontSize:11.5 }}>Synced by {syncOwnerLabel(binding)} with their Jira account</span>
       {syncWarningMessage(binding) && <span role="alert" style={{ color:'#b91c1c', fontSize:11.5 }}>{syncWarningMessage(binding)}</span>}
@@ -369,8 +384,8 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     {binding.external_container_url && <a href={binding.external_container_url} target="_blank" rel="noreferrer" style={{ ...buttonStyle, textDecoration: 'none' }}>View in Jira</a>}
     {error && <span role="alert" style={{ color: '#b91c1c', fontSize: 11.5 }}>{error}</span>}
     {syncNotice && <span role="status" style={{ color: COLOR.greenInk, fontSize: 11.5 }}>{syncNotice}</span>}
-    {summaryLog && <span style={{ color: COLOR.mute, fontSize: 11.5 }}>Last sync: {summaryLog.status} · {summaryLog.items_synced || 0} {summaryLog.items_synced === 1 ? 'change' : 'changes'}{(summaryLog.sync_metadata?.conflicts || []).length ? ` · ${summaryLog.sync_metadata.conflicts.length} need review` : ''}</span>}
-    {logs.length > 0 && <details style={{ fontSize:11.5, color:COLOR.ink }}><summary style={{ cursor:'pointer' }}>Sync history</summary><div style={{ position:'absolute', zIndex:20, background:'#fff', border:`1px solid ${COLOR.line}`, borderRadius:8, padding:10, width:330, boxShadow:'0 10px 30px rgba(22,31,59,.12)' }}>{logs.slice(0, 5).map((log) => <div key={log.id} style={{ padding:'5px 0', borderBottom:`1px solid ${COLOR.line2}` }}><strong>{log.status}</strong> · {log.items_synced || 0} changes · {log.created_at ? new Date(log.created_at).toLocaleString() : 'just now'}{(log.sync_metadata?.notes || []).map((note, index) => <div key={`note-${index}`} style={{ color:COLOR.mute }}>{note}</div>)}{(log.sync_metadata?.conflicts || []).map((conflict) => <div key={`${conflict.task_id}-${conflict.field}`} style={{ color:'#9f1239' }}>{conflict.task_id}: choose the {conflict.field} value</div>)}{(log.sync_metadata?.errors || []).map((item, index) => <div key={index} style={{ color:'#9f1239' }}>{item.error}</div>)}</div>)}</div></details>}
+    {summaryLog && <span style={{ color: COLOR.mute, fontSize: 11.5 }}>Last sync: {syncLogStatusLabel(summaryLog.status)} · {summaryLog.items_synced || 0} {summaryLog.items_synced === 1 ? 'change' : 'changes'}{(summaryLog.sync_metadata?.conflicts || []).length ? ` · ${summaryLog.sync_metadata.conflicts.length} need review` : ''}</span>}
+    {logs.length > 0 && <details style={{ fontSize:11.5, color:COLOR.ink }}><summary style={{ cursor:'pointer' }}>Sync history</summary><div style={{ position:'absolute', zIndex:20, background:'#fff', border:`1px solid ${COLOR.line}`, borderRadius:8, padding:10, width:330, boxShadow:'0 10px 30px rgba(22,31,59,.12)' }}>{logs.slice(0, 5).map((log) => <div key={log.id} style={{ padding:'5px 0', borderBottom:`1px solid ${COLOR.line2}` }}><strong>{syncLogStatusLabel(log.status)}</strong> · {log.items_synced || 0} changes · {log.created_at ? new Date(log.created_at).toLocaleString() : 'just now'}{(log.sync_metadata?.notes || []).map((note, index) => <div key={`note-${index}`} style={{ color:COLOR.mute }}>{note}</div>)}{(log.sync_metadata?.conflicts || []).map((conflict) => <div key={`${conflict.task_id}-${conflict.field}`} style={{ color:'#9f1239' }}>{conflict.task_id}: choose the {conflict.field} value</div>)}{(log.sync_metadata?.errors || []).map((item, index) => <div key={index} style={{ color:'#9f1239' }}>{item.error}</div>)}</div>)}</div></details>}
   </div>;
 
   const close = () => { setOpen(false); setTool(''); setConnect(null); setError(''); setGuidance(''); };

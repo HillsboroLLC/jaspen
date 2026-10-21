@@ -2458,7 +2458,7 @@ const renderInlineExecutionView = () => {
                 <div
                   key={cid}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 14,
+                    display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 14,
                     padding: '12px 16px',
                     background: '#fff',
                     border: '1px solid #e6eaf2',
@@ -2497,7 +2497,7 @@ const renderInlineExecutionView = () => {
                       message={executionPlanFailure}
                       busy={Boolean(isBuilding)}
                       onRetry={() => void handleGenerateAiWbsFromScorecard(failedExecutionPlanRequest)}
-                      style={{ maxWidth: 420 }}
+                      style={{ flexBasis: '100%' }}
                     />
                   )}
                 </div>
@@ -10474,12 +10474,19 @@ const handleGenerateAiWbsFromScorecard = useCallback(async ({ threadBundleId, sc
     return true;
   } catch (err) {
     console.error('[handleGenerateAiWbsFromScorecard] failed', err);
-    setFailedExecutionPlanRequest({ threadBundleId: tid, scorecardId: scorecardId || null, force: !!force });
-    if (err?.status === 403) setBillingModalOpen(true);
-    showToast(err?.message || 'Failed to build execution plan. Your existing plan was not changed.', 'error', {
-      actionLabel: 'Retry',
-      onAction: () => void handleGenerateAiWbsFromScorecard({ threadBundleId, scorecardId, force }),
-    });
+    // One message per failure: the billing dialog explains a plan-access
+    // refusal, the scorecard's own card shows everything else inline, and a
+    // toast is used only when there is no card to show it on.
+    if (err?.status === 403) {
+      setBillingModalOpen(true);
+    } else if (scorecardId) {
+      setFailedExecutionPlanRequest({ threadBundleId: tid, scorecardId, force: !!force });
+    } else if (err?.status !== 402) {
+      showToast(err?.message || "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.", 'error', {
+        actionLabel: 'Retry',
+        onAction: () => void handleGenerateAiWbsFromScorecard({ threadBundleId, scorecardId, force }),
+      });
+    }
     return false;
   } finally {
     setAiWbsBusy(false);
