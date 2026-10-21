@@ -507,8 +507,8 @@ export default function JaspenWorkspace() {
   // Chat-driven build: generate the plan, then drop an inline sample card into
   // the conversation with an "Open in workspace" action (instead of jumping
   // straight to the execution canvas). `nextHistory` is the conversation up to
-  // and including the user's affirmative; we replace the trailing pending
-  // placeholder with the result card.
+  // and including the user's affirmative. Build status belongs to the toolbar
+  // and failure band; code never adds plan-build prose to the conversation.
   async function buildExecutionPlanFromChat(nextHistory, abortSignal = null) {
     // Pick a seed: on a scorecard, this card's scorecard; on the trade-off
     // surface, the top-scoring idea (and name it so the user knows which).
@@ -532,31 +532,30 @@ export default function JaspenWorkspace() {
       }
     }
 
-    setChatHistory((prev) => {
-      const arr = prev.slice(0, -1);
-      return [...arr, { role: 'ai', text: `Building an execution plan for **${seedLabel}**…`, pending: true }];
-    });
+    const buildRequest = {
+      source: 'chat',
+      scorecard_id: seed.scorecard_id,
+      scenario_id: seed.scenario_id,
+    };
+    setChatHistory(nextHistory);
+    _writeWorkspaceChat(chatKey, nextHistory);
+    setFailedPlanRequest(null);
+    setBuildingPlan(seed.scorecard_id || seed.scenario_id || 'plan');
 
     try {
       const resp = await generateExecutionPlan(threadId, { ...seed, commit: true }, { abortSignal });
       if (resp?.cancelled) {
-        setChatHistory(nextHistory);
-        _writeWorkspaceChat(chatKey, nextHistory);
         return;
       }
       if (resp?.plan_exists) {
-        const planExistsHistory = [...nextHistory, {
-          role: 'ai',
-          text: `**${resp.scorecard_name || seedLabel}** already has an execution plan (${Number(resp.task_count || 0)} task${Number(resp.task_count || 0) === 1 ? '' : 's'}). Open the current plan, or generate a new one?`,
-        }];
-        setChatHistory(planExistsHistory);
-        _writeWorkspaceChat(chatKey, planExistsHistory);
         setPlanExistsPrompt({
           scorecardId: resp.scorecard_id || seed.scorecard_id || null,
           scorecardName: resp.scorecard_name || seedLabel,
           taskCount: Number(resp.task_count || 0),
           onGenerateNew: async () => {
             setChatBusy(true);
+            setFailedPlanRequest(null);
+            setBuildingPlan(seed.scorecard_id || seed.scenario_id || 'plan');
             try {
               const forced = await generateExecutionPlan(threadId, { ...seed, commit: true, force: true });
               if (forced?.cancelled) return;
@@ -565,21 +564,16 @@ export default function JaspenWorkspace() {
               setChatHistory((prev) => {
                 const updated = [...prev, {
                   role: 'ai',
-                  text: fTasks.length
-                    ? `Here's a fresh execution plan for **${seedLabel}** — ${fTasks.length} task${fTasks.length === 1 ? '' : 's'}.`
-                    : `I generated a new execution plan for **${seedLabel}**.`,
+                  text: '',
                   execPlan: { label: seedLabel, tasks: fTasks.slice(0, 6), total: fTasks.length, scorecardId: seed.scorecard_id || null },
                 }];
                 _writeWorkspaceChat(chatKey, updated);
                 return updated;
               });
-            } catch (e) {
-              setChatHistory((prev) => {
-                const updated = [...prev, { role: 'ai', text: `I couldn't regenerate the plan: ${String(e?.message || e || 'unknown error')}.` }];
-                _writeWorkspaceChat(chatKey, updated);
-                return updated;
-              });
+            } catch {
+              setFailedPlanRequest({ ...buildRequest, force: true });
             } finally {
+              setBuildingPlan(null);
               setChatBusy(false);
             }
           },
@@ -590,23 +584,15 @@ export default function JaspenWorkspace() {
       const tasks = Array.isArray(planWbs?.tasks) ? planWbs.tasks : [];
       const generatedHistory = [...nextHistory, {
         role: 'ai',
-        text: tasks.length
-          ? `Here's a draft execution plan for **${seedLabel}** — ${tasks.length} task${tasks.length === 1 ? '' : 's'} across the key workstreams. Open it in the workspace to edit, reassign, and track.`
-          : `I generated an execution plan for **${seedLabel}**. Open it in the workspace to review.`,
+        text: '',
         execPlan: { label: seedLabel, tasks: tasks.slice(0, 6), total: tasks.length, scorecardId: seed.scorecard_id || null },
       }];
       setChatHistory(generatedHistory);
       _writeWorkspaceChat(chatKey, generatedHistory);
-    } catch (err) {
-      const failedHistory = [...nextHistory, {
-        role: 'ai',
-        text: abortSignal?.aborted
-          ? 'Stopped.'
-          : `I couldn't build the execution plan: ${String(err?.message || err || 'unknown error')}. Want me to try again?`,
-      }];
-      setChatHistory(failedHistory);
-      _writeWorkspaceChat(chatKey, failedHistory);
+    } catch {
+      if (!abortSignal?.aborted) setFailedPlanRequest(buildRequest);
     } finally {
+      setBuildingPlan(null);
       setChatBusy(false);
     }
   }
