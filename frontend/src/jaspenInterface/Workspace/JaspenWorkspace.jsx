@@ -2269,7 +2269,7 @@ export default function JaspenWorkspace() {
           )}
         </div>
 
-        {isScorecard && failedPlanRequest && (
+        {(isScorecard || isTradeoff) && failedPlanRequest && (
           <ExecutionPlanBuildFailure
             message={executionPlanFailure}
             busy={Boolean(buildingPlan)}

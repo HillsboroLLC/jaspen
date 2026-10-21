@@ -153,3 +153,8 @@ it('adds only the data-backed plan card after a successful sidebar build', async
     expect.objectContaining({ role: 'ai', text: '', execPlan: expect.any(Object) }),
   ]));
 });
+
+it('shows the failure band on the trade-off view as well as on a scorecard', () => {
+  const source = require('fs').readFileSync(require('path').join(__dirname, 'JaspenWorkspace.jsx'), 'utf8');
+  expect(source).toContain('{(isScorecard || isTradeoff) && failedPlanRequest && (');
+});
