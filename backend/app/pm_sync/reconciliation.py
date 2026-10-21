@@ -1,6 +1,8 @@
 """Provider-neutral three-way reconciliation for execution plans."""
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from app import db
 from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncLink
@@ -312,7 +314,11 @@ def reconcile_binding(binding, trigger="sync_now"):
                 link.jaspen_version = _iso(task.get("updated_at")); link.last_synced_at = datetime.utcnow()
                 link.state = "active"; link.last_error = None
         except Exception as exc:
-            db.session.rollback()
+            # Roll back only a failed database write. Rolling back for a remote
+            # error would discard what earlier links recorded in this pass,
+            # such as issues already marked missing.
+            if isinstance(exc, SQLAlchemyError):
+                db.session.rollback()
             if binding.connector_id == "jira_sync" and jira_adapter.is_missing_issue_error(exc):
                 link.state = "missing_external"; link.last_error = None
                 link.last_synced_at = datetime.utcnow()

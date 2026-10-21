@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from unittest.mock import call, patch
 
@@ -950,6 +951,126 @@ def test_batch_pull_counts_all_sixteen_missing_task_issue_keys(test_user):
     assert request.call_count == 1
     assert request.call_args.args[2] == "/rest/api/3/search/jql"
 
+
+
+class _RealisticJira:
+    """Behaves like Jira Cloud for deleted issues: a key-in search naming any
+    deleted key fails with HTTP 400, and the issue itself returns 404."""
+
+    def __init__(self, live, deleted):
+        self.live, self.deleted = set(live), set(deleted)
+        self.calls = []
+
+    def __call__(self, _config, method, path, payload=None, timeout=30):
+        self.calls.append((method, path))
+        if path == "/rest/api/3/search/jql":
+            keys = re.findall(r'"([^"]+)"', str((payload or {}).get("jql") or ""))
+            gone = [key for key in keys if key in self.deleted]
+            if gone:
+                raise RuntimeError(f"HTTP 400: {{'errorMessages': [\"An issue with key '{gone[0]}' does not exist for field 'key'.\"]}}")
+            return {"issues": [{"key": key} for key in keys if key in self.live]}, {}
+        if path.startswith("/rest/api/3/issue/"):
+            key = path[len("/rest/api/3/issue/"):].split("?", 1)[0].split("/", 1)[0]
+            if key in self.deleted:
+                raise RuntimeError("HTTP 404: {'errorMessages': ['Issue does not exist or you do not have permission to see it.']}")
+            if method == "GET" and "expand=changelog" in path:
+                return {"key": key, "fields": {
+                    "summary": "Task", "status": {"name": "Done", "statusCategory": {"key": "done"}},
+                    "updated": "2026-10-20T12:00:00Z",
+                }, "changelog": {"histories": [{"created": "2026-10-20T12:00:00Z",
+                                               "items": [{"field": "status", "fieldId": "status"}]}]}}, {}
+        return {}, {}
+
+
+def _sixteen_linked_tasks(test_user):
+    binding = _binding(test_user)
+    binding.mode = "two_way"
+    base = {"title": "Task", "description": None, "owner": None, "owner_email": None,
+            "status": "todo", "start_date": None, "due_date": None}
+    links = [
+        PmSyncLink(binding_id=binding.id, entity_type="task", jaspen_id=f"task-{index}",
+                   external_id=f"JST-{index + 1}", base_snapshot=base, state="active")
+        for index in range(16)
+    ]
+    app_db.session.add_all(links); app_db.session.commit()
+    plan = {"tasks": [{**base, "id": f"task-{index}", "updated_at": "2026-10-11T10:00:00"} for index in range(16)]}
+    return binding, plan
+
+
+def _pull_with(binding, plan, jira):
+    from app.pm_sync.jira_adapter import JiraProvider
+
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=JiraProvider()), patch(
+        "app.pm_sync.reconciliation._sync_phases", return_value={}), patch(
+        "app.pm_sync.reconciliation._save_plan"), patch(
+        "app.pm_sync.jira_adapter.assert_connected", return_value={"base_url": "https://example.atlassian.net"}), patch(
+        "app.pm_sync.jira_adapter.request", side_effect=jira):
+        return reconcile_binding(binding)
+
+
+def test_rejected_batch_search_checks_every_issue_and_counts_all_sixteen(test_user):
+    binding, plan = _sixteen_linked_tasks(test_user)
+    keys = [f"JST-{index + 1}" for index in range(16)]
+    jira = _RealisticJira(live=[], deleted=keys)
+
+    result = _pull_with(binding, plan, jira)
+
+    assert result["errors"] == []
+    assert result["deleted"] == 16
+    assert binding.config["missing_issue_count"] == 16
+    assert binding.status == "links_missing"
+    assert PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task", state="missing_external").count() == 16
+    assert all(task["pm_sync_state"]["state"] == "removed_in_jira" for task in plan["tasks"])
+    # Every issue was checked individually after the search was rejected.
+    assert {path for method, path in jira.calls if method == "GET"} == {
+        f"/rest/api/3/issue/{key}?fields=key" for key in keys
+    }
+
+
+def test_three_deleted_issues_are_found_and_the_live_ones_still_pull_then_recreate(test_user):
+    binding, plan = _sixteen_linked_tasks(test_user)
+    deleted = ["JST-3", "JST-8", "JST-15"]
+    live = [f"JST-{index + 1}" for index in range(16) if f"JST-{index + 1}" not in deleted]
+    jira = _RealisticJira(live=live, deleted=deleted)
+
+    result = _pull_with(binding, plan, jira)
+
+    assert result["errors"] == []
+    assert result["deleted"] == 3
+    assert result["pulled"] == 13
+    assert binding.config["missing_issue_count"] == 3
+    states = {link.external_id: link.state for link in PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task")}
+    assert sorted(key for key, state in states.items() if state == "missing_external") == sorted(deleted)
+    assert all(states[key] == "active" for key in live)
+    by_id = {task["id"]: task for task in plan["tasks"]}
+    assert by_id["task-2"]["pm_sync_state"]["state"] == "removed_in_jira"
+    assert by_id["task-0"]["status"] == "done"
+
+    created_keys = iter(["JST-17", "JST-18", "JST-19"])
+    bulk_sizes = []
+
+    def request(_config, method, path, payload=None, timeout=30):
+        if path == "/rest/api/3/issue/bulk":
+            updates = (payload or {}).get("issueUpdates") or []
+            bulk_sizes.append(len(updates))
+            return {"issues": [{"key": next(created_keys)} for _ in updates], "errors": []}, {}
+        return {}, {}
+
+    with patch("app.pm_sync.service.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.service.jira_adapter.assert_connected", return_value={"base_url": "https://example.atlassian.net"}), patch(
+        "app.pm_sync.service.jira_adapter.request", side_effect=request), patch(
+        "app.pm_sync.service.jira_adapter.recover_issue", return_value=None), patch(
+        "app.pm_sync.service.jira_adapter.set_identity"), patch(
+        "app.pm_sync.service.jira_adapter.sync_status"):
+        recreated = recreate_missing_links(binding)
+
+    assert recreated["created"] == 3
+    assert bulk_sizes == [3]
+    links = {link.jaspen_id: link for link in PmSyncLink.query.filter_by(binding_id=binding.id, entity_type="task")}
+    assert {links[task_id].external_id for task_id in ("task-2", "task-7", "task-14")} == {"JST-17", "JST-18", "JST-19"}
+    assert links["task-0"].external_id == "JST-1"
+    assert PmSyncLink.query.filter_by(binding_id=binding.id, state="missing_external").count() == 0
 
 def test_recreate_clears_only_dead_links_and_creates_replacements(test_user):
     binding = _binding(test_user)

@@ -407,17 +407,34 @@ class JiraProvider(ProjectToolProvider):
         for offset in range(0, len(ordered), 50):
             chunk = ordered[offset:offset + 50]
             quoted = ", ".join(f'"{key.replace(chr(34), chr(92) + chr(34))}"' for key in chunk)
-            data, _ = request(config, "POST", "/rest/api/3/search/jql", {
-                "jql": f"key in ({quoted})",
-                "fields": ["key"],
-                "maxResults": len(chunk),
-            }, timeout=30)
+            try:
+                data, _ = request(config, "POST", "/rest/api/3/search/jql", {
+                    "jql": f"key in ({quoted})",
+                    "fields": ["key"],
+                    "maxResults": len(chunk),
+                }, timeout=30)
+            except Exception as exc:
+                # Jira rejects the whole search with HTTP 400 when any listed
+                # key no longer exists, so check each issue on its own.
+                if "http 400" not in str(exc).lower():
+                    raise
+                missing.update(key for key in chunk if self._issue_missing(config, key))
+                continue
             returned = {
                 str(issue.get("key") or "").strip().upper()
                 for issue in ((data or {}).get("issues") or []) if isinstance(issue, dict)
             }
             missing.update(key for key in chunk if key.upper() not in returned)
         return missing
+
+    def _issue_missing(self, config, external_id):
+        try:
+            request(config, "GET", f"/rest/api/3/issue/{quote(external_id)}?fields=key", timeout=30)
+        except Exception as exc:
+            if is_missing_issue_error(exc):
+                return True
+            raise
+        return False
 
     def create_items(self, config, binding, items):
         payload = {"issueUpdates": [
