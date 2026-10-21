@@ -160,7 +160,39 @@ export function StatusCard({ data, onSendText = null, showRetry = false }) {
   );
 }
 
+export function ReceiptsCard({ data }) {
+  const items = (Array.isArray(data?.items) ? data.items : []).map((item) => String(item || '').trim()).filter(Boolean);
+  if (!items.length) return null;
+  return (
+    <ul data-card="receipts" style={{ listStyle: 'none', margin: 0, padding: 0, maxWidth: 560, display: 'grid', gap: 3 }}>
+      {items.map((item) => (
+        <li key={item} style={{ display: 'flex', gap: 7, fontSize: 12, color: C.ink, lineHeight: 1.45 }}>
+          <span aria-hidden="true" style={{ color: C.green, fontWeight: 700 }}>✓</span>
+          <span>{item}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function ConfirmCard({ data, onSendText = null, showActions = false }) {
+  if (data?.kind === 'decision_override') {
+    const checks = Array.isArray(data.failed_check_labels) ? data.failed_check_labels.filter(Boolean) : [];
+    return (
+      <div style={cardStyle} data-card="confirm">
+        <div style={{ ...eyebrowStyle, marginBottom: 8 }}>Override</div>
+        <div style={{ fontSize: 13.5, color: C.navy, lineHeight: 1.5 }}>
+          Moving forward with <strong>{data.option_name || 'this option'}</strong>
+        </div>
+        <div style={{ fontSize: 12, color: C.ink, marginTop: 4 }}>
+          {data.override_of === 'decline'
+            ? "Overrides Jaspen's No-Bid."
+            : `Overrides a failed required check${checks.length ? `: ${checks.join(', ')}` : ''}.`}
+        </div>
+        {showActions && <ActionButtons actions={data?.actions} onSendText={onSendText} />}
+      </div>
+    );
+  }
   if (data?.kind !== 'decision_kit_change') return null;
   return (
     <div style={cardStyle} data-card="confirm">

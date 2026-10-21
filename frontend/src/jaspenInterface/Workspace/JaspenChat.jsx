@@ -66,7 +66,7 @@ import RecordDecisionPanel from './RecordDecisionPanel';
 import WorkspaceTips from './components/WorkspaceTips';
 import ScoreReuseNotice from './ScoreReuseNotice';
 import ScorecardExecutionPlanAction from './ScorecardExecutionPlanAction';
-import { ConfirmCard, RubricCard, StatusCard, isLatestCard } from './ChatCards';
+import { ConfirmCard, ReceiptsCard, RubricCard, StatusCard, isLatestCard } from './ChatCards';
 import StarterPlanNote from './StarterPlanNote';
 
 // Tab components
@@ -3528,6 +3528,9 @@ const renderConversationMessage = (message, opts = {}) => {
       />
     );
   }
+  if (message?.artifact?.type === 'receipts') {
+    return <ReceiptsCard data={message.artifact.data} />;
+  }
   if (message?.artifact?.type === 'confirm') {
     return (
       <ConfirmCard
@@ -3732,6 +3735,8 @@ const saveMessageFeedback = async (message, value, feedbackKey, note) => {
 
 const renderMessageActions = (message, messageKey, idx, total) => {
   if (message?.role === 'user') return null;
+  // Copy and feedback belong to the AI's words, not to the app's cards.
+  if (['receipts', 'status', 'confirm', 'rubric'].includes(message?.artifact?.type)) return null;
   const isCopied = copiedMessageKey === messageKey;
   const canFeedback = Number.isInteger(message?.historyIndex) && Boolean(activeThreadId);
   const isLatestAssistant = idx === total - 1;

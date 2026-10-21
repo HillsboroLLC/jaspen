@@ -3415,8 +3415,10 @@ def _successful_scoring_action(executed_actions):
     return False
 
 
-def _criteria_summary_after_scoring(user_id, thread_id):
-    """Mention the active criteria once without turning them into a workflow step."""
+def _criteria_card_after_scoring(user_id, thread_id):
+    """Show the criteria behind the first scoring once, as the rubric card."""
+    if not user_id or not thread_id:
+        return None
     sessions = load_user_sessions(user_id) or {}
     key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
@@ -3424,30 +3426,17 @@ def _criteria_summary_after_scoring(user_id, thread_id):
     rubric = session.get("scoring_rubric")
     if not isinstance(rubric, dict) or not isinstance(rubric.get("criteria"), list):
         return None
-    if rubric.get("criteria_summary_presented_at"):
+    if rubric.get("criteria_summary_presented_at") or rubric.get("presented_at"):
         return None
-    weighted = [
-        str(item.get("label") or item.get("key") or "").strip()
-        for item in rubric["criteria"]
-        if isinstance(item, dict) and not item.get("gate")
-    ]
-    gates = [
-        str(item.get("label") or item.get("key") or "").strip()
-        for item in rubric["criteria"]
-        if isinstance(item, dict) and item.get("gate")
-    ]
-    if not weighted:
+    if not [item for item in rubric["criteria"] if isinstance(item, dict) and not item.get("gate")]:
         return None
-    sentence = f"I’m weighing these on {_format_human_list(weighted)}"
-    if gates:
-        sentence += f", plus {len(gates)} must-haves ({_format_human_list(gates)})"
-    sentence += ". If something matters more to you, tell me and I’ll re-score."
     rubric = {**rubric, "criteria_summary_presented_at": _iso_now()}
     session["scoring_rubric"] = rubric
     sessions[key or thread_id] = session
     if not save_user_sessions(user_id, sessions):
         return None
-    return sentence
+    kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version")) if session.get("decision_kit") else None
+    return _rubric_card(rubric, kit=kit)
 
 
 def _finalize_agent_reply(
@@ -3465,15 +3454,17 @@ def _finalize_agent_reply(
     # approve) is what the user sees. Every other reply stands as written.
     if _scoring_outcome_card_action(executed_actions):
         return ""
+    # What changed is shown as receipts and cards under the reply
+    # (_artifact_entries_from_actions), never appended to the AI's words.
+    # When the AI said nothing but actions completed, those cards are the
+    # turn; code doesn't invent a sentence for it.
+    if not str(reply or "").strip() and any(
+        isinstance(action, dict) and isinstance(action.get("result"), dict)
+        and (action["result"].get("ok") or isinstance(action["result"].get("artifact"), dict))
+        for action in executed_actions or []
+    ):
+        return ""
     final_reply = str(reply or "").strip() or fallback_reply
-    if tool_confirmations:
-        confirmations_text = "\n".join(f"- {item}" for item in tool_confirmations)
-        if confirmations_text and confirmations_text not in final_reply:
-            final_reply = f"{final_reply}\n\nApplied changes:\n{confirmations_text}".strip()
-    if _successful_scoring_action(executed_actions):
-        criteria_summary = _criteria_summary_after_scoring(user_id, thread_id)
-        if criteria_summary and criteria_summary not in final_reply:
-            final_reply = f"{final_reply}\n\n{criteria_summary}".strip()
     if _check_response_for_leak(final_reply):
         current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
         return _safe_instructions_reply()
@@ -7109,10 +7100,20 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             return _tool_success({
                 "tool": tool_name,
                 "confirmation_required": True,
-                "confirmation": confirmation,
+                "confirmation": confirmation + " A confirmation card is shown; ask in your own words and don't say it was recorded.",
                 "option_key": option_key,
                 "option_name": option_name,
                 "pending_option_decision": pending,
+                "artifact": {"type": "confirm", "data": {
+                    "kind": "decision_override",
+                    "option_name": option_name,
+                    "override_of": pending["override_of"],
+                    "failed_check_labels": failed_checks or [],
+                    "actions": [
+                        {"label": "Record override", "value": "Yes, record it."},
+                        {"label": "Cancel", "value": "No, don't record it."},
+                    ],
+                }},
             })
 
         original_quote = (
@@ -11733,13 +11734,17 @@ def _artifact_chat_entry(artifact):
     }
 
 
-def _artifact_entries_from_actions(actions, user_message=None):
+def _artifact_entries_from_actions(actions, user_message=None, user_id=None, thread_id=None):
     artifact_entries = []
+    receipts = []
     for action in (actions if isinstance(actions, list) else []):
         if not isinstance(action, dict):
             continue
         result = action.get("result") if isinstance(action.get("result"), dict) else {}
         artifact = result.get("artifact") if isinstance(result.get("artifact"), dict) else None
+        confirmation = str(result.get("confirmation") or "").strip()
+        if result.get("ok") and not artifact and not result.get("confirmation_required") and confirmation:
+            receipts.append(confirmation)
         if not artifact and not result.get("ok") and result.get("failure_state"):
             # A real failure is shown as a status card with Retry; the AI's
             # reply stays its own.
@@ -11749,6 +11754,15 @@ def _artifact_entries_from_actions(actions, user_message=None):
                 "retry_message": str(user_message or "").strip() or None,
             }}
         entry = _artifact_chat_entry(artifact)
+        if entry:
+            artifact_entries.append(entry)
+    if _successful_scoring_action(actions):
+        criteria_card = _criteria_card_after_scoring(user_id, thread_id)
+        entry = _artifact_chat_entry(criteria_card) if criteria_card else None
+        if entry:
+            artifact_entries.append(entry)
+    if receipts:
+        entry = _artifact_chat_entry({"type": "receipts", "data": {"items": list(dict.fromkeys(receipts))}})
         if entry:
             artifact_entries.append(entry)
     decision_failure = _failed_option_decision_action(actions)
@@ -13056,7 +13070,7 @@ def conversation_start():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message)
+                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id)
                 _apply_rubric_action_to_session(session, actions)
 
                 credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
@@ -13285,7 +13299,7 @@ def conversation_start():
     credits_charged = credit_settlement["charged"]
     _persist_credit_deduction(user_id, remaining)
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
-    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message)
+    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id)
     _apply_rubric_action_to_session(session, actions)
     chat_history.append(_assistant_chat_entry(
         assistant_reply,
@@ -13645,7 +13659,7 @@ def conversation_continue():
                 mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
                 usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
                 undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message)
+                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id)
                 _apply_rubric_action_to_session(session, actions)
 
                 credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
@@ -13869,7 +13883,7 @@ def conversation_continue():
     credits_charged = credit_settlement["charged"]
     _persist_credit_deduction(user_id, remaining)
     undo_available = _has_successful_mutations(mutations) and isinstance(undo_snapshot, dict)
-    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message)
+    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id)
     _apply_rubric_action_to_session(session, actions)
     chat_history.append(_assistant_chat_entry(
         assistant_reply,

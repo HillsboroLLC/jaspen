@@ -1,6 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { ConfirmCard, RubricCard, StatusCard, isLatestCard } from './ChatCards';
+import { ConfirmCard, ReceiptsCard, RubricCard, StatusCard, isLatestCard } from './ChatCards';
 
 const rubric = {
   status: 'proposed',
@@ -72,4 +72,23 @@ it('a "which option?" card offers the options instead of Retry', () => {
   expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'South Agency' }));
   expect(onSendText).toHaveBeenCalledWith('South Agency');
+});
+
+it('lists what changed as receipts', () => {
+  render(<ReceiptsCard data={{ items: ['Renamed this initiative to \'Q4 bids\'.', 'Saved 2 structured fact(s) for Agency.'] }} />);
+  expect(screen.getByText("Renamed this initiative to 'Q4 bids'.")).toBeInTheDocument();
+  expect(screen.getByText('Saved 2 structured fact(s) for Agency.')).toBeInTheDocument();
+});
+
+it('the override card names the option and what it overrides', () => {
+  const onSendText = jest.fn();
+  render(<ConfirmCard
+    data={{ kind: 'decision_override', option_name: 'Aurora bid', override_of: 'decline', actions: [{ label: 'Record override', value: 'Yes, record it.' }, { label: 'Cancel', value: "No, don't record it." }] }}
+    onSendText={onSendText}
+    showActions
+  />);
+  expect(screen.getByText('Aurora bid')).toBeInTheDocument();
+  expect(screen.getByText("Overrides Jaspen's No-Bid.")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Record override' }));
+  expect(onSendText).toHaveBeenCalledWith('Yes, record it.');
 });

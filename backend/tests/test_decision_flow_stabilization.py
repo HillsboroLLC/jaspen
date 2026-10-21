@@ -1779,11 +1779,15 @@ def test_score_now_uses_proposed_kit_rubric_without_approval_stop(app, db, test_
         '', '', [], user_id=test_user.id, thread_id=tid,
         executed_actions=[{'tool': 'queue_scorecards', 'result': result}],
     )
-    # Queueing is shown as scoring progress in the UI, not pasted into the reply.
-    assert 'Queued' not in reply
-    assert 'I’m weighing these on' in reply
-    assert 'If something matters more to you, tell me and I’ll re-score.' in reply
-    assert 'approve' not in reply.lower()
+    # Code adds nothing to the reply; the criteria used appear once as a card.
+    assert reply == ''
+    entries = agent._artifact_entries_from_actions(
+        [{'tool': 'queue_scorecards', 'result': result}],
+        user_message=message, user_id=test_user.id, thread_id=tid,
+    )
+    criteria_card = next(entry['artifact'] for entry in entries if entry['artifact']['type'] == 'rubric')
+    assert criteria_card['data']['status'] == 'used'
+    assert criteria_card['data']['actions'] == []
     durable = load_user_sessions(test_user.id)[tid]
     assert durable['scoring_rubric']['criteria_summary_presented_at']
 
@@ -3491,7 +3495,10 @@ def test_narration_failure_keeps_completed_action_but_marks_degraded(app, test_u
     assert len(calls) == 2 and len(actions) == 1
     assert mutations[0]['success']
     assert usage['degraded'] and usage['error_code'] == 'narration_failed'
-    assert 'Queued all seven.' in reply
+    # No canned sentence: the completed action shows as a receipt.
+    assert reply == ''
+    receipts = agent._artifact_entries_from_actions(actions, user_message='Score all 7 now')
+    assert receipts[-1]['artifact'] == {'type': 'receipts', 'data': {'items': ['Queued all seven.']}}
 
 
 def test_chat_execution_plan_confirms_records_and_does_not_reprompt_for_regenerate(app, db, test_user, monkeypatch):
@@ -3869,7 +3876,12 @@ def test_chat_override_confirms_then_records_override_through_conversation(
         'message': "We're going to bid on Override proposal.",
     })
     assert first.status_code == 200, first.get_json()
-    assert first.get_json()['reply'] == "That overrides Jaspen's No-Bid; record it?"
+    override_cards = [
+        item['artifact']['data'] for item in first.get_json()['artifact_messages']
+        if item['artifact']['type'] == 'confirm'
+    ]
+    assert override_cards[0]['kind'] == 'decision_override'
+    assert [a['label'] for a in override_cards[0]['actions']] == ['Record override', 'Cancel']
     assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
 
     confirmed = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
