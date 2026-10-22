@@ -21,6 +21,9 @@ Written for humans and AI coding agents alike. Last verified: 2026-07-05.
 - Push to `main` → GitHub Actions → Vercel prod + SSH deploy to DigitalOcean (`~/sekki-platform`) + service restart.
 - Push to `develop` → staging (Vercel preview + `~/jaspen-dev`, api-dev.jaspen.ai).
 - `frontend/npm run deploy` is a legacy SFTP path; avoid.
+- `frontend/Dockerfile` appears obsolete: no tracked CI or deployment path uses
+  it, and its build stage still uses unsupported Node 16. It remains unchanged
+  pending a separate removal decision and is not the production Node version.
 
 **Working locally is safe:** nothing deploys until you push to `main`/`develop`.
 
@@ -28,7 +31,7 @@ Written for humans and AI coding agents alike. Last verified: 2026-07-05.
 
 ## 2. First-time setup (one command)
 
-Prereqs: Node 24.3.0 (`frontend/.nvmrc`), npm 11.4.2 (`frontend/package.json`), and Homebrew Python 3.12. Use `nvm install` / `nvm use` from `frontend/` if you use nvm. CI uses the same Node/npm versions.
+Prereqs: Node 24.22.1 (`frontend/.nvmrc`), npm 11.4.2 (`frontend/package.json`), and Homebrew Python 3.12. Use `nvm install` / `nvm use` from `frontend/` if you use nvm. CI uses the same Node/npm versions.
 
 ```bash
 ./scripts/dev_setup.sh
@@ -134,7 +137,7 @@ cd frontend && CI=true npm test -- --watchAll=false  # frontend tests
 cd frontend && npm run build                         # production build check
 ```
 
-CI (GitHub Actions `ci.yml`) runs the same on Python 3.12 / Node 24.3.0 and npm 11.4.2 for every
+CI (GitHub Actions `ci.yml`) runs the same on Python 3.12 / Node 24.22.1 and npm 11.4.2 for every
 push and PR.
 
 ## 7. Testing specific areas safely in dev
