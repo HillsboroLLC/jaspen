@@ -9,7 +9,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 import uuid
-from app import db, limiter
+from app import db, limiter, org_access
 from app.admin_audit import append_user_audit_event
 from app.decision_confidence import (
     CONFIDENCE_CAPS,
@@ -1926,12 +1926,12 @@ def _rename_snapshot_in_session(
     all_data = _load_scenarios(user_id)
     resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
     resolved_thread_id = resolved_thread_id or thread_id
-    native_row = Scorecard.query.filter_by(
+    native_row = org_access.gate_row(Scorecard.query.filter_by(
         id=str(snapshot_id),
         user_id=str(user_id),
         thread_id=str(resolved_thread_id),
         archived_at=None,
-    ).first()
+    ).first(), user_id, path='snapshot_rename')
     if not isinstance(session, dict):
         if native_row is None:
             return None
@@ -2060,12 +2060,12 @@ def _delete_snapshot_from_session(
     all_data = _load_scenarios(user_id)
     resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
     resolved_thread_id = resolved_thread_id or thread_id
-    native_row = Scorecard.query.filter_by(
+    native_row = org_access.gate_row(Scorecard.query.filter_by(
         id=str(snapshot_id),
         user_id=str(user_id),
         thread_id=str(resolved_thread_id),
         archived_at=None,
-    ).first()
+    ).first(), user_id, path='snapshot_select')
     if not isinstance(session, dict):
         if native_row is None:
             return None
@@ -7953,6 +7953,15 @@ def get_ai_wbs_job(thread_id, job_id):
     job = PlanBuildJob.query.filter_by(id=job_id, user_id=user_id, thread_id=str(thread_id)).first()
     if job is None:
         return jsonify({'error': 'Plan build not found.'}), 404
+    # Owning the job is not enough: the caller must still be able to reach the
+    # thread, exactly as when the build started, or a removed member could
+    # keep reading the plan built for the organization's project.
+    from .sessions import load_sessions_for_thread
+    from .ai_agent import _resolve_user_session
+    user = User.query.get(user_id)
+    _key, session = _resolve_user_session(load_sessions_for_thread(user, thread_id), thread_id)
+    if not isinstance(session, dict):
+        return jsonify({'error': 'Plan build not found.'}), 404
     if job.status in {'done', 'failed'}:
         return jsonify({
             'job_id': job.id, 'status': job.status,
@@ -9878,12 +9887,12 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
                 expected_snapshot_revision=expected_snapshot_revision,
             )
             if not active_meta:
-                native_row = Scorecard.query.filter_by(
+                native_row = org_access.gate_row(Scorecard.query.filter_by(
                     id=str(snapshot_id),
                     user_id=str(user_id),
                     thread_id=str(thread_id),
                     archived_at=None,
-                ).first()
+                ).first(), user_id, path='snapshot_activate')
                 if native_row is None:
                     return jsonify({'error': 'Snapshot not found'}), 404
                 sessions = load_user_sessions(user_id) or {}
@@ -10158,12 +10167,12 @@ def _find_scorecard_carrier(user_id, thread_id, scorecard_id):
         session['tradeoff_view'] = view
         return ('tradeoff', sessions, _key or thread_id, view)
 
-    peer_row = Scorecard.query.filter_by(
+    peer_row = org_access.gate_row(Scorecard.query.filter_by(
         id=sid,
         user_id=str(user_id),
         thread_id=str(thread_id),
         archived_at=None,
-    ).first()
+    ).first(), user_id, path='scorecard_view_state')
     if peer_row is not None:
         return ('peer', None, peer_row.id, {'result': peer_row.to_peer_dict(), 'row': peer_row})
 
@@ -11430,7 +11439,7 @@ def scorecard_attributes(thread_id, scorecard_id):
     )
     if access_error:
         return access_error
-    row = Scorecard.query.filter_by(id=str(scorecard_id), user_id=str(user_id), thread_id=str(thread_id)).first()
+    row = org_access.gate_row(Scorecard.query.filter_by(id=str(scorecard_id), user_id=str(user_id), thread_id=str(thread_id)).first(), user_id, path='scorecard_attributes')
     if row is None:
         return jsonify({'error': 'Scorecard not found', 'code': 'not_found'}), 404
     card = dict(row.data or {})
@@ -11577,7 +11586,7 @@ def recompute_decision_recommendation(thread_id, scorecard_id):
     user, _plan_key, access_error = _require_tool_access(user_id, 'wbs_write', access='write')
     if access_error:
         return access_error
-    row = Scorecard.query.filter_by(id=str(scorecard_id), user_id=str(user_id), thread_id=str(thread_id)).first()
+    row = org_access.gate_row(Scorecard.query.filter_by(id=str(scorecard_id), user_id=str(user_id), thread_id=str(thread_id)).first(), user_id, path='recommendation_recompute')
     if row is None:
         return jsonify({'error': 'Scorecard not found', 'code': 'not_found'}), 404
     sessions = load_user_sessions(user_id) or {}

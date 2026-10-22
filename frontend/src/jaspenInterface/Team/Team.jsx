@@ -151,6 +151,7 @@ export default function Team({ mode = 'team' }) {
   const [invitations, setInvitations] = useState([]);
   const [organizations, setOrganizations] = useState([]);
   const [projects, setProjects] = useState([]);
+  const [orgShareLinks, setOrgShareLinks] = useState([]);
   const [orgNameDraft, setOrgNameDraft] = useState('');
 
   const [inviteEmail, setInviteEmail] = useState('');
@@ -526,6 +527,53 @@ export default function Team({ mode = 'team' }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  // Share links on the organization's work, including links whose creator
+  // has left. Metadata only: admins can turn a link off, never open it.
+  const loadOrgShareLinks = useCallback(async () => {
+    if (!canManageMembers || previewModeActive || !activeOrgId) {
+      setOrgShareLinks([]);
+      return;
+    }
+    try {
+      const data = await teamFetch(`/api/v1/shares/org/${encodeURIComponent(activeOrgId)}/links`);
+      setOrgShareLinks(Array.isArray(data?.links) ? data.links : []);
+    } catch (_err) {
+      setOrgShareLinks([]);
+    }
+  }, [activeOrgId, canManageMembers, previewModeActive]);
+
+  useEffect(() => {
+    if (!loading) loadOrgShareLinks();
+  }, [loading, loadOrgShareLinks]);
+
+  const onTurnOffShareLink = (link) => {
+    if (!canManageMembers || previewModeActive || !activeOrgId) return;
+    setConfirmDialog({
+      title: 'Turn off share link',
+      message: `Turn off the share link for "${link.title}"? Anyone with the link will no longer be able to open it.`,
+      confirmLabel: 'Turn off',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setBusy(true);
+        setNotice('');
+        setError('');
+        try {
+          await teamFetch(
+            `/api/v1/shares/org/${encodeURIComponent(activeOrgId)}/links/${encodeURIComponent(link.id)}/revoke`,
+            { method: 'POST' }
+          );
+          await loadOrgShareLinks();
+          setNotice('Share link turned off.');
+        } catch (err) {
+          setError(err?.message || 'Failed to turn off share link');
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
   };
 
   const onRemoveMember = async (member) => {
@@ -1378,6 +1426,67 @@ export default function Team({ mode = 'team' }) {
           </table>
         </div>
       </section>
+
+      {canManageMembers && !previewModeActive && (
+        <section className="team-card">
+          <h2>Share Links</h2>
+          <p className="team-subcopy">Public links to this {teamLabelLower}'s scorecards and trade-offs, including links created by people who have left. You can turn a link off here, but not open it or change what it shows.</p>
+          <div className="team-table-wrap">
+            <table className="team-table">
+              <thead>
+                <tr>
+                  <th>Link</th>
+                  <th>Created by</th>
+                  <th>Status</th>
+                  <th>Views</th>
+                  <th>Created</th>
+                  <th>Expires</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {orgShareLinks.map((link) => (
+                  <tr key={link.id}>
+                    <td>
+                      {link.title}
+                      <span className="team-pill" style={{ marginLeft: 8 }}>{link.artifact_type === 'tradeoff' ? 'Trade-off' : 'Scorecard'}</span>
+                    </td>
+                    <td>
+                      {link.owner_name || link.owner_email || '—'}
+                      {!link.owner_is_member && <span className="team-pill" style={{ marginLeft: 8 }}>Left {teamLabelLower}</span>}
+                    </td>
+                    <td>{link.status === 'active' ? 'Active' : link.status === 'expired' ? 'Expired' : 'Off'}</td>
+                    <td>{link.view_count ?? 0}</td>
+                    <td>{formatDate(link.created_at)}</td>
+                    <td>{link.expires_at ? formatDate(link.expires_at) : 'Never'}</td>
+                    <td>
+                      {link.status === 'active' ? (
+                        <button
+                          type="button"
+                          className="team-btn tiny danger"
+                          onClick={() => onTurnOffShareLink(link)}
+                          disabled={busy} aria-disabled={busy}
+                        >
+                          Turn off
+                        </button>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {orgShareLinks.length === 0 && (
+                  <tr>
+                    <td colSpan={7}>
+                      <p className="team-empty">No share links on this {teamLabelLower}'s work.</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       <ConfirmDialog
         isOpen={Boolean(confirmDialog)}
         title={confirmDialog?.title}

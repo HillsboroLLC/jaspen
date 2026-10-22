@@ -24,7 +24,7 @@ except Exception:
     DocxDocument = None
     _HAS_DOCX = False
 
-from app import db, limiter, mail
+from app import db, limiter, mail, org_access
 from app.admin_audit import append_user_audit_event
 from app.models import BatchIdeaUpload, UsageEvent, User
 from app.billing_config import (
@@ -259,11 +259,12 @@ def _authorized_thread_scope(user_id, thread_id, *, require_write=False,
         row, _membership = resolve_session_for_actor(
             user, thread_id, require_write=require_write, include_archived=include_archived
         )
-    except SessionNotFound:
+    except SessionNotFound as exc:
         # allow_missing preserves endpoints that can still answer for a thread
         # with no session row (e.g. usage assembled from UsageEvent rows).
-        # A FORBIDDEN row is never softened -- only a genuinely absent one.
-        if not allow_missing:
+        # A FORBIDDEN or unreadable row is never softened -- only a genuinely
+        # absent one.
+        if not allow_missing or exc.denied:
             raise
         row = None
     sessions = load_sessions_for_thread(user, thread_id, include_archived=include_archived)
@@ -12076,7 +12077,10 @@ def _batch_access_context(user):
 
 
 def _get_batch_or_404(batch_id, user_id):
-    batch = BatchIdeaUpload.query.filter_by(id=str(batch_id), user_id=str(user_id)).first()
+    batch = org_access.gate_row(
+        BatchIdeaUpload.query.filter_by(id=str(batch_id), user_id=str(user_id)).first(),
+        user_id, path='batch_upload', resource_type='batch_idea_upload',
+    )
     if not batch:
         return None, (jsonify({"error": "Batch upload not found"}), 404)
     return batch, None

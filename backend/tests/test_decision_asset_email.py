@@ -1,3 +1,4 @@
+import os
 import uuid
 from dataclasses import dataclass
 
@@ -222,8 +223,14 @@ def test_cross_workspace_access_is_rejected(client, db, test_user, auth_headers)
     db.session.flush()
     _seed_decision(db, test_user, organization_id=organization.id)
     response = _request(client, auth_headers, "email-cross-workspace")
-    assert response.status_code == 403
-    assert response.json["code"] == "workspace_access_denied"
+    # Report mode still loads the former workspace's thread and the email
+    # check refuses it; enforce mode never loads it at all.
+    if os.environ.get("ORG_ACCESS_ENFORCEMENT") == "enforce":
+        assert response.status_code == 404
+        assert response.json["code"] == "thread_not_found"
+    else:
+        assert response.status_code == 403
+        assert response.json["code"] == "workspace_access_denied"
 
 
 def test_missing_execution_plan_fails_without_losing_delivery(

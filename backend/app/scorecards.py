@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import current_app
 
-from . import db
+from . import db, org_access
 from .models import Scorecard, User, UserSession
 from .session_access import can_read_session
 
@@ -157,7 +157,9 @@ def list_scorecard_rows(user_id, *, thread_id=None, include_archived=False):
         query = query.filter_by(thread_id=str(thread_id))
     if not include_archived:
         query = query.filter(Scorecard.archived_at.is_(None))
-    return query.order_by(Scorecard.created_at.asc(), Scorecard.id.asc()).all()
+    rows = query.order_by(Scorecard.created_at.asc(), Scorecard.id.asc()).all()
+    # Scorecards this user scored inside an organization they have since left.
+    return org_access.gate_rows(rows, user_id, path='list_scorecards', resource_type='scorecard')
 
 
 def _source_session_for_scorecard(row):
@@ -178,8 +180,12 @@ def _can_reuse_scorecard(row, actor):
     source_session = _source_session_for_scorecard(row)
     if source_session is None:
         # Legacy personal scorecards may predate durable UserSession rows. They
-        # remain reusable by their owner, never by a teammate.
-        return str(row.user_id) == str(actor.id)
+        # remain reusable by their owner, never by a teammate, and never once
+        # the owner has left the organization that holds them.
+        return str(row.user_id) == str(actor.id) and org_access.allow(
+            row.organization_id, actor.id,
+            path='scorecard_reuse', resource_type='scorecard', resource_id=row.id,
+        )
     return can_read_session(source_session, actor)
 
 

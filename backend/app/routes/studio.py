@@ -20,7 +20,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from .. import db
+from .. import db, org_access
 from ..models import User
 from ..models_studio import StudioWorkspace, StudioArtifact
 
@@ -101,9 +101,12 @@ def _current_user():
 
 
 def _owned_workspace(user_id, workspace_id):
-    return StudioWorkspace.query.filter_by(
-        id=str(workspace_id), user_id=str(user_id), archived_at=None
-    ).first()
+    return org_access.gate_row(
+        StudioWorkspace.query.filter_by(
+            id=str(workspace_id), user_id=str(user_id), archived_at=None
+        ).first(),
+        user_id, path='studio_workspace', resource_type='studio_workspace',
+    )
 
 
 # ----------------------------- routes ---------------------------------------
@@ -140,6 +143,7 @@ def list_workspaces():
         .limit(200)
         .all()
     )
+    rows = org_access.gate_rows(rows, user_id, path='studio_workspaces', resource_type='studio_workspace')
     return jsonify({'ok': True, 'workspaces': [w.to_dict() for w in rows]})
 
 

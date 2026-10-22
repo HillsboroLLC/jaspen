@@ -626,6 +626,70 @@ def capabilities():
     }), 200
 
 
+@admin_bp.route("/org-access/events", methods=["GET"])
+@jwt_required()
+def org_access_events():
+    """Review accesses the organization membership rule refused or would refuse.
+
+    Used to review report mode before switching ORG_ACCESS_ENFORCEMENT to
+    enforce. ?hours= limits the window (default 72).
+    """
+    _, err = _require_admin()
+    if err:
+        return err
+    from app import org_access
+    from app.models import OrgAccessShadowEvent
+
+    try:
+        hours = max(1, min(24 * 30, int(request.args.get("hours") or 72)))
+    except (TypeError, ValueError):
+        hours = 72
+    since = datetime.utcnow() - timedelta(hours=hours)
+    base = OrgAccessShadowEvent.query.filter(OrgAccessShadowEvent.created_at >= since)
+    by_path = [
+        {"path": path, "reason": reason, "mode": mode, "count": int(count)}
+        for path, reason, mode, count in (
+            base.with_entities(
+                OrgAccessShadowEvent.path,
+                OrgAccessShadowEvent.reason,
+                OrgAccessShadowEvent.mode,
+                func.count(OrgAccessShadowEvent.id),
+            )
+            .group_by(OrgAccessShadowEvent.path, OrgAccessShadowEvent.reason, OrgAccessShadowEvent.mode)
+            .order_by(func.count(OrgAccessShadowEvent.id).desc())
+            .all()
+        )
+    ]
+    recent = base.order_by(OrgAccessShadowEvent.created_at.desc()).limit(200).all()
+    user_ids = {row.user_id for row in recent if row.user_id}
+    emails = {
+        str(user.id): user.email
+        for user in (User.query.filter(User.id.in_(user_ids)).all() if user_ids else [])
+    }
+    return jsonify({
+        "mode": org_access.enforcement_mode(),
+        "hours": hours,
+        "total": base.count(),
+        "users": base.with_entities(OrgAccessShadowEvent.user_id).distinct().count(),
+        "organizations": base.with_entities(OrgAccessShadowEvent.organization_id).distinct().count(),
+        "by_path": by_path,
+        "recent": [
+            {
+                "created_at": _iso(row.created_at),
+                "mode": row.mode,
+                "path": row.path,
+                "reason": row.reason,
+                "resource_type": row.resource_type,
+                "resource_id": row.resource_id,
+                "organization_id": row.organization_id,
+                "user_id": row.user_id,
+                "user_email": emails.get(str(row.user_id)),
+            }
+            for row in recent
+        ],
+    }), 200
+
+
 @admin_bp.route("/master/analytics", methods=["GET"])
 @jwt_required()
 def master_analytics():

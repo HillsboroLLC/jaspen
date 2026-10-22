@@ -22,6 +22,13 @@ def _base_session_payload(user_id, session_id):
     }
 
 
+def _readable_by(user_id, row):
+    from app.models import User
+    from app.session_access import can_read_session
+    user = User.query.get(str(user_id)) if user_id else None
+    return user is not None and can_read_session(row, user)
+
+
 def _active_organization_id(user_id):
     """The organization a new scenario-backed row belongs to."""
     from app.models import User
@@ -45,8 +52,21 @@ def _canonical_row_for(user_id, session_id):
     return canonical_row(user, session_id, include_archived=True)
 
 
+def _attributed_rows(user_id, path):
+    """The caller's own rows, minus organization work they can no longer reach.
+
+    Load and save must agree: a row hidden from the load must also be left out
+    of the save, or saving would clear its scenario data.
+    """
+    from app.session_access import reachable_by_attribution
+    return [
+        row for row in UserSession.query.filter_by(user_id=str(user_id)).all()
+        if reachable_by_attribution(row, user_id, path=path)
+    ]
+
+
 def load_scenarios_data(user_id):
-    rows = UserSession.query.filter_by(user_id=str(user_id)).all()
+    rows = _attributed_rows(user_id, 'load_scenarios')
     out = {}
     for row in rows:
         payload = row.scenarios_json if isinstance(row.scenarios_json, dict) else None
@@ -67,7 +87,7 @@ def save_scenarios_data(user_id, data):
     try:
         existing = {
             row.session_id: row
-            for row in UserSession.query.filter_by(user_id=str(user_id)).all()
+            for row in _attributed_rows(user_id, 'save_scenarios')
         }
         incoming = set()
         for thread_id, thread_payload in payloads.items():
@@ -87,6 +107,10 @@ def save_scenarios_data(user_id, data):
                 # would have reintroduced fork debt through a side door.
                 row = _canonical_row_for(user_id, sid)
                 if row is not None:
+                    if not _readable_by(user_id, row):
+                        # Never write onto, or fork, a project this caller
+                        # cannot read.
+                        continue
                     existing[sid] = row
 
             if row is None:

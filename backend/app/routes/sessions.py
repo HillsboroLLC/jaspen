@@ -9,9 +9,12 @@ from app import db
 from app.models import User, UserSession
 from app.session_access import (
     RevisionConflict,
+    attributed_scope_clause,
     SessionAccessError,
     SessionForbidden,
+    SessionNotFound,
     can_archive_session,
+    can_read_session,
     can_write_session,
     canonical_row,
     check_revision,
@@ -19,6 +22,7 @@ from app.session_access import (
     hide_for_user,
     is_hidden_for,
     is_personal_session_id,
+    reachable_by_attribution,
     resolve_session_for_actor,
     stamp_write,
     unhide_for_user,
@@ -283,6 +287,10 @@ def load_user_sessions(user_id, include_archived=False):
             # Removed from THIS member's history without archiving the
             # organization's canonical row.
             continue
+        if not reachable_by_attribution(row, user_id, path='load_user_sessions'):
+            # Organization work this user created before leaving the
+            # organization (or losing their seat).
+            continue
         payload = _session_row_to_payload(row)
         sessions[str(payload.get('session_id') or row.session_id)] = payload
     return sessions
@@ -300,7 +308,8 @@ def load_sessions_for_thread(user, thread_id, include_archived=False):
     and the `__user_memory__` sentinel all depend on it staying personal.
 
     Authorization still happens at the endpoint via resolve_session_for_actor();
-    this function only widens which row is reachable.
+    the organization row is added only when the caller may read it, so an
+    endpoint that tolerates a missing row can never pick up an unreadable one.
     """
     if user is None:
         return {}
@@ -312,7 +321,7 @@ def load_sessions_for_thread(user, thread_id, include_archived=False):
         return sessions
 
     row = canonical_row(user, sid, include_archived=include_archived)
-    if row is None or is_hidden_for(row, str(user.id)):
+    if row is None or is_hidden_for(row, str(user.id)) or not can_read_session(row, user):
         return sessions
 
     payload = _session_row_to_payload(row)
@@ -437,12 +446,11 @@ def hard_delete_user_session(user_id, session_id):
 
 def _session_query_for_user(user_id):
     user_id = str(user_id)
-    query = (
-        UserSession.query
-        .filter_by(user_id=user_id)
-        .order_by(UserSession.updated_at.desc(), UserSession.id.desc())
-    )
-    return query
+    query = UserSession.query.filter_by(user_id=user_id)
+    scope = attributed_scope_clause(user_id)
+    if scope is not None:
+        query = query.filter(scope)
+    return query.order_by(UserSession.updated_at.desc(), UserSession.id.desc())
 
 
 def save_user_sessions(user_id, sessions, session_ids_to_delete=None):
@@ -491,6 +499,8 @@ def save_user_sessions(user_id, sessions, session_ids_to_delete=None):
                 )
 
             if existing is not None:
+                if actor is not None and not can_read_session(existing, actor):
+                    raise SessionNotFound(denied=True)
                 if actor is not None and not can_write_session(existing, actor):
                     raise SessionForbidden(
                         'Your role on this project is read-only.'
@@ -607,6 +617,7 @@ def get_sessions():
             _session_row_to_payload(row)
             for row in pagination.items
             if not is_hidden_for(row, current_user_id)
+            and reachable_by_attribution(row, current_user_id, path='list_sessions')
         ]
         return jsonify({
             'success': True,

@@ -29,7 +29,7 @@
 
 from datetime import datetime
 
-from app import db
+from app import db, org_access
 from app.models import Organization, OrganizationMember, UserSession
 from app.orgs import (
     active_membership_for_user,
@@ -76,8 +76,13 @@ class SessionAccessError(Exception):
 
 
 class SessionNotFound(SessionAccessError):
-    def __init__(self, message='Session not found'):
+    """404. ``denied`` marks a row that exists but may not be read: it still
+    answers 404 so ids cannot be probed, but callers that tolerate a missing
+    row must never treat it as absent."""
+
+    def __init__(self, message='Session not found', *, denied=False):
         super().__init__(404, 'not_found', message)
+        self.denied = bool(denied)
 
 
 class SessionForbidden(SessionAccessError):
@@ -183,6 +188,41 @@ def canonical_row(user, session_id, *, include_archived=False):
 
 # --- Predicates --------------------------------------------------------------
 
+def attributed_scope_clause(user_id):
+    """SQL form of reachable_by_attribution() for paginated queries.
+
+    Returns None outside enforce mode: report and off keep the legacy result
+    set, and report mode records would-be refusals row by row instead.
+    """
+    if org_access.enforcement_mode() != org_access.MODE_ENFORCE:
+        return None
+    member_orgs = tuple(org_access.active_org_ids(user_id))
+    clauses = [
+        UserSession.organization_id.is_(None),
+        UserSession.session_id.in_(tuple(PERSONAL_SESSION_IDS)),
+    ]
+    if member_orgs:
+        clauses.append(UserSession.organization_id.in_(member_orgs))
+    return db.or_(*clauses)
+
+
+def reachable_by_attribution(row, user_id, *, path):
+    """True when a row found by the caller's own user_id may be returned.
+
+    Loaders that select rows by ``user_id`` use this so a former member's
+    history, scenario data and exports stop including the organization's work.
+    Personal rows always pass.
+    """
+    if not isinstance(row, UserSession):
+        return False
+    if is_personal_session_id(row.session_id) or not row.organization_id:
+        return True
+    return org_access.allow(
+        row.organization_id, user_id,
+        path=path, resource_type='user_session', resource_id=row.session_id,
+    )
+
+
 def _shared_ids(row):
     raw = row.shared_with_user_ids if isinstance(row.shared_with_user_ids, list) else []
     return {str(item or '').strip() for item in raw if str(item or '').strip()}
@@ -205,17 +245,22 @@ def can_read_session(row, user, membership=None):
         return False
 
     uid = str(user.id)
-    if is_attributed_to(row, uid):
-        return True
-
-    if is_personal_session_id(row.session_id):
-        return False
-
-    if not row.organization_id:
-        return False
-    if membership is None:
+    personal = is_personal_session_id(row.session_id) or not row.organization_id
+    if membership is None and not personal:
         membership = active_membership_for_user(row.organization_id, uid)
-    if membership is None:
+
+    if is_attributed_to(row, uid):
+        # Attribution alone reaches personal work only. Organization work also
+        # needs an active membership, so removing a member (or revoking their
+        # seat) removes their access to what they created there.
+        if personal or membership is not None:
+            return True
+        return org_access.allow(
+            row.organization_id, uid,
+            path='session_read', resource_type='user_session', resource_id=row.session_id,
+        )
+
+    if personal or membership is None:
         return False
 
     visibility = str(row.visibility or VISIBILITY_PRIVATE).strip().lower()
@@ -243,7 +288,9 @@ def can_write_session(row, user, membership=None):
         # entitlement, not the authorship.
         return can_edit_projects(normalize_org_role(membership.role))
 
-    # No org binding at all -- legacy personal row. Attribution is the gate.
+    # No org binding at all -- legacy personal row -- or a former member that
+    # report mode is still letting through can_read_session(). Attribution is
+    # the gate.
     return is_attributed_to(row, uid)
 
 
@@ -315,7 +362,7 @@ def resolve_session_for_actor(user, session_id, *, require_write=False,
     if not can_read_session(row, user, membership=membership):
         # 404 rather than 403 for a row the caller cannot read at all: a
         # non-member must not be able to probe which session ids exist.
-        raise SessionNotFound()
+        raise SessionNotFound(denied=True)
 
     if require_write and not can_write_session(row, user, membership=membership):
         raise SessionForbidden(

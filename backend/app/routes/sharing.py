@@ -1,8 +1,11 @@
 """Public share links for scorecards and trade-off comparisons.
 
 Owner endpoints (JWT):   preview, create, list, revoke.
+Org endpoints (JWT):     an organization's owners/admins list (metadata only)
+                         and turn off the organization's links.
 Public endpoints:        view a live link, report a link.
-Admin endpoints (JWT):   list/revoke any link, disable sharing for an account.
+Admin endpoints (JWT):   list/revoke any link, resolve a link held for review,
+                         disable sharing for an account.
 """
 
 import hashlib
@@ -12,10 +15,19 @@ from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import func
 
-from app import db, limiter
+from app import db, limiter, share_ownership
 from app.admin_audit import append_admin_audit_event
 from app.admin_policy import is_global_admin
-from app.models import SharedArtifact, SharedArtifactReport, User
+from app.models import (
+    Organization,
+    SharedArtifact,
+    SharedArtifactOwnership,
+    SharedArtifactReport,
+    User,
+    UserSession,
+)
+from app.orgs import active_membership_for_user, can_manage_org
+from app.session_access import can_read_session
 from app.sharing import (
     ARTIFACT_TYPES,
     REPORT_REASONS,
@@ -296,6 +308,7 @@ def create_share():
         view_count=0,
     )
     db.session.add(link)
+    share_ownership.record_for_new_link(link)
     db.session.commit()
     return jsonify({'link': _link_json(link), 'summary': prepared['summary']}), 201
 
@@ -311,6 +324,9 @@ def list_shares():
     if thread_id:
         query = query.filter_by(thread_id=thread_id)
     links = query.order_by(SharedArtifact.created_at.desc()).limit(200).all()
+    # Links on organization work the user can no longer reach move to the
+    # organization's owners and admins.
+    links = [link for link in links if share_ownership.owner_may_manage(link, user, path='share_list')]
     return jsonify({
         'links': [_link_json(link) for link in links],
         'limits': {'daily_create': daily_create_limit(), 'active': active_link_limit()},
@@ -326,7 +342,7 @@ def revoke_share(link_id):
     if not user:
         return jsonify({'error': 'User not found.'}), 404
     link = SharedArtifact.query.filter_by(id=link_id, owner_user_id=user.id).first()
-    if not link:
+    if not link or not share_ownership.owner_may_manage(link, user, path='share_revoke'):
         return jsonify({'error': 'Share link not found.'}), 404
     if link.revoked_at is None:
         link.revoked_at = datetime.utcnow()
@@ -351,6 +367,8 @@ def _owned_link_by_token(user, token):
         return None
     link = SharedArtifact.query.filter_by(token=token).first()
     if link is None or link.owner_user_id != user.id or link.revoked_at is not None:
+        return None
+    if not share_ownership.owner_may_manage(link, user, path='share_manage'):
         return None
     return link
 
@@ -453,6 +471,10 @@ def _live_link(token):
     # A link stops serving while its owner is off a paid plan or blocked.
     if sharing_block_reason(owner) is not None:
         return None
+    # A link whose owning organization could not be determined is held for
+    # review while enforcing. Nothing is deleted; resolving it restores it.
+    if not share_ownership.serves_publicly(link):
+        return None
     return link
 
 
@@ -505,6 +527,107 @@ def report_public_share(token):
     return _noindex(jsonify({'ok': True}), 201)
 
 
+# ── Organization ─────────────────────────────────────────────────────────────
+#
+# An organization's owners and admins manage the links on its work, including
+# links whose creator has left. This view is metadata only: never the token,
+# the URL or the snapshot, and the title only when the admin can already read
+# the underlying project. Admins can turn a link off; they cannot open it,
+# edit what it shows, or change who can see it.
+
+PRIVATE_PROJECT_TITLE = 'Private project'
+
+
+def _require_org_manager(org_id):
+    user = _current_user()
+    if not user:
+        return None, None, (jsonify({'error': 'User not found.'}), 404)
+    org = Organization.query.filter_by(id=str(org_id)).first()
+    membership = active_membership_for_user(org.id, user.id) if org else None
+    if membership is None:
+        return None, None, (jsonify({'error': 'Organization not found.'}), 404)
+    if not can_manage_org(membership.role):
+        return None, None, (jsonify({'error': 'Only organization owners and admins can manage share links.'}), 403)
+    return user, org, None
+
+
+def _org_link_json(link, viewer, org_id, members):
+    report = (
+        UserSession.query
+        .filter_by(organization_id=str(org_id), session_id=link.thread_id)
+        .order_by(UserSession.created_at.asc(), UserSession.id.asc())
+        .first()
+    )
+    readable = report is not None and can_read_session(report, viewer)
+    owner = members.get(str(link.owner_user_id))
+    data = _link_json(link, include_url=False)
+    return {
+        'id': data['id'],
+        'artifact_type': data['artifact_type'],
+        'title': link.title if readable else PRIVATE_PROJECT_TITLE,
+        'title_hidden': not readable,
+        'status': data['status'],
+        'created_at': data['created_at'],
+        'expires_at': data['expires_at'],
+        'revoked_at': data['revoked_at'],
+        'revoked_by': data['revoked_by'],
+        'view_count': data['view_count'],
+        'last_viewed_at': data['last_viewed_at'],
+        'owner_name': owner.name if owner else None,
+        'owner_email': owner.email if owner else None,
+        'owner_is_member': active_membership_for_user(org_id, link.owner_user_id) is not None,
+    }
+
+
+@sharing_bp.route('/org/<org_id>/links', methods=['GET'])
+@jwt_required()
+def org_list_links(org_id):
+    user, org, error = _require_org_manager(org_id)
+    if error:
+        return error
+    links = (
+        SharedArtifact.query
+        .join(SharedArtifactOwnership, SharedArtifactOwnership.shared_artifact_id == SharedArtifact.id)
+        .filter(SharedArtifactOwnership.state == share_ownership.STATE_ORGANIZATION)
+        .filter(SharedArtifactOwnership.organization_id == org.id)
+        .order_by(SharedArtifact.created_at.desc())
+        .limit(200)
+        .all()
+    )
+    owner_ids = {str(link.owner_user_id) for link in links}
+    members = {
+        str(member.id): member
+        for member in (User.query.filter(User.id.in_(owner_ids)).all() if owner_ids else [])
+    }
+    return jsonify({'links': [_org_link_json(link, user, org.id, members) for link in links]})
+
+
+@sharing_bp.route('/org/<org_id>/links/<link_id>/revoke', methods=['POST'])
+@jwt_required()
+def org_revoke_link(org_id, link_id):
+    user, org, error = _require_org_manager(org_id)
+    if error:
+        return error
+    link = SharedArtifact.query.filter_by(id=str(link_id)).first()
+    state, owner_org_id = share_ownership.ownership_for(link) if link else (None, None)
+    if link is None or state != share_ownership.STATE_ORGANIZATION or str(owner_org_id) != str(org.id):
+        return jsonify({'error': 'Share link not found.'}), 404
+    if link.revoked_at is None:
+        link.revoked_at = datetime.utcnow()
+        link.revoked_by = 'org_admin'
+        link.revoked_reason = f'Turned off by an organization admin ({user.id})'[:255]
+        append_admin_audit_event(
+            actor_user_id=user.id,
+            actor_email=user.email,
+            action='org_share_link_revoked',
+            target_user_id=link.owner_user_id,
+            details={'link_id': link.id, 'organization_id': org.id},
+        )
+        db.session.commit()
+    members = {str(owner.id): owner for owner in User.query.filter_by(id=link.owner_user_id).all()}
+    return jsonify({'link': _org_link_json(link, user, org.id, members)})
+
+
 # ── Admin ────────────────────────────────────────────────────────────────────
 
 def _require_admin():
@@ -534,6 +657,11 @@ def admin_list_links():
         query = query.filter(SharedArtifact.id.in_(
             db.session.query(SharedArtifactReport.shared_artifact_id)
         ))
+    if str(request.args.get('ownership') or '').strip().lower() == share_ownership.STATE_AMBIGUOUS:
+        query = query.filter(SharedArtifact.id.in_(
+            db.session.query(SharedArtifactOwnership.shared_artifact_id)
+            .filter(SharedArtifactOwnership.state == share_ownership.STATE_AMBIGUOUS)
+        ))
     links = query.order_by(SharedArtifact.created_at.desc()).limit(200).all()
     report_counts = dict(
         db.session.query(SharedArtifactReport.shared_artifact_id, func.count(SharedArtifactReport.id))
@@ -541,10 +669,58 @@ def admin_list_links():
         .group_by(SharedArtifactReport.shared_artifact_id)
         .all()
     )
-    return jsonify({'links': [
-        {**_link_json(link), 'owner_user_id': link.owner_user_id, 'report_count': int(report_counts.get(link.id, 0))}
-        for link in links
-    ]})
+    def _with_ownership(link):
+        state, org_id = share_ownership.ownership_for(link)
+        return {
+            **_link_json(link),
+            'owner_user_id': link.owner_user_id,
+            'report_count': int(report_counts.get(link.id, 0)),
+            'ownership': state,
+            'organization_id': org_id,
+        }
+    return jsonify({'links': [_with_ownership(link) for link in links]})
+
+
+@sharing_bp.route('/admin/links/<link_id>/ownership', methods=['POST'])
+@jwt_required()
+def admin_resolve_link_ownership(link_id):
+    """Resolve a link held for review: assign its organization, or mark it personal."""
+    admin, error = _require_admin()
+    if error:
+        return error
+    link = SharedArtifact.query.filter_by(id=link_id).first()
+    if not link:
+        return jsonify({'error': 'Share link not found.'}), 404
+    body = request.get_json(silent=True) or {}
+    state = str(body.get('state') or '').strip().lower()
+    org_id = str(body.get('organization_id') or '').strip() or None
+    if state == share_ownership.STATE_PERSONAL:
+        org_id = None
+    elif state == share_ownership.STATE_ORGANIZATION:
+        if not org_id or Organization.query.filter_by(id=org_id).first() is None:
+            return jsonify({'error': 'Choose the organization that owns this link.'}), 400
+    else:
+        return jsonify({'error': 'state must be "personal" or "organization".'}), 400
+    row = db.session.get(SharedArtifactOwnership, link.id)
+    if row is None:
+        row = SharedArtifactOwnership(shared_artifact_id=link.id)
+        db.session.add(row)
+    previous = row.state
+    row.state = state
+    row.organization_id = org_id
+    row.source = 'admin'
+    row.resolved_at = datetime.utcnow()
+    row.resolved_by_user_id = admin.id
+    row.note = str(body.get('note') or '').strip()[:255] or None
+    append_admin_audit_event(
+        actor_user_id=admin.id,
+        actor_email=admin.email,
+        action='share_link_ownership_resolved',
+        target_user_id=link.owner_user_id,
+        details={'link_id': link.id, 'from': previous, 'to': state, 'organization_id': org_id},
+    )
+    db.session.commit()
+    return jsonify({'link': {**_link_json(link), 'ownership': state, 'organization_id': org_id}})
 
 
 @sharing_bp.route('/admin/links/<link_id>/revoke', methods=['POST'])

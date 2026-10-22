@@ -1287,6 +1287,52 @@ class SharedArtifact(db.Model):
     )
 
 
+class SharedArtifactOwnership(db.Model):
+    """Which organization owns a share link, decided from the underlying report.
+
+    Kept beside ``shared_artifacts`` rather than as columns on it, so the
+    original link rows are never rewritten. ``state`` is one of:
+      personal      -- the report had no organization; the owner manages it.
+      organization  -- the report belonged to ``organization_id``.
+      ambiguous     -- the report was missing or matched several owners; the
+                       link is held for review (disabled when enforcing).
+    """
+
+    __tablename__ = 'shared_artifact_ownership'
+
+    shared_artifact_id = db.Column(
+        db.String(36),
+        db.ForeignKey('shared_artifacts.id', ondelete='CASCADE'),
+        primary_key=True,
+    )
+    state = db.Column(db.String(16), nullable=False)
+    organization_id = db.Column(db.String(36), nullable=True, index=True)
+    source = db.Column(db.String(16), nullable=False, default='created')
+    resolved_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    resolved_by_user_id = db.Column(db.String(36), nullable=True)
+    note = db.Column(db.String(255), nullable=True)
+
+
+class OrgAccessShadowEvent(db.Model):
+    """An access the organization membership rule refused, or would refuse.
+
+    Written while ORG_ACCESS_ENFORCEMENT is ``report`` (would refuse) or
+    ``enforce`` (refused), for review before and after enforcement.
+    """
+
+    __tablename__ = 'org_access_shadow_events'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    mode = db.Column(db.String(16), nullable=False)
+    path = db.Column(db.String(120), nullable=False, index=True)
+    resource_type = db.Column(db.String(64), nullable=False)
+    resource_id = db.Column(db.String(255), nullable=True)
+    organization_id = db.Column(db.String(36), nullable=True, index=True)
+    user_id = db.Column(db.String(36), nullable=True, index=True)
+    reason = db.Column(db.String(64), nullable=False)
+
+
 class AccountSharingControl(db.Model):
     """Admin kill switch for an account's public share links.
 
