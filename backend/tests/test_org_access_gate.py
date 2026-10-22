@@ -297,6 +297,24 @@ def test_off_mode_is_the_emergency_rollback(client, app, team, monkeypatch):
     assert _events() == []
 
 
+def test_recorded_events_hold_identifiers_only_and_expire(client, app, db, team, report):
+    team['project'].name = 'Confidential acquisition of Globex'
+    db.session.add(OrgAccessShadowEvent(
+        created_at=datetime(2020, 1, 1), mode='report', path='old', resource_type='user_session',
+        reason='not_active_member',
+    ))
+    db.session.commit()
+    _remove(client, app, team)
+    client.get('/api/v1/sessions/org-proj', headers=_headers(app, team['member']))
+
+    events = _events()
+    assert events and all(event.path != 'old' for event in events), 'rows past retention are pruned'
+    stored = ' '.join(
+        str(getattr(event, column.name)) for event in events for column in OrgAccessShadowEvent.__table__.columns
+    )
+    assert 'Confidential' not in stored and 'Globex' not in stored
+
+
 def test_admin_can_review_recorded_events(client, app, team, report, admin_user, admin_auth_headers):
     _remove(client, app, team)
     client.get('/api/v1/sessions/org-proj', headers=_headers(app, team['member']))

@@ -26,7 +26,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import has_app_context, has_request_context, request
 
@@ -43,6 +43,12 @@ _DEDUP_WINDOW_SECONDS = 3600
 _DEDUP_MAX_KEYS = 5000
 _recent = {}
 _recent_lock = threading.Lock()
+
+# Events are kept for review, not forever. Older rows are pruned at most once
+# per hour per process, on the same connection that records a new event.
+RETENTION_DAYS = 90
+_PRUNE_INTERVAL_SECONDS = 3600
+_last_prune = [0.0]
 
 
 def enforcement_mode():
@@ -153,6 +159,16 @@ def reset_dedup():
     """Tests only."""
     with _recent_lock:
         _recent.clear()
+        _last_prune[0] = 0.0
+
+
+def _prune_due():
+    now = time.monotonic()
+    with _recent_lock:
+        if _last_prune[0] and now - _last_prune[0] < _PRUNE_INTERVAL_SECONDS:
+            return False
+        _last_prune[0] = now
+    return True
 
 
 def record(*, mode, path, resource_type, resource_id, organization_id, user_id, reason):
@@ -191,5 +207,9 @@ def record(*, mode, path, resource_type, resource_id, organization_id, user_id, 
                 user_id=str(user_id)[:36] if user_id else None,
                 reason=str(reason)[:64],
             ))
+            if _prune_due():
+                connection.execute(table.delete().where(
+                    table.c.created_at < datetime.utcnow() - timedelta(days=RETENTION_DAYS)
+                ))
     except Exception:  # noqa: BLE001 -- recording must never break a request
         logger.warning('org_access: could not record shadow event', exc_info=True)
