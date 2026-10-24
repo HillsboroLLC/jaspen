@@ -8487,7 +8487,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         return _tool_success(success_payload)
 
     if tool_name == "update_workspace_presentation":
-        from .strategy import update_scorecard_display_overrides
+        from .strategy import OverridesSaveFailed, update_scorecard_display_overrides
 
         changes = tool_input.get("changes")
         if not isinstance(changes, dict) or not changes:
@@ -8519,6 +8519,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             return _tool_error(
                 f"Presentation change rejected: {rejection}.",
                 code=rejection.split(":", 1)[0],
+            )
+        except OverridesSaveFailed:
+            return _tool_error(
+                "The presentation change was valid but could not be saved. Nothing changed.",
+                code="save_failed",
             )
 
         changed_fields = sorted(str(key) for key in changes)

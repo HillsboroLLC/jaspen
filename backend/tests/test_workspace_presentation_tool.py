@@ -282,3 +282,66 @@ def test_overrides_endpoint_explains_a_color_that_is_too_light(app, db, client, 
     body = response.get_json()
     assert body['code'] == 'low_contrast'
     assert body['error'] == 'That color is too light to read on white. Choose a darker shade.'
+
+
+# --- edits must persist, or say they did not ---------------------------------
+
+def _seed_session_card(user_id, thread_id='persist-thread', card_id='persist-card'):
+    from app.routes.sessions import save_user_sessions
+    save_user_sessions(user_id, {thread_id: {
+        'session_id': thread_id, 'name': 'Denver Bike Lane Package', 'chat_history': [],
+        'result': {'analysis_id': card_id, 'project_name': 'Denver Bike Lane Package', 'jaspen_score': 47},
+    }})
+    return f'/api/v1/strategy/threads/{thread_id}/scorecards/{card_id}/overrides'
+
+
+EDIT = {'display_overrides': {'report_presentation': {
+    'colors': {'accent': '#C2410C'}, 'text': {'company_name': 'Acme Builders'},
+}}}
+
+
+def test_session_stored_scorecard_edits_survive_a_reload(app, db, client, test_user, auth_headers):
+    url = _seed_session_card(test_user.id)
+    saved = client.patch(url, json=EDIT, headers=auth_headers)
+    assert saved.status_code == 200, saved.get_json()
+    assert saved.get_json()['kind'] == 'baseline'
+    reloaded = client.get(url, headers=auth_headers).get_json()['display_overrides']['report_presentation']
+    assert reloaded['colors']['accent'] == '#C2410C'
+    assert reloaded['text']['company_name'] == 'Acme Builders'
+
+
+def test_session_card_save_writes_only_its_own_project(app, db, client, test_user, auth_headers, monkeypatch):
+    url = _seed_session_card(test_user.id)
+    _seed_session_card(test_user.id, thread_id='other-project', card_id='other-card')
+    import app.routes.strategy as strategy
+    seen = []
+    real = strategy.save_user_sessions
+
+    def spy(user_id, sessions, *args, **kwargs):
+        seen.append(sorted(sessions))
+        return real(user_id, sessions, *args, **kwargs)
+
+    monkeypatch.setattr(strategy, 'save_user_sessions', spy)
+    assert client.patch(url, json=EDIT, headers=auth_headers).status_code == 200
+    assert seen == [['persist-thread']]
+
+
+def test_a_failed_write_is_reported_not_claimed(app, db, client, test_user, auth_headers, monkeypatch):
+    url = _seed_session_card(test_user.id)
+    import app.routes.strategy as strategy
+    monkeypatch.setattr(strategy, 'save_user_sessions', lambda *a, **k: False)
+    response = client.patch(url, json=EDIT, headers=auth_headers)
+    assert response.status_code == 500
+    assert response.get_json() == {
+        'error': "Couldn't save your changes. Nothing was lost; try again.",
+        'code': 'save_failed',
+    }
+
+
+def test_peer_scorecard_edits_survive_a_reload(app, db, client, test_user, auth_headers):
+    card_id = 'persist-peer-card'
+    _save_card(test_user.id, card_id)
+    url = f'/api/v1/strategy/threads/{THREAD_ID}/scorecards/{card_id}/overrides'
+    assert client.patch(url, json=EDIT, headers=auth_headers).status_code == 200
+    reloaded = client.get(url, headers=auth_headers).get_json()['display_overrides']['report_presentation']
+    assert reloaded['text']['company_name'] == 'Acme Builders'

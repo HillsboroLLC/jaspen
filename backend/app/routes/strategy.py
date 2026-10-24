@@ -10229,6 +10229,13 @@ def _find_scorecard_carrier(user_id, thread_id, scorecard_id):
     return (None, None, None, None)
 
 
+class OverridesSaveFailed(RuntimeError):
+    """The presentation edit was valid but could not be stored."""
+
+
+SAVE_FAILED_MESSAGE = "Couldn't save your changes. Nothing was lost; try again."
+
+
 def update_scorecard_display_overrides(user_id, thread_id, scorecard_id, patch, *, reject_unknown=False):
     """Apply and persist presentation overrides for an editable scorecard.
 
@@ -10262,23 +10269,27 @@ def update_scorecard_display_overrides(user_id, thread_id, scorecard_id, patch, 
     elif kind == 'baseline':
         container[key]['result'] = result_blob
         container[key]['timestamp'] = updated_at
-        save_user_sessions(user_id, container)
+        _save_one_session(user_id, container, key)
     elif kind == 'tradeoff':
         container[key]['tradeoff_view'] = carrier
         container[key]['timestamp'] = updated_at
-        save_user_sessions(user_id, container)
+        _save_one_session(user_id, container, key)
     elif kind == 'chat_artifact':
         # The carrier result is the live artifact data object. Re-save the
         # owning session so the mutation survives refresh.
         session_entry = container.get(key) if isinstance(container, dict) else None
-        if isinstance(session_entry, dict):
-            session_entry['timestamp'] = updated_at
-            container[key] = session_entry
-            save_user_sessions(user_id, container)
+        if not isinstance(session_entry, dict):
+            raise OverridesSaveFailed('session_missing')
+        session_entry['timestamp'] = updated_at
+        container[key] = session_entry
+        _save_one_session(user_id, container, key)
     else:
         carrier['result'] = result_blob
         carrier['updated_at'] = updated_at
-        _save_scenarios(user_id, container)
+        # Scenario data is saved as one set: rows missing from it are cleared,
+        # so the whole set goes back, not just this thread.
+        if not _save_scenarios(user_id, container):
+            raise OverridesSaveFailed('scenarios_not_saved')
 
     return {
         'display_overrides': next_overrides,
@@ -10287,6 +10298,17 @@ def update_scorecard_display_overrides(user_id, thread_id, scorecard_id, patch, 
         'thread_id': str(thread_id),
         'kind': kind,
     }
+
+
+def _save_one_session(user_id, sessions, key):
+    """Save only the session that changed.
+
+    Saving the caller's whole history let one unrelated project's error abandon
+    the write, and the old callers never checked the result, so a lost edit
+    still reported success.
+    """
+    if not save_user_sessions(user_id, {key: sessions[key]}):
+        raise OverridesSaveFailed('session_not_saved')
 
 
 def apply_scorecard_edit_in_place(user_id, thread_id, scorecard_id, mutate_fn):
@@ -10443,6 +10465,12 @@ def scorecard_display_overrides(thread_id, scorecard_id):
                 'error': PRESENTATION_ERRORS.get(code, 'These report edits are not supported.'),
                 'code': code,
             }), 400
+        except OverridesSaveFailed as error:
+            current_app.logger.error(
+                "[scorecard_display_overrides] save failed (%s) thread=%s scorecard=%s",
+                error, thread_id, scorecard_id,
+            )
+            return jsonify({'error': SAVE_FAILED_MESSAGE, 'code': 'save_failed'}), 500
 
         return jsonify({
             'success': True,
