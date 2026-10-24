@@ -30,6 +30,7 @@ from app.orgs import active_membership_for_user, can_manage_org
 from app.session_access import can_read_session
 from app.sharing import (
     ARTIFACT_TYPES,
+    PRESENTATION_ERRORS,
     REPORT_REASONS,
     active_link_limit,
     build_snapshot,
@@ -350,15 +351,6 @@ def revoke_share(link_id):
         db.session.commit()
     return jsonify({'link': _link_json(link)})
 
-
-PRESENTATION_ERRORS = {
-    'invalid_presentation': 'Send the report edits as an object.',
-    'invalid_colors': 'Colors must be six-digit hex values like #A0036C.',
-    'low_contrast': 'That color is too light to read on white. Choose a darker shade.',
-    'invalid_text': 'Report wording must be plain text.',
-    'text_too_long': 'One of the text fields is too long.',
-    'invalid_layout': 'That section layout is not supported.',
-}
 
 
 def _owned_link_by_token(user, token):

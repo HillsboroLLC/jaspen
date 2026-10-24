@@ -1310,6 +1310,17 @@ export default function JaspenWorkspace() {
     setRiskNarrative(riskId, { risk: '', mitigation: '' });
   }
 
+  // Report edits save immediately and only then apply, so the editor can show
+  // a refusal in place and a refused edit never rides along with later saves.
+  const saveReportPresentation = async (presentation) => {
+    const next = { ...overrides, report_presentation: presentation };
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    await Jaspen.patchScorecardOverrides(threadId, scorecardId, next);
+    skipNextSaveRef.current = true;
+    setSaveError(null);
+    setOverrides(next);
+  };
+
   function setOverride(key, value) {
     setOverrides((prev) => {
       const next = { ...prev };
@@ -2860,7 +2871,7 @@ export default function JaspenWorkspace() {
               title={displayTitle}
               createdAt={rendered?.timestamp || rendered?.createdAt || null}
               canEdit={isScorecard}
-              onSavePresentation={async (presentation) => { setOverride('report_presentation', presentation); }}
+              onSavePresentation={saveReportPresentation}
               notes={workspaceNotes}
               showActions={false}
               editing={reportEditing}

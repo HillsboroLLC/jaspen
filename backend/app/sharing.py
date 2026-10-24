@@ -517,6 +517,18 @@ def _contrast_ratio(hex_a, hex_b):
     return (light + 0.05) / (dark + 0.05)
 
 
+# What each sanitize_presentation() error code means, in words an owner can act
+# on. Shared by every endpoint that saves report edits.
+PRESENTATION_ERRORS = {
+    'invalid_presentation': 'Send the report edits as an object.',
+    'invalid_colors': 'Colors must be six-digit hex values like #A0036C.',
+    'low_contrast': 'That color is too light to read on white. Choose a darker shade.',
+    'invalid_text': 'Report wording must be plain text.',
+    'text_too_long': 'One of the text fields is too long.',
+    'invalid_layout': 'That section layout is not supported.',
+}
+
+
 def sanitize_presentation(payload):
     """Validate owner presentation edits. Raises ValueError(code) on bad input."""
     if not isinstance(payload, dict):

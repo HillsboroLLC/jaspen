@@ -1104,8 +1104,15 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       body,
     });
     if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      throw new Error(`${url} -> ${res.status} ${txt}`);
+      // The server explains a refused edit in plain words; show that, not the
+      // request URL and raw body.
+      const body = await res.json().catch(() => ({}));
+      const error = new Error(
+        (body && typeof body.error === 'string' && body.error) || 'Could not save these edits.',
+      );
+      error.status = res.status;
+      error.code = body?.code || null;
+      throw error;
     }
     const data = await res.json();
     return (data && typeof data.display_overrides === 'object') ? data.display_overrides : {};

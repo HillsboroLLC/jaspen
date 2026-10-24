@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import SharedArtifactView from './SharedArtifactView';
-import { REPORT_SECTIONS, applyPresentation, buildReportModel } from './reportModel';
+import {
+  REPORT_SECTIONS, applyPresentation, buildReportModel, closestReadableShade, readableOnWhite,
+} from './reportModel';
 import './OnePagerReport.css';
 
 const EVIDENCE_LABELS = { none: 'No evidence', weak: 'Weak evidence', strong: 'Strong evidence' };
@@ -370,8 +372,16 @@ function NextStep({ text }) {
   );
 }
 
+// Accent and text colors carry white or body text, so they must stay readable
+// on white. The server applies the same rule; checking here means the owner
+// learns it while choosing, not after a failed save.
+const READABLE_COLOR_SLOTS = ['accent', 'ink'];
+
 function Editor({ draft, setDraft, onSave, onCancel, saving, error }) {
   const setColor = (slot, value) => setDraft((d) => ({ ...d, colors: { ...d.colors, [slot]: value } }));
+  const unreadable = READABLE_COLOR_SLOTS.filter((slot) => (
+    draft.colors[slot] && !readableOnWhite(draft.colors[slot])
+  ));
   const setText = (slot, value) => setDraft((d) => ({ ...d, text: { ...d.text, [slot]: value } }));
   const move = (index, delta) => setDraft((d) => {
     const order = [...d.order];
@@ -408,7 +418,7 @@ function Editor({ draft, setDraft, onSave, onCancel, saving, error }) {
         <strong>Edit report</strong>
         <span className="op-editor__bar-actions">
           <button type="button" className="op-btn" onClick={onCancel} disabled={saving}>Cancel</button>
-          <button type="button" className="op-btn op-btn--primary" onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          <button type="button" className="op-btn op-btn--primary" onClick={onSave} disabled={saving || unreadable.length > 0}>{saving ? 'Saving…' : 'Save'}</button>
           <button type="button" className="op-editor__close" onClick={onCancel} aria-label="Close editor" disabled={saving}>×</button>
         </span>
       </div>
@@ -416,12 +426,26 @@ function Editor({ draft, setDraft, onSave, onCancel, saving, error }) {
       <p className="op-muted op-small op-editor__note">Scores and figures can’t be edited. Change the facts in Jaspen to change a number.</p>
       <fieldset className="op-editor__group">
         <legend>Colors</legend>
-        {[['accent', 'Accent'], ['ink', 'Text'], ['tint', 'Panel tint']].map(([slot, label]) => (
-          <label key={slot} className="op-editor__color">
-            <input type="color" value={draft.colors[slot]} onChange={(e) => setColor(slot, e.target.value)} />
-            {label}
-          </label>
-        ))}
+        {[['accent', 'Accent'], ['ink', 'Text'], ['tint', 'Panel tint']].map(([slot, label]) => {
+          const shade = unreadable.includes(slot) ? closestReadableShade(draft.colors[slot]) : null;
+          return (
+            <div key={slot} className="op-editor__color-row">
+              <label className="op-editor__color">
+                <input type="color" value={draft.colors[slot]} onChange={(e) => setColor(slot, e.target.value)} />
+                {label}
+              </label>
+              {shade && (
+                <p className="op-editor__color-warning" role="alert">
+                  Too light to read on white.
+                  <button type="button" className="op-editor__shade" onClick={() => setColor(slot, shade)}>
+                    <span className="op-editor__swatch" style={{ background: shade }} aria-hidden="true" />
+                    Use {shade}
+                  </button>
+                </p>
+              )}
+            </div>
+          );
+        })}
       </fieldset>
       <fieldset className="op-editor__group">
         <legend>Branding</legend>

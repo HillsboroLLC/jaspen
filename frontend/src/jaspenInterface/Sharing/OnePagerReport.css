@@ -186,6 +186,10 @@
 }
 .op-editor__row button:disabled { opacity: 0.4; cursor: default; }
 .op-editor__error { margin: 0; color: #A0036C; font-size: 14px; }
+.op-editor__color-row { display: grid; gap: 6px; }
+.op-editor__color-warning { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: #A0036C; font-size: 13px; }
+.op-editor__shade { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid #D5D8E3; border-radius: 999px; background: #FFFFFF; color: #1B2342; font-size: 13px; cursor: pointer; }
+.op-editor__swatch { width: 12px; height: 12px; border-radius: 3px; }
 .op-editor__actions { display: flex; justify-content: flex-end; gap: 10px; }
 
 @media (max-width: 1100px) {

@@ -269,3 +269,16 @@ def test_tool_schema_targets_one_pager_text_colors_and_decision_title(app):
     for slot in ('headline', 'summary', 'accent', 'ink', 'tint'):
         assert slot in report_description
     assert 'Do not use for a one-pager headline' in changes['title']['description']
+
+
+def test_overrides_endpoint_explains_a_color_that_is_too_light(app, db, client, test_user, auth_headers):
+    card_id = 'presentation-low-contrast-card'
+    _save_card(test_user.id, card_id)
+    url = f'/api/v1/strategy/threads/{THREAD_ID}/scorecards/{card_id}/overrides'
+    response = client.patch(url, json={'display_overrides': {
+        'report_presentation': {'colors': {'accent': '#E8472C'}},
+    }}, headers=auth_headers)
+    assert response.status_code == 400
+    body = response.get_json()
+    assert body['code'] == 'low_contrast'
+    assert body['error'] == 'That color is too light to read on white. Choose a darker shade.'

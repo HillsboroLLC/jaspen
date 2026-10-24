@@ -10437,7 +10437,12 @@ def scorecard_display_overrides(thread_id, scorecard_id):
                 user_id, thread_id, scorecard_id, patch, reject_unknown=False
             )
         except ValueError as error:
-            return jsonify({'error': 'These report edits are not supported.', 'code': str(error)}), 400
+            from app.sharing import PRESENTATION_ERRORS
+            code = str(error)
+            return jsonify({
+                'error': PRESENTATION_ERRORS.get(code, 'These report edits are not supported.'),
+                'code': code,
+            }), 400
 
         return jsonify({
             'success': True,

@@ -27,13 +27,29 @@ const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 
 // The same readability rule the server applies to presentation colors:
 // white text on the accent needs a 4.5:1 contrast ratio.
-const readableOnWhite = (hex) => {
+export const readableOnWhite = (hex) => {
   const linear = [1, 3, 5].map((i) => {
     const c = parseInt(hex.slice(i, i + 2), 16) / 255;
     return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
   });
   const luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
   return 1.05 / (luminance + 0.05) >= 4.5;
+};
+
+// The lightest darker version of a color that passes the rule above, keeping
+// its hue, so an owner who picks a brand color too light to read gets the
+// nearest shade that works instead of a dead end.
+export const closestReadableShade = (hex) => {
+  if (!HEX_COLOR.test(String(hex || ''))) return null;
+  if (readableOnWhite(hex)) return hex.toUpperCase();
+  const channels = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  for (let factor = 0.99; factor > 0; factor -= 0.01) {
+    const shade = `#${channels
+      .map((c) => Math.round(c * factor).toString(16).padStart(2, '0'))
+      .join('')}`.toUpperCase();
+    if (readableOnWhite(shade)) return shade;
+  }
+  return '#000000';
 };
 
 // A brand color set from chat lives on the card's display_overrides. It colors

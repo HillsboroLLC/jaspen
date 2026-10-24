@@ -269,3 +269,14 @@ test('a brand color set from chat colors the one-pager unless the report has its
   // A share snapshot carries the color in presentation and renders the same.
   expect(accentFor({ scorecard: bid('Denver', 64, 'Bid') }, { colors: { accent: '#0A66C2' } })).toBe('#0A66C2');
 });
+
+test('closestReadableShade keeps readable colors and darkens light ones until they pass', () => {
+  const { closestReadableShade, readableOnWhite } = require('./reportModel');
+  expect(closestReadableShade('#a0036c')).toBe('#A0036C');
+  const shade = closestReadableShade('#E8472C');
+  expect(readableOnWhite(shade)).toBe(true);
+  expect(shade).not.toBe('#E8472C');
+  expect(readableOnWhite('#E8472C')).toBe(false);
+  expect(closestReadableShade('#FFFFFF')).toMatch(/^#[0-9A-F]{6}$/);
+  expect(closestReadableShade('blue')).toBeNull();
+});
