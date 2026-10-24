@@ -345,3 +345,56 @@ def test_peer_scorecard_edits_survive_a_reload(app, db, client, test_user, auth_
     assert client.patch(url, json=EDIT, headers=auth_headers).status_code == 200
     reloaded = client.get(url, headers=auth_headers).get_json()['display_overrides']['report_presentation']
     assert reloaded['text']['company_name'] == 'Acme Builders'
+
+
+def test_in_place_edit_saves_only_its_project_and_survives_a_reload(app, db, client, test_user, auth_headers, monkeypatch):
+    from app.routes.strategy import apply_scorecard_edit_in_place
+    import app.routes.strategy as strategy
+    url = _seed_session_card(test_user.id)
+    _seed_session_card(test_user.id, thread_id='other-project', card_id='other-card')
+    seen = []
+    real = strategy.save_user_sessions
+
+    def spy(user_id, sessions, *args, **kwargs):
+        seen.append(sorted(sessions))
+        return real(user_id, sessions, *args, **kwargs)
+
+    monkeypatch.setattr(strategy, 'save_user_sessions', spy)
+    card = apply_scorecard_edit_in_place(
+        test_user.id, 'persist-thread', 'persist-card',
+        lambda current: {**current, 'executive_summary': 'Edited in place.'},
+    )
+    assert card['executive_summary'] == 'Edited in place.'
+    assert seen == [['persist-thread']]
+    monkeypatch.setattr(strategy, 'save_user_sessions', real)
+    workspace = client.get(url.rsplit('/overrides', 1)[0], headers=auth_headers).get_json()
+    assert workspace['scorecard']['executive_summary'] == 'Edited in place.'
+
+
+def test_in_place_edit_that_cannot_be_stored_raises(app, db, test_user, monkeypatch):
+    import pytest
+    import app.routes.strategy as strategy
+    _seed_session_card(test_user.id)
+    monkeypatch.setattr(strategy, 'save_user_sessions', lambda *a, **k: False)
+    with pytest.raises(strategy.OverridesSaveFailed):
+        strategy.apply_scorecard_edit_in_place(
+            test_user.id, 'persist-thread', 'persist-card',
+            lambda current: {**current, 'executive_summary': 'Lost edit.'},
+        )
+
+
+def test_patch_scorecard_tool_reports_a_failed_save(app, db, test_user, monkeypatch):
+    import app.routes.strategy as strategy
+    from app.routes.ai_agent import _execute_mutation_tool
+    _seed_session_card(test_user.id)
+    monkeypatch.setattr(strategy, 'save_user_sessions', lambda *a, **k: False)
+    result = _execute_mutation_tool(
+        'patch_scorecard',
+        {'scorecard_id': 'persist-card', 'executive_summary': 'Lost edit.'},
+        user=test_user,
+        user_id=test_user.id,
+        thread_id='persist-thread',
+        view_context={'current_view': 'scorecard', 'active_scorecard_id': 'persist-card'},
+    )
+    assert result['ok'] is False, result
+    assert result['code'] == 'save_failed'

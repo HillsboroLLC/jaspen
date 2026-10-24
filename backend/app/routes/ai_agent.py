@@ -7406,7 +7406,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
 
         updated = None
         if target_id:
-            from .strategy import apply_scorecard_edit_in_place
+            from .strategy import OverridesSaveFailed, apply_scorecard_edit_in_place
             from ..decision_metrics import calculate_metrics
             def _apply(card):
                 current = migrate_attribute_mapping(card.get("attributes"), kit=kit)
@@ -7416,7 +7416,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     active_kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version"))
                     merged["metrics"] = calculate_metrics(current, active_kit.get("metrics"), context=session.get("kit_context"))
                 return merged
-            updated = apply_scorecard_edit_in_place(user_id, thread_id, target_id, _apply)
+            try:
+                updated = apply_scorecard_edit_in_place(user_id, thread_id, target_id, _apply)
+            except OverridesSaveFailed:
+                updated = None
             if not isinstance(updated, dict):
                 return _tool_error(
                     "The canonical fact was saved, but the selected scorecard could not be marked for re-score.",
@@ -8055,7 +8058,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # Only honor an explicit rescore request — don't silently overwrite the
         # open idea just because one is on screen.
         if rescore_id:
-            from .strategy import apply_scorecard_edit_in_place
+            from .strategy import OverridesSaveFailed, apply_scorecard_edit_in_place
 
             def _do_rescore(existing):
                 if (
@@ -8114,7 +8117,12 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 updated_card["section_provenance"] = section_provenance
                 return updated_card
 
-            updated = apply_scorecard_edit_in_place(user_id, thread_id, rescore_id, _do_rescore)
+            try:
+                updated = apply_scorecard_edit_in_place(user_id, thread_id, rescore_id, _do_rescore)
+            except OverridesSaveFailed:
+                # Falls through to the refund and "no scorecard was changed"
+                # error below, which is exactly what happened.
+                updated = None
             if isinstance(updated, dict):
                 keep_id = str(updated.get("id") or updated.get("analysis_id") or rescore_id)
                 upsert_scorecard(
@@ -8537,7 +8545,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         })
 
     if tool_name == "patch_scorecard":
-        from .strategy import _merge_scorecard_patch, apply_scorecard_edit_in_place
+        from .strategy import OverridesSaveFailed, _merge_scorecard_patch, apply_scorecard_edit_in_place
         # Narrative / wording edits only. These do NOT change the score — they
         # rewrite text in place on the idea the user has OPEN. For a change that
         # affects the analysis or score, the agent re-scores in place via
@@ -8733,7 +8741,13 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 merged["display_overrides"] = _ovb
             return merged
 
-        card = apply_scorecard_edit_in_place(user_id, thread_id, target_id, _do_patch)
+        try:
+            card = apply_scorecard_edit_in_place(user_id, thread_id, target_id, _do_patch)
+        except OverridesSaveFailed:
+            return _tool_error(
+                "The scorecard change could not be saved. Nothing changed.",
+                code="save_failed",
+            )
         if not isinstance(card, dict):
             return _tool_error("No scorecard found to edit for this idea.", code="missing_scorecard")
 

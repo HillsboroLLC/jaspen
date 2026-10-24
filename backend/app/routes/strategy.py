@@ -10326,7 +10326,9 @@ def apply_scorecard_edit_in_place(user_id, thread_id, scorecard_id, mutate_fn):
 
     mutate_fn(current_card: dict) -> dict   # returns the FULL merged card
     Returns the persisted card dict, or None when the scorecard can't be located
-    or the mutation produced nothing usable.
+    or the mutation produced nothing usable. Raises OverridesSaveFailed when
+    the edit was made but could not be stored, so no caller reports a lost
+    edit as done.
     """
     kind, container, key, carrier = _find_scorecard_carrier(user_id, thread_id, scorecard_id)
     if not kind or not isinstance(carrier, dict):
@@ -10369,20 +10371,23 @@ def apply_scorecard_edit_in_place(user_id, thread_id, scorecard_id, mutate_fn):
         result_blob['selected_scorecard_id'] = card_id
         container[key]['result'] = result_blob
         container[key]['timestamp'] = now
-        save_user_sessions(user_id, container)
+        _save_one_session(user_id, container, key)
     elif kind == 'chat_artifact':
         # carrier['result'] IS the live artifact data dict (already mutated
         # above). Persist the owning session so the edit survives refresh.
         session_entry = container.get(key) if isinstance(container, dict) else None
-        if isinstance(session_entry, dict):
-            session_entry['timestamp'] = now
-            container[key] = session_entry
-            save_user_sessions(user_id, container)
+        if not isinstance(session_entry, dict):
+            raise OverridesSaveFailed('session_missing')
+        session_entry['timestamp'] = now
+        container[key] = session_entry
+        _save_one_session(user_id, container, key)
     else:
         # container is the scenarios all_data dict; carrier is the scenario.
+        # Saved as one set: rows missing from it are cleared.
         carrier['result'] = result_blob
         carrier['updated_at'] = now
-        _save_scenarios(user_id, container)
+        if not _save_scenarios(user_id, container):
+            raise OverridesSaveFailed('scenarios_not_saved')
 
     return result_blob
 
