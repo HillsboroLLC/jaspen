@@ -407,14 +407,14 @@ it('shows connection fields immediately for Jira, Smartsheet, Salesforce, and Sn
   });
 });
 
-it('renders naive UTC connector timestamps consistently in browser local time', async () => {
+it('renders last-confirmed connector timestamps consistently in browser local time', async () => {
   mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
   const storedUtc = '2026-10-13T01:26:45';
   const expectedLocal = new Date(`${storedUtc}Z`).toLocaleString();
   authFetch.mockImplementation((url) => {
     if (String(url).includes('/api/v1/connectors/status')) return Promise.resolve(response({ connectors: [{
       id: 'jira_sync', label: 'Jira', implementation_status: 'implemented', lifecycle_status: 'disconnected', connected: false,
-      last_verified_at: storedUtc, jira: { data_project_scope: 'all' },
+      last_confirmed_at: storedUtc, jira: { data_project_scope: 'all' },
     }] }));
     if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success: true, sessions: [] }));
     if (String(url).includes('/api/v1/pm-sync/bindings')) return Promise.resolve(response({ bindings: [] }));
@@ -426,8 +426,32 @@ it('renders naive UTC connector timestamps consistently in browser local time', 
 
   render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
 
-  expect(await screen.findByText(`Last checked ${expectedLocal}`)).toBeInTheDocument();
+  expect(await screen.findByText(`Last confirmed ${expectedLocal}`)).toBeInTheDocument();
   expect(await screen.findByText(expectedLocal, { selector: 'time' })).toBeInTheDocument();
+});
+
+it('shows a stale connector with a neutral dot and setup summary', async () => {
+  mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
+  const confirmedAt = '2026-09-30T12:00:00Z';
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) return Promise.resolve(response({ connectors: [{
+      id: 'jira_sync', label: 'Jira', implementation_status: 'implemented', lifecycle_status: 'disconnected', connected: false,
+      jira: { data_project_scope: 'all' },
+    }, {
+      id: 'salesforce_insights', label: 'Salesforce', implementation_status: 'implemented', lifecycle_status: 'connected', connected: true,
+      freshness: 'unconfirmed', last_confirmed_at: confirmedAt,
+      salesforce: { instance_url: 'https://acme.my.salesforce.com' },
+    }] }));
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success: true, sessions: [] }));
+    if (String(url).includes('/api/v1/pm-sync/bindings')) return Promise.resolve(response({ bindings: [] }));
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events: [] }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  const { container } = render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+
+  expect(await screen.findByText('1 set up')).toBeInTheDocument();
+  expect(container.querySelector('.connector-list-item-dot.is-unconfirmed')).toBeInTheDocument();
 });
 
 it('hides raw provider errors behind Details and shows activity 10 at a time', async () => {

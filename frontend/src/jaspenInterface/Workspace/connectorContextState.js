@@ -11,12 +11,23 @@ const ANALYSIS_SETTING = {
   },
 };
 
+function formatConfirmedDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toLocaleDateString();
+}
+
 export function connectorContextState(connector = {}, fallback = {}) {
   const id = String(connector?.id || fallback?.id || '').trim();
   const label = String(connector?.label || fallback?.label || id || 'connector').trim();
   const connected = Boolean(connector?.connected);
   const lifecycle = String(connector?.lifecycle_status || connector?.status || '').toLowerCase();
   const hasProblem = ['error', 'degraded', 'reconnect_required'].includes(lifecycle);
+  const confirmed = String(connector?.freshness || '').toLowerCase() === 'confirmed';
+  const confirmedDate = formatConfirmedDate(connector?.last_confirmed_at);
+  const freshnessTooltip = confirmedDate
+    ? `Set up · last confirmed ${confirmedDate}`
+    : 'Set up · not confirmed yet';
   const analysisSetting = ANALYSIS_SETTING[id];
   const analysisEnabled = analysisSetting
     ? Boolean(connector?.[analysisSetting.section]?.data_enabled)
@@ -38,13 +49,13 @@ export function connectorContextState(connector = {}, fallback = {}) {
   if (!analysisEnabled && analysisSetting) {
     return {
       id, label, connected: true, analysisEnabled: false, selectable: false,
-      state: 'analysis-disabled', dot: 'connected',
+      state: 'analysis-disabled', dot: confirmed ? 'connected' : 'unconfirmed',
       tooltip: `Turn on '${analysisSetting.setting}' in Data Sources to use it here`,
     };
   }
   return {
     id, label, connected: true, analysisEnabled: true, selectable: true,
-    state: 'available', dot: 'connected',
-    tooltip: `Add live ${label} data as AI context`,
+    state: 'available', dot: confirmed ? 'connected' : 'unconfirmed',
+    tooltip: confirmed ? `Add live ${label} data as AI context` : freshnessTooltip,
   };
 }

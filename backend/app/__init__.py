@@ -179,6 +179,7 @@ def create_app():
         GOOGLE_OAUTH_STATE_TTL_SECONDS = int(os.getenv('GOOGLE_OAUTH_STATE_TTL_SECONDS', '900')),
         REQUIRE_EMAIL_VERIFICATION     = _as_bool(os.getenv('REQUIRE_EMAIL_VERIFICATION'), default=True),
         EMAIL_VERIFICATION_TOKEN_TTL_SECONDS = int(os.getenv('EMAIL_VERIFICATION_TOKEN_TTL_SECONDS', '86400')),
+        CONNECTOR_FRESH_DAYS           = int(os.getenv('CONNECTOR_FRESH_DAYS', '7')),
 
         # JWT
         JWT_SECRET_KEY                 = os.getenv('JWT_SECRET_KEY'),

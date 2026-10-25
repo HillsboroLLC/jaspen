@@ -357,6 +357,11 @@
   background: #22c55e;
 }
 
+.connector-list-item-dot.is-unconfirmed {
+  background: transparent;
+  border: 1px solid #98a2b3;
+}
+
 .connector-list-item-dot.is-warn {
   background: #f59e0b;
 }
@@ -410,6 +415,15 @@
 
 .connectors-health-stat.is-degraded {
   color: #b45309;
+}
+
+.connectors-health-stat.is-unconfirmed {
+  color: #667085;
+}
+
+.connectors-health-stat.is-unconfirmed .connectors-health-dot {
+  background: transparent;
+  border: 1px solid currentColor;
 }
 
 .connectors-health-stat.is-stale {
@@ -1058,6 +1072,10 @@ body.jaspen-sidebar-open .jas-sidebar-tab {
 }
 .connector-status-dot.is-connected,
 .connector-activity-status.is-success { background: #259653; }
+.connector-status-dot.is-unconfirmed {
+  background: transparent;
+  border: 1px solid #98a2b3;
+}
 .connector-status-dot.is-attention { background: #e49b18; }
 .connector-activity-status.is-failed { background: #c53b32; }
 .connector-activity-status.is-partial { background: #e49b18; }

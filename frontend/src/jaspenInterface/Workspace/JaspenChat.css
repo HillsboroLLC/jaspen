@@ -4068,6 +4068,10 @@
   background: var(--gray-400);
 }
 .jas-connector-status-dot.connected { background: #22c55e; }
+.jas-connector-status-dot.unconfirmed {
+  background: transparent;
+  border: 1px solid var(--gray-400);
+}
 .jas-connector-status-dot.problem { background: #f59e0b; }
 
 .jas-connector-context-chip svg { font-size: 0.625rem; }

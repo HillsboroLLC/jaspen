@@ -2,7 +2,7 @@ import hmac
 import json
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from flask import Blueprint, current_app, jsonify, redirect, request
@@ -129,6 +129,47 @@ def _utc_iso(value):
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _utc_datetime(value):
+    if value in (None, ""):
+        return None
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(parsed, datetime):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _connector_freshness(connected, lifecycle_status, last_success_at, last_verified_at):
+    confirmations = [
+        timestamp
+        for timestamp in (
+            _utc_datetime(last_success_at),
+            _utc_datetime(last_verified_at),
+        )
+        if timestamp is not None
+    ]
+    last_confirmed_at = max(confirmations) if confirmations else None
+    lifecycle = str(lifecycle_status or "").strip().lower()
+    if lifecycle in {"error", "degraded", "reconnect_required"}:
+        return lifecycle, _utc_iso(last_confirmed_at)
+    if not connected:
+        return lifecycle or "disconnected", _utc_iso(last_confirmed_at)
+
+    try:
+        fresh_days = max(0, int(current_app.config.get("CONNECTOR_FRESH_DAYS", 7)))
+    except (TypeError, ValueError):
+        fresh_days = 7
+    cutoff = datetime.now(timezone.utc) - timedelta(days=fresh_days)
+    freshness = "confirmed" if last_confirmed_at and last_confirmed_at >= cutoff else "unconfirmed"
+    return freshness, _utc_iso(last_confirmed_at)
 
 
 
@@ -375,6 +416,13 @@ def _merge_connector_view(connector_id, entitlement, settings):
         if has_oauth_token and has_identity:
             connected = True
             connection_status = "connected"
+    lifecycle_status = settings.get("lifecycle_status") or ("connected" if connected else "disconnected")
+    freshness, last_confirmed_at = _connector_freshness(
+        connected,
+        lifecycle_status,
+        settings.get("last_success_at"),
+        settings.get("last_verified_at"),
+    )
     status = "locked" if not enabled else "connected" if connected else "available"
     sync_mode = str(settings.get("sync_mode") or "import").lower()
     if sync_mode not in modes:
@@ -391,7 +439,9 @@ def _merge_connector_view(connector_id, entitlement, settings):
         "enabled": enabled,
         "connected": connected,
         "connection_status": "connected" if connected else "disconnected",
-        "lifecycle_status": settings.get("lifecycle_status") or ("connected" if connected else "disconnected"),
+        "lifecycle_status": lifecycle_status,
+        "freshness": freshness,
+        "last_confirmed_at": last_confirmed_at,
         "required_min_tier": required_min_tier,
         "access": entitlement.get("access"),
         "allowed_read": bool(entitlement.get("allowed_read")),

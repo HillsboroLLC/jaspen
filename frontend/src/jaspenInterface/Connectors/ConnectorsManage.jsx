@@ -122,10 +122,8 @@ function connectorVerificationState(connector, connectionCheck) {
   if (lifecycle === 'degraded' || ['failed', 'error', 'unhealthy', 'degraded', 'warning', 'warn', 'attention', 'needs_attention'].includes(health)) {
     return 'attention';
   }
-  if (lifecycle === 'connected' && (connector?.last_verified_at || ['healthy', 'success', 'connected'].includes(health))) {
-    return 'healthy';
-  }
-  if (connector?.connected || lifecycle === 'configured' || lifecycle === 'connected') return 'attention';
+  if (connector?.connected && connector?.freshness === 'confirmed') return 'healthy';
+  if ((connector?.connected && connector?.freshness === 'unconfirmed') || connector?.connected || lifecycle === 'configured' || lifecycle === 'connected') return 'unconfirmed';
   return 'disconnected';
 }
 
@@ -740,7 +738,9 @@ export default function ConnectorsManage() {
   const selectedVerificationState = selectedConnector
     ? connectorVerificationState(selectedConnector, selectedConnectionCheck)
     : 'disconnected';
-  const selectedLastCheckedAt = selectedConnectionCheck?.checkedAt || selectedConnector?.last_verified_at || null;
+  const selectedLastConfirmedAt = selectedConnectionCheck?.status === 'connected'
+    ? selectedConnectionCheck.checkedAt
+    : selectedConnector?.last_confirmed_at || null;
   const visibleActivityRows = auditRows.slice(0, activityVisibleCount);
 
   const loadJiraProjects = useCallback(async () => {
@@ -812,7 +812,8 @@ export default function ConnectorsManage() {
 
   const healthSummary = useMemo(() => {
     const allowed = connectors.filter((c) => allowedConnectorIds.includes(c.id) && connectorIsImplemented(c));
-    const connected = allowed.filter((c) => normalizeLifecycleStatus(c) === 'connected').length;
+    const confirmed = allowed.filter((c) => c.freshness === 'confirmed').length;
+    const unconfirmed = allowed.filter((c) => c.freshness === 'unconfirmed').length;
     const degraded = allowed.filter((c) => normalizeLifecycleStatus(c) === 'degraded').length;
     const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
     const staleNames = allowed
@@ -823,7 +824,7 @@ export default function ConnectorsManage() {
         return age > STALE_THRESHOLD_MS;
       })
       .map((c) => c.label);
-    return { connected, degraded, total: allowed.length, staleNames };
+    return { confirmed, unconfirmed, degraded, total: allowed.length, staleNames };
   }, [allowedConnectorIds, connectors]);
 
   // Mutual exclusion: close Jaspen drawer whenever App Menu opens
@@ -1581,8 +1582,14 @@ export default function ConnectorsManage() {
             <div className="connectors-health-bar-stats">
               <span className="connectors-health-stat is-connected">
                 <span className="connectors-health-dot" />
-                {healthSummary.connected} connected
+                {healthSummary.confirmed} confirmed
               </span>
+              {healthSummary.unconfirmed > 0 && (
+                <span className="connectors-health-stat is-unconfirmed">
+                  <span className="connectors-health-dot" />
+                  {healthSummary.unconfirmed} set up
+                </span>
+              )}
               {healthSummary.degraded > 0 && (
                 <span className="connectors-health-stat is-degraded">
                   <span className="connectors-health-dot" />
@@ -1662,7 +1669,7 @@ export default function ConnectorsManage() {
                                 </span>
                                 <span className="connector-list-item-label">{connector.label}</span>
                                 {implemented ? (
-                                  <span className={`connector-list-item-dot ${verification === 'healthy' ? 'is-on' : verification === 'attention' ? 'is-warn' : ''}`} />
+                                  <span className={`connector-list-item-dot ${verification === 'healthy' ? 'is-on' : verification === 'attention' ? 'is-warn' : verification === 'unconfirmed' ? 'is-unconfirmed' : ''}`} />
                                 ) : (
                                   <span className="connector-list-item-soon">Soon</span>
                                 )}
@@ -1695,10 +1702,10 @@ export default function ConnectorsManage() {
                     <>
                   <section className="connector-connection-section">
                     <div className="connector-connection-summary">
-                      <span className={`connector-status-dot ${selectedVerificationState === 'healthy' ? 'is-connected' : selectedVerificationState === 'attention' ? 'is-attention' : ''}`} />
+                      <span className={`connector-status-dot ${selectedVerificationState === 'healthy' ? 'is-connected' : selectedVerificationState === 'attention' ? 'is-attention' : selectedVerificationState === 'unconfirmed' ? 'is-unconfirmed' : ''}`} />
                       <div>
                         <strong>{selectedConnector.connected ? `Connected as ${connectorAccountLabel(selectedConnector)}` : `${selectedConnector.label} is not connected`}</strong>
-                        <p>{selectedConnectionCheck?.status === 'checking' ? 'Checking connection…' : selectedConnectionCheck?.status === 'error' ? selectedConnectionCheck.message : `Last checked ${selectedLastCheckedAt ? formatLocalTimestamp(selectedLastCheckedAt) : 'not yet'}`}</p>
+                        <p>{selectedConnectionCheck?.status === 'checking' ? 'Checking connection…' : selectedConnectionCheck?.status === 'error' ? selectedConnectionCheck.message : selectedLastConfirmedAt ? `Last confirmed ${formatLocalTimestamp(selectedLastConfirmedAt)}` : 'Not confirmed yet'}</p>
                       </div>
                     </div>
                     {selectedConnectionCheck?.status === 'error' && <div className="connector-inline-notice connector-inline-notice-error" role="alert">{selectedConnectionCheck.message}</div>}
