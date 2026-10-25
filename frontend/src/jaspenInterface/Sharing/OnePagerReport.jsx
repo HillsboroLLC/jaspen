@@ -418,7 +418,7 @@ function Editor({ draft, setDraft, onSave, onCancel, saving, error }) {
         <strong>Edit report</strong>
         <span className="op-editor__bar-actions">
           <button type="button" className="op-btn" onClick={onCancel} disabled={saving}>Cancel</button>
-          <button type="button" className="op-btn op-btn--primary" onClick={onSave} disabled={saving || unreadable.length > 0}>{saving ? 'Saving…' : 'Save'}</button>
+          <button type="button" className="op-btn op-btn--primary" onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
           <button type="button" className="op-editor__close" onClick={onCancel} aria-label="Close editor" disabled={saving}>×</button>
         </span>
       </div>
@@ -436,7 +436,7 @@ function Editor({ draft, setDraft, onSave, onCancel, saving, error }) {
               </label>
               {shade && (
                 <p className="op-editor__color-warning" role="alert">
-                  Too light to read on white.
+                  <span>Too light to read on white. Saving will use {shade}.</span>
                   <button type="button" className="op-editor__shade" onClick={() => setColor(slot, shade)}>
                     <span className="op-editor__swatch" style={{ background: shade }} aria-hidden="true" />
                     Use {shade}
@@ -532,8 +532,14 @@ export default function OnePagerReport({
       Object.entries(draft.text).filter(([slot, value]) => value !== model.defaults[slot]),
     );
     const defaultOrder = REPORT_SECTIONS.map((s) => s.key);
+    const colors = Object.fromEntries(Object.entries(draft.colors).map(([slot, color]) => [
+      slot,
+      READABLE_COLOR_SLOTS.includes(slot) && color && !readableOnWhite(color)
+        ? closestReadableShade(color)
+        : color,
+    ]));
     const presentation = {
-      colors: draft.colors,
+      colors,
       text: changedText,
       layout: {
         ...(draft.order.join() !== defaultOrder.join() ? { order: draft.order } : {}),
