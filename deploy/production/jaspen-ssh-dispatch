@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Install root-owned as /usr/local/sbin/jaspen-ssh-dispatch (mode 0755) and use
+# it as this key's forced command in the deployment account's authorized_keys.
+set -euo pipefail
+
+readonly requested="${SSH_ORIGINAL_COMMAND:-}"
+if [[ "${requested}" =~ ^JASPEN_RELEASE_SHA=([0-9a-f]{40})[[:space:]]bash[[:space:]]-s$ ]]; then
+  exec sudo -n /usr/local/sbin/jaspen-deploy "${BASH_REMATCH[1]}"
+fi
+
+echo 'SSH command refused.' >&2
+exit 1

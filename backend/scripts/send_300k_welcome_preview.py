@@ -4,11 +4,9 @@ Writing needs nothing configured and is the fast loop:
 
     PYTHONPATH=. ./venv/bin/python scripts/send_300k_welcome_preview.py --write /tmp/receipt.html
 
-Sending needs real mail credentials, which live in the server's environment:
-
-    cd ~/sekki-platform/backend
-    eval export $(systemctl show gunicorn-sekki.service -p Environment --value)
-    PYTHONPATH=. ./venv/bin/python scripts/send_300k_welcome_preview.py ldbailey303@gmail.com "Lydia"
+Sending needs real mail credentials and must run through an administrator-
+approved one-shot job whose protected EnvironmentFile supplies them. Never
+import a service's complete environment into an interactive shell.
 
 Nothing is charged and no credits are granted - this only renders the template.
 """

@@ -1,0 +1,24 @@
+[Unit]
+Description=Jaspen production database migration
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jaspen-migrate
+Group=jaspen-migrate
+EnvironmentFile=/etc/jaspen/migration.env
+ExecStart=/usr/local/sbin/jaspen-migrate
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

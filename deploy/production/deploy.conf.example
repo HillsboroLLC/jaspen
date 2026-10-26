@@ -1,0 +1,3 @@
+# Root-owned, mode 0644. This file contains no credentials.
+DEPLOY_ROOT=/absolute/path/to/the/production/checkout
+DEPLOY_USER=jaspen-deploy

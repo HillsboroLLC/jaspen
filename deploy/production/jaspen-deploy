@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Install root-owned as /usr/local/sbin/jaspen-deploy (mode 0755).
+set -euo pipefail
+
+readonly CONFIG_FILE="/etc/jaspen/deploy.conf"
+readonly MIGRATION_UNIT="jaspen-migrate.service"
+readonly RUNTIME_UNIT="gunicorn-sekki.service"
+
+fail() {
+  echo 'Production deployment stopped; see administrator-only system logs.' >&2
+  exit 1
+}
+
+load_config() {
+  [[ -f "${CONFIG_FILE}" ]] || fail
+  [[ "$(stat -c '%u' "${CONFIG_FILE}")" == "0" ]] || fail
+  [[ "$(stat -c '%a' "${CONFIG_FILE}")" =~ ^(600|640|644)$ ]] || fail
+  # The file is root-owned and non-writable by group/other before it is sourced.
+  # It contains deployment paths/account names only, never credentials.
+  source "${CONFIG_FILE}"
+  [[ "${DEPLOY_ROOT:-}" == /* ]] || fail
+  [[ "${DEPLOY_USER:-}" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail
+}
+
+if [[ "${1:-}" == "--check" && $# -eq 1 ]]; then
+  load_config
+  [[ -d "${DEPLOY_ROOT}/.git" || -f "${DEPLOY_ROOT}/.git" ]] || fail
+  systemctl cat "${MIGRATION_UNIT}" >/dev/null
+  systemctl cat "${RUNTIME_UNIT}" >/dev/null
+  exit 0
+fi
+
+[[ $# -eq 1 && "$1" =~ ^[0-9a-f]{40}$ ]] || fail
+readonly RELEASE_SHA="$1"
+load_config
+
+if [[ -n "$(runuser -u "${DEPLOY_USER}" -- git -C "${DEPLOY_ROOT}" status --porcelain --untracked-files=all)" ]]; then
+  fail
+fi
+runuser -u "${DEPLOY_USER}" -- git -C "${DEPLOY_ROOT}" fetch origin main
+runuser -u "${DEPLOY_USER}" -- git -C "${DEPLOY_ROOT}" cat-file -e "${RELEASE_SHA}^{commit}"
+runuser -u "${DEPLOY_USER}" -- git -C "${DEPLOY_ROOT}" merge-base --is-ancestor HEAD "${RELEASE_SHA}"
+runuser -u "${DEPLOY_USER}" -- git -C "${DEPLOY_ROOT}" merge --ff-only "${RELEASE_SHA}"
+runuser -u "${DEPLOY_USER}" -- "${DEPLOY_ROOT}/backend/venv/bin/pip" install -q -r "${DEPLOY_ROOT}/backend/requirements.txt"
+
+# Credentials are loaded by the dedicated service identities. They never enter
+# this root wrapper or the SSH deployment process.
+systemctl start --wait "${MIGRATION_UNIT}"
+systemctl restart "${RUNTIME_UNIT}"
+systemctl is-active --quiet "${RUNTIME_UNIT}"
+echo "Production deployment completed for ${RELEASE_SHA}."

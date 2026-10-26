@@ -1,25 +1,14 @@
-name: Deploy → Staging
+name: Deploy → Staging (disabled)
 
 on:
-  push:
-    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  deploy-backend:
+  staging-disabled:
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
-      - name: Configure SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${SERVER_SSH_KEY}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${SERVER_HOST}" >> ~/.ssh/known_hosts
-        env:
-          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-      - name: Deploy staging on DigitalOcean
-        run: |
-          ssh "${SERVER_USER}@${SERVER_HOST}" "cd ~/jaspen-platform && git fetch origin && git pull --ff-only origin develop && source backend/venv/bin/activate && pip install -q -r backend/requirements.txt && cd backend && FLASK_APP=wsgi.py flask db upgrade && sudo systemctl restart gunicorn-jaspen-dev.service"
-        env:
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      - run: echo 'Staging is disabled because it shares production data.'

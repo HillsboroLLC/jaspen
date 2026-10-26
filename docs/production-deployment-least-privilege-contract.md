@@ -1,8 +1,9 @@
 # Production deployment least-privilege contract
 
-Status: future-state security contract. It documents the boundary to implement
-after Phase 1; it does not describe the current host as compliant and does not
-authorize a production change.
+Status: repository safeguards and host-side templates are implemented locally.
+The live host is not claimed compliant, and this document does not authorize a
+production change. `production-security-cutover.md` lists the administrator
+cutover and verification that remain.
 
 ## Identities
 

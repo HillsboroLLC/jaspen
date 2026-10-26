@@ -4,22 +4,76 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: false
+
 jobs:
   deploy-backend:
     runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
     steps:
-      - name: Configure SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${SERVER_SSH_KEY}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${SERVER_HOST}" >> ~/.ssh/known_hosts
+      - name: Deploy approved revision
+        shell: bash
         env:
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-      - name: Deploy on DigitalOcean
-        run: |
-          ssh "${SERVER_USER}@${SERVER_HOST}" "cd ~/sekki-platform && git fetch origin && git pull --ff-only origin main && source backend/venv/bin/activate && pip install -q -r backend/requirements.txt && cd backend && eval export \$(systemctl show gunicorn-sekki.service -p Environment --value) && export PATH=\"\$PATH:/usr/bin:/bin\" && python migrate_production.py && sudo systemctl restart gunicorn-sekki.service"
-        env:
+          SERVER_SSH_KNOWN_HOSTS: ${{ secrets.SERVER_SSH_KNOWN_HOSTS }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          key_path="${RUNNER_TEMP}/jaspen_deploy_key"
+          known_hosts_path="${RUNNER_TEMP}/jaspen_known_hosts"
+          cleanup() {
+            rm -f -- "${key_path}" "${known_hosts_path}"
+          }
+          trap cleanup EXIT
+          umask 077
+          printf '%s\n' "${SERVER_SSH_KEY}" > "${key_path}"
+
+          if [[ -n "${SERVER_SSH_KNOWN_HOSTS:-}" ]]; then
+            printf '%s\n' "${SERVER_SSH_KNOWN_HOSTS}" > "${known_hosts_path}"
+          else
+            echo '::warning::SERVER_SSH_KNOWN_HOSTS is not configured; using compatibility host discovery until the administrator pins the verified public host key.'
+            ssh-keyscan -H "${SERVER_HOST}" > "${known_hosts_path}"
+          fi
+
+          if [[ ! "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'Invalid release revision; deployment stopped.' >&2
+            exit 1
+          fi
+
+          ssh \
+            -i "${key_path}" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${known_hosts_path}" \
+            "${SERVER_USER}@${SERVER_HOST}" \
+            "JASPEN_RELEASE_SHA=${RELEASE_SHA} bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          if [[ -x /usr/local/sbin/jaspen-deploy ]] \
+             && sudo -n /usr/local/sbin/jaspen-deploy --check >/dev/null 2>&1; then
+            exec sudo -n /usr/local/sbin/jaspen-deploy "${JASPEN_RELEASE_SHA}"
+          fi
+
+          # Compatibility path: retained until the administrator installs the
+          # root-owned wrapper and protected runtime/migration environments.
+          cd "${HOME}/sekki-platform"
+          git fetch origin main
+          git merge --ff-only "${JASPEN_RELEASE_SHA}"
+          source backend/venv/bin/activate
+          pip install -q -r backend/requirements.txt
+          cd backend
+          eval export \$(systemctl show gunicorn-sekki.service -p Environment --value)
+          export PATH="${PATH}:/usr/bin:/bin"
+          python migrate_production.py
+          sudo systemctl restart gunicorn-sekki.service
+          REMOTE
