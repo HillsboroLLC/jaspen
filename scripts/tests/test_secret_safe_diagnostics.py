@@ -36,6 +36,19 @@ class SecretSafeDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("replayIntegration", source)
         self.assertNotIn("feedbackIntegration", source)
 
+    def test_dependency_audits_are_visible_but_do_not_block_releases_yet(self):
+        workflow = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        dependabot = (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+
+        self.assertIn("security-audit:", workflow)
+        self.assertIn("continue-on-error: true", workflow)
+        self.assertIn("python -m pip_audit -r backend/requirements.txt", workflow)
+        self.assertIn("npm audit --omit=dev --audit-level=high", workflow)
+        self.assertEqual(dependabot.count("open-pull-requests-limit: 5"), 3)
+        self.assertIn("package-ecosystem: pip", dependabot)
+        self.assertIn("package-ecosystem: npm", dependabot)
+        self.assertIn("package-ecosystem: github-actions", dependabot)
+
 
 if __name__ == "__main__":
     unittest.main()
