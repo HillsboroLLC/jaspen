@@ -67,6 +67,25 @@ def test_current_workflow_preserves_fail_closed_deployment_order():
     assert "set -euo pipefail" in workflow
 
 
+def test_compatibility_remote_script_is_valid_bash():
+    workflow = workflow_text()
+    marker = "<<'REMOTE'\n"
+    remote_script = workflow.split(marker, maxsplit=1)[1].split("\n          REMOTE", maxsplit=1)[0]
+    remote_script = "\n".join(
+        line.removeprefix("          ") for line in remote_script.splitlines()
+    )
+
+    result = subprocess.run(
+        ["bash", "-n"],
+        input=remote_script,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_current_workflow_protects_and_removes_temporary_ssh_files():
     workflow = workflow_text()
     assert "umask 077" in workflow

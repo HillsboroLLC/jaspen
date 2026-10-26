@@ -72,7 +72,7 @@ jobs:
           source backend/venv/bin/activate
           pip install -q -r backend/requirements.txt
           cd backend
-          eval export \$(systemctl show gunicorn-sekki.service -p Environment --value)
+          eval export $(systemctl show gunicorn-sekki.service -p Environment --value)
           export PATH="${PATH}:/usr/bin:/bin"
           python migrate_production.py
           sudo systemctl restart gunicorn-sekki.service
