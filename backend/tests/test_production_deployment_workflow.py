@@ -290,14 +290,23 @@ def test_runtime_customer_data_is_ignored_but_not_tracked_or_committed():
     )
     assert tracked_ignored.stdout == ""
 
-    branch_changes = subprocess.run(
-        ["git", "diff", "--name-only", "origin/main..HEAD", "--", *RUNTIME_DATA_PATHS],
+    # CI checks out only the pushed branch, so origin/main is absent on a
+    # develop push; the tracked-file checks above already cover that case.
+    has_main = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", "origin/main"],
         cwd=REPO_ROOT,
-        check=True,
         capture_output=True,
         text=True,
-    )
-    assert branch_changes.stdout == ""
+    ).returncode == 0
+    if has_main:
+        branch_changes = subprocess.run(
+            ["git", "diff", "--name-only", "origin/main..HEAD", "--", *RUNTIME_DATA_PATHS],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert branch_changes.stdout == ""
 
 
 def test_deployment_artifacts_never_remove_runtime_customer_data():
