@@ -25,6 +25,13 @@ class SecretScannerTests(unittest.TestCase):
         )
         self.assertEqual(scan_secrets.scan_text("backend/.env.example", text), [])
 
+    def test_detects_unquoted_generic_secret_in_environment_file(self):
+        value = "production-credential-value-123456"
+        findings = scan_secrets.scan_text("backend/.env.production", f"JWT_SECRET_KEY={value}")
+
+        self.assertTrue(any(item.rule == "hardcoded-secret-assignment" for item in findings))
+        self.assertTrue(all(value not in item.safe_summary() for item in findings))
+
     def test_main_never_prints_detected_value(self):
         secret = "ghp_" + "Z" * 36
         finding = scan_secrets.Finding("unsafe.txt", 7, "github-token")

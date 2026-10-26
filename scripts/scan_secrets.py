@@ -57,6 +57,9 @@ CONTENT_RULES = (
     ("stripe-webhook-secret", re.compile(_joined(r"\bwhsec_", r"[A-Za-z0-9]{16,}\b"))),
     ("slack-token", re.compile(_joined(r"\bxox[baprs]-", r"[A-Za-z0-9-]{16,}\b"))),
     ("google-api-key", re.compile(_joined(r"\bAIza", r"[A-Za-z0-9_-]{30,}\b"))),
+    ("google-oauth-secret", re.compile(_joined(r"\bGOCSPX-", r"[A-Za-z0-9_-]{16,}\b"))),
+    ("digitalocean-token", re.compile(_joined(r"\bdop_v1_", r"[A-Fa-f0-9]{32,}\b"))),
+    ("sendgrid-api-key", re.compile(_joined(r"\bSG\.", r"[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b"))),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\b")),
     (
         "credentialed-url",
@@ -68,6 +71,11 @@ GENERIC_QUOTED_ASSIGNMENT = re.compile(
     r"\b(?:[A-Z0-9_]*(?:API_KEY|CLIENT_SECRET|SECRET_KEY|PASSWORD|PASSWD|PRIVATE_KEY|ACCESS_TOKEN|REFRESH_TOKEN|DATABASE_URL))\b"
     r"\s*(?:=|:)\s*([\"'])([^\r\n\"']{8,})\1"
 )
+GENERIC_UNQUOTED_ASSIGNMENT = re.compile(
+    r"\b(?:[A-Z0-9_]*(?:API_KEY|CLIENT_SECRET|SECRET_KEY|PASSWORD|PASSWD|PRIVATE_KEY|ACCESS_TOKEN|REFRESH_TOKEN|DATABASE_URL))\b"
+    r"\s*(?:=|:)\s*([^\s,;#]{8,})"
+)
+CONFIG_SUFFIXES = {".conf", ".config", ".ini", ".json", ".properties", ".toml", ".yaml", ".yml"}
 
 PLACEHOLDER_MARKERS = (
     "${{",
@@ -78,6 +86,7 @@ PLACEHOLDER_MARKERS = (
     "example",
     "placeholder",
     "changeme",
+    "change-me",
     "replace_me",
     "replace-with",
     "not_used",
@@ -87,6 +96,7 @@ PLACEHOLDER_MARKERS = (
     "test-only",
     "dev-",
     "local-",
+    "sqlite:",
     "validpass",
     "redacted",
     "your_",
@@ -118,7 +128,27 @@ def scan_text(path: str, text: str) -> list[Finding]:
                 findings.append(Finding(normalized_path, line_number, rule))
         generic = GENERIC_QUOTED_ASSIGNMENT.search(line)
         is_test_fixture = "/tests/" in f"/{normalized_path}" and "test" in generic.group(2).lower() if generic else False
-        if generic and not is_test_fixture and not _looks_like_placeholder(generic.group(2)):
+        is_metadata_default = (
+            generic
+            and normalized_path in ALLOWED_SECRET_METADATA_FILES
+            and (
+                generic.group(2).lower().startswith(("dev", "test", "local"))
+                or any(marker in generic.group(2).lower() for marker in ("change", "replace", "placeholder", "dummy"))
+            )
+        )
+        if generic and not is_test_fixture and not is_metadata_default and not _looks_like_placeholder(generic.group(2)):
+            findings.append(Finding(normalized_path, line_number, "hardcoded-secret-assignment"))
+        is_config = Path(normalized_path).suffix.lower() in CONFIG_SUFFIXES or Path(normalized_path).name.startswith(".env")
+        unquoted = GENERIC_UNQUOTED_ASSIGNMENT.search(line) if is_config else None
+        metadata_default = (
+            unquoted
+            and normalized_path in ALLOWED_SECRET_METADATA_FILES
+            and (
+                unquoted.group(1).lstrip("\"'").lower().startswith(("dev", "test", "local"))
+                or any(marker in unquoted.group(1).lower() for marker in ("change", "replace", "placeholder", "dummy"))
+            )
+        )
+        if unquoted and not metadata_default and not _looks_like_placeholder(unquoted.group(1)):
             findings.append(Finding(normalized_path, line_number, "hardcoded-secret-assignment"))
     return findings
 
