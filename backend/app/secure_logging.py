@@ -47,12 +47,18 @@ TEXT_PATTERNS = (
     ),
     re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----.*?-----END (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----", re.DOTALL),
 )
+SHARE_URL_PATTERN = re.compile(
+    r"(?P<prefix>/(?:s|api/v1/shares/(?:public|manage))/)[^/?#\s]+",
+    re.IGNORECASE,
+)
+SENTRY_ALLOWED_REQUEST_HEADERS = {"content-type", "user-agent"}
 
 
 def redact_text(value: Any, *, environ: Mapping[str, str] | None = None) -> str:
     """Return safe text without ever emitting configured credential values."""
 
     text = str(value)
+    text = SHARE_URL_PATTERN.sub(rf"\g<prefix>{REDACTED}", text)
     source = os.environ if environ is None else environ
     for name in SECRET_ENV_NAMES:
         secret = str(source.get(name) or "")
@@ -87,10 +93,44 @@ def sanitize_structure(value: Any, *, environ: Mapping[str, str] | None = None) 
 
 
 def sanitize_sentry_event(event: dict[str, Any], hint: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Sentry ``before_send`` hook; ``hint`` is accepted by the SDK contract."""
+    """Strip customer content while preserving error type and stack location."""
 
     del hint
-    return sanitize_structure(event)
+    sanitized = sanitize_structure(event)
+
+    request = sanitized.get("request")
+    if isinstance(request, Mapping):
+        headers = request.get("headers") if isinstance(request.get("headers"), Mapping) else {}
+        safe_headers = {
+            key: value
+            for key, value in headers.items()
+            if str(key).lower() in SENTRY_ALLOWED_REQUEST_HEADERS
+        }
+        sanitized["request"] = {
+            key: value
+            for key, value in request.items()
+            if key in {"method", "url"}
+        }
+        if safe_headers:
+            sanitized["request"]["headers"] = safe_headers
+
+    user = sanitized.get("user")
+    if isinstance(user, Mapping):
+        sanitized["user"] = {"id": user["id"]} if user.get("id") is not None else {}
+
+    exception = sanitized.get("exception")
+    if isinstance(exception, Mapping) and isinstance(exception.get("values"), list):
+        for item in exception["values"]:
+            if isinstance(item, dict) and "value" in item:
+                item["value"] = "Exception details suppressed"
+
+    logentry = sanitized.get("logentry")
+    if isinstance(logentry, Mapping):
+        sanitized["logentry"] = {"message": "Application error captured"}
+
+    sanitized.pop("extra", None)
+    sanitized.pop("breadcrumbs", None)
+    return sanitized
 
 
 class SecretRedactingJsonFormatter(jsonlogger.JsonFormatter):

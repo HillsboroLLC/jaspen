@@ -135,6 +135,8 @@ def _setup_sentry(app):
         release=os.getenv('SENTRY_RELEASE') or None,
         traces_sample_rate=traces_sample_rate,
         send_default_pii=False,
+        max_request_body_size="never",
+        include_local_variables=False,
         before_send=sanitize_sentry_event,
     )
     app.logger.info('Sentry initialized')

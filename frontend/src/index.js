@@ -9,6 +9,7 @@ import './styles/tokens.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { AuthProvider } from './shared/auth/AuthContext'; // keep auth here only
+import { scrubSentryBreadcrumb, scrubSentryEvent } from './sentryPrivacy';
 import './overrides.css';
 
 const sentryDsn = process.env.REACT_APP_SENTRY_DSN || '';
@@ -23,6 +24,8 @@ if (sentryDsn) {
       undefined,
     tracesSampleRate: Number.isFinite(tracesSampleRate) ? tracesSampleRate : 0,
     sendDefaultPii: false,
+    beforeSend: scrubSentryEvent,
+    beforeBreadcrumb: scrubSentryBreadcrumb,
   });
 }
 
@@ -37,7 +40,7 @@ window.addEventListener('unhandledrejection', (event) => {
     Sentry.captureException(reason instanceof Error ? reason : new Error(String(reason)));
   } else {
     // eslint-disable-next-line no-console
-    console.error('[unhandledrejection]', reason);
+    console.error('[unhandledrejection] Details suppressed.', reason?.name || 'Error');
   }
 });
 

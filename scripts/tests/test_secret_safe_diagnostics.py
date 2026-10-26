@@ -28,6 +28,14 @@ class SecretSafeDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("pass it inline", promotion)
         self.assertNotIn('target.split("@")', promotion)
 
+    def test_frontend_sentry_always_uses_privacy_hooks_without_replay(self):
+        source = (REPO_ROOT / "frontend" / "src" / "index.js").read_text(encoding="utf-8")
+
+        self.assertIn("beforeSend: scrubSentryEvent", source)
+        self.assertIn("beforeBreadcrumb: scrubSentryBreadcrumb", source)
+        self.assertNotIn("replayIntegration", source)
+        self.assertNotIn("feedbackIntegration", source)
+
 
 if __name__ == "__main__":
     unittest.main()
