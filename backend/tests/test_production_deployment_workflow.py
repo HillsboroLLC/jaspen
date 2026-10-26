@@ -104,7 +104,7 @@ def test_workflow_prefers_the_bounded_wrapper_and_validates_exact_revision():
 def test_wrapper_never_reads_or_prints_credentials():
     wrapper = (REPO_ROOT / "deploy" / "production" / "jaspen-deploy").read_text(encoding="utf-8")
 
-    assert "systemctl show" not in wrapper
+    assert "--property=Environment" not in wrapper
     assert "printenv" not in wrapper
     assert "EnvironmentFile" not in wrapper
     assert '"$1" =~ ^[0-9a-f]{40}$' in wrapper
@@ -129,7 +129,24 @@ def test_wrapper_check_validates_cutover_permissions_without_reading_values():
     assert 'check_protected_environment_file "${MIGRATION_ENV_FILE}" "${MIGRATION_USER}"' in wrapper
     assert 'systemctl cat "${MIGRATION_UNIT}"' in wrapper
     assert 'systemctl cat "${RUNTIME_UNIT}"' in wrapper
+    assert 'systemctl show "${RUNTIME_UNIT}" --property=WorkingDirectory --value' in wrapper
+    assert '== "${DEPLOY_ROOT}/backend"' in wrapper
+    assert wrapper.count("systemctl show") == 1
     assert "read_text" not in wrapper
+
+
+def test_cutover_verifies_identity_switch_before_ssh_lockdown_without_reading_environment():
+    cutover = (REPO_ROOT / "docs" / "production-security-cutover.md").read_text(encoding="utf-8")
+    verification = cutover[cutover.index("## Fail-closed verification") : cutover.index("## Rollback")]
+
+    assert "systemctl show" not in cutover
+    assert "/usr/local/sbin/jaspen-env-check" in verification
+    assert "prints `PASS`" in verification
+
+    env_check = cutover.index("Run `/usr/local/sbin/jaspen-env-check`")
+    functional_check = cutover.index("a chat file upload")
+    ssh_lockdown = cutover.index("Only after every identity-switch and functional check passes")
+    assert env_check < functional_check < ssh_lockdown
 
 
 def test_migration_unit_has_a_dedicated_identity_and_hardening():

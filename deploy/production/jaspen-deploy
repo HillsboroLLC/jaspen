@@ -67,6 +67,7 @@ if [[ "${1:-}" == "--check" && $# -eq 1 ]]; then
   check_protected_environment_file "${MIGRATION_ENV_FILE}" "${MIGRATION_USER}"
   systemctl cat "${MIGRATION_UNIT}" >/dev/null
   systemctl cat "${RUNTIME_UNIT}" >/dev/null
+  [[ "$(systemctl show "${RUNTIME_UNIT}" --property=WorkingDirectory --value)" == "${DEPLOY_ROOT}/backend" ]] || fail
   exit 0
 fi
 

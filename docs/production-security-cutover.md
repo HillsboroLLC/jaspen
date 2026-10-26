@@ -29,12 +29,14 @@ available through a compatibility path until every cutover check below passes.
 5. Create `/etc/jaspen/runtime.env` as `root:jaspen-app` mode `0640` and
    `/etc/jaspen/migration.env` as `root:jaspen-migrate` mode `0640`. Preserve the
    currently required application variable names without printing values. The
-   runtime file references only the runtime database credential. The migration
-   file references only the separate migration credential and supplies
+   runtime file sets `JASPEN_DATABASE_URL_FILE` to reference only the runtime
+   database credential. The migration file sets
+   `JASPEN_MIGRATION_DATABASE_URL_FILE` to reference only the separate migration
+   credential and supplies
    `JASPEN_APP_DB_ROLE`, `JASPEN_APP_DB_HOST`, `JASPEN_APP_DB_PORT`, and
    `JASPEN_APP_DB_NAME` as non-secret target metadata. Database URL credential
    files themselves are mode `0600` and owned by the service identity that reads
-   each one.
+   each one. The migration database URL must include an explicit port.
 6. Preserve the existing customer files before changing ownership. Set
    `DEPLOY_ROOT` to the exact absolute value in `/etc/jaspen/deploy.conf`; do not
    use an unresolved variable or glob. Use this fixed order for the four paths:
@@ -107,8 +109,17 @@ available through a compatibility path until every cutover check below passes.
    `/etc/systemd/system`. Validate both with `systemd-analyze verify`, then run
    `systemctl daemon-reload`. Run `/usr/local/sbin/jaspen-env-check`; proceed
    only when it prints `PASS`. It compares secret names and protected-file
-   values in memory and never reports values, fragments, or hashes.
-8. Restrict the GitHub deployment public key in the deployment identity's
+   values in memory and never reports values, fragments, or hashes. Confirm the
+   base unit's `WorkingDirectory` is the exact `${DEPLOY_ROOT}/backend` path;
+   the wrapper fails closed otherwise. Run
+   `/usr/local/sbin/jaspen-deploy --check` as root. In a quiet window, run
+   `systemctl restart gunicorn-sekki.service`, followed by
+   `systemctl is-active --quiet gunicorn-sekki.service`. Then verify in the
+   application, as an administrator: the health endpoint, a chat file upload,
+   a report PDF export, saving a connector setting, and a Jira sync status
+   update. If any check fails, use the Rollback section immediately.
+8. Only after every identity-switch and functional check passes, restrict the
+   GitHub deployment public key in the deployment identity's
    `authorized_keys` with `restrict,command="/usr/local/sbin/jaspen-ssh-dispatch"`.
    This makes every SSH command except a validated release SHA fail closed.
    Validate the sudoers file with `visudo -cf` before installing it root-owned,
@@ -131,8 +142,8 @@ available through a compatibility path until every cutover check below passes.
   terminal, or invoke any command other than the fixed deployment wrapper.
 - The runtime identity cannot read the migration environment.
 - The migration identity cannot log in or control services.
-- `systemctl show gunicorn-sekki.service -p Environment` exposes no secret
-  values because secrets come from the protected `EnvironmentFile`.
+- `/usr/local/sbin/jaspen-env-check` prints `PASS` (it never prints values,
+  fragments, or hashes).
 
 ## Rollback
 
