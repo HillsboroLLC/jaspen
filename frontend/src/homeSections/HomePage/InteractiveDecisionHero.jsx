@@ -360,11 +360,10 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
               page listing what it accepts. The moment, before you commit, is
               what they have in common and is where the urgency comes from. */}
           <p className="idh-eyebrow">Decision confidence</p>
-          <h1>How much of your direction is backed by evidence?</h1>
+          <h1>How strong is your idea?</h1>
           <p className="idh-subcopy">
-            Jaspen separates what is evidenced from what is assumed, shows where you
-            are exposed, and names the assumptions that could change the answer,
-            before you commit.
+            Get a strength report that shows what&apos;s backed by evidence, where the
+            gaps are, and what would make it stronger before you commit.
           </p>
         </div>
 
@@ -422,7 +421,7 @@ export default function InteractiveDecisionHero({ onOpenModal, onContextChange }
                 value={draftText}
                 onChange={handleTextChange}
                 placeholder={!hasStarted
-                  ? 'Paste the plan, proposal, or options you are about to commit to. Notes and emails work too.'
+                  ? 'Paste your idea, plan, or proposal…'
                   : 'Type your reply...'}
                 rows={hasStarted ? 2 : 3}
                 disabled={handoffRequired}
