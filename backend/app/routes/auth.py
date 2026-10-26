@@ -1,6 +1,8 @@
 from urllib.parse import urlencode, urlparse, parse_qs
 from datetime import datetime, timedelta, timezone
 import base64
+import hashlib
+import hmac
 import io
 import os
 import re
@@ -37,7 +39,15 @@ from app.admin_audit import append_user_audit_event
 from app.admin_policy import is_global_admin
 from app.decision_profile_service import link_latest_public_decision_profile_for_user
 from app.founder_entitlements import has_limited_time_300k_entitlement
-from app.models import Organization, User, UserAuthSession
+from app.models import (
+    Organization,
+    OrganizationInvitation,
+    OrganizationMember,
+    SsoIdentity,
+    SsoLoginState,
+    User,
+    UserAuthSession,
+)
 from app.billing_config import (
     apply_plan_to_user,
     bootstrap_legacy_credits,
@@ -52,7 +62,9 @@ from app.orgs import (
     mfa_policy_for_org,
     resolve_active_org_for_user,
     organization_access_payload_for_user,
+    role_has_capacity,
 )
+from app.sso_provider import SsoProviderError, get_sso_client
 
 
 auth_bp = Blueprint('auth', __name__)
@@ -60,6 +72,7 @@ GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
 GOOGLE_MFA_PENDING_COOKIE = 'jaspen_mfa_pending'
+SSO_STATE_COOKIE = 'jaspen_sso_state'
 MAX_FAILED_ATTEMPTS = 10
 LOCKOUT_DURATION_MINUTES = 15
 MFA_ROLLOUT_ENFORCE_UTC = datetime(2026, 12, 16, 0, 0, 0, tzinfo=timezone.utc)
@@ -256,6 +269,14 @@ def _register_auth_session(user, token, active_org=None):
     existing = UserAuthSession.query.filter_by(token_jti=jti).first()
     row = existing or UserAuthSession(user_id=str(user.id), token_jti=jti)
     row.organization_id = str(active_org.id) if active_org else (str(user.active_organization_id) if user.active_organization_id else None)
+    row.auth_method = str(decoded.get('auth_method') or 'password')[:32]
+    row.sso_organization_id = str(decoded.get('sso_org') or '')[:36] or None
+    auth_time = decoded.get('auth_time')
+    row.authenticated_at = (
+        datetime.fromtimestamp(int(auth_time), tz=timezone.utc).replace(tzinfo=None)
+        if auth_time else _utc_now().replace(tzinfo=None)
+    )
+    row.last_activity_at = _utc_now().replace(tzinfo=None)
     row.issued_at = _utc_now().replace(tzinfo=None)
     row.expires_at = expires_at
     row.revoked_at = None
@@ -263,6 +284,14 @@ def _register_auth_session(user, token, active_org=None):
     row.user_agent = (request.headers.get('User-Agent') or '')[:512] or None
     db.session.add(row)
     return True
+
+
+def _claims_after_mfa(decoded):
+    claims = {}
+    for key in ('auth_method', 'sso_org', 'auth_time'):
+        if decoded.get(key) is not None:
+            claims[key] = decoded[key]
+    return claims
 
 
 def _revoke_auth_session_by_jti(user_id, jti):
@@ -1450,8 +1479,9 @@ def mfa_challenge():
             user.mfa_enabled = True
             user.mfa_secret = _encrypt_mfa_secret(secret)
             db.session.commit()
-        access_token = _create_user_access_token(user)
-        session_changed = _register_auth_session(user, access_token)
+        access_token = _create_user_access_token(user, additional_claims=_claims_after_mfa(decoded))
+        sso_org = Organization.query.get(decoded.get('sso_org')) if decoded.get('sso_org') else None
+        session_changed = _register_auth_session(user, access_token, active_org=sso_org)
         try:
             token_jti = str(decode_token(access_token).get('jti') or '').strip()
         except Exception:
@@ -1475,8 +1505,9 @@ def mfa_challenge():
                 user.mfa_enabled = True
                 user.mfa_secret = _encrypt_mfa_secret(secret)
                 db.session.commit()
-            access_token = _create_user_access_token(user)
-            session_changed = _register_auth_session(user, access_token)
+            access_token = _create_user_access_token(user, additional_claims=_claims_after_mfa(decoded))
+            sso_org = Organization.query.get(decoded.get('sso_org')) if decoded.get('sso_org') else None
+            session_changed = _register_auth_session(user, access_token, active_org=sso_org)
             try:
                 token_jti = str(decode_token(access_token).get('jti') or '').strip()
             except Exception:
@@ -1599,6 +1630,224 @@ def resend_verification():
         return jsonify(message='We could not send the verification email right now. Please try again shortly.'), 500
 
     return jsonify(message='Verification email sent.'), 200
+
+
+def _sso_state_hash(value):
+    return hashlib.sha256(str(value or '').encode('utf-8')).hexdigest()
+
+
+def _clear_sso_state_cookie(resp):
+    resp.delete_cookie(
+        SSO_STATE_COOKIE,
+        path='/api/v1/auth/sso',
+        domain=current_app.config.get('JWT_COOKIE_DOMAIN') or None,
+    )
+    return resp
+
+
+def _sso_unavailable():
+    return jsonify(code='sso_not_available', message='SSO is not available.'), 404
+
+
+@auth_bp.route('/sso/status', methods=['GET'])
+def sso_status():
+    return jsonify(enabled=bool(current_app.config.get('SSO_ENABLED'))), 200
+
+
+@auth_bp.route('/sso/start', methods=['POST'])
+@limiter.limit("10 per minute")
+def sso_start():
+    if not current_app.config.get('SSO_ENABLED'):
+        return _sso_unavailable()
+    data = request.get_json(silent=True) or {}
+    organization_id = str(data.get('organization_id') or '').strip()
+    org = Organization.query.get(organization_id) if organization_id else None
+    if (
+        not org
+        or org.plan_key != 'enterprise_custom'
+        or org.sso_status != 'active'
+        or not org.workos_organization_id
+    ):
+        return _sso_unavailable()
+    try:
+        client = get_sso_client()
+    except SsoProviderError:
+        current_app.logger.warning('SSO start requested without provider configuration')
+        return jsonify(code='sso_not_configured', message='SSO is not configured.'), 503
+
+    state = secrets.token_urlsafe(32)
+    ttl = max(60, int(current_app.config.get('SSO_STATE_TTL_SECONDS') or 600))
+    row = SsoLoginState(
+        state_hash=_sso_state_hash(state),
+        organization_id=org.id,
+        next_path=_safe_next_path(data.get('next') or '/new'),
+        expires_at=datetime.utcnow() + timedelta(seconds=ttl),
+    )
+    db.session.add(row)
+    db.session.commit()
+    resp = jsonify(authorization_url=client.authorization_url(
+        organization_id=org.workos_organization_id,
+        state=state,
+    ))
+    resp.set_cookie(
+        SSO_STATE_COOKIE,
+        state,
+        max_age=ttl,
+        httponly=True,
+        secure=bool(current_app.config.get('JWT_COOKIE_SECURE')),
+        samesite=current_app.config.get('JWT_COOKIE_SAMESITE') or 'Lax',
+        domain=current_app.config.get('JWT_COOKIE_DOMAIN') or None,
+        path='/api/v1/auth/sso',
+    )
+    return resp, 200
+
+
+def _sso_user_and_membership(org, profile):
+    provider_identity_id = str(profile.get('id') or '').strip()
+    connection_id = str(profile.get('connection_id') or '').strip()
+    email = str(profile.get('email') or '').strip().lower()
+    if not provider_identity_id or not connection_id or not email:
+        raise SsoProviderError('SSO profile is incomplete')
+
+    identity = SsoIdentity.query.filter_by(
+        organization_id=org.id,
+        provider='workos',
+        provider_identity_id=provider_identity_id,
+    ).first()
+    user = User.query.get(identity.user_id) if identity else User.query.filter_by(email=email).first()
+    membership = (
+        OrganizationMember.query.filter_by(
+            organization_id=org.id,
+            user_id=user.id,
+            status='active',
+        ).first()
+        if user else None
+    )
+    invite = OrganizationInvitation.query.filter_by(
+        organization_id=org.id,
+        email=email,
+        status='pending',
+    ).first()
+    if invite and invite.expires_at and invite.expires_at < datetime.utcnow():
+        invite.status = 'expired'
+        invite = None
+    if not membership and not invite:
+        raise PermissionError('An active membership or invitation is required')
+
+    if not user:
+        display_name = str(profile.get('first_name') or profile.get('name') or '').strip() or email.split('@')[0]
+        user = User(
+            name=display_name,
+            email=email,
+            password_hash=generate_password_hash(secrets.token_urlsafe(32)),
+            seat_limit=1,
+            max_seats=1,
+            email_verified=True,
+            email_verified_at=datetime.utcnow(),
+            access_approval_status=APPROVAL_APPROVED,
+            access_approved_at=datetime.utcnow(),
+        )
+        apply_plan_to_user(user, 'free', current_app.config, reset_credits=True)
+        db.session.add(user)
+        db.session.flush()
+
+    if not membership:
+        if not role_has_capacity(org, 'viewer'):
+            raise PermissionError('No SSO seats are available')
+        membership = OrganizationMember(
+            organization_id=org.id,
+            user_id=user.id,
+            role='viewer',
+            status='active',
+            invited_by_user_id=invite.invited_by_user_id,
+            joined_at=datetime.utcnow(),
+            last_active_at=datetime.utcnow(),
+        )
+        db.session.add(membership)
+        invite.status = 'accepted'
+        invite.accepted_at = datetime.utcnow()
+        invite.accepted_by_user_id = user.id
+
+    if identity and str(identity.user_id) != str(user.id):
+        raise PermissionError('SSO identity is already linked')
+    if not identity:
+        identity = SsoIdentity(
+            user_id=user.id,
+            organization_id=org.id,
+            provider='workos',
+            provider_identity_id=provider_identity_id,
+            connection_id=connection_id,
+        )
+        db.session.add(identity)
+    identity.connection_id = connection_id
+    identity.last_login_at = datetime.utcnow()
+    user.active_organization_id = org.id
+    return user
+
+
+@auth_bp.route('/sso/callback', methods=['GET'])
+@limiter.limit("20 per minute")
+def sso_callback():
+    if not current_app.config.get('SSO_ENABLED'):
+        return _sso_unavailable()
+    state = str(request.args.get('state') or '').strip()
+    cookie_state = str(request.cookies.get(SSO_STATE_COOKIE) or '').strip()
+    if not state or not cookie_state or not hmac.compare_digest(state, cookie_state):
+        return _clear_sso_state_cookie(redirect(_frontend_login_error_url('sso_invalid_state'), code=302))
+    state_row = SsoLoginState.query.filter_by(state_hash=_sso_state_hash(state)).first()
+    if not state_row or state_row.used_at or state_row.expires_at < datetime.utcnow():
+        return _clear_sso_state_cookie(redirect(_frontend_login_error_url('sso_invalid_state'), code=302))
+    state_row.used_at = datetime.utcnow()
+    db.session.commit()
+    org = Organization.query.get(state_row.organization_id)
+    if not org or org.sso_status != 'active' or not org.workos_organization_id:
+        return _clear_sso_state_cookie(redirect(_frontend_login_error_url('sso_not_available'), code=302))
+    try:
+        profile = get_sso_client().authenticate(code=str(request.args.get('code') or '').strip())
+        if str(profile.get('organization_id') or '') != str(org.workos_organization_id):
+            raise PermissionError('SSO organization mismatch')
+        user = _sso_user_and_membership(org, profile)
+    except PermissionError:
+        db.session.rollback()
+        return _clear_sso_state_cookie(redirect(_frontend_login_error_url('sso_access_denied'), code=302))
+    except SsoProviderError:
+        db.session.rollback()
+        current_app.logger.warning('SSO provider callback failed')
+        return _clear_sso_state_cookie(redirect(_frontend_login_error_url('sso_failed'), code=302))
+    except Exception:
+        db.session.rollback()
+        current_app.logger.warning('SSO callback failed', exc_info=True)
+        return _clear_sso_state_cookie(redirect(_frontend_login_error_url('sso_failed'), code=302))
+
+    auth_time = int(time.time())
+    claims = {'auth_method': 'sso', 'sso_org': str(org.id), 'auth_time': auth_time}
+    if not org.sso_mfa_attested_at:
+        pending_token = _create_user_access_token(
+            user,
+            expires_delta=timedelta(minutes=5),
+            additional_claims={**claims, 'mfa_pending': True},
+        )
+        db.session.commit()
+        callback_url = _frontend_callback_url(state_row.next_path)
+        separator = '&' if '?' in callback_url else '?'
+        resp = redirect(f'{callback_url}{separator}mfa=1', code=302)
+        resp.set_cookie(
+            GOOGLE_MFA_PENDING_COOKIE, pending_token,
+            max_age=300, httponly=True,
+            secure=bool(current_app.config.get('JWT_COOKIE_SECURE')),
+            samesite=current_app.config.get('JWT_COOKIE_SAMESITE') or 'Lax',
+            domain=current_app.config.get('JWT_COOKIE_DOMAIN') or None,
+            path='/api/v1/auth/mfa',
+        )
+        return _clear_sso_state_cookie(resp)
+
+    token = _create_user_access_token(user, additional_claims=claims)
+    _register_auth_session(user, token, active_org=org)
+    db.session.commit()
+    _audit_auth_event('auth.login.succeeded', actor=user, target_user=user, details={'method': 'sso', 'organization_id': org.id})
+    return _clear_sso_state_cookie(_attach_auth_cookie(
+        redirect(_frontend_callback_url(state_row.next_path), code=302), token,
+    ))
 
 
 @auth_bp.route('/google/start', methods=['GET'])
@@ -2031,6 +2280,14 @@ def refresh_access_token():
         if token_version != current_token_version:
             return jsonify(error='Session no longer valid'), 401
 
+        auth_method = str(claims.get('auth_method') or 'password')
+        if auth_method == 'sso':
+            auth_time = int(claims.get('auth_time') or 0)
+            recheck_seconds = max(1, int(current_app.config.get('SSO_RECHECK_HOURS') or 8)) * 3600
+            if auth_time <= 0 or now_epoch >= auth_time + recheck_seconds:
+                return jsonify(code='sso_reauthentication_required', error='SSO sign-in must be verified again'), 401
+
+        auth_session = None
         if not bool(claims.get('mfa_pending')):
             jti = str(claims.get('jti') or '').strip()
             if jti:
@@ -2041,10 +2298,26 @@ def refresh_access_token():
                 )
                 if auth_session and auth_session.revoked_at is not None:
                     return jsonify(error='Session no longer valid'), 401
+                if auth_method == 'sso' and auth_session:
+                    idle_hours = max(1, int(current_app.config.get('SSO_IDLE_HOURS') or 12))
+                    last_activity = auth_session.last_activity_at or auth_session.issued_at
+                    if last_activity and last_activity < datetime.utcnow() - timedelta(hours=idle_hours):
+                        return jsonify(code='sso_session_idle', error='SSO session expired'), 401
 
         # Issue a fresh token with the same version — no session re-registration needed
         # since we're extending an already-authenticated session.
-        new_token = _create_user_access_token(user)
+        preserved_claims = {
+            key: claims[key]
+            for key in ('auth_method', 'sso_org', 'auth_time')
+            if claims.get(key) is not None
+        }
+        new_token = _create_user_access_token(user, additional_claims=preserved_claims)
+        if auth_method == 'sso':
+            active_org = Organization.query.get(claims.get('sso_org'))
+            _register_auth_session(user, new_token, active_org=active_org)
+            if auth_session:
+                auth_session.last_activity_at = datetime.utcnow()
+            db.session.commit()
         resp = jsonify(message='Token refreshed', user_id=str(user.id))
         _attach_auth_cookie(resp, new_token)
         return resp, 200

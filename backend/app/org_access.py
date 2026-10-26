@@ -29,6 +29,7 @@ import time
 from datetime import datetime, timedelta
 
 from flask import has_app_context, has_request_context, request
+from flask_jwt_extended import get_jwt
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +100,95 @@ def is_member(organization_id, user_id):
     return str(organization_id) in active_org_ids(user_id)
 
 
+def _request_claims():
+    """The signed-in user's token claims, or {} outside a user session.
+
+    Background jobs, webhooks and CLI tasks have no user session. They were
+    started by an already-authorized request or act for the system, so the
+    per-session SSO boundary does not apply to them.
+    """
+    if not has_request_context():
+        return {}
+    try:
+        return get_jwt() or {}
+    except Exception:
+        return {}
+
+
+def _sessions_revoked(org, claims):
+    revoked_at = getattr(org, 'sso_sessions_revoked_at', None)
+    if not revoked_at:
+        return False
+    issued = claims.get('auth_time') or claims.get('iat')
+    try:
+        issued_at = datetime.utcfromtimestamp(int(issued))
+    except (TypeError, ValueError):
+        return True
+    return issued_at < revoked_at
+
+
+def sso_allows(organization_id):
+    """Apply an explicitly activated org's SSO boundary to this request.
+
+    Orgs that have not turned enforcement on are unaffected. For an enforcing
+    org, only a session issued by that org's SSO sign-in reaches its data
+    (or any session during the configured grace window), and sessions issued
+    before an admin's "sign everyone out" are refused.
+    """
+    from app.models import Organization
+
+    org = Organization.query.get(str(organization_id))
+    if not org:
+        return True
+    enforced = bool(getattr(org, 'sso_enforced', False))
+    if not enforced and not getattr(org, 'sso_sessions_revoked_at', None):
+        return True
+    claims = _request_claims()
+    if not claims:
+        return True
+    # "Sign everyone out" applies whether or not enforcement is on.
+    if _sessions_revoked(org, claims):
+        return False
+    if not enforced:
+        return True
+    if (
+        str(claims.get('auth_method') or '') == 'sso'
+        and str(claims.get('sso_org') or '') == str(organization_id)
+    ):
+        return True
+    grace_until = getattr(org, 'sso_grace_until', None)
+    return bool(grace_until and grace_until >= datetime.utcnow())
+
+
+def sso_recovery_permitted(org, user):
+    """Break-glass access to an enforcing org's SSO settings only.
+
+    The designated recovery admin, signed in without SSO and protected by
+    Jaspen two-factor, may manage SSO settings (for example to switch
+    enforcement off during an identity-provider outage). It never grants
+    access to the org's projects or records; every use is recorded.
+    """
+    if org is None or user is None:
+        return False
+    if str(getattr(org, 'sso_recovery_admin_user_id', '') or '') != str(user.id):
+        return False
+    if not bool(getattr(user, 'mfa_enabled', False)):
+        return False
+    claims = _request_claims()
+    if claims and _sessions_revoked(org, claims):
+        return False
+    record(
+        mode=MODE_ENFORCE,
+        path='sso_recovery',
+        resource_type='organization',
+        resource_id=org.id,
+        organization_id=org.id,
+        user_id=user.id,
+        reason='sso_recovery_access',
+    )
+    return True
+
+
 def allow(organization_id, user_id, *, path, resource_type, resource_id=None):
     """True when attributed access to organization work may proceed.
 
@@ -107,8 +197,21 @@ def allow(organization_id, user_id, *, path, resource_type, resource_id=None):
     pass; members pass; everyone else is refused in enforce mode and recorded
     in report mode.
     """
-    if not organization_id or is_member(organization_id, user_id):
+    if not organization_id:
         return True
+    if is_member(organization_id, user_id):
+        if sso_allows(organization_id):
+            return True
+        record(
+            mode=MODE_ENFORCE,
+            path=path,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            organization_id=organization_id,
+            user_id=user_id,
+            reason='sso_required',
+        )
+        return False
     mode = enforcement_mode()
     if mode == MODE_OFF:
         return True

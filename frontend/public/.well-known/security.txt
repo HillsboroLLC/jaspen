@@ -1,0 +1,4 @@
+Contact: mailto:security@jaspen.ai
+Expires: 2027-10-26T00:00:00Z
+Preferred-Languages: en
+Canonical: https://jaspen.ai/.well-known/security.txt

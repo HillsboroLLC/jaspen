@@ -37,6 +37,7 @@ import CalculatorsHubPage from './pages/Calculators/CalculatorsHubPage';
 import NotFoundPage from './pages/NotFound/NotFound';
 import ServerErrorPage from './pages/ServerError/ServerError';
 import OfflineBanner from './shared/components/OfflineBanner';
+import { applyTrackingPolicy } from './thirdPartyTracking';
 
 // Lazily loaded internal routes for bundle splitting.
 const PricingResult = lazy(() => import('./jaspenInterface/PricingResult/PricingResult'));
@@ -73,6 +74,9 @@ const LimitedTimeTerms = lazy(() => import('./pages/Marketing/LimitedTimeTerms')
 
 function AnimatedAppRoutes({ withShell }) {
   const location = useLocation();
+  useEffect(() => {
+    applyTrackingPolicy(location.pathname);
+  }, [location.pathname]);
   const prefersReducedMotion = useReducedMotion();
   const transitionProps = prefersReducedMotion
     ? { initial: false, animate: { opacity: 1 }, exit: { opacity: 1 }, transition: { duration: 0 } }

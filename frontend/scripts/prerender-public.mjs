@@ -110,6 +110,8 @@ function snapshotPath(route) {
 }
 
 async function renderRoute(page, origin, route) {
+  // Keep analytics/ads out of the static snapshots (src/thirdPartyTracking.js).
+  await page.evaluateOnNewDocument(() => { window.__JASPEN_PRERENDER__ = true; });
   await page.goto(`${origin}${route}`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.waitForFunction(
     () => {

@@ -7309,3 +7309,9 @@
   line-height: 1.4;
   color: #5a6585;
 }
+
+.jas-message-feedback-disclosure {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  color: var(--gray-500, #667085);
+}

@@ -90,9 +90,11 @@ def authorized_candidates(user, *, organization_id=None, status=None,
     # Organization scope first. A record whose organization the caller does not
     # belong to is not a candidate, full stop.
     from .models import OrganizationMember
+    from .org_access import sso_allows
     member_org_ids = [
         m.organization_id for m in
         OrganizationMember.query.filter_by(user_id=str(user.id), status='active').all()
+        if sso_allows(m.organization_id)
     ]
     if organization_id:
         requested = str(organization_id)

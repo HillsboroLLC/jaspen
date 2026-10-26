@@ -662,11 +662,19 @@ def new_invitation_expiry(days=14):
 
 
 def active_membership_for_user(org_id, user_id):
-    return OrganizationMember.query.filter_by(
+    membership = OrganizationMember.query.filter_by(
         organization_id=str(org_id),
         user_id=str(user_id),
         status="active",
     ).first()
+    # An org that enforces SSO treats a non-SSO session as a non-member, so
+    # every membership-based access path honors the boundary in one place.
+    # No effect unless the org has explicitly turned enforcement on.
+    if membership is not None:
+        from app.org_access import sso_allows
+        if not sso_allows(org_id):
+            return None
+    return membership
 
 
 def organization_access_payload_for_user(user):

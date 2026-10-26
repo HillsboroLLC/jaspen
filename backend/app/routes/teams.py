@@ -26,7 +26,7 @@ from flask_jwt_extended import get_jwt_identity, jwt_required
 from flask_mail import Message
 from sqlalchemy import func
 
-from app import db, mail
+from app import db, limiter, mail
 from app.billing_config import get_plan_catalog, normalize_plan_key, to_public_plan
 from app.models import Organization, OrganizationInvitation, OrganizationMember, User
 from app.orgs import (
@@ -823,3 +823,284 @@ def cancel_team_invitation(org_id, invitation_id):
     invite.updated_at = _now()
     db.session.commit()
     return jsonify({"success": True}), 200
+
+
+# ── Enterprise SSO settings ─────────────────────────────────────────────────
+#
+# Organization owners/admins manage their own SSO boundary here. Jaspen staff
+# activate SSO for a signed customer separately (admin route); until then the
+# org stays "off" and nothing here can enforce it. Every change is audited.
+
+def _sso_settings_payload(org):
+    return {
+        "enabled": bool(current_app.config.get("SSO_ENABLED")),
+        "status": org.sso_status or "off",
+        "enforced": bool(org.sso_enforced),
+        "enforced_at": org.sso_enforced_at.isoformat() if org.sso_enforced_at else None,
+        "grace_until": org.sso_grace_until.isoformat() if org.sso_grace_until else None,
+        "mfa_attested": bool(org.sso_mfa_attested_at),
+        "mfa_attested_at": org.sso_mfa_attested_at.isoformat() if org.sso_mfa_attested_at else None,
+        "recovery_admin_user_id": org.sso_recovery_admin_user_id,
+        "sessions_revoked_at": org.sso_sessions_revoked_at.isoformat() if org.sso_sessions_revoked_at else None,
+    }
+
+
+def _require_sso_manager(org_id):
+    """Owner/admin of the org, reached through SSO or the recovery path."""
+    from app.org_access import sso_allows, sso_recovery_permitted
+
+    user, err = _auth_user()
+    if err:
+        return None, None, err
+    org = Organization.query.filter_by(id=str(org_id)).first()
+    # Direct membership lookup: the recovery admin must still reach these
+    # settings while the org refuses non-SSO sessions everywhere else.
+    membership = OrganizationMember.query.filter_by(
+        organization_id=str(org_id), user_id=str(user.id), status="active",
+    ).first() if org else None
+    if not org or membership is None:
+        return None, None, (jsonify({"error": "Organization not found"}), 404)
+    if normalize_org_role(membership.role) not in MANAGE_ROLES:
+        return None, None, (jsonify({"error": "Only owners and admins can manage SSO"}), 403)
+    if not (sso_allows(org.id) or sso_recovery_permitted(org, user)):
+        return None, None, (jsonify({"error": "Sign in with your organization's SSO", "code": "sso_required"}), 403)
+    return user, org, None
+
+
+@teams_bp.route("/<org_id>/sso", methods=["GET"])
+@jwt_required()
+def get_org_sso_settings(org_id):
+    _user, org, err = _require_sso_manager(org_id)
+    if err:
+        return err
+    return jsonify({"sso": _sso_settings_payload(org)}), 200
+
+
+@teams_bp.route("/<org_id>/sso", methods=["PATCH"])
+@jwt_required()
+def update_org_sso_settings(org_id):
+    from app.admin_audit import append_admin_audit_event
+
+    user, org, err = _require_sso_manager(org_id)
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    now = datetime.utcnow()
+    changes = {}
+
+    if "recovery_admin_user_id" in body:
+        target_id = str(body.get("recovery_admin_user_id") or "").strip() or None
+        if target_id:
+            target = OrganizationMember.query.filter_by(
+                organization_id=org.id, user_id=target_id, status="active",
+            ).first()
+            target_user = User.query.get(target_id)
+            if not target or normalize_org_role(target.role) not in MANAGE_ROLES:
+                return jsonify({"error": "The recovery admin must be an owner or admin of this organization"}), 400
+            if not target_user or not bool(getattr(target_user, "mfa_enabled", False)):
+                return jsonify({"error": "The recovery admin must have two-factor authentication turned on", "code": "recovery_admin_mfa_required"}), 400
+        org.sso_recovery_admin_user_id = target_id
+        changes["recovery_admin_user_id"] = target_id
+
+    if "mfa_attested" in body:
+        attested = bool(body.get("mfa_attested"))
+        org.sso_mfa_attested_at = now if attested else None
+        org.sso_mfa_attested_by = user.id if attested else None
+        changes["mfa_attested"] = attested
+
+    if "enforced" in body:
+        enforce = bool(body.get("enforced"))
+        if enforce:
+            if not current_app.config.get("SSO_ENABLED") or org.sso_status != "active" or not org.workos_organization_id:
+                return jsonify({"error": "SSO is not active for this organization yet", "code": "sso_not_active"}), 409
+            if not org.sso_recovery_admin_user_id:
+                return jsonify({"error": "Choose a recovery admin before enforcing SSO", "code": "recovery_admin_required"}), 409
+            try:
+                grace_hours = max(0, min(168, int(body.get("grace_hours") or 0)))
+            except (TypeError, ValueError):
+                return jsonify({"error": "grace_hours must be a whole number of hours"}), 400
+            org.sso_enforced = True
+            org.sso_enforced_at = now
+            org.sso_grace_until = now + timedelta(hours=grace_hours) if grace_hours else None
+            changes["enforced"] = True
+            changes["grace_hours"] = grace_hours
+        else:
+            org.sso_enforced = False
+            org.sso_grace_until = None
+            changes["enforced"] = False
+
+    if body.get("revoke_sessions") is True:
+        org.sso_sessions_revoked_at = now
+        changes["revoke_sessions"] = True
+
+    if not changes:
+        return jsonify({"error": "No supported SSO setting was provided"}), 400
+
+    append_admin_audit_event(
+        actor_user_id=user.id,
+        actor_email=user.email,
+        action="org_sso_settings_changed",
+        details={"organization_id": org.id, "changes": changes},
+    )
+    db.session.commit()
+    return jsonify({"sso": _sso_settings_payload(org)}), 200
+
+
+# ── Data-sharing choices (privacy) ──────────────────────────────────────────
+
+@teams_bp.route("/<org_id>/data-sharing", methods=["GET"])
+@jwt_required()
+def get_org_data_sharing(org_id):
+    from app.data_sharing import data_sharing_choices
+    _user, org, _membership, err = _require_org_access(org_id)
+    if err:
+        return err
+    return jsonify({"data_sharing": data_sharing_choices(org)}), 200
+
+
+@teams_bp.route("/<org_id>/data-sharing", methods=["PUT", "PATCH"])
+@jwt_required()
+def update_org_data_sharing(org_id):
+    from app.admin_audit import append_admin_audit_event
+    from app.data_sharing import DEFAULTS, data_sharing_choices
+
+    user, org, membership, err = _require_org_access(org_id)
+    if err:
+        return err
+    if normalize_org_role(membership.role) not in MANAGE_ROLES:
+        return jsonify({"error": "Only owners and admins can change data-sharing choices"}), 403
+    body = request.get_json(silent=True) or {}
+    changes = {key: body[key] for key in DEFAULTS if key in body}
+    if not changes or any(not isinstance(value, bool) for value in changes.values()):
+        return jsonify({"error": "Send improve_jaspen and/or decision_sharing_allowed as true or false"}), 400
+    before = data_sharing_choices(org)
+    settings = dict(org.settings) if isinstance(org.settings, dict) else {}
+    stored = dict(settings.get("data_sharing") or {})
+    stored.update(changes)
+    stored["updated_at"] = _now().isoformat()
+    stored["updated_by"] = user.id
+    settings["data_sharing"] = stored
+    org.settings = settings
+    org.updated_at = _now()
+    append_admin_audit_event(
+        actor_user_id=user.id,
+        actor_email=user.email,
+        action="org_data_sharing_changed",
+        details={
+            "organization_id": org.id,
+            "changes": {key: {"from": before[key], "to": value} for key, value in changes.items()},
+        },
+    )
+    db.session.commit()
+    return jsonify({"data_sharing": data_sharing_choices(org)}), 200
+
+
+# ── Organization data export (privacy) ──────────────────────────────────────
+#
+# An organization owner can download the organization's work as JSON. The
+# export never widens access: it contains only what the owner can already
+# read (other members' private projects stay with those members), and never
+# includes share-link tokens, connector credentials, or staff-only data.
+# Deletion stays a support request until a reviewed self-serve flow exists.
+
+_EXPORT_DELETION_NOTE = (
+    "To delete your organization's data, email support@jaspen.ai from an owner "
+    "account. Deleted data leaves database backups within 7 days."
+)
+
+
+def _iso_or_none(value):
+    return value.isoformat() if value else None
+
+
+@teams_bp.route("/<org_id>/export", methods=["GET"])
+@jwt_required()
+@limiter.limit("5 per hour")
+def export_org_data(org_id):
+    from app.admin_audit import append_admin_audit_event
+    from app.decision_records import can_read_record
+    from app.models import Scorecard, SharedArtifact, SharedArtifactOwnership, UserSession
+    from app.models_decision_record import DecisionRecord
+    from app.session_access import can_read_session
+
+    user, org, membership, err = _require_org_access(org_id)
+    if err:
+        return err
+    if normalize_org_role(membership.role) != "owner":
+        return jsonify({"error": "Only the organization owner can export its data"}), 403
+
+    projects = []
+    readable_threads = set()
+    for row in UserSession.query.filter_by(organization_id=org.id).order_by(UserSession.created_at.asc()).all():
+        if not can_read_session(row, user, membership=membership):
+            continue
+        readable_threads.add(row.session_id)
+        projects.append({
+            "session_id": row.session_id,
+            "name": row.name,
+            "visibility": row.visibility,
+            "created_at": _iso_or_none(row.created_at),
+            "updated_at": _iso_or_none(row.updated_at),
+            "archived_at": _iso_or_none(row.archived_at),
+            "payload": row.payload if isinstance(row.payload, dict) else {},
+            "scenarios": row.scenarios_json if isinstance(row.scenarios_json, dict) else {},
+        })
+
+    scorecards = [
+        {"id": card.id, "thread_id": card.thread_id, "created_at": _iso_or_none(card.created_at),
+         "archived_at": _iso_or_none(card.archived_at), "data": card.data if isinstance(card.data, dict) else {}}
+        for card in Scorecard.query.filter_by(organization_id=org.id).all()
+        if card.thread_id in readable_threads
+    ]
+
+    records = [
+        record.to_dict()
+        for record in DecisionRecord.query.filter_by(organization_id=org.id).all()
+        if can_read_record(record, user, membership=membership)
+    ]
+
+    share_links = [
+        {"id": link.id, "artifact_type": link.artifact_type, "title": link.title,
+         "thread_id": link.thread_id, "created_at": _iso_or_none(link.created_at),
+         "expires_at": _iso_or_none(link.expires_at), "revoked_at": _iso_or_none(link.revoked_at)}
+        for link in SharedArtifact.query.join(
+            SharedArtifactOwnership, SharedArtifactOwnership.shared_artifact_id == SharedArtifact.id,
+        ).filter(SharedArtifactOwnership.organization_id == org.id).all()
+        if link.thread_id in readable_threads
+    ]
+
+    members = [
+        {"user_id": m.user_id, "role": m.role, "joined_at": _iso_or_none(m.joined_at),
+         "email": getattr(db.session.get(User, m.user_id), "email", None)}
+        for m in OrganizationMember.query.filter_by(organization_id=org.id, status="active").all()
+    ]
+
+    append_admin_audit_event(
+        actor_user_id=user.id,
+        actor_email=user.email,
+        action="org_data_exported",
+        details={"organization_id": org.id, "projects": len(projects), "scorecards": len(scorecards),
+                 "decision_records": len(records), "share_links": len(share_links)},
+    )
+    db.session.commit()
+
+    from app.data_sharing import data_sharing_choices
+    response = jsonify({
+        "exported_at": _now().isoformat(),
+        "organization": {"id": org.id, "name": org.name, "plan_key": org.plan_key},
+        "data_sharing": data_sharing_choices(org),
+        "members": members,
+        "projects": projects,
+        "scorecards": scorecards,
+        "decision_records": records,
+        "share_links": share_links,
+        "excluded": [
+            "Other members' private projects (they can export their own)",
+            "Share-link access tokens",
+            "Connector credentials and synced connector caches",
+        ],
+        "deletion": _EXPORT_DELETION_NOTE,
+    })
+    response.headers["Content-Disposition"] = f'attachment; filename="jaspen-export-{org.id}.json"'
+    response.headers["Cache-Control"] = "no-store"
+    return response, 200

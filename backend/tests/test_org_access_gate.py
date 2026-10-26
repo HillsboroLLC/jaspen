@@ -16,6 +16,7 @@ from datetime import datetime
 
 import pytest
 import sqlalchemy as sa
+from flask_jwt_extended import create_access_token
 
 from app import org_access, share_ownership
 from app.models import (
@@ -123,6 +124,34 @@ def test_active_member_keeps_access_to_their_org_work(client, app, team, enforce
     assert 'org-proj' in load_user_sessions(team['member'].id)
     assert can_write_session(team['project'], team['member']) is True
     assert _events() == []
+
+
+def test_enforced_sso_org_requires_an_sso_session_for_that_org(client, app, db, team, enforce):
+    team['org'].sso_enforced = True
+    team['org'].sso_enforced_at = datetime.utcnow()
+    team['org'].sso_grace_until = None
+    db.session.commit()
+
+    password_response = client.get(
+        '/api/v1/sessions/org-proj', headers=_headers(app, team['member']),
+    )
+    assert password_response.status_code == 404
+    assert any(event.reason == 'sso_required' for event in _events(team['member'].id))
+
+    with app.app_context():
+        sso_token = create_access_token(
+            identity=str(team['member'].id),
+            additional_claims={
+                'auth_method': 'sso',
+                'sso_org': str(team['org'].id),
+                'auth_time': int(datetime.utcnow().timestamp()),
+            },
+        )
+    sso_response = client.get(
+        '/api/v1/sessions/org-proj',
+        headers={'Authorization': f'Bearer {sso_token}'},
+    )
+    assert sso_response.status_code == 200
 
 
 def test_personal_work_survives_removal(client, app, db, team, enforce):

@@ -40,7 +40,7 @@
     "prestart": "node ./scripts/generate-article-content.mjs",
     "start": "react-scripts start",
     "prebuild": "node ./scripts/generate-article-content.mjs",
-    "build": "react-scripts build && node ./scripts/prerender-public.mjs",
+    "build": "INLINE_RUNTIME_CHUNK=false react-scripts build && node ./scripts/prerender-public.mjs",
     "pretest": "node ./scripts/generate-article-content.mjs",
     "prerender:verify": "node ./scripts/verify-prerendered.mjs",
     "css:organize:pretty": "postcss src/jaspenInterface/Workspace/JaspenWorkspace.css -o src/jaspenInterface/Workspace/JaspenWorkspace.organized.css && prettier --write src/jaspenInterface/Workspace/JaspenWorkspace.organized.css",

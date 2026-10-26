@@ -31,6 +31,8 @@ from app.models import (
     PersistentCreditTransaction,
     OrgIdeaLedger,
     SavedStarter,
+    SsoIdentity,
+    SsoLoginState,
     Scorecard,
     UsageEvent,
     User,
@@ -63,6 +65,9 @@ def app(tmp_path_factory):
         "ANTHROPIC_API_KEY",
         "CLAUDE_API_KEY",
         "GEMINI_API_KEY",
+        "SSO_ENABLED",
+        "WORKOS_CLIENT_ID",
+        "WORKOS_API_KEY",
     )}
 
     os.environ["DATABASE_URL"] = f"sqlite:///{db_file}"
@@ -85,6 +90,9 @@ def app(tmp_path_factory):
     os.environ.pop("ANTHROPIC_API_KEY", None)
     os.environ.pop("CLAUDE_API_KEY", None)
     os.environ.pop("GEMINI_API_KEY", None)
+    os.environ.pop("SSO_ENABLED", None)
+    os.environ.pop("WORKOS_CLIENT_ID", None)
+    os.environ.pop("WORKOS_API_KEY", None)
     os.environ.pop("ENV", None)
     os.environ.pop("FLASK_ENV", None)
 
@@ -179,6 +187,8 @@ def db(app):
             EnterpriseInquiry,
             Lead,
             OrganizationInvitation,
+            SsoIdentity,
+            SsoLoginState,
             OrganizationMember,
             Organization,
             SavedStarter,

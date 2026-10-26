@@ -1,4 +1,7 @@
-from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context, send_file
+import contextvars
+from contextlib import contextmanager
+
+from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context, send_file, has_request_context
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from flask_mail import Message
 from datetime import datetime, timedelta
@@ -4270,8 +4273,53 @@ def _anthropic_model_candidates(preferred_model=None):
     return [_anthropic_model_for_selection({"llm_model": preferred_model, "model_key": model_key})]
 
 
+# The customer an AI call is made for, when no signed-in request carries it
+# (background plan builds and their worker threads).
+_AI_CUSTOMER_USER_ID = contextvars.ContextVar("ai_customer_user_id", default=None)
+GEMINI_RESTRICTED_PLAN_KEYS = frozenset({"business", "enterprise_custom"})
+
+
+@contextmanager
+def ai_customer_scope(user_id):
+    token = _AI_CUSTOMER_USER_ID.set(str(user_id) if user_id else None)
+    try:
+        yield
+    finally:
+        _AI_CUSTOMER_USER_ID.reset(token)
+
+
+def _ai_customer_user_id():
+    scoped = _AI_CUSTOMER_USER_ID.get()
+    if scoped:
+        return scoped
+    if has_request_context():
+        try:
+            return get_jwt_identity()
+        except Exception:
+            return None
+    return None
+
+
+def gemini_permitted_for_customer():
+    """False when content belongs to a Business/Enterprise customer and the
+    Gemini key is on Google's free tier (which may use content to improve
+    Google products). Upgrading is configuration only: GEMINI_API_TIER=paid."""
+    if str(current_app.config.get("GEMINI_API_TIER") or "free").lower() == "paid":
+        return True
+    user_id = _ai_customer_user_id()
+    if not user_id:
+        return True
+    from app.models import Organization
+    user = db.session.get(User, str(user_id))
+    org_id = getattr(user, "active_organization_id", None) if user else None
+    org = db.session.get(Organization, str(org_id)) if org_id else None
+    return str(getattr(org, "plan_key", "") or "") not in GEMINI_RESTRICTED_PLAN_KEYS
+
+
 def _gemini_api_key():
     if current_app.config.get("TESTING") and not current_app.config.get("GEMINI_API_KEY"):
+        return None
+    if not gemini_permitted_for_customer():
         return None
     return (
         current_app.config.get("GEMINI_API_KEY")

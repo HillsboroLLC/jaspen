@@ -152,6 +152,7 @@ export default function Team({ mode = 'team' }) {
   const [organizations, setOrganizations] = useState([]);
   const [projects, setProjects] = useState([]);
   const [orgShareLinks, setOrgShareLinks] = useState([]);
+  const [dataSharing, setDataSharing] = useState(null);
   const [orgNameDraft, setOrgNameDraft] = useState('');
 
   const [inviteEmail, setInviteEmail] = useState('');
@@ -531,6 +532,65 @@ export default function Team({ mode = 'team' }) {
 
   // Share links on the organization's work, including links whose creator
   // has left. Metadata only: admins can turn a link off, never open it.
+  // Organization data-sharing choices: off by default, owner/admin only.
+  const loadDataSharing = useCallback(async () => {
+    if (previewModeActive || !activeOrgId) {
+      setDataSharing(null);
+      return;
+    }
+    try {
+      const data = await teamFetch(`/api/v1/teams/${encodeURIComponent(activeOrgId)}/data-sharing`);
+      setDataSharing(data?.data_sharing || null);
+    } catch (_err) {
+      setDataSharing(null);
+    }
+  }, [activeOrgId, previewModeActive]);
+
+  useEffect(() => {
+    if (!loading) loadDataSharing();
+  }, [loading, loadDataSharing]);
+
+  const onToggleDataSharing = async (key, value) => {
+    if (!canManageMembers || previewModeActive || !activeOrgId) return;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const data = await teamFetch(`/api/v1/teams/${encodeURIComponent(activeOrgId)}/data-sharing`, {
+        method: 'PUT',
+        body: JSON.stringify({ [key]: value }),
+      });
+      setDataSharing(data?.data_sharing || null);
+      setNotice('Data-sharing choice saved.');
+    } catch (err) {
+      setError(err?.message || 'Failed to save data-sharing choice');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onExportOrgData = async () => {
+    if (effectiveRole !== 'owner' || previewModeActive || !activeOrgId) return;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const data = await teamFetch(`/api/v1/teams/${encodeURIComponent(activeOrgId)}/export`);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `jaspen-export-${activeOrgId}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setNotice('Export downloaded.');
+    } catch (err) {
+      setError(err?.message || 'Failed to export organization data');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const loadOrgShareLinks = useCallback(async () => {
     if (!canManageMembers || previewModeActive || !activeOrgId) {
       setOrgShareLinks([]);
@@ -1426,6 +1486,40 @@ export default function Team({ mode = 'team' }) {
           </table>
         </div>
       </section>
+
+      {dataSharing && !previewModeActive && (
+        <section className="team-card" aria-label="Data sharing">
+          <h2>Data Sharing</h2>
+          <p className="team-subcopy">Your {teamLabelLower}'s content is used only to provide Jaspen to you. Nothing is shared unless an owner or admin turns it on here.</p>
+          {[
+            ['improve_jaspen', 'Help improve Jaspen', 'Share de-identified, aggregated scores, outcomes and patterns to improve Jaspen\'s methodology. Never project names, conversations, files or connector data.'],
+            ['decision_sharing_allowed', 'Allow members to share decisions with Jaspen', 'Members may choose to share a specific decision after seeing exactly what will be shared, and can withdraw it.'],
+          ].map(([key, label, description]) => (
+            <label key={key} className="team-data-sharing-row" style={{ display: 'flex', gap: 12, alignItems: 'flex-start', padding: '10px 0' }}>
+              <input
+                type="checkbox"
+                checked={Boolean(dataSharing[key])}
+                disabled={busy || !canManageMembers}
+                onChange={(event) => onToggleDataSharing(key, event.target.checked)}
+                aria-label={label}
+              />
+              <span>
+                <strong>{label}</strong>
+                <span className="team-subcopy" style={{ display: 'block', margin: 0 }}>{description}</span>
+              </span>
+            </label>
+          ))}
+          {!canManageMembers && <p className="team-subcopy">Only owners and admins can change these.</p>}
+          {effectiveRole === 'owner' && (
+            <div style={{ marginTop: 12 }}>
+              <button type="button" className="team-btn ghost int-btn int-btn-ghost" onClick={onExportOrgData} disabled={busy}>
+                Export organization data
+              </button>
+              <p className="team-subcopy" style={{ marginTop: 6 }}>Downloads your {teamLabelLower}'s projects, scorecards and decision records you can access. To delete your data, email support@jaspen.ai.</p>
+            </div>
+          )}
+        </section>
+      )}
 
       {canManageMembers && !previewModeActive && (
         <section className="team-card">

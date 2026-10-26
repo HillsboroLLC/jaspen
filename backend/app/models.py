@@ -526,6 +526,16 @@ class Organization(db.Model):
         nullable=True,
         default=dict,
     )
+    workos_organization_id = db.Column(db.String(255), nullable=True, unique=True, index=True)
+    sso_status = db.Column(db.String(32), nullable=False, default='off', server_default='off', index=True)
+    sso_enforced = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    sso_enforced_at = db.Column(db.DateTime, nullable=True)
+    sso_grace_until = db.Column(db.DateTime, nullable=True)
+    sso_mfa_attested_by = db.Column(db.String(36), db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    sso_mfa_attested_at = db.Column(db.DateTime, nullable=True)
+    sso_recovery_admin_user_id = db.Column(db.String(36), db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    # Sessions for this org issued before this moment are refused (admin "sign everyone out").
+    sso_sessions_revoked_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(
         db.DateTime,
         nullable=False,
@@ -571,6 +581,8 @@ class Organization(db.Model):
             'max_collaborator_seats': self.max_collaborator_seats,
             'seat_policy_overrides': self.seat_policy_overrides if isinstance(self.seat_policy_overrides, dict) else {},
             'settings': self.settings if isinstance(self.settings, dict) else {},
+            'sso_status': self.sso_status or 'off',
+            'sso_enforced': bool(self.sso_enforced),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -806,6 +818,10 @@ class UserAuthSession(db.Model):
         nullable=True,
         index=True,
     )
+    auth_method = db.Column(db.String(32), nullable=True, index=True)
+    sso_organization_id = db.Column(db.String(36), nullable=True, index=True)
+    authenticated_at = db.Column(db.DateTime, nullable=True)
+    last_activity_at = db.Column(db.DateTime, nullable=True)
     issued_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
     expires_at = db.Column(db.DateTime, nullable=True, index=True)
     revoked_at = db.Column(db.DateTime, nullable=True, index=True)
@@ -817,6 +833,36 @@ class UserAuthSession(db.Model):
     __table_args__ = (
         db.Index('ix_user_auth_sessions_user_revoked', 'user_id', 'revoked_at'),
     )
+
+
+class SsoIdentity(db.Model):
+    __tablename__ = 'sso_identities'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    organization_id = db.Column(db.String(36), db.ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
+    provider = db.Column(db.String(32), nullable=False, default='workos', server_default='workos')
+    provider_identity_id = db.Column(db.String(255), nullable=False)
+    connection_id = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_login_at = db.Column(db.DateTime, nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint('organization_id', 'provider', 'provider_identity_id', name='uq_sso_identity_provider'),
+        db.UniqueConstraint('organization_id', 'user_id', name='uq_sso_identity_org_user'),
+    )
+
+
+class SsoLoginState(db.Model):
+    __tablename__ = 'sso_login_states'
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    state_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    organization_id = db.Column(db.String(36), db.ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
+    next_path = db.Column(db.String(512), nullable=False, default='/new', server_default='/new')
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)
+    used_at = db.Column(db.DateTime, nullable=True, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
 class UserDataset(db.Model):

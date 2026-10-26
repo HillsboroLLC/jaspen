@@ -2034,7 +2034,7 @@ def get_audit_events():
 @admin_bp.route("/message-feedback", methods=["GET"])
 @jwt_required()
 def get_message_feedback():
-    _, err = _require_admin()
+    admin_user, err = _require_admin()
     if err:
         return err
 
@@ -2047,6 +2047,12 @@ def get_message_feedback():
     limit = max(1, min(250, limit or 100))
 
     result = _collect_message_feedback(user_id=user_id, value=value, query=query, limit=limit)
+    _audit(admin_user, "message_feedback.view", details={
+        "user_id_filter": user_id,
+        "value_filter": value,
+        "query_used": bool(query),
+        "result_count": len(result["items"]),
+    })
     return jsonify({
         "items": result["items"],
         "summary": result["summary"],
@@ -2086,3 +2092,46 @@ def get_provider_health():
             "limit": limit,
         },
     }), 200
+
+
+@admin_bp.route("/organizations/<org_id>/sso", methods=["POST"])
+@jwt_required()
+def activate_organization_sso(org_id):
+    """Jaspen staff connect a signed enterprise customer's SSO.
+
+    Records the customer's WorkOS organization and sets the org's SSO status.
+    It never enforces SSO; the customer's own owner/admin does that after
+    choosing a recovery admin. Requires SSO_ENABLED, so nothing activates
+    until the paid WorkOS connection is approved and configured.
+    """
+    admin_user, err = _require_admin()
+    if err:
+        return err
+    from app.models import Organization
+    org = Organization.query.get(str(org_id))
+    if not org:
+        return jsonify({"error": "Organization not found"}), 404
+    body = request.get_json(silent=True) or {}
+    status = str(body.get("status") or "").strip().lower()
+    if status not in {"active", "off"}:
+        return jsonify({"error": "status must be \"active\" or \"off\""}), 400
+    if status == "active":
+        if not current_app.config.get("SSO_ENABLED"):
+            return jsonify({"error": "SSO is not enabled for this deployment", "code": "sso_not_enabled"}), 409
+        if org.plan_key != "enterprise_custom":
+            return jsonify({"error": "SSO is available on Enterprise plans only", "code": "sso_plan_required"}), 409
+        workos_org = str(body.get("workos_organization_id") or "").strip()
+        if not workos_org:
+            return jsonify({"error": "workos_organization_id is required"}), 400
+        org.workos_organization_id = workos_org[:255]
+        org.sso_status = "active"
+    else:
+        org.sso_status = "off"
+        org.sso_enforced = False
+        org.sso_grace_until = None
+    _audit(admin_user, "organization_sso_status_changed", details={
+        "organization_id": org.id, "status": org.sso_status,
+    })
+    db.session.commit()
+    return jsonify({"organization_id": org.id, "sso_status": org.sso_status,
+                    "sso_enforced": bool(org.sso_enforced)}), 200

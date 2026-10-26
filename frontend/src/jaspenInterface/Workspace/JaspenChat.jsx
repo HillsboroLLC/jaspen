@@ -3812,7 +3812,7 @@ const renderMessageActions = (message, messageKey, idx, total) => {
           }
         }}
         aria-label="Thumbs up"
-        title="Thumbs up"
+        title="Thumbs up (shares this reply with the Jaspen team)"
         disabled={!canFeedback || isFeedbackBusy} aria-disabled={!canFeedback || isFeedbackBusy}
       >
         <FontAwesomeIcon icon={faThumbsUp} />
@@ -3830,7 +3830,7 @@ const renderMessageActions = (message, messageKey, idx, total) => {
           }
         }}
         aria-label="Thumbs down"
-        title="Thumbs down"
+        title="Thumbs down (shares this reply with the Jaspen team)"
         disabled={!canFeedback || isFeedbackBusy} aria-disabled={!canFeedback || isFeedbackBusy}
       >
         <FontAwesomeIcon icon={faThumbsDown} />
@@ -3886,6 +3886,9 @@ const renderMessageActions = (message, messageKey, idx, total) => {
             rows={3}
             disabled={isFeedbackBusy}
           />
+          <p className="jas-message-feedback-disclosure">
+            Your rating, this reply and any note are shared with the Jaspen team to improve responses. Access is limited and logged.
+          </p>
           <div className="jas-message-feedback-note-actions">
             <button
               type="button"

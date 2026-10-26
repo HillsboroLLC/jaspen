@@ -180,6 +180,13 @@ def create_app():
         GOOGLE_CLIENT_SECRET           = os.getenv('GOOGLE_CLIENT_SECRET'),
         GOOGLE_REDIRECT_URI            = os.getenv('GOOGLE_REDIRECT_URI'),
         GOOGLE_OAUTH_STATE_TTL_SECONDS = int(os.getenv('GOOGLE_OAUTH_STATE_TTL_SECONDS', '900')),
+        SSO_ENABLED                    = _as_bool(os.getenv('SSO_ENABLED'), default=False),
+        WORKOS_CLIENT_ID               = os.getenv('WORKOS_CLIENT_ID'),
+        WORKOS_API_KEY                 = os.getenv('WORKOS_API_KEY'),
+        WORKOS_REDIRECT_URI            = os.getenv('WORKOS_REDIRECT_URI'),
+        SSO_STATE_TTL_SECONDS          = int(os.getenv('SSO_STATE_TTL_SECONDS', '600')),
+        SSO_RECHECK_HOURS              = int(os.getenv('SSO_RECHECK_HOURS', '8')),
+        SSO_IDLE_HOURS                 = int(os.getenv('SSO_IDLE_HOURS', '12')),
         REQUIRE_EMAIL_VERIFICATION     = _as_bool(os.getenv('REQUIRE_EMAIL_VERIFICATION'), default=True),
         EMAIL_VERIFICATION_TOKEN_TTL_SECONDS = int(os.getenv('EMAIL_VERIFICATION_TOKEN_TTL_SECONDS', '86400')),
         CONNECTOR_FRESH_DAYS           = int(os.getenv('CONNECTOR_FRESH_DAYS', '7')),
@@ -368,6 +375,10 @@ def create_app():
         'titan': app.config['LLM_PROVIDER_MODELS']['claude_opus'],
     }
     app.config['GEMINI_API_KEY'] = os.getenv('GEMINI_API_KEY', '')
+    # 'free' (default) keeps Business/Enterprise customer content off Gemini,
+    # whose free tier may use content to improve Google products. Set 'paid'
+    # only after billing is active on the key's Google Cloud project.
+    app.config['GEMINI_API_TIER'] = str(os.getenv('GEMINI_API_TIER', 'free')).strip().lower()
     # One canonical Sonnet source: all compatibility helpers resolve through
     # the provider model map rather than their own environment override.
     app.config['AI_AGENT_ANTHROPIC_MODEL'] = app.config['LLM_PROVIDER_MODELS']['claude_sonnet']

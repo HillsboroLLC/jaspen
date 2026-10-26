@@ -1,3 +1,4 @@
+import contextvars
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 import copy
@@ -3900,7 +3901,8 @@ def _generate_batch_scorecards(
     results = [None] * len(ideas)
     usages = [None] * len(ideas)
     with ThreadPoolExecutor(max_workers=min(5, len(ideas))) as pool:
-        futures = [pool.submit(score_one, item) for item in ideas]
+        # copy_context() carries the AI customer scope into worker threads.
+        futures = [pool.submit(contextvars.copy_context().run, score_one, item) for item in ideas]
         for index, future in enumerate(futures):
             try:
                 card, usage = future.result()
@@ -5840,7 +5842,7 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
             )
             _pool = ThreadPoolExecutor(max_workers=1)
             attempt_started = time.monotonic()
-            _future = _pool.submit(_call_llm, attempt_prompt)
+            _future = _pool.submit(contextvars.copy_context().run, _call_llm, attempt_prompt)
             try:
                 raw_reply, attempt_usage = _future.result(timeout=attempt_timeout)
             except _FuturesTimeout:
@@ -5937,6 +5939,7 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
                     repair_started = time.monotonic()
                     _repair_pool = ThreadPoolExecutor(max_workers=1)
                     _repair_future = _repair_pool.submit(
+                        contextvars.copy_context().run,
                         _call_llm,
                         _repair_prompt(missing_sources, valid_task_count, phase_names),
                         max_tokens=600,
@@ -7908,10 +7911,12 @@ def _run_plan_build_job(job_id):
     job = db.session.get(PlanBuildJob, job_id)
     if job is None:
         return
+    from .ai_agent import ai_customer_scope
     try:
-        response = _build_execution_plan(
-            job.user_id, job.thread_id, dict(job.request_json or {}), job_id=job.id,
-        )
+        with ai_customer_scope(job.user_id):
+            response = _build_execution_plan(
+                job.user_id, job.thread_id, dict(job.request_json or {}), job_id=job.id,
+            )
         body, status_code = response if isinstance(response, tuple) else (response, 200)
         result = body.get_json() if hasattr(body, 'get_json') else body
     except Exception as exc:  # noqa: BLE001

@@ -248,6 +248,17 @@ def can_read_session(row, user, membership=None):
     personal = is_personal_session_id(row.session_id) or not row.organization_id
     if membership is None and not personal:
         membership = active_membership_for_user(row.organization_id, uid)
+    if membership is not None and not personal and not org_access.sso_allows(row.organization_id):
+        org_access.record(
+            mode=org_access.MODE_ENFORCE,
+            path='session_read',
+            resource_type='user_session',
+            resource_id=row.session_id,
+            organization_id=row.organization_id,
+            user_id=uid,
+            reason='sso_required',
+        )
+        return False
 
     if is_attributed_to(row, uid):
         # Attribution alone reaches personal work only. Organization work also
