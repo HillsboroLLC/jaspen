@@ -18,12 +18,13 @@ cutover and verification that remain.
 
 ## Required boundaries
 
-1. The runtime and migration database URLs name different logins and the same host, port, and database. Credential files are mode `600` and readable only by their corresponding service identity.
+1. The runtime and migration database URLs name different logins and the same host, port, and database. Each database URL credential file is owned by its corresponding service identity and is mode `0600`, as enforced when it is read. `/etc/jaspen/runtime.env` and `/etc/jaspen/migration.env` contain references and non-secret settings; they are owned by `root`, grouped to their corresponding service identity, and mode `0640`.
 2. The deployment account owns neither credential file. Any allowed privilege escalation names a root-owned wrapper, fixed working directory, fixed service unit, and fixed command; it accepts no caller-controlled command or path.
 3. A migration failure prevents restart. The currently running service remains untouched when checkout, dependency installation, or migration fails.
 4. Production releases come only from protected `main`, through a protected GitHub Environment with human approval and environment-scoped deployment values. The workflow token is read-only unless a reviewed step proves a narrower additional permission is necessary.
 5. SSH host identity is pinned from an administrator-verified public host key. A key mismatch stops the deployment before authentication.
 6. Deployment logs and errors never contain private keys, database URLs, access tokens, or credential-file contents.
+7. Runtime customer-data paths remain in the existing checkout for this cutover. They are ignored by Git, owned by `jaspen-app`, writable only where the systemd drop-in explicitly allows writes, and are never modified by deployment repository operations.
 
 ## Verification boundary
 

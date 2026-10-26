@@ -5,6 +5,10 @@ set -euo pipefail
 readonly CONFIG_FILE="/etc/jaspen/deploy.conf"
 readonly MIGRATION_UNIT="jaspen-migrate.service"
 readonly RUNTIME_UNIT="gunicorn-sekki.service"
+readonly APP_USER="jaspen-app"
+readonly MIGRATION_USER="jaspen-migrate"
+readonly RUNTIME_ENV_FILE="/etc/jaspen/runtime.env"
+readonly MIGRATION_ENV_FILE="/etc/jaspen/migration.env"
 
 fail() {
   echo 'Production deployment stopped; see administrator-only system logs.' >&2
@@ -22,9 +26,45 @@ load_config() {
   [[ "${DEPLOY_USER:-}" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail
 }
 
+check_protected_environment_file() {
+  local path="$1"
+  local group="$2"
+  [[ -f "${path}" ]] || fail
+  [[ "$(stat -c '%U' "${path}")" == "root" ]] || fail
+  [[ "$(stat -c '%G' "${path}")" == "${group}" ]] || fail
+  [[ "$(stat -c '%a' "${path}")" == "640" ]] || fail
+}
+
 if [[ "${1:-}" == "--check" && $# -eq 1 ]]; then
   load_config
   [[ -d "${DEPLOY_ROOT}/.git" || -f "${DEPLOY_ROOT}/.git" ]] || fail
+  id -u "${DEPLOY_USER}" >/dev/null 2>&1 || fail
+  id -u "${APP_USER}" >/dev/null 2>&1 || fail
+  id -u "${MIGRATION_USER}" >/dev/null 2>&1 || fail
+  [[ "$(stat -c '%U' "${DEPLOY_ROOT}")" == "${DEPLOY_USER}" ]] || fail
+
+  runuser -u "${APP_USER}" -- test -x "${DEPLOY_ROOT}" || fail
+  runuser -u "${APP_USER}" -- test -x "${DEPLOY_ROOT}/backend/venv/bin/python" || fail
+  runuser -u "${MIGRATION_USER}" -- test -r "${DEPLOY_ROOT}" || fail
+  runuser -u "${MIGRATION_USER}" -- test -x "${DEPLOY_ROOT}" || fail
+  runuser -u "${MIGRATION_USER}" -- test -r "${DEPLOY_ROOT}/backend/migrate_production.py" || fail
+  runuser -u "${MIGRATION_USER}" -- test -x "${DEPLOY_ROOT}/backend/venv/bin/python" || fail
+
+  local_data_paths=(
+    "${DEPLOY_ROOT}/backend/data/user_uploads"
+    "${DEPLOY_ROOT}/backend/data/reports"
+    "${DEPLOY_ROOT}/backend/connectors_data"
+    "${DEPLOY_ROOT}/backend/admin_audit_data"
+  )
+  for path in "${local_data_paths[@]}"; do
+    [[ -d "${path}" ]] || fail
+    runuser -u "${APP_USER}" -- test -r "${path}" || fail
+    runuser -u "${APP_USER}" -- test -w "${path}" || fail
+    runuser -u "${APP_USER}" -- test -x "${path}" || fail
+  done
+
+  check_protected_environment_file "${RUNTIME_ENV_FILE}" "${APP_USER}"
+  check_protected_environment_file "${MIGRATION_ENV_FILE}" "${MIGRATION_USER}"
   systemctl cat "${MIGRATION_UNIT}" >/dev/null
   systemctl cat "${RUNTIME_UNIT}" >/dev/null
   exit 0

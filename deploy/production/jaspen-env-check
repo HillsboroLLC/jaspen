@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Report only PASS/FAIL for inline systemd credential exposure."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+
+
+RUNTIME_UNIT = "gunicorn-sekki.service"
+RUNTIME_ENV = Path("/etc/jaspen/runtime.env")
+MIGRATION_ENV = Path("/etc/jaspen/migration.env")
+SECRET_NAME = re.compile(
+    r"(?:PASSWORD|PASSWD|SECRET|TOKEN|KEY|CREDENTIAL|DATABASE_URL|SQLALCHEMY_DATABASE_URI|DSN)",
+    re.IGNORECASE,
+)
+
+
+def parse_assignments(text: str) -> dict[str, str]:
+    assignments: dict[str, str] = {}
+    for raw_line in text.splitlines() or [text]:
+        for token in shlex.split(raw_line, comments=True, posix=True):
+            if "=" not in token:
+                continue
+            name, value = token.split("=", 1)
+            name = name.strip()
+            if name:
+                assignments[name] = value
+    return assignments
+
+
+def read_assignments(path: Path) -> dict[str, str]:
+    return parse_assignments(path.read_text(encoding="utf-8"))
+
+
+def exposed_variable_count(
+    inline: dict[str, str],
+    runtime: dict[str, str],
+    migration: dict[str, str],
+) -> int:
+    protected_values = {
+        value
+        for source in (runtime, migration)
+        for value in source.values()
+        if value
+    }
+    return sum(
+        1
+        for name, value in inline.items()
+        if SECRET_NAME.search(name) or (value and value in protected_values)
+    )
+
+
+def load_inputs(args: argparse.Namespace) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    supplied = (args.inline_file, args.runtime_file, args.migration_file)
+    if any(supplied):
+        if not all(supplied):
+            raise RuntimeError("all synthetic input files are required")
+        return tuple(read_assignments(Path(path)) for path in supplied)  # type: ignore[return-value]
+
+    inline_text = subprocess.run(
+        ["systemctl", "show", RUNTIME_UNIT, "--property=Environment", "--value"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return parse_assignments(inline_text), read_assignments(RUNTIME_ENV), read_assignments(MIGRATION_ENV)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--inline-file")
+    parser.add_argument("--runtime-file")
+    parser.add_argument("--migration-file")
+    try:
+        args = parser.parse_args(argv)
+        inline, runtime, migration = load_inputs(args)
+        count = exposed_variable_count(inline, runtime, migration)
+    except Exception:
+        print("FAIL: environment check unavailable")
+        return 2
+
+    if count:
+        print(f"FAIL: {count} secret-named variable(s) still inline")
+        return 1
+    print("PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

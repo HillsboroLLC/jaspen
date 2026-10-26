@@ -26,6 +26,12 @@ service-account*.json
 
 # Local dev databases (never commit data)
 backend/instance/
+
+# Runtime customer data stays on the host and must never enter Git history.
+backend/data/
+backend/connectors_data/
+backend/admin_audit_data/
+admin_audit_data/
 # Local/backup artifacts
 .DS_Store
 *.zip

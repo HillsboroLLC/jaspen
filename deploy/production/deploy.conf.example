@@ -1,3 +1,4 @@
 # Root-owned, mode 0644. This file contains no credentials.
+# Also replace @DEPLOY_ROOT@ in gunicorn-sekki-security.conf with this exact value.
 DEPLOY_ROOT=/absolute/path/to/the/production/checkout
 DEPLOY_USER=jaspen-deploy

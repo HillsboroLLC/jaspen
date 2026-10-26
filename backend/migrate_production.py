@@ -10,25 +10,76 @@ from sqlalchemy.engine import make_url
 from database_secret import load_database_url_secret
 
 
+APP_TARGET_SETTINGS = (
+    "JASPEN_APP_DB_ROLE",
+    "JASPEN_APP_DB_HOST",
+    "JASPEN_APP_DB_PORT",
+    "JASPEN_APP_DB_NAME",
+)
+
+
+def _configured_app_target(env, migration_url):
+    values = {name: str(env.get(name) or "").strip() for name in APP_TARGET_SETTINGS}
+    if not any(values.values()):
+        return None
+    if not all(values.values()):
+        raise RuntimeError("Complete application database target settings are required")
+
+    try:
+        app_port = int(values["JASPEN_APP_DB_PORT"])
+    except ValueError as exc:
+        raise RuntimeError("Application database port must be numeric") from exc
+    if not 1 <= app_port <= 65535:
+        raise RuntimeError("Application database port is outside the valid range")
+
+    app_target = (
+        values["JASPEN_APP_DB_HOST"].casefold(),
+        app_port,
+        values["JASPEN_APP_DB_NAME"],
+    )
+    migration_target = (
+        str(migration_url.host or "").casefold(),
+        migration_url.port,
+        migration_url.database,
+    )
+    if app_target != migration_target:
+        raise RuntimeError("App and migration credentials must target the same database")
+
+    app_role = values["JASPEN_APP_DB_ROLE"]
+    if not migration_url.username or app_role == migration_url.username:
+        raise RuntimeError("Migration login must be separate from the app login")
+    return app_role
+
+
 def migration_environment(environ):
     env = dict(environ)
     app_path = Path(env.get("JASPEN_DATABASE_URL_FILE", "~/.config/jaspen/database_url")).expanduser()
     migration_path = Path(env.get("JASPEN_MIGRATION_DATABASE_URL_FILE", "~/.config/jaspen/migration_database_url")).expanduser()
-    app_env = {}
     migration_env = {}
-    for path, target in ((app_path, app_env), (migration_path, migration_env)):
-        if not load_database_url_secret(environ=target, path=path):
-            raise RuntimeError(f"Required database credential file missing: {path}")
-    app_url = make_url(app_env["DATABASE_URL"])
+    if not load_database_url_secret(environ=migration_env, path=migration_path):
+        raise RuntimeError("Required migration database credential is unavailable")
     migration_url = make_url(migration_env["DATABASE_URL"])
-    if (app_url.host, app_url.port, app_url.database) != (migration_url.host, migration_url.port, migration_url.database):
-        raise RuntimeError("App and migration credentials must target the same database")
-    if not app_url.username or app_url.username == migration_url.username:
-        raise RuntimeError("Migration login must be separate from the app login")
+    app_role = _configured_app_target(env, migration_url)
+
+    if app_role is None:
+        app_env = {}
+        if not load_database_url_secret(environ=app_env, path=app_path):
+            raise RuntimeError("Required application database credential is unavailable")
+        app_url = make_url(app_env["DATABASE_URL"])
+        if (app_url.host, app_url.port, app_url.database) != (
+            migration_url.host,
+            migration_url.port,
+            migration_url.database,
+        ):
+            raise RuntimeError("App and migration credentials must target the same database")
+        if not app_url.username or app_url.username == migration_url.username:
+            raise RuntimeError("Migration login must be separate from the app login")
+        app_role = app_url.username
+
     env.update(migration_env)
     env["JASPEN_DATABASE_URL_FILE"] = str(migration_path)
     env["FLASK_APP"] = "wsgi.py"
-    return env, app_url.username
+    return env, app_role
 
 
 def grant_future_app_access(connection, app_role):
