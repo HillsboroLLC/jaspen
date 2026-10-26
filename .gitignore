@@ -1,9 +1,28 @@
 node_modules/
 *.log
 .env
+.env.*
+!.env.example
+!frontend/.env.development
 .env.local
 .env.*.local
 docker-compose.override.yml
+
+# Credentials and private key material
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials.json
+service-account*.json
+
+# Infrastructure state and database exports can contain credentials/data
+*.tfstate
+*.tfstate.*
+*.sql
+*.dump
 
 # Local dev databases (never commit data)
 backend/instance/
