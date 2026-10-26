@@ -78,7 +78,7 @@ function resolveLocalHtaccess() {
     console.log('[deploy] Done ✅');
     await sftp.end();
   } catch (e) {
-    console.error('[deploy] Failed ❌', e.message);
+    console.error('[deploy] Failed; connection details suppressed.', e?.code || e?.name || 'Error');
     process.exit(1);
   }
 })();

@@ -57,10 +57,9 @@ def main():
     # sqlite file would accept the change and silently affect nobody.
     if target.startswith('sqlite') and args[0] != 'status':
         print('REFUSED  This is pointing at a local sqlite database, not production.')
-        print(f'         {target}')
-        print('         Run it where DATABASE_URL is set, or pass it inline.')
+        print('         Configure the approved database credential file; never pass DATABASE_URL inline.')
         return 1
-    print(f'database: {target.split("@")[-1] or target}\n')
+    print('database: configured (location suppressed)\n')
     with app.app_context():
         if args[0] == "status":
             return _report()

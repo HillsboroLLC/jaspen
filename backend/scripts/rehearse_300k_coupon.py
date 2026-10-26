@@ -114,7 +114,7 @@ def rehearse():
                 if not client_secret:
                     failures.append(f'{label}: no client secret, so the card fields cannot be mounted.')
                 else:
-                    print(f'             OK  card fields can mount against {client_secret.split("_secret_")[0]}.')
+                    print('             OK  card fields can mount with the returned client credential.')
                 stripe.Invoice.void_invoice(_stripe_field(invoice, 'id'))
     except stripe.error.StripeError as exc:
         print(f'\nFAIL  Stripe rejected a call the checkout makes: {exc}')

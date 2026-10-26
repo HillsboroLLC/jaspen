@@ -18,29 +18,16 @@ const required = [
   'REMOTE_PATH'
 ];
 
-function mask(v) {
-  if (!v) return '';
-  if (v.length <= 4) return '*'.repeat(v.length);
-  return `${v.slice(0, 2)}${'*'.repeat(Math.max(1, v.length - 4))}${v.slice(-2)}`;
-}
-
 function hasAuth() {
   return !!process.env.SFTP_PASS || !!process.env.SSH_KEY_PATH;
 }
 
 function summarizeEnv() {
-  const summary = {
-    SFTP_HOST: process.env.SFTP_HOST || '',
-    SFTP_PORT: process.env.SFTP_PORT || '',
-    SFTP_USER: process.env.SFTP_USER || '',
-    SFTP_PASS: process.env.SFTP_PASS ? mask(process.env.SFTP_PASS) : '',
-    SSH_KEY_PATH: process.env.SSH_KEY_PATH || '',
-    SSH_KEY_PASSPHRASE: process.env.SSH_KEY_PASSPHRASE ? mask(process.env.SSH_KEY_PASSPHRASE) : '',
-    REMOTE_PATH: process.env.REMOTE_PATH || '',
-    LOCAL_BUILD_DIR: process.env.LOCAL_BUILD_DIR || 'build',
-    DEPLOY_CLEAN: process.env.DEPLOY_CLEAN || 'false'
-  };
-  console.log('[env] Loaded (masked):\n', JSON.stringify(summary, null, 2));
+  const names = [...required, 'SFTP_PASS', 'SSH_KEY_PATH', 'SSH_KEY_PASSPHRASE'];
+  const configured = names.filter((name) => Boolean(process.env[name]));
+  const missing = names.filter((name) => !process.env[name]);
+  console.log(`[env] Configured variable names: ${configured.join(', ') || 'none'}`);
+  console.log(`[env] Unset variable names: ${missing.join(', ') || 'none'}`);
 }
 
 function assertEnv() {
@@ -86,7 +73,7 @@ async function testConnect() {
         process.exit(0);
       })
       .catch(err => {
-        console.error('[env] SFTP connection test ❌', err.message);
+        console.error('[env] SFTP connection test failed; details suppressed.', err?.code || err?.name || 'Error');
         process.exit(1);
       });
   } else {

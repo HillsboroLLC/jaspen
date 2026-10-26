@@ -5,10 +5,10 @@ import pyotp
 
 
 class _Response:
-    def __init__(self, payload):
+    def __init__(self, payload, *, ok=True, status_code=200):
         self._payload = payload
-        self.ok = True
-        self.status_code = 200
+        self.ok = ok
+        self.status_code = status_code
         self.content = b'{}'
 
     def json(self):
@@ -66,3 +66,27 @@ def test_google_sign_in_without_2fa_still_signs_in_directly(client, app, db, tes
 
 def test_pending_endpoint_without_a_google_sign_in_is_refused(client):
     assert client.get('/api/v1/auth/mfa/pending').status_code == 401
+
+
+def test_google_token_failure_does_not_log_provider_payload(client, app, monkeypatch, caplog):
+    auth = sys.modules['app.routes.auth']
+    app.config['GOOGLE_CLIENT_ID'] = 'test-client'
+    app.config['GOOGLE_CLIENT_SECRET'] = 'test-secret'
+    provider_token = 'provider-' + ('credential-' * 4)
+    monkeypatch.setattr(
+        auth.requests,
+        'post',
+        lambda *a, **k: _Response(
+            {'access_token': provider_token, 'error_description': provider_token},
+            ok=False,
+            status_code=401,
+        ),
+    )
+    with app.test_request_context():
+        state = auth._google_state_serializer().dumps({'next': '/new'})
+
+    response = client.get(f'/api/v1/auth/google/callback?code=abc&state={state}')
+
+    assert response.status_code == 302
+    assert provider_token not in caplog.text
+    assert 'status=401' in caplog.text

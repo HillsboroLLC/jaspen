@@ -11,7 +11,6 @@ import sentry_sdk
 from flask_jwt_extended import JWTManager
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from pythonjsonlogger import jsonlogger
 from sentry_sdk.integrations.flask import FlaskIntegration
 from sqlalchemy import text
 from flask_sqlalchemy import SQLAlchemy
@@ -22,6 +21,7 @@ from app.rate_limits import (
     resolve_rate_limit_storage_uri,
 )
 from app.ai_governance import CANONICAL_ANTHROPIC_MODELS, resolve_anthropic_model
+from app.secure_logging import SecretRedactingJsonFormatter, sanitize_sentry_event
 
 load_dotenv()  # pull in .env
 
@@ -100,7 +100,7 @@ def _format_retry_after(seconds):
 
 def _setup_logging(app):
     handler = logging.StreamHandler()
-    formatter = jsonlogger.JsonFormatter(
+    formatter = SecretRedactingJsonFormatter(
         fmt='%(asctime)s %(name)s %(levelname)s %(message)s',
         datefmt='%Y-%m-%dT%H:%M:%S',
     )
@@ -135,6 +135,7 @@ def _setup_sentry(app):
         release=os.getenv('SENTRY_RELEASE') or None,
         traces_sample_rate=traces_sample_rate,
         send_default_pii=False,
+        before_send=sanitize_sentry_event,
     )
     app.logger.info('Sentry initialized')
 

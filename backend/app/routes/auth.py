@@ -1677,7 +1677,7 @@ def google_callback():
         return redirect(_frontend_login_error_url('google_token_exchange_failed'), code=302)
 
     if not token_response.ok:
-        current_app.logger.error('Google token exchange failed: status=%s payload=%s', token_response.status_code, token_payload)
+        current_app.logger.error('Google token exchange failed: status=%s', token_response.status_code)
         return redirect(_frontend_login_error_url('google_token_exchange_failed'), code=302)
 
     access_token = str((token_payload or {}).get('access_token') or '').strip()
@@ -1696,7 +1696,7 @@ def google_callback():
         return redirect(_frontend_login_error_url('google_profile_fetch_failed'), code=302)
 
     if not profile_response.ok:
-        current_app.logger.error('Google profile fetch failed: status=%s payload=%s', profile_response.status_code, profile_payload)
+        current_app.logger.error('Google profile fetch failed: status=%s', profile_response.status_code)
         return redirect(_frontend_login_error_url('google_profile_fetch_failed'), code=302)
 
     email = str((profile_payload or {}).get('email') or '').strip().lower()
