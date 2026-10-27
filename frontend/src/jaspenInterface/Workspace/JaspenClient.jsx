@@ -1534,6 +1534,14 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     getJSON(`${API_BASE}/api/v1/shares${threadId ? `?thread_id=${encodeURIComponent(threadId)}` : ''}`),
   revokeShare: async (linkId) =>
     del(`${API_BASE}/api/v1/shares/${encodeURIComponent(linkId)}`),
+  previewDecisionShare: async (payload = {}) =>
+    postJSON(`${API_BASE}/api/v1/decision-shares/preview`, payload),
+  createDecisionShare: async (payload = {}) =>
+    postJSON(`${API_BASE}/api/v1/decision-shares`, payload),
+  listDecisionShares: async () =>
+    getJSON(`${API_BASE}/api/v1/decision-shares`),
+  withdrawDecisionShare: async (shareId) =>
+    del(`${API_BASE}/api/v1/decision-shares/${encodeURIComponent(shareId)}`),
   // Owner view of a share link: whether the signed-in viewer may edit the
   // one-pager, and the saved colors/wording/layout.
   getShareManage: async (token) =>

@@ -11,6 +11,7 @@ import './Team.css';
 import AppMenu from '../shared/AppMenu';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import { Jaspen } from '../Workspace/JaspenClient';
+import SharedWithJaspenList from '../Sharing/SharedWithJaspenList';
 
 const VISIBILITY_OPTIONS = ['private', 'team', 'specific'];
 const SEAT_EDITABLE_ROLES = ROLE_OPTIONS.filter((role) => role !== 'owner');
@@ -1510,6 +1511,7 @@ export default function Team({ mode = 'team' }) {
             </label>
           ))}
           {!canManageMembers && <p className="team-subcopy">Only owners and admins can change these.</p>}
+          <SharedWithJaspenList disabled={busy} onNotice={setNotice} onError={setError} />
           {effectiveRole === 'owner' && (
             <div style={{ marginTop: 12 }}>
               <button type="button" className="team-btn ghost int-btn int-btn-ghost" onClick={onExportOrgData} disabled={busy}>

@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import ShareButton from './ShareButton';
 import SharedPage from './SharedPage';
+import SharedWithJaspenList from './SharedWithJaspenList';
 import { Jaspen } from '../Workspace/JaspenClient';
 
 jest.mock('../Workspace/JaspenClient', () => ({
@@ -13,6 +14,10 @@ jest.mock('../Workspace/JaspenClient', () => ({
     createShare: jest.fn(),
     listShares: jest.fn(),
     revokeShare: jest.fn(),
+    previewDecisionShare: jest.fn(),
+    createDecisionShare: jest.fn(),
+    listDecisionShares: jest.fn(),
+    withdrawDecisionShare: jest.fn(),
     getShareManage: jest.fn(),
     saveSharePresentation: jest.fn(),
   },
@@ -59,6 +64,12 @@ describe('ShareDialog', () => {
     Jaspen.createShare.mockResolvedValue({
       link: { id: 'l1', url: 'https://jaspen.ai/s/abc', expires_at: '2026-10-26T00:00:00Z', status: 'active' },
     });
+    Jaspen.previewDecisionShare.mockResolvedValue({
+      artifact_type: 'scorecard', snapshot, snapshot_sha256: 'preview-hash',
+    });
+    Jaspen.createDecisionShare.mockResolvedValue({ share: { id: 'ds1' } });
+    Jaspen.listDecisionShares.mockResolvedValue({ shares: [] });
+    Jaspen.withdrawDecisionShare.mockResolvedValue({ share: { id: 'ds1', status: 'withdrawn' } });
   });
 
   test('previews without evidence, then creates a 30-day link by default', async () => {
@@ -129,6 +140,41 @@ describe('ShareDialog', () => {
 
     expect(await screen.findByText(/available on paid plans, starting with Starter/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create link' })).not.toBeInTheDocument();
+  });
+
+  test('Share with Jaspen renders the preview and confirms the exact hash', async () => {
+    const user = userEvent.setup();
+    render(<ShareButton threadId="t1" scorecardId="card-a" />);
+    await user.click(screen.getByRole('button', { name: 'Share with Jaspen' }));
+    expect(await screen.findByTestId('shared-view')).toHaveTextContent('scorecard:Paid search');
+    await user.click(screen.getByRole('button', { name: 'Confirm share' }));
+    expect(Jaspen.createDecisionShare).toHaveBeenCalledWith({
+      thread_id: 't1', scorecard_id: 'card-a', snapshot_sha256: 'preview-hash', preview_confirmed: true,
+    });
+    expect(await screen.findByText('Decision shared with Jaspen.')).toBeInTheDocument();
+  });
+
+  test('Share with Jaspen shows an API refusal reason', async () => {
+    Jaspen.previewDecisionShare.mockRejectedValue(new Error(
+      'Sharing decisions with Jaspen is off. An owner or admin can turn it on in Team settings.',
+    ));
+    const user = userEvent.setup();
+    render(<ShareButton threadId="t1" scorecardId="card-a" />);
+    await user.click(screen.getByRole('button', { name: 'Share with Jaspen' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('owner or admin can turn it on in Team settings');
+  });
+});
+
+describe('SharedWithJaspenList', () => {
+  test('Withdraw calls the decision-share DELETE client', async () => {
+    Jaspen.listDecisionShares
+      .mockResolvedValueOnce({ shares: [{ id: 'ds1', thread_id: 't1', scorecard_id: 'card-a', user_id: 'u1', status: 'shared' }] })
+      .mockResolvedValueOnce({ shares: [{ id: 'ds1', thread_id: 't1', scorecard_id: 'card-a', user_id: 'u1', status: 'withdrawn' }] });
+    const user = userEvent.setup();
+    render(<SharedWithJaspenList />);
+    await user.click(await screen.findByRole('button', { name: 'Withdraw' }));
+    expect(Jaspen.withdrawDecisionShare).toHaveBeenCalledWith('ds1');
+    expect(await screen.findByText('Withdrawn')).toBeInTheDocument();
   });
 });
 

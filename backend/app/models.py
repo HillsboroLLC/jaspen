@@ -1333,6 +1333,37 @@ class SharedArtifact(db.Model):
     )
 
 
+class DecisionShare(db.Model):
+    """A customer-approved, frozen decision copy held for Jaspen staff."""
+
+    __tablename__ = 'decision_shares'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey('organizations.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    thread_id = db.Column(db.String(255), nullable=False, index=True)
+    scorecard_id = db.Column(db.String(255), nullable=True)
+    snapshot_json = db.Column(db.JSON, nullable=True)
+    snapshot_sha256 = db.Column(db.String(64), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    withdrawn_at = db.Column(db.DateTime, nullable=True, index=True)
+
+    __table_args__ = (
+        db.Index('ix_decision_shares_org_created', 'organization_id', 'created_at'),
+        db.Index('ix_decision_shares_user_created', 'user_id', 'created_at'),
+    )
+
+
 class SharedArtifactOwnership(db.Model):
     """Which organization owns a share link, decided from the underlying report.
 
