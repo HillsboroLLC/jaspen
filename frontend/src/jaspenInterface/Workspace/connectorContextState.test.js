@@ -58,12 +58,25 @@ describe.each([
   });
 
   test('checking and problem states are disabled', () => {
-    expect(connectorContextState({
+    const failed = connectorContextState({
       id, label, connected: true, freshness: 'checking', [section]: { data_enabled: true },
-    })).toEqual(expect.objectContaining({ state: 'checking', selectable: false }));
-    expect(connectorContextState({
+    });
+    expect(failed).toEqual(expect.objectContaining({ state: 'checking', selectable: false }));
+    expect(failed.tooltip).toBe(`Checking ${label} data…`);
+
+    const problem = connectorContextState({
       id, label, connected: true, freshness: 'confirmed', lifecycle_status: 'error', [section]: { data_enabled: true },
-    })).toEqual(expect.objectContaining({ state: 'problem', selectable: false }));
+    });
+    expect(problem).toEqual(expect.objectContaining({ state: 'problem', selectable: false }));
+    expect(problem.tooltip).toBe(`Couldn't verify ${label} data. Check it in Data Sources.`);
+  });
+
+  test('only an explicit reconnect-required state uses reconnect wording', () => {
+    const state = connectorContextState({
+      id, label, connected: true, freshness: 'unconfirmed', data_context_check_status: 'failed',
+      data_context_reconnect_required: true, [section]: { data_enabled: true },
+    });
+    expect(state.tooltip).toBe(`Reconnect ${label} in Data Sources`);
   });
 });
 

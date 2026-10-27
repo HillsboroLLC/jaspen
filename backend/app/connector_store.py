@@ -619,10 +619,6 @@ def update_connector_settings(user_id, connector_id, updates):
 
     current["connector_id"] = key
     connection_status = str(current.get("connection_status") or "").strip().lower()
-    if connection_status == "connected":
-        current["last_verified_at"] = _iso_now()
-    if connection_status == "disconnected":
-        current["last_verified_at"] = current.get("last_verified_at")
 
     current["lifecycle_status"] = _compute_connector_lifecycle_status(key, current)
     if previous_lifecycle == "connected" and connection_status == "disconnected":

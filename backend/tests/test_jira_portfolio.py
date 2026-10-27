@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from app import jira_portfolio as portfolio
 from app import connector_runtime
+from app import connector_store
 from app.decision_facts import normalize_fact_entry
 
 
@@ -198,6 +199,38 @@ def test_failed_refresh_uses_stale_cache_with_lower_confidence(monkeypatch):
         "reconnect_required": False,
     }
     assert all(row["confidence"] == 0.55 for row in result["evidence"])
+
+
+def test_failed_refresh_with_cached_snapshot_does_not_refresh_verification(monkeypatch, tmp_path):
+    original_dir = connector_store.CONNECTORS_DIR
+    connector_store.CONNECTORS_DIR = str(tmp_path)
+    verified_at = "2026-10-01T12:00:00+00:00"
+    cached = {
+        "fetched_at": "2026-10-01T12:00:00Z",
+        "portfolio": {"project_count": 1},
+        "projects": [{"project_key": "ABC"}],
+        "provenance": {"source": "connector"},
+    }
+    try:
+        connector_store.update_connector_settings("user", "jira_sync", {
+            "connection_status": "connected",
+            "lifecycle_status": "connected",
+            "last_verified_at": verified_at,
+            "jira_base_url": "https://synthetic.atlassian.test",
+            "jira_email": "dev@example.test",
+            "jira_api_token": "synthetic-token",
+            "jira_portfolio_snapshot": cached,
+        })
+        monkeypatch.setattr(portfolio, "_list_projects", lambda *_: (_ for _ in ()).throw(RuntimeError("HTTP 429")))
+
+        result = portfolio.refresh_portfolio("user", force=True, now=NOW)
+        saved = connector_store.get_connector_settings("user", "jira_sync")
+
+        assert result["refresh_failed"] is True
+        assert saved["last_verified_at"] == verified_at
+        assert saved["jira_data_last_refresh_failed"] is True
+    finally:
+        connector_store.CONNECTORS_DIR = original_dir
 
 
 def test_no_default_project_is_required(monkeypatch):

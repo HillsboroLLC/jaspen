@@ -1142,6 +1142,7 @@ def test_connection_is_validated_before_save_and_secret_is_not_returned(client, 
         assert saved_fields["jira_base_url"] == payload["jira_base_url"]
         assert saved_fields["jira_email"] == payload["jira_email"]
         assert saved_fields["jira_api_token"] == payload["jira_api_token"]
+        assert saved_fields["last_verified_at"]
         assert "top-secret" not in connected.get_data(as_text=True)
 
 

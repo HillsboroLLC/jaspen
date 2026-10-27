@@ -1131,6 +1131,7 @@ def update_connector(connector_id):
                     "error": "Unable to validate Smartsheet token.",
                     "connector_id": connector_id,
                 }), 400
+            updates["last_verified_at"] = _iso_now()
         if connector_id == "snowflake_insights":
             # Temporarily write candidate settings so test_snowflake_connection can read them
             update_connector_settings(user.id, connector_id, updates)
@@ -1142,6 +1143,7 @@ def update_connector(connector_id):
                     "error": f"Could not connect to Snowflake: {err_msg}",
                     "connector_id": connector_id,
                 }), 400
+            updates["last_verified_at"] = _iso_now()
 
     saved = update_connector_settings(user.id, connector_id, updates)
     if connector_id == "jira_sync":
@@ -1207,7 +1209,10 @@ def _verify_data_context_read(user_id, connector_id, settings):
             raise RuntimeError("Jira data analysis is turned off.")
         snapshot = refresh_portfolio(user_id, force=True)
         if snapshot.get("stale") or snapshot.get("refresh_failed"):
-            raise RuntimeError("Jira data could not be refreshed.")
+            error = RuntimeError("Jira data could not be refreshed.")
+            refresh_error = snapshot.get("refresh_error") if isinstance(snapshot.get("refresh_error"), dict) else {}
+            error.reconnect_required = bool(refresh_error.get("reconnect_required"))
+            raise error
         return
 
     if connector_id == "smartsheet_sync":
@@ -1267,7 +1272,7 @@ def check_connector_data_context(connector_id):
             }
             if not confirmed:
                 payload["error"] = recent.get("message") or "Data source verification failed."
-            return jsonify(payload), 200 if confirmed else 503
+            return jsonify(payload), 200
 
         settings = get_connector_settings(user.id, connector_id)
         if str(settings.get("connection_status") or "").lower() != "connected":
@@ -1281,6 +1286,9 @@ def check_connector_data_context(connector_id):
             _verify_data_context_read(user.id, connector_id, settings)
         except Exception as exc:
             reason = str(exc) or "Data source verification failed."
+            reconnect_required = bool(getattr(exc, "reconnect_required", False))
+            if connector_id == "jira_sync":
+                reconnect_required = reconnect_required or bool(classify_refresh_error(exc).get("reconnect_required"))
             append_sync_audit_event(
                 user.id,
                 connector_id,
@@ -1292,7 +1300,8 @@ def check_connector_data_context(connector_id):
                 "connector_id": connector_id,
                 "status": "failed",
                 "error": reason,
-            }), 503
+                "reconnect_required": reconnect_required,
+            }), 200
 
         verified_at = _iso_now()
         update_connector_settings(user.id, connector_id, {"last_verified_at": verified_at})

@@ -1,5 +1,11 @@
 import { connectorContextState } from './connectorContextState';
 
+export async function readConnectorCheckResponse(response) {
+  const result = await response.json().catch(() => ({}));
+  if (result?.status === 'confirmed' || result?.status === 'failed') return result;
+  throw new Error(result?.error || 'Data source verification failed.');
+}
+
 export async function verifyUnconfirmedContextSources({ connectors, checkConnector, onChecking, onResult, inFlight }) {
   const checks = (Array.isArray(connectors) ? connectors : [])
     .filter((connector) => connectorContextState(connector).state === 'unconfirmed')

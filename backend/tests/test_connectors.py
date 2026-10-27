@@ -247,9 +247,13 @@ def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
 
     monkeypatch.setattr(connector_routes, "refresh_portfolio", fail_read)
     response = client.get("/api/v1/connectors/jira_sync/data-context/check", headers=auth_headers)
+    throttled = client.get("/api/v1/connectors/jira_sync/data-context/check", headers=auth_headers)
 
-    assert response.status_code == 503
+    assert response.status_code == 200
     assert response.get_json()["status"] == "failed"
+    assert throttled.status_code == 200
+    assert throttled.get_json()["status"] == "failed"
+    assert throttled.get_json()["throttled"] is True
     settings = connector_store.get_connector_settings(test_user.id, "jira_sync")
     for field in (
         "connection_status", "lifecycle_status", "jira_project_key", "jira_issue_type",
@@ -257,6 +261,25 @@ def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
     ):
         assert settings[field] == original[field]
     assert settings["last_verified_at"] == original["last_verified_at"]
+
+
+def test_connected_settings_save_does_not_refresh_last_verified_at(test_user):
+    verified_at = "2026-10-13T01:26:45+00:00"
+    _store_connector_status(
+        test_user.id,
+        connection_status="connected",
+        lifecycle_status="connected",
+        last_verified_at=verified_at,
+    )
+
+    update_connector_settings(test_user.id, "jira_sync", {
+        "jira_project_key": "EXEC",
+        "jira_issue_type": "Task",
+        "jira_field_mapping": {"title": "summary"},
+    })
+
+    saved = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert saved["last_verified_at"] == verified_at
 
 
 @pytest.mark.parametrize(

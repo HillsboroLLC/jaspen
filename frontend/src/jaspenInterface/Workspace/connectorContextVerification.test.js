@@ -1,4 +1,4 @@
-import { verifyUnconfirmedContextSources } from './connectorContextVerification';
+import { readConnectorCheckResponse, verifyUnconfirmedContextSources } from './connectorContextVerification';
 
 const jira = {
   id: 'jira_sync', label: 'Jira', connected: true, freshness: 'unconfirmed', jira: { data_enabled: true },
@@ -30,4 +30,17 @@ test('reports a failed verification without making the source selectable', async
   });
 
   expect(onResult).toHaveBeenCalledWith('jira_sync', expect.objectContaining({ status: 'failed' }));
+});
+
+test('reads a failed verification as a normal result even when the response is not ok', async () => {
+  const response = {
+    ok: false,
+    status: 503,
+    json: jest.fn().mockResolvedValue({ status: 'failed', error: 'synthetic read failed' }),
+  };
+
+  await expect(readConnectorCheckResponse(response)).resolves.toEqual({
+    status: 'failed',
+    error: 'synthetic read failed',
+  });
 });

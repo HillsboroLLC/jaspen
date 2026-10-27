@@ -24,6 +24,7 @@ export function connectorContextState(connector = {}, fallback = {}) {
   const lifecycle = String(connector?.lifecycle_status || connector?.status || '').toLowerCase();
   const checkStatus = String(connector?.data_context_check_status || '').toLowerCase();
   const hasProblem = ['error', 'degraded', 'reconnect_required'].includes(lifecycle) || checkStatus === 'failed';
+  const reconnectRequired = lifecycle === 'reconnect_required' || Boolean(connector?.data_context_reconnect_required);
   const checking = String(connector?.freshness || '').toLowerCase() === 'checking' || checkStatus === 'checking';
   const confirmed = String(connector?.freshness || '').toLowerCase() === 'confirmed';
   const confirmedDate = formatConfirmedDate(connector?.last_confirmed_at);
@@ -45,7 +46,10 @@ export function connectorContextState(connector = {}, fallback = {}) {
   if (hasProblem) {
     return {
       id, label, connected: true, analysisEnabled: false, selectable: false,
-      state: 'problem', dot: 'problem', tooltip: `Reconnect ${label} in Data Sources`,
+      state: 'problem', dot: 'problem',
+      tooltip: reconnectRequired
+        ? `Reconnect ${label} in Data Sources`
+        : `Couldn't verify ${label} data. Check it in Data Sources.`,
     };
   }
   if (!analysisEnabled && analysisSetting) {

@@ -35,7 +35,7 @@ import ExecutionPlanExportButton from './ExecutionPlanExportButton';
 import PmSyncPanel from './PmSyncPanel';
 import ConnectorContextChip from './ConnectorContextChip';
 import { connectorContextState } from './connectorContextState';
-import { verifyUnconfirmedContextSources } from './connectorContextVerification';
+import { readConnectorCheckResponse, verifyUnconfirmedContextSources } from './connectorContextVerification';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -8710,9 +8710,7 @@ useEffect(() => {
             `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/data-context/check`,
             { method: 'GET', headers: buildAuthHeaders({}, 'GET'), credentials: 'include' }
           );
-          const result = await checkResponse.json().catch(() => ({}));
-          if (!checkResponse.ok) throw new Error(result?.error || 'Data source verification failed.');
-          return result;
+          return readConnectorCheckResponse(checkResponse);
         },
         onResult: (connectorId, result) => {
           const confirmed = result?.status === 'confirmed';
@@ -8726,6 +8724,7 @@ useEffect(() => {
                 : previous[connectorId]?.last_confirmed_at,
               data_context_check_status: confirmed ? 'confirmed' : 'failed',
               data_context_check_error: confirmed ? '' : (result?.error || ''),
+              data_context_reconnect_required: !confirmed && Boolean(result?.reconnect_required),
             },
           }));
         },
