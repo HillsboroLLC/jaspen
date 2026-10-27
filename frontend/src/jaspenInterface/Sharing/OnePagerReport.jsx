@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-import SharedArtifactView from './SharedArtifactView';
+import ScoringDetails from './ScoringDetails';
 import {
   REPORT_SECTIONS, applyPresentation, buildReportModel, closestReadableShade, readableOnWhite,
 } from './reportModel';
@@ -497,9 +497,12 @@ export default function OnePagerReport({
   artifactType, snapshot, title, createdAt, actions = null, canEdit = false, onSavePresentation = null, notes = [],
   showActions = true, editing: editingProp, onEditingChange = null,
 }) {
+  const snapshotCreatedAt = artifactType === 'tradeoff'
+    ? snapshot?.scorecards?.find((card) => card?.createdAt)?.createdAt
+    : snapshot?.scorecard?.createdAt;
   const model = useMemo(
-    () => buildReportModel({ artifactType, snapshot, title, createdAt }),
-    [artifactType, snapshot, title, createdAt],
+    () => buildReportModel({ artifactType, snapshot, title, createdAt: createdAt || snapshotCreatedAt }),
+    [artifactType, snapshot, title, createdAt, snapshotCreatedAt],
   );
   const saved = useMemo(() => applyPresentation(model, snapshot?.presentation), [model, snapshot]);
   // Editing can be driven from outside (the Workspace top bar) or by the
@@ -649,11 +652,9 @@ export default function OnePagerReport({
             <span>See how this was scored <span className="op-muted">· scores by criterion, sources and every assumption</span></span>
             <span aria-hidden="true">{detailsOpen ? '▴' : '▾'}</span>
           </button>
-          {detailsOpen && (
-            <div className="op-details__body">
-              <SharedArtifactView artifactType={artifactType} snapshot={snapshot} />
-            </div>
-          )}
+          <div className={`op-details__body${detailsOpen ? ' is-open' : ''}`} aria-hidden={!detailsOpen}>
+            <ScoringDetails artifactType={artifactType} snapshot={snapshot} />
+          </div>
         </section>
 
         <footer className="op-footer">

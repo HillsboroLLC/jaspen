@@ -23,13 +23,13 @@ jest.mock('../Workspace/JaspenClient', () => ({
   },
 }));
 
-// The real views are exercised by their own tests; here we only need to know
-// which snapshot reached them.
-jest.mock('./SharedArtifactView', () => ({ artifactType, snapshot }) => (
-  <div data-testid="shared-view">{artifactType}:{snapshot?.scorecard?.project_name}</div>
-));
-
 const snapshot = { scorecard: { project_name: 'Paid search', jaspen_score: 72 } };
+const tradeoffSnapshot = {
+  scorecards: [
+    { id: 'c1', project_name: 'Paid search', jaspen_score: 72 },
+    { id: 'c2', project_name: 'Partner channel', jaspen_score: 64 },
+  ],
+};
 const summary = (overrides = {}) => ({
   scorecard_count: 1,
   evidence_quotes_available: 3,
@@ -77,7 +77,7 @@ describe('ShareDialog', () => {
     render(<ShareButton threadId="t1" scorecardId="card-a" />);
     await user.click(screen.getByRole('button', { name: 'Share' }));
 
-    expect(await screen.findByTestId('shared-view')).toHaveTextContent('scorecard:Paid search');
+    expect(await screen.findByRole('heading', { name: 'Should we pursue Paid search?' })).toBeInTheDocument();
     expect(Jaspen.previewShare).toHaveBeenCalledWith(expect.objectContaining({
       artifact_type: 'scorecard', thread_id: 't1', scorecard_id: 'card-a', include_evidence: false,
     }));
@@ -101,7 +101,7 @@ describe('ShareDialog', () => {
     const user = userEvent.setup();
     render(<ShareButton threadId="t1" scorecardId="card-a" />);
     await user.click(screen.getByRole('button', { name: 'Share' }));
-    await screen.findByTestId('shared-view');
+    await screen.findByRole('heading', { name: 'Should we pursue Paid search?' });
 
     await user.click(screen.getByRole('checkbox', { name: /Include evidence quotes/ }));
     await waitFor(() => expect(Jaspen.previewShare).toHaveBeenLastCalledWith(
@@ -113,7 +113,7 @@ describe('ShareDialog', () => {
     const user = userEvent.setup();
     render(<ShareButton threadId="t1" scorecardId="card-a" />);
     await user.click(screen.getByRole('button', { name: 'Share' }));
-    await screen.findByTestId('shared-view');
+    await screen.findByRole('heading', { name: 'Should we pursue Paid search?' });
 
     await user.click(screen.getByRole('checkbox', { name: /^Facts/ }));
     await waitFor(() => expect(Jaspen.previewShare).toHaveBeenLastCalledWith(
@@ -146,7 +146,7 @@ describe('ShareDialog', () => {
     const user = userEvent.setup();
     render(<ShareButton threadId="t1" scorecardId="card-a" />);
     await user.click(screen.getByRole('button', { name: 'Share with Jaspen' }));
-    expect(await screen.findByTestId('shared-view')).toHaveTextContent('scorecard:Paid search');
+    expect(await screen.findByRole('heading', { name: 'Should we pursue Paid search?' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Confirm share' }));
     expect(Jaspen.createDecisionShare).toHaveBeenCalledWith({
       thread_id: 't1', scorecard_id: 'card-a', snapshot_sha256: 'preview-hash', preview_confirmed: true,
@@ -160,11 +160,52 @@ describe('ShareDialog', () => {
     const user = userEvent.setup();
     render(<ShareButton threadId="t1" scorecardId="card-a" />);
     await user.click(screen.getByRole('button', { name: 'Share with Jaspen' }));
-    await screen.findByTestId('shared-view');
+    await screen.findByRole('heading', { name: 'Should we pursue Paid search?' });
     await user.click(screen.getByRole('button', { name: 'Confirm share' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('changed after the preview');
     await waitFor(() => expect(Jaspen.previewDecisionShare).toHaveBeenCalledTimes(2));
-    expect(await screen.findByTestId('shared-view')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Should we pursue Paid search?' })).toBeInTheDocument();
+  });
+
+  test('both share previews use the one-pager for trade-off snapshots', async () => {
+    Jaspen.previewShare.mockResolvedValue({
+      artifact_type: 'tradeoff', title: 'Channel choice', snapshot: tradeoffSnapshot,
+      summary: summary({ scorecard_count: 2 }),
+      disclosure_review: { required: false, matches: [], warning: null },
+    });
+    Jaspen.previewDecisionShare.mockResolvedValue({
+      artifact_type: 'tradeoff', title: 'Channel choice', snapshot: tradeoffSnapshot, snapshot_sha256: 'tradeoff-hash',
+    });
+    const user = userEvent.setup();
+    const first = render(<ShareButton threadId="t1" artifactType="tradeoff" />);
+    await user.click(screen.getByRole('button', { name: 'Share' }));
+    expect(await screen.findByRole('heading', { name: 'Which option should we choose?' })).toBeInTheDocument();
+    expect(first.container.querySelector('[class*="score-dashboard"]')).toBeNull();
+    first.unmount();
+
+    const second = render(<ShareButton threadId="t1" artifactType="tradeoff" />);
+    await user.click(screen.getByRole('button', { name: 'Share with Jaspen' }));
+    expect(await screen.findByRole('heading', { name: 'Which option should we choose?' })).toBeInTheDocument();
+    expect(second.container.querySelector('[class*="score-dashboard"]')).toBeNull();
+  });
+
+  test('reserves the disclosure summary and modal height before the preview resolves', async () => {
+    let resolvePreview;
+    Jaspen.previewShare.mockReturnValue(new Promise((resolve) => { resolvePreview = resolve; }));
+    const user = userEvent.setup();
+    render(<ShareButton threadId="t1" scorecardId="card-a" />);
+    await user.click(screen.getByRole('button', { name: 'Share' }));
+
+    const slotBefore = screen.getByTestId('share-includes-slot');
+    expect(slotBefore).toHaveStyle({ minHeight: '176px' });
+
+    resolvePreview({
+      artifact_type: 'scorecard', title: 'Paid search', snapshot, summary: summary(),
+      disclosure_review: { required: true, matches: [], warning: 'Review it.' },
+    });
+    await screen.findByRole('heading', { name: 'Should we pursue Paid search?' });
+    expect(screen.getByTestId('share-includes-slot')).toBe(slotBefore);
+    expect(screen.getByTestId('share-includes-slot')).toHaveStyle({ minHeight: '176px' });
   });
 
   test('Share with Jaspen shows an API refusal reason', async () => {
@@ -217,28 +258,22 @@ describe('SharedPage', () => {
     expect(document.querySelector('meta[name="robots"]').content).toContain('noindex');
   });
 
-  test('only the link owner sees Edit, and saved wording replaces the headline', async () => {
+  test('the public page uses saved presentation wording and never shows owner edit controls', async () => {
+    const presentedSnapshot = {
+      ...snapshot,
+      presentation: { text: { headline: 'Is paid search worth it?' } },
+    };
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ artifact_type: 'scorecard', title: 'Paid search', created_at: '2026-09-26T00:00:00Z', expires_at: null, snapshot }),
+      json: async () => ({ artifact_type: 'scorecard', title: 'Paid search', created_at: '2026-09-26T00:00:00Z', expires_at: null, snapshot: presentedSnapshot }),
     });
     Jaspen.getShareManage.mockResolvedValue({ owner: true, can_edit: true, presentation: {} });
-    Jaspen.saveSharePresentation.mockResolvedValue({ presentation: { text: { headline: 'Is paid search worth it?' } } });
-    const user = userEvent.setup();
     renderAt('/s/tok123');
 
-    await user.click(await screen.findByRole('button', { name: 'Edit' }));
-    const headline = screen.getByLabelText('Headline');
-    await user.clear(headline);
-    await user.type(headline, 'Is paid search worth it?');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-
-    expect(Jaspen.saveSharePresentation).toHaveBeenCalledWith('tok123', expect.objectContaining({
-      text: { headline: 'Is paid search worth it?' },
-    }));
     expect(await screen.findByRole('heading', { name: 'Is paid search worth it?' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+    expect(Jaspen.getShareManage).not.toHaveBeenCalled();
   });
 
   test('visitors who do not own the link get no Edit button', async () => {

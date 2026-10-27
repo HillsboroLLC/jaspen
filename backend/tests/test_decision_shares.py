@@ -95,7 +95,9 @@ def test_preview_stores_nothing_and_excludes_sensitive_fields(client, db, app, t
     response = _preview(client, _headers(app, test_user))
     assert response.status_code == 200
     assert DecisionShare.query.count() == 0
-    serialized = str(response.get_json()['snapshot']).lower()
+    payload = response.get_json()
+    assert payload['title'] == 'Option One'
+    serialized = str(payload['snapshot']).lower()
     assert 'private passage' not in serialized
     assert 'secret-token' not in serialized
     assert 'connector_credentials' not in serialized

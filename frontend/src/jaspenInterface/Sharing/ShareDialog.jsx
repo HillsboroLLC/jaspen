@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Jaspen } from '../Workspace/JaspenClient';
-import SharedArtifactView from './SharedArtifactView';
+import OnePagerReport from './OnePagerReport';
 import './Sharing.css';
 
 const EXPIRY_OPTIONS = [
@@ -222,8 +222,9 @@ export default function ShareDialog({ open, onClose, threadId, artifactType, sco
               )}
 
               <h3 className="share-subhead">What viewers will see</h3>
-              {summary ? (
-                <ul className="share-includes">
+              <div className="share-includes-slot" data-testid="share-includes-slot" style={{ minHeight: 176 }}>
+                {summary ? (
+                  <ul className="share-includes">
                   <Included ok>Scores, criteria, and tiers{summary.scorecard_count > 1 ? ` for ${summary.scorecard_count} options` : ''}</Included>
                   <Included ok={summary.includes_rationale}>Rationale and summaries</Included>
                   <Included ok={summary.includes_risks}>Risks and considerations</Included>
@@ -233,10 +234,11 @@ export default function ShareDialog({ open, onClose, threadId, artifactType, sco
                     Evidence quotes from your conversation
                     {quotes ? ` (${quotes})` : ' (none on this ' + (artifactType === 'tradeoff' ? 'comparison' : 'scorecard') + ')'}
                   </Included>
-                </ul>
-              ) : (
-                <p className="share-muted">{previewLoading ? 'Building preview…' : previewError}</p>
-              )}
+                  </ul>
+                ) : (
+                  <p className="share-muted">{previewLoading ? 'Building preview…' : previewError}</p>
+                )}
+              </div>
 
               <fieldset className="share-fieldset">
                 <legend>Choose details to include</legend>
@@ -358,7 +360,13 @@ export default function ShareDialog({ open, onClose, threadId, artifactType, sco
               <div className="share-preview__label">Preview · exactly what viewers will see</div>
               <div className="share-preview__frame">
                 {preview ? (
-                  <SharedArtifactView artifactType={preview.artifact_type} snapshot={preview.snapshot} />
+                  <OnePagerReport
+                    artifactType={preview.artifact_type}
+                    snapshot={preview.snapshot}
+                    title={preview.title}
+                    canEdit={false}
+                    showActions={false}
+                  />
                 ) : (
                   <p className="share-muted share-preview__empty">{previewLoading ? 'Building preview…' : previewError}</p>
                 )}

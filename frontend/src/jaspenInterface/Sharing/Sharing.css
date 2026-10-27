@@ -256,6 +256,7 @@
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   gap: 20px;
+  height: min(720px, calc(100vh - 140px));
   min-height: 0;
 }
 
@@ -304,6 +305,10 @@
   display: grid;
   gap: 6px;
 }
+
+/* The summary is replaced asynchronously by six disclosure rows. Reserving
+   their full space keeps every checkbox and Create link under the pointer. */
+.share-includes-slot { min-height: 176px; }
 
 .share-include {
   display: flex;

@@ -141,6 +141,7 @@ def preview_decision_share():
         return error
     return jsonify({
         'artifact_type': prepared['artifact_type'],
+        'title': prepared['title'],
         'snapshot': prepared['snapshot'],
         'snapshot_sha256': prepared['snapshot_sha256'],
     })

@@ -2869,7 +2869,6 @@ export default function JaspenWorkspace() {
               artifactType="scorecard"
               snapshot={workspaceReportSnapshot}
               title={displayTitle}
-              createdAt={rendered?.timestamp || rendered?.createdAt || null}
               canEdit={isScorecard}
               onSavePresentation={saveReportPresentation}
               notes={workspaceNotes}

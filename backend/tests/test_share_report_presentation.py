@@ -209,6 +209,25 @@ def test_narrative_check_flags_only_values_excluded_for_this_link():
     assert disclosure_narrative_matches(raw, filter_public_snapshot(raw, opted_in), opted_in) == []
 
 
+def test_presentation_wording_cannot_bypass_excluded_value_review():
+    raw = {
+        'scorecard': {
+            'facts': {'contract_value': {'value': 2400000, 'unit': 'USD'}},
+            'jaspen_score': 72,
+        },
+        'presentation': {'text': {'headline': 'Approve the $2.4M contract'}},
+    }
+    settings = {'include_facts': False, 'include_metrics': False, 'include_financials': False}
+    filtered = filter_public_snapshot(raw, settings)
+
+    assert filtered['presentation']['text']['headline'] == 'Approve the $2.4M contract'
+    assert disclosure_narrative_matches(raw, filtered, settings) == [{
+        'path': 'presentation.text.headline',
+        'excluded_field': 'facts.contract_value',
+        'excluded_value': 2400000,
+    }]
+
+
 def test_empty_fact_selection_means_no_facts_are_shared_or_exempt_from_review():
     raw = {'scorecard': {
         'executive_summary': 'Contract is $2.4M.',

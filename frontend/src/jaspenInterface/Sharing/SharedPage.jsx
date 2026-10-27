@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 
 import { API_BASE } from '../../config/apiBase';
-import { Jaspen } from '../Workspace/JaspenClient';
 import OnePagerReport from './OnePagerReport';
 import './Sharing.css';
 
@@ -133,36 +132,9 @@ export default function SharedPage() {
   const location = useLocation();
   const [state, setState] = useState({ phase: 'loading', data: null });
   const [reportOpen, setReportOpen] = useState(false);
-  const [canEdit, setCanEdit] = useState(false);
   const printedRef = useRef(false);
   useNoIndex();
   useReportFonts();
-
-  // Only the link's owner (sharing is paid-only) gets the Edit button. Anyone
-  // else, signed in or not, simply sees the report.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const manage = await Jaspen.getShareManage(token);
-        if (!cancelled) setCanEdit(Boolean(manage?.owner && manage?.can_edit));
-      } catch (_error) {
-        if (!cancelled) setCanEdit(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [token]);
-
-  const savePresentation = useCallback(async (presentation) => {
-    const result = await Jaspen.saveSharePresentation(token, presentation);
-    setState((current) => ({
-      ...current,
-      data: {
-        ...current.data,
-        snapshot: { ...current.data.snapshot, presentation: result?.presentation || {} },
-      },
-    }));
-  }, [token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,9 +215,7 @@ export default function SharedPage() {
           artifactType={data.artifact_type}
           snapshot={data.snapshot}
           title={data.title}
-          createdAt={data.created_at}
-          canEdit={canEdit}
-          onSavePresentation={savePresentation}
+          canEdit={false}
           actions={(
             <>
               <button type="button" className="op-btn op-btn--primary" onClick={downloadPdf}>

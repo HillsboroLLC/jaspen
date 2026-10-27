@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Jaspen } from '../Workspace/JaspenClient';
-import SharedArtifactView from './SharedArtifactView';
+import OnePagerReport from './OnePagerReport';
 import './Sharing.css';
 
 export default function DecisionShareDialog({ open, onClose, threadId, scorecardId = null }) {
@@ -76,7 +76,13 @@ export default function DecisionShareDialog({ open, onClose, threadId, scorecard
             <p className="share-muted">Building preview…</p>
           ) : preview ? (
             <div className="share-preview-frame">
-              <SharedArtifactView artifactType={preview.artifact_type} snapshot={preview.snapshot} />
+              <OnePagerReport
+                artifactType={preview.artifact_type}
+                snapshot={preview.snapshot}
+                title={preview.title}
+                canEdit={false}
+                showActions={false}
+              />
             </div>
           ) : null}
           {error && <p className="share-error" role="alert">{error}</p>}
