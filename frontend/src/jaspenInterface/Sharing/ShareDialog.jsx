@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { Jaspen } from '../Workspace/JaspenClient';
 import OnePagerReport from './OnePagerReport';
@@ -176,7 +177,7 @@ export default function ShareDialog({ open, onClose, threadId, artifactType, sco
   const kind = artifactType === 'tradeoff' ? 'trade-off comparison' : 'scorecard';
   const shareTitle = preview?.title || title || (artifactType === 'tradeoff' ? 'Trade-off comparison' : 'Scorecard');
 
-  return (
+  return createPortal(
     <div className="share-modal-backdrop" role="presentation" onClick={onClose}>
       <div className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onClick={(e) => e.stopPropagation()}>
         <div className="share-modal__head">
@@ -375,6 +376,7 @@ export default function ShareDialog({ open, onClose, threadId, artifactType, sco
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

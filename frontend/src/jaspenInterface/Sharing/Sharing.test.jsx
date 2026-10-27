@@ -154,6 +154,31 @@ describe('ShareDialog', () => {
     expect(await screen.findByText('Decision shared with Jaspen.')).toBeInTheDocument();
   });
 
+  test('mounts both share dialog backdrops directly under document.body', async () => {
+    const user = userEvent.setup();
+    const shell = document.createElement('div');
+    shell.className = 'jas-shell';
+    document.body.appendChild(shell);
+    render(<ShareButton threadId="t1" scorecardId="card-a" />, { container: shell });
+
+    await user.click(screen.getByRole('button', { name: 'Share' }));
+    let backdrop = Array.from(document.body.children)
+      .find((element) => element.classList.contains('share-modal-backdrop'));
+    expect(backdrop).toBeDefined();
+    expect(backdrop.parentElement).toBe(document.body);
+    expect(shell).not.toContainElement(backdrop);
+
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    expect(document.body.querySelector('.share-modal-backdrop')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Share with Jaspen' }));
+    backdrop = Array.from(document.body.children)
+      .find((element) => element.classList.contains('share-modal-backdrop'));
+    expect(backdrop).toBeDefined();
+    expect(backdrop.parentElement).toBe(document.body);
+    expect(shell).not.toContainElement(backdrop);
+  });
+
   test('Share with Jaspen reloads the preview when the decision changed', async () => {
     const changed = Object.assign(new Error('This decision changed after the preview.'), { status: 409 });
     Jaspen.createDecisionShare.mockRejectedValueOnce(changed);

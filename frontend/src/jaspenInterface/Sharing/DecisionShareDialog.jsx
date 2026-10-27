@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { Jaspen } from '../Workspace/JaspenClient';
 import OnePagerReport from './OnePagerReport';
@@ -59,7 +60,7 @@ export default function DecisionShareDialog({ open, onClose, threadId, scorecard
   };
 
   if (!open) return null;
-  return (
+  return createPortal(
     <div className="share-modal-backdrop" role="presentation" onClick={onClose}>
       <div className="share-modal" role="dialog" aria-modal="true" aria-labelledby="decision-share-title" onClick={(event) => event.stopPropagation()}>
         <div className="share-modal__head">
@@ -96,6 +97,7 @@ export default function DecisionShareDialog({ open, onClose, threadId, scorecard
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
