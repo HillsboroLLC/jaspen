@@ -37,4 +37,9 @@ describe('production browser security policy', () => {
   ])('allows required production origin %s', (origin) => {
     expect(header.value).toContain(origin);
   });
+
+  test('lets AdSense load its ad-quality frame on article pages', () => {
+    const frameSrc = header.value.split(';').find((part) => part.trim().startsWith('frame-src'));
+    expect(frameSrc).toContain('https://*.adtrafficquality.google');
+  });
 });
