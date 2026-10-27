@@ -4,7 +4,7 @@ describe.each([
   ['Jira', 'jira_sync', 'jira'],
   ['Smartsheet', 'smartsheet_sync', 'smartsheet'],
 ])('%s Data Context states', (label, id, section) => {
-  test('not connected is grey and routes the user to Data Sources', () => {
+  test('not connected is grey and points the user to Data Sources', () => {
     expect(connectorContextState({ id, label, connected: false })).toEqual(expect.objectContaining({
       state: 'disconnected',
       dot: 'disconnected',
@@ -31,7 +31,7 @@ describe.each([
     }));
   });
 
-  test('unconfirmed remains selectable with a neutral dot and last-confirmed tooltip', () => {
+  test('unconfirmed is disabled with a neutral dot and last-confirmed tooltip', () => {
     const lastConfirmedAt = '2026-10-01T12:00:00Z';
     const expectedDate = new Date(lastConfirmedAt).toLocaleDateString();
 
@@ -39,21 +39,50 @@ describe.each([
       id, label, connected: true, freshness: 'unconfirmed', last_confirmed_at: lastConfirmedAt,
       [section]: { data_enabled: true },
     })).toEqual(expect.objectContaining({
-      state: 'available',
+      state: 'unconfirmed',
       dot: 'unconfirmed',
-      selectable: true,
+      selectable: false,
       tooltip: `Set up · last confirmed ${expectedDate}`,
     }));
   });
 
-  test('never-confirmed remains selectable with the neutral setup tooltip', () => {
+  test('never-confirmed is disabled with the neutral setup tooltip', () => {
     expect(connectorContextState({
       id, label, connected: true, freshness: 'unconfirmed', last_confirmed_at: null,
       [section]: { data_enabled: true },
     })).toEqual(expect.objectContaining({
       dot: 'unconfirmed',
-      selectable: true,
+      selectable: false,
       tooltip: 'Set up · not confirmed yet',
+    }));
+  });
+
+  test('checking and problem states are disabled', () => {
+    expect(connectorContextState({
+      id, label, connected: true, freshness: 'checking', [section]: { data_enabled: true },
+    })).toEqual(expect.objectContaining({ state: 'checking', selectable: false }));
+    expect(connectorContextState({
+      id, label, connected: true, freshness: 'confirmed', lifecycle_status: 'error', [section]: { data_enabled: true },
+    })).toEqual(expect.objectContaining({ state: 'problem', selectable: false }));
+  });
+});
+
+describe.each([
+  ['Salesforce', 'salesforce_insights'],
+  ['Snowflake', 'snowflake_insights'],
+])('%s Data Context states', (label, id) => {
+  test('only a confirmed connection is selectable', () => {
+    expect(connectorContextState({ id, label, connected: true, freshness: 'confirmed' })).toEqual(expect.objectContaining({
+      state: 'available',
+      selectable: true,
+    }));
+    expect(connectorContextState({ id, label, connected: true, freshness: 'unconfirmed' })).toEqual(expect.objectContaining({
+      state: 'unconfirmed',
+      selectable: false,
+    }));
+    expect(connectorContextState({ id, label, connected: false, freshness: 'confirmed' })).toEqual(expect.objectContaining({
+      state: 'disconnected',
+      selectable: false,
     }));
   });
 });

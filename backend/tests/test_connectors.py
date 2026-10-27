@@ -1,5 +1,8 @@
+import importlib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import pytest
 
 from app import connector_store
 from app.connector_store import append_sync_audit_event, update_connector_settings
@@ -171,3 +174,109 @@ def test_connector_status_normalizes_naive_utc_timestamps(client, auth_headers, 
     jira = next(item for item in response.get_json()["connectors"] if item["id"] == "jira_sync")
     assert jira["last_verified_at"] == "2026-10-13T01:26:45Z"
     assert jira["last_sync_at"] == "2026-10-13T01:20:00Z"
+
+
+def test_data_context_check_ignores_incomplete_jira_execution_config_and_is_throttled(
+    client, auth_headers, test_user, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    stale = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=8)
+    _store_connector_status(
+        test_user.id,
+        connection_status="connected",
+        lifecycle_status="connected",
+        last_verified_at=stale.isoformat(),
+        jira_base_url="https://synthetic.atlassian.test",
+        jira_email="dev@example.test",
+        jira_api_token="synthetic-token",
+        jira_project_key="",
+        jira_issue_type="",
+        jira_field_mapping={},
+        jira_data_enabled=True,
+        jira_data_project_scope="selected",
+        jira_data_selected_projects=["DATA"],
+    )
+    calls = []
+    monkeypatch.setattr(
+        connector_routes,
+        "refresh_portfolio",
+        lambda user_id, force=False: calls.append((user_id, force)) or {"stale": False, "refresh_failed": False},
+    )
+
+    first = client.get("/api/v1/connectors/jira_sync/data-context/check", headers=auth_headers)
+    second = client.get("/api/v1/connectors/jira_sync/data-context/check", headers=auth_headers)
+
+    assert first.status_code == 200
+    assert first.get_json()["status"] == "confirmed"
+    assert second.status_code == 200
+    assert second.get_json()["throttled"] is True
+    assert calls == [(test_user.id, True)]
+    settings = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert settings["jira_project_key"] == ""
+    assert settings["jira_issue_type"] == ""
+    assert settings["jira_field_mapping"] == {}
+    assert settings["jira_data_selected_projects"] == ["DATA"]
+
+    jira = _jira_status(client, auth_headers)
+    assert jira["freshness"] == "confirmed"
+
+
+def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
+    client, auth_headers, test_user, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    stale = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(days=8)
+    original = {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+        "last_verified_at": stale.isoformat(),
+        "jira_base_url": "https://synthetic.atlassian.test",
+        "jira_email": "dev@example.test",
+        "jira_api_token": "synthetic-token",
+        "jira_project_key": "EXEC",
+        "jira_issue_type": "Task",
+        "jira_field_mapping": {"title": "summary"},
+        "jira_data_enabled": True,
+        "jira_data_project_scope": "selected",
+        "jira_data_selected_projects": ["DATA"],
+    }
+    _store_connector_status(test_user.id, **original)
+
+    def fail_read(*_args, **_kwargs):
+        raise RuntimeError("synthetic data read failed")
+
+    monkeypatch.setattr(connector_routes, "refresh_portfolio", fail_read)
+    response = client.get("/api/v1/connectors/jira_sync/data-context/check", headers=auth_headers)
+
+    assert response.status_code == 503
+    assert response.get_json()["status"] == "failed"
+    settings = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    for field in (
+        "connection_status", "lifecycle_status", "jira_project_key", "jira_issue_type",
+        "jira_field_mapping", "jira_data_project_scope", "jira_data_selected_projects",
+    ):
+        assert settings[field] == original[field]
+    assert settings["last_verified_at"] == original["last_verified_at"]
+
+
+@pytest.mark.parametrize(
+    ("connector_id", "settings", "probe_name"),
+    [
+        ("jira_sync", {"jira_data_enabled": True}, "refresh_portfolio"),
+        ("smartsheet_sync", {"smartsheet_data_enabled": True, "smartsheet_sheet_id": "sheet-1"}, "smartsheet_get_sheet"),
+        ("salesforce_insights", {}, "fetch_pipeline_summary"),
+        ("snowflake_insights", {"snowflake_table_allowlist": ["analytics.context"]}, "run_allowlisted_query"),
+    ],
+)
+def test_each_discovery_source_uses_a_live_read(app, monkeypatch, connector_id, settings, probe_name):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    calls = []
+
+    def probe(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"stale": False, "refresh_failed": False}
+
+    monkeypatch.setattr(connector_routes, probe_name, probe)
+    connector_routes._verify_data_context_read("user-1", connector_id, settings)
+
+    assert len(calls) == 1

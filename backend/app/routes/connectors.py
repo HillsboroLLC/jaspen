@@ -12,7 +12,7 @@ from app import db, limiter
 from app.admin_audit import append_user_audit_event
 from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_operation
 from app.billing_config import to_public_plan
-from app.connectors.smartsheet import smartsheet_connect, smartsheet_list_sheets
+from app.connectors.smartsheet import smartsheet_connect, smartsheet_get_sheet, smartsheet_list_sheets
 from app.connector_registry import (
     get_connector_catalog,
     get_connector_definition,
@@ -62,6 +62,15 @@ from app.tool_registry import get_tool_entitlements
 
 
 connectors_bp = Blueprint("connectors", __name__)
+
+DATA_CONTEXT_CONNECTOR_IDS = {
+    "jira_sync",
+    "smartsheet_sync",
+    "salesforce_insights",
+    "snowflake_insights",
+}
+DATA_CONTEXT_CHECK_LOCKS = {}
+DATA_CONTEXT_CHECK_LOCKS_GUARD = threading.Lock()
 
 
 def _audit_connector_event(action, *, user=None, user_id=None, details=None):
@@ -1160,6 +1169,146 @@ def update_connector(connector_id):
         "connector": updated_view,
         "saved_settings": redact_connector_settings(saved, connector_id=connector_id),
     }), 200
+
+
+def _data_context_check_lock(user_id, connector_id):
+    key = (str(user_id), str(connector_id))
+    with DATA_CONTEXT_CHECK_LOCKS_GUARD:
+        return DATA_CONTEXT_CHECK_LOCKS.setdefault(key, threading.Lock())
+
+
+def _recent_data_context_check(user_id, connector_id, now):
+    try:
+        throttle_seconds = max(0, int(current_app.config.get("DATA_CONTEXT_CHECK_THROTTLE_SECONDS", 300)))
+    except (TypeError, ValueError):
+        throttle_seconds = 300
+    cutoff = now - timedelta(seconds=throttle_seconds)
+    row = (
+        ConnectorSyncLog.query
+        .filter_by(user_id=user_id, connector_id=connector_id, action="data_context_check")
+        .order_by(ConnectorSyncLog.created_at.desc())
+        .first()
+    )
+    if not row:
+        return None
+    checked_at = _utc_datetime(row.created_at)
+    if not checked_at or checked_at < cutoff:
+        return None
+    return {
+        "timestamp": _utc_iso(row.created_at),
+        "status": row.status,
+        "message": row.error_message or "",
+    }
+
+
+def _verify_data_context_read(user_id, connector_id, settings):
+    if connector_id == "jira_sync":
+        if not _to_bool(settings.get("jira_data_enabled"), default=False):
+            raise RuntimeError("Jira data analysis is turned off.")
+        snapshot = refresh_portfolio(user_id, force=True)
+        if snapshot.get("stale") or snapshot.get("refresh_failed"):
+            raise RuntimeError("Jira data could not be refreshed.")
+        return
+
+    if connector_id == "smartsheet_sync":
+        if not _to_bool(settings.get("smartsheet_data_enabled"), default=False):
+            raise RuntimeError("Smartsheet data analysis is turned off.")
+        smartsheet_get_sheet(
+            {
+                "base_url": settings.get("smartsheet_base_url"),
+                "access_token": settings.get("smartsheet_api_token"),
+            },
+            settings.get("smartsheet_sheet_id") or settings.get("external_workspace"),
+        )
+        return
+
+    if connector_id == "salesforce_insights":
+        fetch_pipeline_summary(user_id, lookback_days=1, max_records=1)
+        return
+
+    if connector_id == "snowflake_insights":
+        allowlist = settings.get("snowflake_table_allowlist") if isinstance(settings.get("snowflake_table_allowlist"), list) else []
+        table = next((str(value).strip() for value in allowlist if str(value).strip()), "")
+        if not table:
+            raise RuntimeError("Snowflake table allowlist is empty.")
+        run_allowlisted_query(user_id, table, limit=1)
+        return
+
+    raise RuntimeError("This source does not support data context verification.")
+
+
+@connectors_bp.route("/<connector_id>/data-context/check", methods=["GET"])
+@jwt_required()
+def check_connector_data_context(connector_id):
+    user = User.query.get(get_jwt_identity())
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    connector_id = str(connector_id or "").strip().lower()
+    if connector_id not in DATA_CONTEXT_CONNECTOR_IDS:
+        return jsonify(_error_payload(
+            f"Connector '{connector_id}' does not support data context",
+            "DATA_CONTEXT_NOT_SUPPORTED",
+            connector_id=connector_id,
+        )), 404
+
+    lock = _data_context_check_lock(user.id, connector_id)
+    with lock:
+        now = datetime.now(timezone.utc)
+        recent = _recent_data_context_check(user.id, connector_id, now)
+        if recent:
+            confirmed = recent.get("status") == "success"
+            settings = get_connector_settings(user.id, connector_id)
+            payload = {
+                "connector_id": connector_id,
+                "status": "confirmed" if confirmed else "failed",
+                "throttled": True,
+                "last_verified_at": settings.get("last_verified_at"),
+            }
+            if not confirmed:
+                payload["error"] = recent.get("message") or "Data source verification failed."
+            return jsonify(payload), 200 if confirmed else 503
+
+        settings = get_connector_settings(user.id, connector_id)
+        if str(settings.get("connection_status") or "").lower() != "connected":
+            return jsonify({
+                "connector_id": connector_id,
+                "status": "failed",
+                "error": "Connect this source in Data Sources before using it as data context.",
+            }), 409
+
+        try:
+            _verify_data_context_read(user.id, connector_id, settings)
+        except Exception as exc:
+            reason = str(exc) or "Data source verification failed."
+            append_sync_audit_event(
+                user.id,
+                connector_id,
+                action="data_context_check",
+                status="failed",
+                message=reason,
+            )
+            return jsonify({
+                "connector_id": connector_id,
+                "status": "failed",
+                "error": reason,
+            }), 503
+
+        verified_at = _iso_now()
+        update_connector_settings(user.id, connector_id, {"last_verified_at": verified_at})
+        append_sync_audit_event(
+            user.id,
+            connector_id,
+            action="data_context_check",
+            status="success",
+            message="Live data-context read passed",
+        )
+        return jsonify({
+            "connector_id": connector_id,
+            "status": "confirmed",
+            "throttled": False,
+            "last_verified_at": verified_at,
+        }), 200
 
 
 @connectors_bp.route("/<connector_id>/health", methods=["GET"])

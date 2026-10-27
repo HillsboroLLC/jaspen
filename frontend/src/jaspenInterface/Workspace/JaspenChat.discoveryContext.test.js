@@ -4,6 +4,7 @@ import path from 'path';
 const source = fs.readFileSync(path.join(__dirname, 'JaspenChat.jsx'), 'utf8');
 const clientSource = fs.readFileSync(path.join(__dirname, 'JaspenClient.jsx'), 'utf8');
 const connectorStateSource = fs.readFileSync(path.join(__dirname, 'connectorContextState.js'), 'utf8');
+const connectorChipSource = fs.readFileSync(path.join(__dirname, 'ConnectorContextChip.jsx'), 'utf8');
 
 test('Discovery presents objective, Decision Kit, and honest Data Context separately', () => {
   const objectiveBlock = source.slice(source.indexOf('const renderObjectiveTags'), source.indexOf('const renderDecisionKitTags'));
@@ -12,7 +13,7 @@ test('Discovery presents objective, Decision Kit, and honest Data Context separa
   expect(source).toContain("{ id: 'jira_sync', label: 'Jira' }");
   expect(source).toContain("{ id: 'salesforce_insights', label: 'Salesforce' }");
   expect(source).toContain("{ id: 'snowflake_insights', label: 'Snowflake' }");
-  expect(source).toContain('jas-connector-status-dot');
+  expect(connectorChipSource).toContain('jas-connector-status-dot');
   expect(connectorStateSource).toContain('Connect ${label} in Data Sources');
 });
 
@@ -43,8 +44,15 @@ test('active objective and RFP kit render in the upper-right context', () => {
 test('Jira is available but never auto-selected and the session chip controls prompt inclusion', () => {
   expect(source).not.toContain('defaultActive:');
   expect(source).not.toContain('dataContextDefaultsAppliedRef');
-  expect(source).toContain('dataContextConnectorIds: [...activeContextSourceIds]');
+  expect(source).toContain('dataContextConnectorIds: Array.isArray(options.dataContextConnectorIds)');
+  expect(source).toContain('dataContextConnectorIds: successfulContextIds');
   expect(clientSource).toContain('data_context_connector_ids: Array.isArray(data_context_connector_ids)');
+});
+
+test('failed context is excluded from the AI connector list and visible marker', () => {
+  expect(source).toContain("!String(contextSourceData[id] || '').startsWith('__error__')");
+  expect(source).toContain('const selectedContextLabels = successfulContextIds');
+  expect(source).toContain('dataContextConnectorIds: successfulContextIds');
 });
 
 test('blank and switched sessions clear per-session kit context and progress state', () => {

@@ -22,7 +22,9 @@ export function connectorContextState(connector = {}, fallback = {}) {
   const label = String(connector?.label || fallback?.label || id || 'connector').trim();
   const connected = Boolean(connector?.connected);
   const lifecycle = String(connector?.lifecycle_status || connector?.status || '').toLowerCase();
-  const hasProblem = ['error', 'degraded', 'reconnect_required'].includes(lifecycle);
+  const checkStatus = String(connector?.data_context_check_status || '').toLowerCase();
+  const hasProblem = ['error', 'degraded', 'reconnect_required'].includes(lifecycle) || checkStatus === 'failed';
+  const checking = String(connector?.freshness || '').toLowerCase() === 'checking' || checkStatus === 'checking';
   const confirmed = String(connector?.freshness || '').toLowerCase() === 'confirmed';
   const confirmedDate = formatConfirmedDate(connector?.last_confirmed_at);
   const freshnessTooltip = confirmedDate
@@ -43,7 +45,7 @@ export function connectorContextState(connector = {}, fallback = {}) {
   if (hasProblem) {
     return {
       id, label, connected: true, analysisEnabled: false, selectable: false,
-      state: 'problem', dot: 'problem', tooltip: `Reconnect ${label}`,
+      state: 'problem', dot: 'problem', tooltip: `Reconnect ${label} in Data Sources`,
     };
   }
   if (!analysisEnabled && analysisSetting) {
@@ -53,9 +55,22 @@ export function connectorContextState(connector = {}, fallback = {}) {
       tooltip: `Turn on '${analysisSetting.setting}' in Data Sources to use it here`,
     };
   }
+  if (checking) {
+    return {
+      id, label, connected: true, analysisEnabled: true, selectable: false,
+      state: 'checking', dot: 'unconfirmed',
+      tooltip: `Checking ${label} data…`,
+    };
+  }
+  if (!confirmed) {
+    return {
+      id, label, connected: true, analysisEnabled: true, selectable: false,
+      state: 'unconfirmed', dot: 'unconfirmed', tooltip: freshnessTooltip,
+    };
+  }
   return {
     id, label, connected: true, analysisEnabled: true, selectable: true,
-    state: 'available', dot: confirmed ? 'connected' : 'unconfirmed',
-    tooltip: confirmed ? `Add live ${label} data as AI context` : freshnessTooltip,
+    state: 'available', dot: 'connected',
+    tooltip: `Add live ${label} data as AI context`,
   };
 }

@@ -153,6 +153,18 @@ def smartsheet_list_sheets(config):
     return normalized
 
 
+def smartsheet_get_sheet(config, sheet_id):
+    """Read one configured sheet without changing it."""
+    target = _text(sheet_id)
+    if not target:
+        raise RuntimeError("Smartsheet sheet ID is not configured.")
+    response = _request(config, "GET", f"2.0/sheets/{target}")
+    payload = response.get("data")
+    if not isinstance(payload, dict):
+        raise RuntimeError("Smartsheet returned an unexpected sheet response.")
+    return payload
+
+
 def smartsheet_push_wbs(thread_id, wbs_data, config):
     settings = config if isinstance(config, dict) else {}
     sheet_id = _sheet_id(settings)

@@ -33,7 +33,9 @@ import {
 } from '../GuidedDecision';
 import ExecutionPlanExportButton from './ExecutionPlanExportButton';
 import PmSyncPanel from './PmSyncPanel';
+import ConnectorContextChip from './ConnectorContextChip';
 import { connectorContextState } from './connectorContextState';
+import { verifyUnconfirmedContextSources } from './connectorContextVerification';
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -7386,20 +7388,13 @@ const renderConnectorContextTags = () => {
         const contextState = connectorContextState(connectorStatusById[source.id], source);
         const isActive = contextState.selectable && activeContextSourceIds.has(source.id);
         return (
-          <button
+          <ConnectorContextChip
             key={source.id}
-            type="button"
-            className={`jas-connector-context-chip ${isActive ? 'active' : ''} ${contextState.state}`}
-            onClick={() => {
-              if (contextState.selectable) void handleToggleContextSource(source.id, source.label);
-              else window.location.assign(`/connectors-manage?connector=${encodeURIComponent(source.id)}`);
-            }}
-            title={isActive ? `Remove ${source.label} context` : contextState.tooltip}
-          >
-            <span className={`jas-connector-status-dot ${contextState.dot}`} aria-hidden="true" />
-            {isActive && <FontAwesomeIcon icon={faCheck} />}
-            {source.label}
-          </button>
+            source={source}
+            connector={connectorStatusById[source.id]}
+            active={isActive}
+            onToggle={(id, label) => void handleToggleContextSource(id, label)}
+          />
         );
       })}
     </div>
@@ -7877,7 +7872,9 @@ useEffect(() => {
         viewContext: chatViewContext,
         leverDefaults,
         starterId: selectedStarter?.id || undefined,
-        dataContextConnectorIds: [...activeContextSourceIds],
+        dataContextConnectorIds: Array.isArray(options.dataContextConnectorIds)
+          ? options.dataContextConnectorIds
+          : [...activeContextSourceIds],
         attachments: Array.isArray(options.attachments) ? options.attachments : [],
       });
 
@@ -7980,7 +7977,9 @@ async function continueConversation(userText, options = {}) {
       objective: strategyObjective,
       intakeContext: ongoingIntakeContext,
       viewContext: chatViewContext,
-      dataContextConnectorIds: [...activeContextSourceIds],
+      dataContextConnectorIds: Array.isArray(options.dataContextConnectorIds)
+        ? options.dataContextConnectorIds
+        : [...activeContextSourceIds],
       attachments: Array.isArray(options.attachments) ? options.attachments : [],
     });
     syncCreditsFromPayload(data, { refresh: true });
@@ -8046,9 +8045,15 @@ async function retryLastSend() {
   setError(null);
   try {
     if (snapshot.kind === 'start' && !sessionId) {
-      await startConversation(snapshot.placeholder, { attachments: snapshot.attachments || [] });
+      await startConversation(snapshot.placeholder, {
+        attachments: snapshot.attachments || [],
+        dataContextConnectorIds: snapshot.dataContextConnectorIds || [],
+      });
     } else {
-      await continueConversation(snapshot.placeholder, { attachments: snapshot.attachments || [] });
+      await continueConversation(snapshot.placeholder, {
+        attachments: snapshot.attachments || [],
+        dataContextConnectorIds: snapshot.dataContextConnectorIds || [],
+      });
     }
   } finally {
     setRetryingStream(false);
@@ -8182,6 +8187,7 @@ const [usedContextSourceIds, setUsedContextSourceIds] = useState(new Set()); // 
 const [contextSourceData, setContextSourceData] = useState({});
 const [contextSourceMeta, setContextSourceMeta] = useState({});
 const [contextSourceLoading, setContextSourceLoading] = useState(false);
+const dataContextChecksInFlightRef = useRef(new Set());
 
 // Confidence: AI-driven when available (from knowledgeSignals), falls back to local formula.
 const confidence = useMemo(() => {
@@ -8685,6 +8691,45 @@ useEffect(() => {
       setActiveContextSourceIds((previous) => new Set(
         [...previous].filter((id) => selectableIds.has(id))
       ));
+      const discoveryIds = new Set(DISCOVERY_DATA_CONTEXTS.map((item) => item.id));
+      void verifyUnconfirmedContextSources({
+        connectors: allConnectors.filter((item) => discoveryIds.has(item.id)),
+        inFlight: dataContextChecksInFlightRef.current,
+        onChecking: (connectorId) => {
+          setConnectorStatusById((previous) => ({
+            ...previous,
+            [connectorId]: {
+              ...previous[connectorId],
+              freshness: 'checking',
+              data_context_check_status: 'checking',
+            },
+          }));
+        },
+        checkConnector: async (connectorId) => {
+          const checkResponse = await authFetch(
+            `${API_BASE}/api/v1/connectors/${encodeURIComponent(connectorId)}/data-context/check`,
+            { method: 'GET', headers: buildAuthHeaders({}, 'GET'), credentials: 'include' }
+          );
+          const result = await checkResponse.json().catch(() => ({}));
+          if (!checkResponse.ok) throw new Error(result?.error || 'Data source verification failed.');
+          return result;
+        },
+        onResult: (connectorId, result) => {
+          const confirmed = result?.status === 'confirmed';
+          setConnectorStatusById((previous) => ({
+            ...previous,
+            [connectorId]: {
+              ...previous[connectorId],
+              freshness: confirmed ? 'confirmed' : 'unconfirmed',
+              last_confirmed_at: confirmed
+                ? (result?.last_verified_at || previous[connectorId]?.last_confirmed_at)
+                : previous[connectorId]?.last_confirmed_at,
+              data_context_check_status: confirmed ? 'confirmed' : 'failed',
+              data_context_check_error: confirmed ? '' : (result?.error || ''),
+            },
+          }));
+        },
+      });
     } catch (error) {
       devWarn('[connectors/status] request failed', { message: error?.message || 'unknown error' });
     }
@@ -9295,13 +9340,14 @@ const handleSaveStarter = async () => {
       uploading: true,
     }));
     const selectedContextIds = [...activeContextSourceIds];
-    const selectedContextLabels = selectedContextIds
-      .map((id) => connectedDataSources.find((item) => item.id === id)?.label || id)
-      .filter(Boolean);
     const backendManagedContextIds = new Set(['jira_sync']);
     const successfulContextIds = selectedContextIds.filter(
-      (id) => backendManagedContextIds.has(id) || (contextSourceData[id] && !String(contextSourceData[id]).startsWith('__error__'))
+      (id) => !String(contextSourceData[id] || '').startsWith('__error__')
+        && (backendManagedContextIds.has(id) || contextSourceData[id])
     );
+    const selectedContextLabels = successfulContextIds
+      .map((id) => connectedDataSources.find((item) => item.id === id)?.label || id)
+      .filter(Boolean);
     const activeContextParts = successfulContextIds.filter((id) => !backendManagedContextIds.has(id)).map((id) => {
       const source = connectedDataSources.find((item) => item.id === id);
       return `[${source?.label || id} Context]\n${contextSourceData[id]}`;
@@ -9377,11 +9423,21 @@ const handleSaveStarter = async () => {
     if (!sessionId) {
       // Remember this send so the chat bubble can offer a one-click retry if
       // the stream fails mid-response (see retryLastSend / setStreamingAssistantError).
-      lastSendRef.current = { kind: 'start', placeholder, attachments: sendAttachments };
-      resolvedThreadId = await startConversation(placeholder, { attachments: sendAttachments });
+      lastSendRef.current = {
+        kind: 'start', placeholder, attachments: sendAttachments, dataContextConnectorIds: successfulContextIds,
+      };
+      resolvedThreadId = await startConversation(placeholder, {
+        attachments: sendAttachments,
+        dataContextConnectorIds: successfulContextIds,
+      });
     } else {
-      lastSendRef.current = { kind: 'continue', placeholder, attachments: sendAttachments };
-      resolvedThreadId = await continueConversation(placeholder, { attachments: sendAttachments });
+      lastSendRef.current = {
+        kind: 'continue', placeholder, attachments: sendAttachments, dataContextConnectorIds: successfulContextIds,
+      };
+      resolvedThreadId = await continueConversation(placeholder, {
+        attachments: sendAttachments,
+        dataContextConnectorIds: successfulContextIds,
+      });
     }
 
     // Data files were already read pre-send (B2 fix above) and folded into the agent
