@@ -101,14 +101,22 @@ export const cardName = (card) => {
   return String(overrides.title || card?.project_name || card?.name || card?.label || 'Option').trim();
 };
 
+const numericValue = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
 export const cardScore = (card) => {
   const value = card?.jaspen_score ?? card?.score;
-  return Number.isFinite(Number(value)) ? Math.round(Number(value)) : null;
+  const numeric = numericValue(value);
+  return numeric === null ? null : Math.round(numeric);
 };
 
 const initialCardScore = (card) => {
   const value = card?.initial_jaspen_score;
-  return Number.isFinite(Number(value)) ? Math.round(Number(value)) : null;
+  const numeric = numericValue(value);
+  return numeric === null ? null : Math.round(numeric);
 };
 
 const money = (value) => {
@@ -129,6 +137,7 @@ const restatesScore = (text) => /\bscores?\s+\d+\s*\/\s*100\b|\b\d+\s*\/\s*100\b
 
 export const formatFactValue = (fact) => {
   const value = fact?.value;
+  if (value === null || value === undefined || value === '') return null;
   const unit = String(fact?.unit || '').toLowerCase();
   if (typeof value === 'string' && ISO_DATE.test(value)) return formatDate(value);
   if (unit === 'usd') return money(value);
@@ -179,7 +188,7 @@ const dimensionsOf = (card) => {
     .map(([key, d]) => ({
       key,
       label: d.label || criteriaOf(card).find((c) => c.key === key)?.label || humanize(key),
-      score: Number(d.score),
+      score: numericValue(d.score),
       confidence: String(d.confidence || '').toLowerCase(),
       rationale: firstSentences(d.rationale || d.summary || d.reasoning, 1),
       improve: NO_ADVICE.test(String(d.what_would_improve ?? '').trim()) ? '' : firstSentences(d.what_would_improve || d.improvement || d.how_to_improve, 1),

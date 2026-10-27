@@ -30,6 +30,14 @@ const itemText = (item, keys) => {
   return key ? String(item[key]).trim() : '';
 };
 
+const hasValue = (value) => value !== null && value !== undefined && value !== '';
+
+const scoreValue = (value) => {
+  if (!hasValue(value)) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.round(numeric) : null;
+};
+
 const formatValue = (value, unit) => {
   if (value === null || value === undefined || value === '') return '';
   const display = typeof value === 'number' ? value.toLocaleString('en-US') : String(value);
@@ -82,9 +90,9 @@ function CategoryScores({ card }) {
   const rows = Object.entries(card.component_scores || {}).map(([key, value]) => ({
     key,
     label: humanize(key),
-    score: Number.isFinite(Number(value)) ? Math.round(Number(value)) : null,
+    score: scoreValue(value),
     rationale: String(rationale[key] || '').trim(),
-  }));
+  })).filter((row) => row.score !== null);
   if (!rows.length) return null;
   return (
     <section className="op-detail-section" aria-label="Category scores">
@@ -115,11 +123,11 @@ function CriterionScores({ card }) {
     return {
       key,
       label: dimension?.label || criterion.label || humanize(key),
-      score: Number.isFinite(Number(dimension?.score)) ? Math.round(Number(dimension.score)) : null,
+      score: scoreValue(dimension?.score),
       rationale: String(dimension?.rationale || dimension?.summary || dimension?.reasoning || '').trim(),
       confidence: String(dimension?.confidence || '').trim(),
     };
-  });
+  }).filter((row) => row.score !== null);
   if (!rows.length) return null;
   return (
     <section className="op-detail-section" aria-label="Criterion scores and rationale">
@@ -155,8 +163,8 @@ function EvidenceProfile({ card }) {
       <h3 className="op-detail-heading">Evidence profile</h3>
       {profile && (
         <div className="op-evidence-summary">
-          {profile.evidence_backed_pct !== undefined && <span><strong>{profile.evidence_backed_pct}%</strong> stated facts</span>}
-          {profile.assumption_dependent_pct !== undefined && <span><strong>{profile.assumption_dependent_pct}%</strong> assumptions</span>}
+          {hasValue(profile.evidence_backed_pct) && <span><strong>{profile.evidence_backed_pct}%</strong> stated facts</span>}
+          {hasValue(profile.assumption_dependent_pct) && <span><strong>{profile.assumption_dependent_pct}%</strong> assumptions</span>}
         </div>
       )}
       <DetailRows rows={factRows} />
@@ -230,10 +238,13 @@ function FinancialsAndMetrics({ card }) {
     const value = inner ? card?.[outer]?.[inner] : card?.[outer];
     return { title, rows: flattenRows(value) };
   }).filter((group) => group.rows.length);
-  const metrics = Object.entries(card.metrics || {}).map(([key, metric]) => ({
-    label: metric?.label || humanize(key),
-    value: formatValue(metric?.value ?? metric, metric?.unit),
-  })).filter((row) => row.value);
+  const metrics = Object.entries(card.metrics || {}).map(([key, metric]) => {
+    const isMetric = metric && typeof metric === 'object' && !Array.isArray(metric);
+    return {
+      label: metric?.label || humanize(key),
+      value: formatValue(isMetric ? metric.value : metric, metric?.unit),
+    };
+  }).filter((row) => row.value);
   if (!groups.length && !metrics.length) return null;
   return (
     <section className="op-detail-section" aria-label="Financial sections and Decision Kit metrics">

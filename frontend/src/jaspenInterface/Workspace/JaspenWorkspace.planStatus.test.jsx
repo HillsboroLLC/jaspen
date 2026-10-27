@@ -5,6 +5,7 @@ import { Jaspen } from './JaspenClient';
 import JaspenWorkspace from './JaspenWorkspace';
 
 const mockGenerateExecutionPlan = jest.fn();
+const mockOnePagerReport = jest.fn(() => null);
 let mockExecutionPlanFailure = null;
 
 jest.mock('react-router-dom', () => ({
@@ -64,7 +65,7 @@ jest.mock('./EmailResultsButton', () => {
   return MockReact.forwardRef(() => null);
 });
 jest.mock('../Sharing/ShareButton', () => () => null);
-jest.mock('../Sharing/OnePagerReport', () => () => null);
+jest.mock('../Sharing/OnePagerReport', () => (props) => mockOnePagerReport(props));
 jest.mock('./PmSyncPanel', () => () => null);
 
 const scorecard = {
@@ -152,6 +153,20 @@ it('adds only the data-backed plan card after a successful sidebar build', async
     { role: 'user', text: 'Build an execution plan' },
     expect.objectContaining({ role: 'ai', text: '', execPlan: expect.any(Object) }),
   ]));
+});
+
+it('passes saved data-source context into the Workspace report', async () => {
+  Jaspen.fetchBundle.mockResolvedValue({
+    thread: { id: 'thread-1', name: 'Launch Alpha' },
+    current_scorecard: scorecard,
+    scorecard_snapshots: [scorecard],
+    report_data_sources: ['jira'],
+  });
+  render(<JaspenWorkspace />);
+
+  await waitFor(() => expect(mockOnePagerReport).toHaveBeenCalled());
+  const reportProps = mockOnePagerReport.mock.calls.find(([props]) => props.artifactType === 'scorecard')?.[0];
+  expect(reportProps.snapshot.context.data_sources).toEqual(['jira']);
 });
 
 it('shows the failure band on the trade-off view as well as on a scorecard', () => {

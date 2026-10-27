@@ -9818,6 +9818,11 @@ def get_thread_bundle(thread_id):
             'result': session_result,
             'strategy_objective': strategy_objective,
             'decision_kit': decision_kit,
+            'report_data_sources': (
+                session.get('report_data_sources')
+                if isinstance(session, dict) and isinstance(session.get('report_data_sources'), list)
+                else []
+            ),
             'decision_kit_family': decision_kit_family,
             'decision_kit_version': decision_kit_version,
             'kit_context': kit_context,

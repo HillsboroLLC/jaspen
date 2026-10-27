@@ -1027,7 +1027,9 @@ def test_bundle_and_exports_return_all_peer_scorecards_without_baseline_fields(
 
     thread_id = 'complete-peers'
     cards = [_card(f'card-{index}', f'Project {index}', score=60 + index) for index in range(12)]
-    assert save_user_sessions(test_user.id, {thread_id: _session_payload(test_user.id, thread_id, cards[:1])})
+    session = _session_payload(test_user.id, thread_id, cards[:1])
+    session['report_data_sources'] = ['jira']
+    assert save_user_sessions(test_user.id, {thread_id: session})
     for card in cards:
         upsert_scorecard(user_id=test_user.id, thread_id=thread_id, payload=card)
     db.session.commit()
@@ -1037,6 +1039,7 @@ def test_bundle_and_exports_return_all_peer_scorecards_without_baseline_fields(
     bundle = response.get_json()
     assert len(bundle['peer_scorecards']) == 12
     assert len(bundle['scorecard_snapshots']) == 12
+    assert bundle['report_data_sources'] == ['jira']
 
     variants = _scorecard_variants_for_export(
         _session_payload(test_user.id, thread_id, cards[:1]),

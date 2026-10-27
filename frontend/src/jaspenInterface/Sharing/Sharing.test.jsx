@@ -244,16 +244,18 @@ describe('SharedPage', () => {
   afterEach(() => { delete global.fetch; });
 
   test('renders the shared copy with the footer, report link, and noindex', async () => {
+    const snapshotWithSources = { ...snapshot, context: { data_sources: ['jira'] } };
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => ({ artifact_type: 'scorecard', title: 'Paid search', created_at: '2026-09-26T00:00:00Z', expires_at: null, snapshot }),
+      json: async () => ({ artifact_type: 'scorecard', title: 'Paid search', created_at: '2026-09-26T00:00:00Z', expires_at: null, snapshot: snapshotWithSources }),
     });
     renderAt('/s/tok123');
 
     expect(await screen.findByRole('heading', { name: 'Should we pursue Paid search?' })).toBeInTheDocument();
     expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/v1/shares/public/tok123'), { credentials: 'omit' });
     expect(screen.getByText('Made with Jaspen')).toBeInTheDocument();
+    expect(screen.getByText('Jira')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Report this page' })).toBeInTheDocument();
     expect(document.querySelector('meta[name="robots"]').content).toContain('noindex');
   });

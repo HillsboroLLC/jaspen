@@ -167,9 +167,44 @@ test('financials, metrics, facts and evidence quotes appear only when present in
   expect(container.querySelector('.op-details__body')).not.toHaveTextContent('Payback');
 });
 
+test('missing scores, metrics and evidence percentages never render as zero values', async () => {
+  const missingValues = {
+    ...detailedCard,
+    jaspen_score: null,
+    component_scores: { financial_health: null, strategic_value: '', delivery: undefined },
+    component_rationale: { financial_health: 'No financial score is available.' },
+    dimensions: {
+      strategic_fit: { label: 'Strategic fit', score: null, rationale: 'Not scored yet.' },
+      delivery: { label: 'Delivery', score: '', rationale: 'Not scored yet.' },
+    },
+    evidence_profile: { evidence_backed_pct: null, assumption_dependent_pct: '' },
+    facts: {},
+    financial_impact: { annual_savings: null },
+    metrics: {
+      payback: { label: 'Payback', value: null, unit: 'years' },
+      roi: { label: 'ROI', value: '', unit: 'percent' },
+    },
+  };
+  const { container } = render(
+    <OnePagerReport artifactType="scorecard" snapshot={{ scorecard: missingValues }} title="Solar retrofit" showActions={false} />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: /See how this was scored/ }));
+
+  const details = container.querySelector('.op-details__body');
+  expect(screen.queryByRole('heading', { name: 'Category scores' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Criterion scores and rationale' })).not.toBeInTheDocument();
+  expect(details).not.toHaveTextContent('Payback');
+  expect(details).not.toHaveTextContent('Annual Savings');
+  expect(details).not.toHaveTextContent('0/100');
+  expect(details).not.toHaveTextContent('$0');
+  expect(details).not.toHaveTextContent('0%');
+  expect(container.querySelector('.op-ring')).toBeNull();
+});
+
 test('the report body markup is identical across workspace, preview and public action variants', () => {
   const reportSnapshot = {
     scorecard: detailedCard,
+    context: { data_sources: ['jira'] },
     presentation: {
       colors: { accent: '#0F6E77', ink: '#1B2342', tint: '#EEF5F7' },
       text: { brand_name: 'ACME', company_name: 'Acme Energy', headline: 'Should Acme fund the retrofit?' },
@@ -186,6 +221,7 @@ test('the report body markup is identical across workspace, preview and public a
   const workspace = markup({ showActions: false });
   const preview = markup({ canEdit: false, showActions: false });
   const publicPage = markup({ actions: <button type="button">Download PDF</button> });
+  expect(workspace).toContain('Jira');
   expect(preview).toBe(workspace);
   expect(publicPage).toBe(workspace);
   cleanup();

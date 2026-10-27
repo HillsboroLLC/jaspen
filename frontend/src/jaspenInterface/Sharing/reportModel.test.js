@@ -228,6 +228,37 @@ test('dates read as dates', () => {
   expect(model.featured.supported).toEqual(['Submission Due: Nov 20, 2026']);
 });
 
+test('missing numeric inputs remain absent instead of becoming zero', () => {
+  const model = buildReportModel({
+    artifactType: 'scorecard',
+    snapshot: { scorecard: bid('Incomplete', null, 'Not scored', {
+      initial_jaspen_score: '',
+      dimensions: {
+        win: { score: null, confidence: 'medium' },
+        delivery: { score: '', confidence: 'high' },
+      },
+      facts: {
+        budget: { label: 'Budget', value: null, unit: 'USD', source: 'user' },
+        margin: { label: 'Margin', value: '', unit: 'percent', source: 'user' },
+      },
+      metrics: {
+        expected_value: { label: 'Expected value', value: null },
+        roi: { label: 'ROI', value: '' },
+      },
+      financial_impact: { cost: null, margin: '' },
+    }) },
+    title: 'Incomplete',
+  });
+
+  expect(model.featured.score).toBeNull();
+  expect(model.strength.score).toBeNull();
+  expect(model.strength.initialScore).toBeNull();
+  expect(model.breakdown.map((row) => row.score)).toEqual([null, null]);
+  expect(model.featured.keyFacts).toEqual([]);
+  expect(model.featured.metrics).toEqual([]);
+  expect(model.financials).toEqual([]);
+});
+
 test('general decisions without a kit get a plain-language verdict band', () => {
   const model = buildReportModel({
     artifactType: 'scorecard',

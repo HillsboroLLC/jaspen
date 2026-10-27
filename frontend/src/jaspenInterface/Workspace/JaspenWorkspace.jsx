@@ -912,9 +912,12 @@ export default function JaspenWorkspace() {
     context: {
       ...(bundle?.strategy_objective ? { strategy_objective: bundle.strategy_objective } : {}),
       ...(bundle?.decision_kit || rendered?.decision_kit ? { decision_kit: bundle?.decision_kit || rendered?.decision_kit } : {}),
+      ...(Array.isArray(bundle?.report_data_sources) && bundle.report_data_sources.length
+        ? { data_sources: bundle.report_data_sources }
+        : {}),
     },
     presentation: overrides?.report_presentation || {},
-  }), [rendered, bundle?.strategy_objective, bundle?.decision_kit, overrides?.report_presentation]);
+  }), [rendered, bundle?.strategy_objective, bundle?.decision_kit, bundle?.report_data_sources, overrides?.report_presentation]);
   const workspaceNotes = useMemo(() => (
     (Array.isArray(overrides?.custom_blocks) ? overrides.custom_blocks : [])
       .map((block) => ({ id: block.id, heading: String(block.heading || '').trim(), body: String(block.body || '').trim() }))
