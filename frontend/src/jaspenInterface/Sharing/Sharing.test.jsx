@@ -154,6 +154,19 @@ describe('ShareDialog', () => {
     expect(await screen.findByText('Decision shared with Jaspen.')).toBeInTheDocument();
   });
 
+  test('Share with Jaspen reloads the preview when the decision changed', async () => {
+    const changed = Object.assign(new Error('This decision changed after the preview.'), { status: 409 });
+    Jaspen.createDecisionShare.mockRejectedValueOnce(changed);
+    const user = userEvent.setup();
+    render(<ShareButton threadId="t1" scorecardId="card-a" />);
+    await user.click(screen.getByRole('button', { name: 'Share with Jaspen' }));
+    await screen.findByTestId('shared-view');
+    await user.click(screen.getByRole('button', { name: 'Confirm share' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('changed after the preview');
+    await waitFor(() => expect(Jaspen.previewDecisionShare).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId('shared-view')).toBeInTheDocument();
+  });
+
   test('Share with Jaspen shows an API refusal reason', async () => {
     Jaspen.previewDecisionShare.mockRejectedValue(new Error(
       'Sharing decisions with Jaspen is off. An owner or admin can turn it on in Team settings.',
@@ -168,11 +181,13 @@ describe('ShareDialog', () => {
 describe('SharedWithJaspenList', () => {
   test('Withdraw calls the decision-share DELETE client', async () => {
     Jaspen.listDecisionShares
-      .mockResolvedValueOnce({ shares: [{ id: 'ds1', thread_id: 't1', scorecard_id: 'card-a', user_id: 'u1', status: 'shared' }] })
+      .mockResolvedValueOnce({ shares: [{ id: 'ds1', thread_id: 't1', scorecard_id: 'card-a', user_id: 'u1', title: 'Paid search', shared_by: 'pat@example.com', status: 'shared' }] })
       .mockResolvedValueOnce({ shares: [{ id: 'ds1', thread_id: 't1', scorecard_id: 'card-a', user_id: 'u1', status: 'withdrawn' }] });
     const user = userEvent.setup();
     render(<SharedWithJaspenList />);
-    await user.click(await screen.findByRole('button', { name: 'Withdraw' }));
+    expect(await screen.findByText('Paid search')).toBeInTheDocument();
+    expect(screen.getByText('pat@example.com')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Withdraw' }));
     expect(Jaspen.withdrawDecisionShare).toHaveBeenCalledWith('ds1');
     expect(await screen.findByText('Withdrawn')).toBeInTheDocument();
   });

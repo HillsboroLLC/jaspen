@@ -46,8 +46,8 @@ export default function SharedWithJaspenList({ disabled = false, onNotice = () =
           <tbody>
             {shares.map((share) => (
               <tr key={share.id}>
-                <td>{share.scorecard_id || share.thread_id}</td>
-                <td>{share.user_id}</td>
+                <td>{share.title || (share.status === 'withdrawn' ? 'Withdrawn decision' : 'Untitled decision')}</td>
+                <td>{share.shared_by || '—'}</td>
                 <td>{formatDate(share.created_at)}</td>
                 <td>{share.status === 'withdrawn' ? 'Withdrawn' : 'Shared'}</td>
                 <td>

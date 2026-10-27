@@ -130,11 +130,15 @@ def test_personal_account_can_create_and_withdraw_clears_content(client, db, app
     assert created.status_code == 201
     share_id = created.get_json()['share']['id']
     assert DecisionShare.query.get(share_id).snapshot_json
+    listed = client.get('/api/v1/decision-shares', headers=headers).get_json()['shares'][0]
+    assert listed['title']
+    assert listed['shared_by'] == test_user.email
     withdrawn = client.delete(f'/api/v1/decision-shares/{share_id}', headers=headers)
     assert withdrawn.status_code == 200
     db.session.expire_all()
     row = DecisionShare.query.get(share_id)
     assert row.snapshot_json is None
+    assert row.title is None
     assert row.withdrawn_at is not None
 
 
@@ -197,3 +201,13 @@ def test_staff_view_requires_admin_is_audited_and_hides_withdrawn_content(
     viewed_after = client.get(f"/api/v1/admin/decision-shares/{created['id']}", headers=admin_auth_headers)
     assert viewed_after.get_json()['snapshot'] is None
     assert AdminAuditEvent.query.filter_by(action='decision_share_staff_view').count() == 2
+
+
+def test_oversized_decision_is_refused(client, db, app, test_user, monkeypatch):
+    import app.routes.decision_shares as routes
+
+    _session(db, test_user)
+    monkeypatch.setattr(routes, 'snapshot_size_ok', lambda snapshot: False)
+    response = _preview(client, _headers(app, test_user))
+    assert response.status_code == 413
+    assert DecisionShare.query.count() == 0

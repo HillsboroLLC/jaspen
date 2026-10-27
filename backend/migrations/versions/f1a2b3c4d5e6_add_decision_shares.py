@@ -22,6 +22,7 @@ def upgrade():
         sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
         sa.Column("thread_id", sa.String(255), nullable=False),
         sa.Column("scorecard_id", sa.String(255), nullable=True),
+        sa.Column("title", sa.String(255), nullable=True),
         sa.Column("snapshot_json", sa.JSON(), nullable=True),
         sa.Column("snapshot_sha256", sa.String(64), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),

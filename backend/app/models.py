@@ -1353,6 +1353,7 @@ class DecisionShare(db.Model):
     )
     thread_id = db.Column(db.String(255), nullable=False, index=True)
     scorecard_id = db.Column(db.String(255), nullable=True)
+    title = db.Column(db.String(255), nullable=True)
     snapshot_json = db.Column(db.JSON, nullable=True)
     snapshot_sha256 = db.Column(db.String(64), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)

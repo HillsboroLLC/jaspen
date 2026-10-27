@@ -14,7 +14,13 @@ from app.data_sharing import decision_sharing_allowed
 from app.models import DecisionShare, Organization, User
 from app.orgs import active_membership_for_user, can_manage_org, plan_allows_collaboration
 from app.session_access import SessionForbidden, SessionNotFound, resolve_session_for_actor
-from app.sharing import ARTIFACT_SCORECARD, ARTIFACT_TRADEOFF, build_snapshot, filter_public_snapshot
+from app.sharing import (
+    ARTIFACT_SCORECARD,
+    ARTIFACT_TRADEOFF,
+    build_snapshot,
+    filter_public_snapshot,
+    snapshot_size_ok,
+)
 
 
 decision_shares_bp = Blueprint('decision_shares', __name__)
@@ -28,11 +34,13 @@ def _iso(value):
     return value.isoformat() + 'Z' if value else None
 
 
-def _metadata(share):
+def _metadata(share, sharer_email=None):
     return {
         'id': share.id,
         'organization_id': share.organization_id,
         'user_id': share.user_id,
+        'shared_by': sharer_email,
+        'title': share.title,
         'thread_id': share.thread_id,
         'scorecard_id': share.scorecard_id,
         'snapshot_sha256': share.snapshot_sha256,
@@ -88,7 +96,7 @@ def _prepare(user, body):
     scorecard_id = str(body.get('scorecard_id') or '').strip() or None
     artifact_type = ARTIFACT_SCORECARD if scorecard_id else ARTIFACT_TRADEOFF
     try:
-        raw_snapshot, _title, _source_id, _evidence = build_snapshot(
+        raw_snapshot, title, _source_id, _evidence = build_snapshot(
             artifact_type=artifact_type,
             cards=cards,
             include_evidence=False,
@@ -106,7 +114,10 @@ def _prepare(user, body):
     # The public-share sanitizer is the single disclosure boundary. Its default
     # settings omit evidence passages, facts, metrics and financial sections.
     snapshot = filter_public_snapshot(raw_snapshot)
+    if not snapshot_size_ok(snapshot):
+        return None, (jsonify({'error': 'This decision is too large to share.', 'code': 'too_large'}), 413)
     return {
+        'title': str(title or '').strip()[:255] or None,
         'row': row,
         'membership': membership,
         'organization': organization,
@@ -157,6 +168,7 @@ def create_decision_share():
         user_id=user.id,
         thread_id=prepared['thread_id'],
         scorecard_id=prepared['scorecard_id'],
+        title=prepared['title'],
         snapshot_json=prepared['snapshot'],
         snapshot_sha256=prepared['snapshot_sha256'],
     )
@@ -168,7 +180,13 @@ def create_decision_share():
         target_user_id=user.id,
         details={'decision_share_id': share.id, 'organization_id': share.organization_id, 'thread_id': share.thread_id},
     )
-    return jsonify({'share': _metadata(share)}), 201
+    return jsonify({'share': _metadata(share, user.email)}), 201
+
+
+def _with_sharers(shares):
+    ids = {share.user_id for share in shares}
+    emails = dict(User.query.with_entities(User.id, User.email).filter(User.id.in_(ids)).all()) if ids else {}
+    return [_metadata(share, emails.get(share.user_id)) for share in shares]
 
 
 def _scope_for_user(user):
@@ -191,7 +209,7 @@ def list_decision_shares():
     if user is None:
         return jsonify({'error': 'User not found.'}), 404
     shares = _scope_for_user(user).order_by(DecisionShare.created_at.desc()).limit(200).all()
-    return jsonify({'shares': [_metadata(share) for share in shares]})
+    return jsonify({'shares': _with_sharers(shares)})
 
 
 @decision_shares_bp.route('/decision-shares/<share_id>', methods=['DELETE'])
@@ -212,6 +230,7 @@ def withdraw_decision_share(share_id):
     if share.withdrawn_at is None:
         share.withdrawn_at = datetime.utcnow()
         share.snapshot_json = None
+        share.title = None
         append_admin_audit_event(
             actor_user_id=user.id,
             action='decision_share_withdraw',
@@ -240,7 +259,7 @@ def admin_list_decision_shares():
         action='decision_share_staff_list',
         details={'decision_share_ids': [share.id for share in shares]},
     )
-    return jsonify({'shares': [_metadata(share) for share in shares]})
+    return jsonify({'shares': _with_sharers(shares)})
 
 
 @decision_shares_bp.route('/admin/decision-shares/<share_id>', methods=['GET'])
@@ -258,4 +277,5 @@ def admin_get_decision_share(share_id):
         target_user_id=share.user_id,
         details={'decision_share_id': share.id, 'organization_id': share.organization_id, 'thread_id': share.thread_id},
     )
-    return jsonify({**_metadata(share), 'snapshot': share.snapshot_json if share.withdrawn_at is None else None})
+    sharer = db.session.get(User, share.user_id)
+    return jsonify({**_metadata(share, sharer.email if sharer else None), 'snapshot': share.snapshot_json if share.withdrawn_at is None else None})

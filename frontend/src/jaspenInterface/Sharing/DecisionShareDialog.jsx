@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Jaspen } from '../Workspace/JaspenClient';
 import SharedArtifactView from './SharedArtifactView';
@@ -12,25 +12,29 @@ export default function DecisionShareDialog({ open, onClose, threadId, scorecard
   const [shared, setShared] = useState(false);
   const closeRef = useRef(null);
 
+  const loadPreview = useCallback((isCancelled = () => false) => {
+    setPreview(null);
+    setLoading(true);
+    return Jaspen.previewDecisionShare({ thread_id: threadId, ...(scorecardId ? { scorecard_id: scorecardId } : {}) })
+      .then((result) => { if (!isCancelled()) setPreview(result); })
+      .catch((err) => { if (!isCancelled()) setError(err?.message || 'We could not build the preview.'); })
+      .finally(() => { if (!isCancelled()) setLoading(false); });
+  }, [scorecardId, threadId]);
+
   useEffect(() => {
     if (!open) return undefined;
     let cancelled = false;
-    setPreview(null);
     setError('');
     setShared(false);
-    setLoading(true);
     closeRef.current?.focus();
-    Jaspen.previewDecisionShare({ thread_id: threadId, ...(scorecardId ? { scorecard_id: scorecardId } : {}) })
-      .then((result) => { if (!cancelled) setPreview(result); })
-      .catch((err) => { if (!cancelled) setError(err?.message || 'We could not build the preview.'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+    loadPreview(() => cancelled);
     const onKey = (event) => { if (event.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
     return () => {
       cancelled = true;
       document.removeEventListener('keydown', onKey);
     };
-  }, [open, onClose, scorecardId, threadId]);
+  }, [open, onClose, loadPreview]);
 
   const onConfirm = async () => {
     if (!preview?.snapshot_sha256) return;
@@ -46,6 +50,9 @@ export default function DecisionShareDialog({ open, onClose, threadId, scorecard
       setShared(true);
     } catch (err) {
       setError(err?.message || 'We could not share this decision.');
+      // The decision changed after the preview: show the current version so
+      // the person confirms exactly what will be stored.
+      if (err?.status === 409) await loadPreview();
     } finally {
       setSharing(false);
     }
