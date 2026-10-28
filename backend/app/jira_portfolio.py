@@ -41,6 +41,11 @@ class JiraPortfolioPermissionError(RuntimeError):
         super().__init__(f"HTTP 403: Jira project access denied for {', '.join(self.project_keys)}")
 
 
+class JiraPortfolioNoProjectsError(RuntimeError):
+    def __init__(self):
+        super().__init__("Jira returned no projects this account can read. Check the Jira account's project access.")
+
+
 def _utcnow():
     return datetime.now(timezone.utc)
 
@@ -470,6 +475,10 @@ def _fresh(snapshot, *, now=None):
 
 
 def _list_projects(config):
+    # Jira can answer project search anonymously with HTTP 200 and no projects
+    # when saved credentials have expired. Verify the account first so an
+    # empty anonymous response can never become verified connector evidence.
+    _jira_request(config, "GET", "/rest/api/3/myself", timeout=20)
     projects, start = [], 0
     while True:
         data, _ = _jira_request(config, "GET", f"/rest/api/3/project/search?startAt={start}&maxResults=50&orderBy=name", timeout=30)
@@ -538,6 +547,8 @@ def refresh_portfolio(user_id, *, force=False, now=None):
         scope = str(settings.get("jira_data_project_scope") or "all")
         selected = {str(key) for key in settings.get("jira_data_selected_projects") or []}
         included = [row for row in projects if scope != "selected" or str(row.get("key")) in selected]
+        if not projects or not included:
+            raise JiraPortfolioNoProjectsError()
         window_days = max(14, min(365, int(settings.get("jira_data_window_days") or DEFAULT_WINDOW_DAYS)))
         threshold = max(1, min(100, int(settings.get("jira_data_workload_threshold") or DEFAULT_WORKLOAD_THRESHOLD)))
         discovered_fields = _discover_fields(config)
@@ -604,14 +615,17 @@ def refresh_portfolio(user_id, *, force=False, now=None):
     except Exception as exc:
         refresh_error = classify_refresh_error(exc)
         logger.exception("Jira portfolio refresh failed for user %s", user_id)
+        updates = {"jira_data_last_refresh_failed": True}
         if cached:
             stale = dict(cached)
             stale["stale"] = True
             stale["refresh_failed"] = True
             stale["refresh_error"] = refresh_error
             stale["evidence"] = canonical_evidence(stale)
-            update_connector_settings(user_id, "jira_sync", {"jira_portfolio_snapshot": stale, "jira_data_last_refresh_failed": True})
+            updates["jira_portfolio_snapshot"] = stale
+            update_connector_settings(user_id, "jira_sync", updates)
             return stale
+        update_connector_settings(user_id, "jira_sync", updates)
         raise
 
 
@@ -631,6 +645,15 @@ def classify_refresh_error(exc, *, project_keys=None):
             "message": f"Jira did not allow access{scope}. Check the Jira account's project permissions.",
             "reconnect_required": False,
             "projects": projects,
+        }
+    if (
+        isinstance(exc, JiraPortfolioNoProjectsError)
+        or raw == "Jira returned no projects this account can read. Check the Jira account's project access."
+    ):
+        return {
+            "category": "no_projects",
+            "message": "Jira returned no projects this account can read. Check the Jira account's project access.",
+            "reconnect_required": False,
         }
     return {
         "category": "request_format" if "HTTP 400" in raw or "Invalid request payload" in raw else "provider",

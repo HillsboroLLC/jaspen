@@ -1281,8 +1281,8 @@ def _verify_data_context_read(user_id, connector_id, settings):
             raise RuntimeError("Jira data analysis is turned off.")
         snapshot = refresh_portfolio(user_id, force=True)
         if snapshot.get("stale") or snapshot.get("refresh_failed"):
-            error = RuntimeError("Jira data could not be refreshed.")
             refresh_error = snapshot.get("refresh_error") if isinstance(snapshot.get("refresh_error"), dict) else {}
+            error = RuntimeError(_text(refresh_error.get("message")) or "Jira data could not be refreshed.")
             error.reconnect_required = bool(refresh_error.get("reconnect_required"))
             raise error
         return

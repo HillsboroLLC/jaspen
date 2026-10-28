@@ -148,6 +148,8 @@ def test_refresh_scopes_projects_paginates_caches_and_emits_provenance(monkeypat
 
     def request(_config, method, path, payload=None, timeout=20):
         calls.append((method, path, payload))
+        if path == "/rest/api/3/myself":
+            return ({"accountId": "synthetic-account"}, {})
         if path.startswith("/rest/api/3/project/search"):
             return ({"values": [{"key": "A", "name": "Alpha"}, {"key": "B", "name": "Beta"}, {"key": "OLD", "name": "Old", "archived": True}], "isLast": True}, {})
         if path == "/rest/api/3/field":
@@ -237,14 +239,62 @@ def test_failed_refresh_with_cached_snapshot_does_not_refresh_verification(monke
         connector_store.CONNECTORS_DIR = original_dir
 
 
-def test_no_default_project_is_required(monkeypatch):
+def test_authenticated_empty_project_list_fails_without_verification(monkeypatch):
+    saved = []
     monkeypatch.setattr(portfolio, "get_connector_settings", lambda *_: {})
     monkeypatch.setattr(portfolio, "_jira_runtime_config", lambda *_: {"base_url": "https://x", "email": "e", "api_token": "t", "project_key": ""})
     monkeypatch.setattr(portfolio, "_list_projects", lambda *_: [])
-    monkeypatch.setattr(portfolio, "_discover_fields", lambda *_: {"story_points": None, "flagged": None, "sprint": None})
+    monkeypatch.setattr(portfolio, "update_connector_settings", lambda *args: saved.append(args[-1]))
+
+    try:
+        portfolio.refresh_portfolio("user", force=True, now=NOW)
+        assert False, "expected an empty Jira project read to fail"
+    except portfolio.JiraPortfolioNoProjectsError as exc:
+        assert str(exc) == "Jira returned no projects this account can read. Check the Jira account's project access."
+
+    assert saved == [{"jira_data_last_refresh_failed": True}]
+
+
+def test_selected_scope_with_no_matching_projects_fails(monkeypatch):
+    saved = []
+    monkeypatch.setattr(portfolio, "get_connector_settings", lambda *_: {
+        "jira_data_project_scope": "selected",
+        "jira_data_selected_projects": ["MISSING"],
+    })
+    monkeypatch.setattr(portfolio, "_jira_runtime_config", lambda *_: {"base_url": "https://x", "email": "e", "api_token": "t"})
+    monkeypatch.setattr(portfolio, "_list_projects", lambda *_: [{"key": "VISIBLE", "name": "Visible"}])
+    monkeypatch.setattr(portfolio, "update_connector_settings", lambda *args: saved.append(args[-1]))
+
+    try:
+        portfolio.refresh_portfolio("user", force=True, now=NOW)
+        assert False, "expected a selected scope with no matches to fail"
+    except portfolio.JiraPortfolioNoProjectsError:
+        pass
+
+    assert saved == [{"jira_data_last_refresh_failed": True}]
+
+
+def test_expired_credentials_fail_auth_before_anonymous_empty_project_search(monkeypatch):
+    calls = []
+    monkeypatch.setattr(portfolio, "get_connector_settings", lambda *_: {})
+    monkeypatch.setattr(portfolio, "_jira_runtime_config", lambda *_: {"base_url": "https://x", "email": "e", "api_token": "expired"})
     monkeypatch.setattr(portfolio, "update_connector_settings", lambda *_: None)
-    result = portfolio.refresh_portfolio("user", force=True, now=NOW)
-    assert result["portfolio"]["project_count"] == 0
+
+    def request(_config, _method, path, **_kwargs):
+        calls.append(path)
+        if path == "/rest/api/3/myself":
+            raise RuntimeError("HTTP 401")
+        return ({"values": [], "isLast": True}, {})
+
+    monkeypatch.setattr(portfolio, "_jira_request", request)
+
+    try:
+        portfolio.refresh_portfolio("user", force=True, now=NOW)
+        assert False, "expected expired Jira credentials to fail"
+    except RuntimeError as exc:
+        assert portfolio.classify_refresh_error(exc)["reconnect_required"] is True
+
+    assert calls == ["/rest/api/3/myself"]
 
 
 def test_last_three_closed_sprints_are_computed_from_detected_sprint_field():

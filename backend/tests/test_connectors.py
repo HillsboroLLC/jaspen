@@ -125,12 +125,13 @@ def test_failed_jira_portfolio_refresh_unconfirms_data_context_until_next_succes
     assert failed["refresh_failed"] is True
     assert _jira_status(client, auth_headers)["data_context_freshness"] == "unconfirmed"
 
-    monkeypatch.setattr(portfolio, "_list_projects", lambda *_: [])
+    monkeypatch.setattr(portfolio, "_list_projects", lambda *_: [{"key": "DATA", "name": "Data"}])
     monkeypatch.setattr(
         portfolio,
         "_discover_fields",
         lambda *_: {"story_points": None, "flagged": None, "sprint": None, "start_date": None},
     )
+    monkeypatch.setattr(portfolio, "_search_project", lambda *_args, **_kwargs: [])
     portfolio.refresh_portfolio(test_user.id, force=True, now=now + timedelta(minutes=1))
 
     refreshed = connector_store.get_connector_settings(test_user.id, "jira_sync")
@@ -343,6 +344,60 @@ def test_jira_context_summary_updates_sync_health_for_success_and_failure(
     assert settings["consecutive_failures"] == 1
     assert settings["last_error_at"]
     assert settings["last_error_message"] == "synthetic Jira read failed"
+
+
+def test_expired_jira_auth_keeps_last_good_snapshot_and_records_failed_reads(
+    client, auth_headers, test_user, monkeypatch,
+):
+    portfolio = importlib.import_module("app.jira_portfolio")
+    verified_at = "2026-10-01T12:00:00+00:00"
+    cached = {
+        "fetched_at": "2026-10-01T12:00:00Z",
+        "portfolio": {"project_count": 1, "blocked_count": 0},
+        "projects": [{"project_key": "DATA", "project_name": "Data"}],
+        "provenance": {"source": "connector"},
+    }
+    _store_connector_status(
+        test_user.id,
+        connection_status="connected",
+        lifecycle_status="connected",
+        last_verified_at=verified_at,
+        data_context_verified_at=verified_at,
+        jira_base_url="https://synthetic.atlassian.test",
+        jira_email="dev@example.test",
+        jira_api_token="expired-token",
+        jira_data_enabled=True,
+        jira_portfolio_snapshot=cached,
+        jira_data_last_refresh_failed=False,
+    )
+    calls = []
+
+    def request(_config, _method, path, **_kwargs):
+        calls.append(path)
+        if path == "/rest/api/3/myself":
+            raise RuntimeError("HTTP 401")
+        return ({"values": [], "isLast": True}, {})
+
+    monkeypatch.setattr(portfolio, "_jira_request", request)
+
+    data_check = client.get("/api/v1/connectors/jira_sync/data-context/check", headers=auth_headers)
+    context_summary = client.get("/api/v1/connectors/jira/context/summary", headers=auth_headers)
+
+    assert data_check.status_code == 200
+    assert data_check.get_json()["status"] == "failed"
+    assert data_check.get_json()["reconnect_required"] is True
+    assert context_summary.status_code == 200
+    assert context_summary.get_json()["snapshot"]["projects"] == cached["projects"]
+    assert context_summary.get_json()["snapshot"]["refresh_failed"] is True
+    assert calls == ["/rest/api/3/myself", "/rest/api/3/myself"]
+
+    settings = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert settings["last_verified_at"] == verified_at
+    assert settings["data_context_verified_at"] == verified_at
+    assert settings["jira_data_last_refresh_failed"] is True
+    assert settings["jira_portfolio_snapshot"]["projects"] == cached["projects"]
+    assert settings["last_sync_result"] == "failed"
+    assert settings["last_error_message"] == "Your saved Jira connection no longer works. Reconnect Jira to continue."
 
 
 def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
