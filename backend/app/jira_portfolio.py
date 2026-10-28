@@ -598,6 +598,7 @@ def refresh_portfolio(user_id, *, force=False, now=None):
             "jira_portfolio_snapshot": snapshot,
             "jira_data_last_refresh_failed": False,
             "data_context_verified_at": _iso(now),
+            "last_verified_at": _iso(now),
         })
         return snapshot
     except Exception as exc:

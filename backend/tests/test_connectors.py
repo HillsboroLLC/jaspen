@@ -87,6 +87,57 @@ def test_dual_purpose_connector_reports_data_context_freshness_separately(
     assert jira["data_context_last_confirmed_at"] == data_read.isoformat().replace("+00:00", "Z")
 
 
+def test_failed_jira_portfolio_refresh_unconfirms_data_context_until_next_success(
+    client, auth_headers, test_user, monkeypatch,
+):
+    portfolio = importlib.import_module("app.jira_portfolio")
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    confirmed_at = now - timedelta(days=2)
+    cached = {
+        "fetched_at": confirmed_at.isoformat().replace("+00:00", "Z"),
+        "portfolio": {"project_count": 1},
+        "projects": [{"project_key": "DATA"}],
+        "provenance": {"source": "connector"},
+    }
+    _store_connector_status(
+        test_user.id,
+        connection_status="connected",
+        lifecycle_status="connected",
+        last_verified_at=confirmed_at.isoformat(),
+        data_context_verified_at=confirmed_at.isoformat(),
+        jira_base_url="https://synthetic.atlassian.test",
+        jira_email="dev@example.test",
+        jira_api_token="synthetic-token",
+        jira_data_enabled=True,
+        jira_portfolio_snapshot=cached,
+        jira_data_last_refresh_failed=False,
+    )
+
+    assert _jira_status(client, auth_headers)["data_context_freshness"] == "confirmed"
+
+    monkeypatch.setattr(
+        portfolio,
+        "_list_projects",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("HTTP 429")),
+    )
+    failed = portfolio.refresh_portfolio(test_user.id, force=True, now=now)
+
+    assert failed["refresh_failed"] is True
+    assert _jira_status(client, auth_headers)["data_context_freshness"] == "unconfirmed"
+
+    monkeypatch.setattr(portfolio, "_list_projects", lambda *_: [])
+    monkeypatch.setattr(
+        portfolio,
+        "_discover_fields",
+        lambda *_: {"story_points": None, "flagged": None, "sprint": None, "start_date": None},
+    )
+    portfolio.refresh_portfolio(test_user.id, force=True, now=now + timedelta(minutes=1))
+
+    refreshed = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert refreshed["jira_data_last_refresh_failed"] is False
+    assert _jira_status(client, auth_headers)["data_context_freshness"] == "confirmed"
+
+
 def test_connector_status_reports_never_confirmed_problem_and_disconnected_states(client, auth_headers, test_user):
     now = datetime.now(timezone.utc).replace(microsecond=0)
     _store_connector_status(
@@ -246,13 +297,52 @@ def test_data_context_check_ignores_incomplete_jira_execution_config_and_is_thro
     assert settings["jira_field_mapping"] == {}
     assert settings["jira_data_selected_projects"] == ["DATA"]
     assert settings["data_context_verified_at"]
-    assert settings["last_verified_at"] == stale.isoformat()
+    assert settings["last_verified_at"] == settings["data_context_verified_at"]
     assert settings["last_sync_at"] is None
     assert settings["last_success_at"] is None
 
     jira = _jira_status(client, auth_headers)
-    assert jira["freshness"] == "unconfirmed"
+    assert jira["freshness"] == "confirmed"
     assert jira["data_context_freshness"] == "confirmed"
+
+
+def test_jira_context_summary_updates_sync_health_for_success_and_failure(
+    client, auth_headers, test_user, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    successful_snapshot = {
+        "portfolio": {"project_count": 1, "blocked_count": 0},
+        "evidence": [],
+        "refresh_failed": False,
+    }
+    monkeypatch.setattr(connector_routes, "refresh_portfolio", lambda *_args, **_kwargs: successful_snapshot)
+
+    success = client.get("/api/v1/connectors/jira/context/summary", headers=auth_headers)
+
+    assert success.status_code == 200
+    settings = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert settings["last_sync_result"] == "success"
+    assert settings["health_status"] == "healthy"
+    assert settings["consecutive_failures"] == 0
+    assert settings["last_success_at"]
+    assert settings["last_verified_at"]
+
+    failed_snapshot = {
+        **successful_snapshot,
+        "refresh_failed": True,
+        "refresh_error": {"message": "synthetic Jira read failed"},
+    }
+    monkeypatch.setattr(connector_routes, "refresh_portfolio", lambda *_args, **_kwargs: failed_snapshot)
+
+    failed = client.get("/api/v1/connectors/jira/context/summary", headers=auth_headers)
+
+    assert failed.status_code == 200
+    settings = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert settings["last_sync_result"] == "failed"
+    assert settings["health_status"] == "degraded"
+    assert settings["consecutive_failures"] == 1
+    assert settings["last_error_at"]
+    assert settings["last_error_message"] == "synthetic Jira read failed"
 
 
 def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
@@ -300,7 +390,7 @@ def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
 
 
 @pytest.mark.parametrize("connector_id", ["jira_sync", "smartsheet_sync"])
-def test_execution_success_does_not_verify_dual_purpose_data_context(
+def test_execution_result_used_by_plan_sync_import_and_webhooks_does_not_verify_data_context(
     client, auth_headers, test_user, connector_id,
 ):
     update_connector_settings(test_user.id, connector_id, {
@@ -352,7 +442,7 @@ def test_jira_credential_health_and_setup_checks_do_not_verify_data_context(
     assert _jira_status(client, auth_headers)["data_context_freshness"] == "unconfirmed"
 
 
-def test_smartsheet_data_context_read_verifies_only_analysis_freshness(
+def test_smartsheet_data_context_read_updates_analysis_and_data_sources_freshness(
     client, auth_headers, test_user, monkeypatch,
 ):
     connector_routes = importlib.import_module("app.routes.connectors")
@@ -376,11 +466,11 @@ def test_smartsheet_data_context_read_verifies_only_analysis_freshness(
     assert response.get_json()["status"] == "confirmed"
     settings = connector_store.get_connector_settings(test_user.id, "smartsheet_sync")
     assert settings["data_context_verified_at"]
-    assert settings["last_verified_at"] is None
+    assert settings["last_verified_at"] == settings["data_context_verified_at"]
     assert settings["last_sync_at"] is None
     assert settings["last_success_at"] is None
     status = _connector_status(client, auth_headers, "smartsheet_sync")
-    assert status["freshness"] == "unconfirmed"
+    assert status["freshness"] == "confirmed"
     assert status["data_context_freshness"] == "confirmed"
 
 

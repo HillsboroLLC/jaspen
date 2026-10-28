@@ -190,12 +190,10 @@ def _data_context_verified_at(connector_id, settings):
 
 def _record_data_context_verification(user_id, connector_id, verified_at=None):
     verified_at = verified_at or _iso_now()
-    field = (
-        "data_context_verified_at"
-        if connector_id in DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS
-        else "last_verified_at"
-    )
-    update_connector_settings(user_id, connector_id, {field: verified_at})
+    updates = {"last_verified_at": verified_at}
+    if connector_id in DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS:
+        updates["data_context_verified_at"] = verified_at
+    update_connector_settings(user_id, connector_id, updates)
     return verified_at
 
 
@@ -458,6 +456,8 @@ def _merge_connector_view(connector_id, entitlement, settings):
             None,
             settings.get("data_context_verified_at"),
         )
+        if connector_id == "jira_sync" and _to_bool(settings.get("jira_data_last_refresh_failed"), default=False):
+            data_context_freshness = "unconfirmed"
     status = "locked" if not enabled else "connected" if connected else "available"
     sync_mode = str(settings.get("sync_mode") or "import").lower()
     if sync_mode not in modes:
@@ -1883,6 +1883,12 @@ def jira_context_summary():
         }
         refresh_failed = bool(snapshot.get("refresh_failed"))
         refresh_error = snapshot.get("refresh_error") or {}
+        mark_connector_sync_result(
+            user.id,
+            "jira_sync",
+            "failed" if refresh_failed else "success",
+            error_message=refresh_error.get("message") if refresh_failed else None,
+        )
         append_sync_audit_event(
             user.id,
             "jira_sync",
@@ -1899,6 +1905,7 @@ def jira_context_summary():
         current_app.logger.exception("Jira portfolio context refresh failed for user %s", user.id)
         refresh_error = classify_refresh_error(exc)
         public_message = refresh_error["message"]
+        mark_connector_sync_result(user.id, "jira_sync", "failed", error_message=public_message)
         append_sync_audit_event(
             user.id, "jira_sync", action="context_summary", status="failed", message=public_message
         )

@@ -171,6 +171,7 @@ def test_refresh_scopes_projects_paginates_caches_and_emits_provenance(monkeypat
     assert search_payload["expand"] == "changelog"
     assert saved[-1]["jira_portfolio_snapshot"]["portfolio"]["project_count"] == 1
     assert saved[-1]["data_context_verified_at"] == "2026-10-12T16:00:00Z"
+    assert saved[-1]["last_verified_at"] == "2026-10-12T16:00:00Z"
 
     settings["jira_portfolio_snapshot"] = snapshot
     calls.clear()
