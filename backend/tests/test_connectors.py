@@ -389,6 +389,115 @@ def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
     assert settings["data_context_verified_at"] == original["data_context_verified_at"]
 
 
+def test_salesforce_data_context_failure_uses_safe_reason_and_throttles_it(
+    client, auth_headers, test_user, monkeypatch, caplog,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    update_connector_settings(test_user.id, "salesforce_insights", {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+    })
+    raw_error = "HTTP 420: {'raw': '<!DOCTYPE HTML><html>provider failure</html>'}"
+
+    def fail_read(*_args, **_kwargs):
+        raise RuntimeError(raw_error)
+
+    monkeypatch.setattr(connector_routes, "fetch_pipeline_summary", fail_read)
+
+    response = client.get(
+        "/api/v1/connectors/salesforce_insights/data-context/check", headers=auth_headers
+    )
+    throttled = client.get(
+        "/api/v1/connectors/salesforce_insights/data-context/check", headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["error"] == "Salesforce returned an error (HTTP 420)."
+    assert "<" not in response.get_json()["error"]
+    assert "DOCTYPE" not in response.get_json()["error"]
+    assert throttled.status_code == 200
+    assert throttled.get_json()["throttled"] is True
+    assert throttled.get_json()["error"] == response.get_json()["error"]
+    audit = ConnectorSyncLog.query.filter_by(
+        user_id=test_user.id,
+        connector_id="salesforce_insights",
+        action="data_context_check",
+    ).order_by(ConnectorSyncLog.created_at.desc()).first()
+    assert audit.error_message == response.get_json()["error"]
+    assert raw_error in caplog.text
+
+
+def test_snowflake_data_context_failure_hides_host_from_response_and_audit(
+    client, auth_headers, test_user, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    update_connector_settings(test_user.id, "snowflake_insights", {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+        "snowflake_table_allowlist": ["analytics.context"],
+    })
+    account_host = "customer-account.us-east-1.snowflakecomputing.com"
+
+    def fail_read(*_args, **_kwargs):
+        raise RuntimeError(f"{account_host}: trial account is suspended")
+
+    monkeypatch.setattr(connector_routes, "run_allowlisted_query", fail_read)
+
+    response = client.get(
+        "/api/v1/connectors/snowflake_insights/data-context/check", headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["error"] == "Snowflake account is unavailable or suspended."
+    assert account_host not in response.get_json()["error"]
+    audit = ConnectorSyncLog.query.filter_by(
+        user_id=test_user.id,
+        connector_id="snowflake_insights",
+        action="data_context_check",
+    ).order_by(ConnectorSyncLog.created_at.desc()).first()
+    assert audit.error_message == response.get_json()["error"]
+    assert account_host not in audit.error_message
+
+
+@pytest.mark.parametrize(
+    ("connector_id", "message"),
+    [
+        ("jira_sync", "Jira data analysis is turned off."),
+        ("snowflake_insights", "Snowflake table allowlist is empty."),
+    ],
+)
+def test_safe_data_context_failure_reason_preserves_jaspen_messages(
+    connector_id, message,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+
+    assert connector_routes._safe_data_context_failure_reason(
+        connector_id, RuntimeError(message)
+    ) == message
+
+
+def test_safe_data_context_failure_reason_caps_long_exceptions():
+    connector_routes = importlib.import_module("app.routes.connectors")
+
+    reason = connector_routes._safe_data_context_failure_reason(
+        "smartsheet_sync", RuntimeError("x" * 5000)
+    )
+
+    assert reason == "Smartsheet data could not be read."
+    assert len(reason) <= 200
+
+
+def test_safe_data_context_failure_reason_uses_jira_public_message():
+    connector_routes = importlib.import_module("app.routes.connectors")
+
+    reason = connector_routes._safe_data_context_failure_reason(
+        "jira_sync", RuntimeError("HTTP 401 from private-jira-host.example.test")
+    )
+
+    assert reason == "Your saved Jira connection no longer works. Reconnect Jira to continue."
+    assert "private-jira-host" not in reason
+
+
 @pytest.mark.parametrize("connector_id", ["jira_sync", "smartsheet_sync"])
 def test_execution_result_used_by_plan_sync_import_and_webhooks_does_not_verify_data_context(
     client, auth_headers, test_user, connector_id,

@@ -1,6 +1,7 @@
 import hmac
 import json
 import os
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
@@ -1232,6 +1233,48 @@ def _recent_data_context_check(user_id, connector_id, now):
     }
 
 
+_SAFE_DATA_CONTEXT_FAILURE_MESSAGES = {
+    "Jira data analysis is turned off.",
+    "Smartsheet data analysis is turned off.",
+    "Missing Smartsheet access token.",
+    "Smartsheet sheet ID is not configured.",
+    "Smartsheet returned an unexpected sheet response.",
+    "Salesforce needs to be reconnected. Please go to Data Sources and click 'Connect with Salesforce'.",
+    "Failed to refresh Salesforce access token.",
+    "Salesforce instance URL is not configured.",
+    "Salesforce access token is missing.",
+    "Snowflake table allowlist is empty.",
+    "This source does not support data context verification.",
+}
+
+
+def _safe_data_context_failure_reason(connector_id, exc):
+    raw = str(exc or "").strip()
+    if raw in _SAFE_DATA_CONTEXT_FAILURE_MESSAGES:
+        reason = raw
+    elif connector_id == "jira_sync":
+        reason = _text(classify_refresh_error(exc).get("message")) or "Jira data could not be refreshed."
+    elif connector_id == "salesforce_insights":
+        status_match = re.search(r"\bHTTP\s+(\d{3})\b", raw, flags=re.IGNORECASE)
+        reason = (
+            f"Salesforce returned an error (HTTP {status_match.group(1)})."
+            if status_match
+            else "Salesforce data could not be read."
+        )
+    elif connector_id == "snowflake_insights":
+        normalized = raw.lower()
+        reason = (
+            "Snowflake account is unavailable or suspended."
+            if "suspend" in normalized or "trial" in normalized
+            else "Snowflake data could not be read."
+        )
+    else:
+        definition = get_connector_definition(connector_id) or {}
+        label = _text(definition.get("label")) or "Data source"
+        reason = f"{label} data could not be read."
+    return reason[:200]
+
+
 def _verify_data_context_read(user_id, connector_id, settings):
     if connector_id == "jira_sync":
         if not _to_bool(settings.get("jira_data_enabled"), default=False):
@@ -1319,7 +1362,13 @@ def check_connector_data_context(connector_id):
         try:
             _verify_data_context_read(user.id, connector_id, settings)
         except Exception as exc:
-            reason = str(exc) or "Data source verification failed."
+            current_app.logger.warning(
+                "Data-context read failed for connector %s and user %s",
+                connector_id,
+                user.id,
+                exc_info=True,
+            )
+            reason = _safe_data_context_failure_reason(connector_id, exc)
             reconnect_required = bool(getattr(exc, "reconnect_required", False))
             if connector_id == "jira_sync":
                 reconnect_required = reconnect_required or bool(classify_refresh_error(exc).get("reconnect_required"))
