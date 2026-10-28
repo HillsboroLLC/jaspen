@@ -31,6 +31,16 @@ describe.each([
     }));
   });
 
+  test('separate data-context freshness overrides execution freshness', () => {
+    expect(connectorContextState({
+      id, label, connected: true, freshness: 'confirmed',
+      data_context_freshness: 'unconfirmed', [section]: { data_enabled: true },
+    })).toEqual(expect.objectContaining({
+      state: 'unconfirmed',
+      selectable: false,
+    }));
+  });
+
   test('unconfirmed is disabled with a neutral dot and last-confirmed tooltip', () => {
     const lastConfirmedAt = '2026-10-01T12:00:00Z';
     const expectedDate = new Date(lastConfirmedAt).toLocaleDateString();

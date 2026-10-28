@@ -44,7 +44,11 @@ SENSITIVE_CONNECTOR_FIELDS = {
     "servicenow_insights": ("servicenow_password",),
     "netsuite_insights": ("netsuite_consumer_secret", "netsuite_token_secret"),
 }
-EXECUTION_PM_CONNECTOR_IDS = {"jira_sync", "smartsheet_sync"}
+# These connectors use one credential set for two independent features:
+# project execution and read-only analysis context. Keep this list centralized
+# so future dual-purpose connectors inherit the same freshness separation.
+DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS = frozenset({"jira_sync", "smartsheet_sync"})
+EXECUTION_PM_CONNECTOR_IDS = set(DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS)
 THREAD_SYNC_STATUS_VALUES = {
     "not_started",
     "tool_selected",
@@ -108,6 +112,7 @@ def _default_connector_settings(connector_id):
         "auto_sync": True,
         "external_workspace": "",
         "last_verified_at": None,
+        "data_context_verified_at": None,
         "verified_instance_url": "",
 
         # Common runtime and reliability metadata

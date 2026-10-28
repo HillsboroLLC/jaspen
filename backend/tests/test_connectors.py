@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app import connector_store
-from app.connector_store import append_sync_audit_event, update_connector_settings
+from app.connector_store import append_sync_audit_event, mark_connector_sync_result, update_connector_settings
 from app.models import ConnectorSyncLog
 
 def test_connector_status_returns_catalog(client, auth_headers):
@@ -26,6 +26,12 @@ def _jira_status(client, auth_headers):
     response = client.get("/api/v1/connectors/status", headers=auth_headers)
     assert response.status_code == 200
     return next(item for item in response.get_json()["connectors"] if item["id"] == "jira_sync")
+
+
+def _connector_status(client, auth_headers, connector_id):
+    response = client.get("/api/v1/connectors/status", headers=auth_headers)
+    assert response.status_code == 200
+    return next(item for item in response.get_json()["connectors"] if item["id"] == connector_id)
 
 
 def test_connector_status_reports_fresh_and_stale_confirmations(client, auth_headers, test_user):
@@ -56,6 +62,29 @@ def test_connector_status_reports_fresh_and_stale_confirmations(client, auth_hea
 
     assert stale["freshness"] == "unconfirmed"
     assert stale["last_confirmed_at"] == stale_success.isoformat().replace("+00:00", "Z")
+
+
+def test_dual_purpose_connector_reports_data_context_freshness_separately(
+    client, auth_headers, test_user,
+):
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    execution_success = now - timedelta(hours=1)
+    data_read = now - timedelta(days=8)
+    _store_connector_status(
+        test_user.id,
+        connection_status="connected",
+        lifecycle_status="connected",
+        last_success_at=execution_success.isoformat(),
+        last_verified_at=execution_success.isoformat(),
+        data_context_verified_at=data_read.isoformat(),
+    )
+
+    jira = _jira_status(client, auth_headers)
+
+    assert jira["freshness"] == "confirmed"
+    assert jira["last_confirmed_at"] == execution_success.isoformat().replace("+00:00", "Z")
+    assert jira["data_context_freshness"] == "unconfirmed"
+    assert jira["data_context_last_confirmed_at"] == data_read.isoformat().replace("+00:00", "Z")
 
 
 def test_connector_status_reports_never_confirmed_problem_and_disconnected_states(client, auth_headers, test_user):
@@ -216,9 +245,14 @@ def test_data_context_check_ignores_incomplete_jira_execution_config_and_is_thro
     assert settings["jira_issue_type"] == ""
     assert settings["jira_field_mapping"] == {}
     assert settings["jira_data_selected_projects"] == ["DATA"]
+    assert settings["data_context_verified_at"]
+    assert settings["last_verified_at"] == stale.isoformat()
+    assert settings["last_sync_at"] is None
+    assert settings["last_success_at"] is None
 
     jira = _jira_status(client, auth_headers)
-    assert jira["freshness"] == "confirmed"
+    assert jira["freshness"] == "unconfirmed"
+    assert jira["data_context_freshness"] == "confirmed"
 
 
 def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
@@ -230,6 +264,7 @@ def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
         "connection_status": "connected",
         "lifecycle_status": "connected",
         "last_verified_at": stale.isoformat(),
+        "data_context_verified_at": stale.isoformat(),
         "jira_base_url": "https://synthetic.atlassian.test",
         "jira_email": "dev@example.test",
         "jira_api_token": "synthetic-token",
@@ -261,6 +296,108 @@ def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
     ):
         assert settings[field] == original[field]
     assert settings["last_verified_at"] == original["last_verified_at"]
+    assert settings["data_context_verified_at"] == original["data_context_verified_at"]
+
+
+@pytest.mark.parametrize("connector_id", ["jira_sync", "smartsheet_sync"])
+def test_execution_success_does_not_verify_dual_purpose_data_context(
+    client, auth_headers, test_user, connector_id,
+):
+    update_connector_settings(test_user.id, connector_id, {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+        "data_context_verified_at": None,
+    })
+
+    mark_connector_sync_result(test_user.id, connector_id, "success")
+
+    settings = connector_store.get_connector_settings(test_user.id, connector_id)
+    assert settings["last_sync_result"] == "success"
+    assert settings["last_sync_at"]
+    assert settings["last_success_at"]
+    assert settings["last_verified_at"]
+    assert settings["data_context_verified_at"] is None
+    status = _connector_status(client, auth_headers, connector_id)
+    assert status["freshness"] == "confirmed"
+    assert status["data_context_freshness"] == "unconfirmed"
+
+
+def test_jira_credential_health_and_setup_checks_do_not_verify_data_context(
+    client, auth_headers, test_user, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    update_connector_settings(test_user.id, "jira_sync", {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+        "jira_base_url": "https://synthetic.atlassian.test",
+        "jira_email": "dev@example.test",
+        "jira_api_token": "synthetic-token",
+        "jira_project_key": "EXEC",
+        "data_context_verified_at": None,
+    })
+    monkeypatch.setattr(
+        connector_routes,
+        "jira_check_connection",
+        lambda *_args, **_kwargs: {"ok": True},
+    )
+
+    health = client.get("/api/v1/connectors/jira_sync/health", headers=auth_headers)
+    setup = client.get("/api/v1/connectors/jira_sync/check", headers=auth_headers)
+
+    assert health.status_code == 200
+    assert setup.status_code == 200, setup.get_json()
+    settings = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert settings["last_verified_at"]
+    assert settings["data_context_verified_at"] is None
+    assert _jira_status(client, auth_headers)["data_context_freshness"] == "unconfirmed"
+
+
+def test_smartsheet_data_context_read_verifies_only_analysis_freshness(
+    client, auth_headers, test_user, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    update_connector_settings(test_user.id, "smartsheet_sync", {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+        "last_verified_at": None,
+        "data_context_verified_at": None,
+        "smartsheet_base_url": "https://synthetic.smartsheet.test",
+        "smartsheet_sheet_id": "sheet-1",
+        "smartsheet_api_token": "synthetic-token",
+        "smartsheet_data_enabled": True,
+    })
+    monkeypatch.setattr(connector_routes, "smartsheet_get_sheet", lambda *_args, **_kwargs: {"id": "sheet-1"})
+
+    response = client.get(
+        "/api/v1/connectors/smartsheet_sync/data-context/check", headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "confirmed"
+    settings = connector_store.get_connector_settings(test_user.id, "smartsheet_sync")
+    assert settings["data_context_verified_at"]
+    assert settings["last_verified_at"] is None
+    assert settings["last_sync_at"] is None
+    assert settings["last_success_at"] is None
+    status = _connector_status(client, auth_headers, "smartsheet_sync")
+    assert status["freshness"] == "unconfirmed"
+    assert status["data_context_freshness"] == "confirmed"
+
+
+@pytest.mark.parametrize("connector_id", ["salesforce_insights", "snowflake_insights"])
+def test_data_only_connector_success_keeps_existing_freshness_rule(
+    client, auth_headers, test_user, connector_id,
+):
+    update_connector_settings(test_user.id, connector_id, {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+    })
+
+    mark_connector_sync_result(test_user.id, connector_id, "success")
+
+    status = _connector_status(client, auth_headers, connector_id)
+    assert status["freshness"] == "confirmed"
+    assert "data_context_freshness" not in status
 
 
 def test_connected_settings_save_does_not_refresh_last_verified_at(test_user):

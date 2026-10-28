@@ -594,7 +594,11 @@ def refresh_portfolio(user_id, *, force=False, now=None):
             "provenance": {"source": "connector", "connector": "jira_sync", "site": config["base_url"], "projects": [row.get("project_key") for row in metrics], "window_days": window_days, "fetched_at": _iso(now)},
         }
         snapshot["evidence"] = canonical_evidence(snapshot)
-        update_connector_settings(user_id, "jira_sync", {"jira_portfolio_snapshot": snapshot, "jira_data_last_refresh_failed": False})
+        update_connector_settings(user_id, "jira_sync", {
+            "jira_portfolio_snapshot": snapshot,
+            "jira_data_last_refresh_failed": False,
+            "data_context_verified_at": _iso(now),
+        })
         return snapshot
     except Exception as exc:
         refresh_error = classify_refresh_error(exc)

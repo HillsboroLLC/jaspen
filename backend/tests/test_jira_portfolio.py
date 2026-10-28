@@ -170,6 +170,7 @@ def test_refresh_scopes_projects_paginates_caches_and_emits_provenance(monkeypat
     search_payload = next(row[2] for row in calls if row[1] == "/rest/api/3/search/jql")
     assert search_payload["expand"] == "changelog"
     assert saved[-1]["jira_portfolio_snapshot"]["portfolio"]["project_count"] == 1
+    assert saved[-1]["data_context_verified_at"] == "2026-10-12T16:00:00Z"
 
     settings["jira_portfolio_snapshot"] = snapshot
     calls.clear()
@@ -216,6 +217,7 @@ def test_failed_refresh_with_cached_snapshot_does_not_refresh_verification(monke
             "connection_status": "connected",
             "lifecycle_status": "connected",
             "last_verified_at": verified_at,
+            "data_context_verified_at": verified_at,
             "jira_base_url": "https://synthetic.atlassian.test",
             "jira_email": "dev@example.test",
             "jira_api_token": "synthetic-token",
@@ -228,6 +230,7 @@ def test_failed_refresh_with_cached_snapshot_does_not_refresh_verification(monke
 
         assert result["refresh_failed"] is True
         assert saved["last_verified_at"] == verified_at
+        assert saved["data_context_verified_at"] == verified_at
         assert saved["jira_data_last_refresh_failed"] is True
     finally:
         connector_store.CONNECTORS_DIR = original_dir

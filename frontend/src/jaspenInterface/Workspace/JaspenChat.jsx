@@ -8700,7 +8700,7 @@ useEffect(() => {
             ...previous,
             [connectorId]: {
               ...previous[connectorId],
-              freshness: 'checking',
+              data_context_freshness: 'checking',
               data_context_check_status: 'checking',
             },
           }));
@@ -8718,10 +8718,10 @@ useEffect(() => {
             ...previous,
             [connectorId]: {
               ...previous[connectorId],
-              freshness: confirmed ? 'confirmed' : 'unconfirmed',
-              last_confirmed_at: confirmed
-                ? (result?.last_verified_at || previous[connectorId]?.last_confirmed_at)
-                : previous[connectorId]?.last_confirmed_at,
+              data_context_freshness: confirmed ? 'confirmed' : 'unconfirmed',
+              data_context_last_confirmed_at: confirmed
+                ? (result?.last_verified_at || previous[connectorId]?.data_context_last_confirmed_at || previous[connectorId]?.last_confirmed_at)
+                : (previous[connectorId]?.data_context_last_confirmed_at || previous[connectorId]?.last_confirmed_at),
               data_context_check_status: confirmed ? 'confirmed' : 'failed',
               data_context_check_error: confirmed ? '' : (result?.error || ''),
               data_context_reconnect_required: !confirmed && Boolean(result?.reconnect_required),

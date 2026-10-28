@@ -20,6 +20,7 @@ from app.connector_registry import (
 )
 from app.connector_store import (
     CONFLICT_POLICIES,
+    DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS,
     EXECUTION_PM_CONNECTOR_IDS,
     SYNC_MODES,
     append_sync_audit_event,
@@ -180,6 +181,22 @@ def _connector_freshness(connected, lifecycle_status, last_success_at, last_veri
     freshness = "confirmed" if last_confirmed_at and last_confirmed_at >= cutoff else "unconfirmed"
     return freshness, _utc_iso(last_confirmed_at)
 
+
+def _data_context_verified_at(connector_id, settings):
+    if connector_id in DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS:
+        return settings.get("data_context_verified_at")
+    return settings.get("last_verified_at")
+
+
+def _record_data_context_verification(user_id, connector_id, verified_at=None):
+    verified_at = verified_at or _iso_now()
+    field = (
+        "data_context_verified_at"
+        if connector_id in DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS
+        else "last_verified_at"
+    )
+    update_connector_settings(user_id, connector_id, {field: verified_at})
+    return verified_at
 
 
 def _frontend_base_url():
@@ -432,6 +449,15 @@ def _merge_connector_view(connector_id, entitlement, settings):
         settings.get("last_success_at"),
         settings.get("last_verified_at"),
     )
+    data_context_freshness = None
+    data_context_last_confirmed_at = None
+    if connector_id in DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS:
+        data_context_freshness, data_context_last_confirmed_at = _connector_freshness(
+            connected,
+            "connected" if connected else lifecycle_status,
+            None,
+            settings.get("data_context_verified_at"),
+        )
     status = "locked" if not enabled else "connected" if connected else "available"
     sync_mode = str(settings.get("sync_mode") or "import").lower()
     if sync_mode not in modes:
@@ -476,6 +502,9 @@ def _merge_connector_view(connector_id, entitlement, settings):
             "last_error_message": settings.get("last_error_message") or "",
         },
     }
+    if data_context_freshness is not None:
+        payload["data_context_freshness"] = data_context_freshness
+        payload["data_context_last_confirmed_at"] = data_context_last_confirmed_at
 
     if connector_id == "jira_sync":
         missing_fields = _missing_required_fields(connector_id, settings)
@@ -1264,11 +1293,16 @@ def check_connector_data_context(connector_id):
         if recent:
             confirmed = recent.get("status") == "success"
             settings = get_connector_settings(user.id, connector_id)
+            verified_at = _data_context_verified_at(connector_id, settings)
+            if confirmed and not verified_at:
+                verified_at = _record_data_context_verification(
+                    user.id, connector_id, recent.get("timestamp")
+                )
             payload = {
                 "connector_id": connector_id,
                 "status": "confirmed" if confirmed else "failed",
                 "throttled": True,
-                "last_verified_at": settings.get("last_verified_at"),
+                "last_verified_at": verified_at,
             }
             if not confirmed:
                 payload["error"] = recent.get("message") or "Data source verification failed."
@@ -1303,8 +1337,7 @@ def check_connector_data_context(connector_id):
                 "reconnect_required": reconnect_required,
             }), 200
 
-        verified_at = _iso_now()
-        update_connector_settings(user.id, connector_id, {"last_verified_at": verified_at})
+        verified_at = _record_data_context_verification(user.id, connector_id)
         append_sync_audit_event(
             user.id,
             connector_id,
@@ -1850,12 +1883,6 @@ def jira_context_summary():
         }
         refresh_failed = bool(snapshot.get("refresh_failed"))
         refresh_error = snapshot.get("refresh_error") or {}
-        mark_connector_sync_result(
-            user.id,
-            "jira_sync",
-            "failed" if refresh_failed else "success",
-            error_message=refresh_error.get("message") if refresh_failed else None,
-        )
         append_sync_audit_event(
             user.id,
             "jira_sync",
@@ -1872,7 +1899,6 @@ def jira_context_summary():
         current_app.logger.exception("Jira portfolio context refresh failed for user %s", user.id)
         refresh_error = classify_refresh_error(exc)
         public_message = refresh_error["message"]
-        mark_connector_sync_result(user.id, "jira_sync", "failed", error_message=public_message)
         append_sync_audit_event(
             user.id, "jira_sync", action="context_summary", status="failed", message=public_message
         )
