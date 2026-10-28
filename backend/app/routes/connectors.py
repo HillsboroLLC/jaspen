@@ -2214,8 +2214,21 @@ Return ONLY a JSON array with this exact structure (no other text):
 Be specific to the actual data. Do not generate generic ideas. Every idea must be directly traceable to a signal in the data provided.
 """
 
+    def validate_ideas(raw_text):
+        raw_text = str(raw_text or "").strip()
+        if raw_text.startswith("```"):
+            parts = raw_text.split("```")
+            if len(parts) > 1:
+                raw_text = parts[1]
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:]
+        ideas = json.loads(raw_text.strip())
+        if not isinstance(ideas, list):
+            raise ValueError("AI reply must be a list of ideas.")
+        return ideas
+
     try:
-        raw_text, _usage, _settlement = execute_customer_text_operation(
+        ideas, _usage, _settlement = execute_customer_text_operation(
             user,
             messages=[{"role": "user", "content": user_prompt}],
             system_prompt=system_prompt,
@@ -2227,17 +2240,8 @@ Be specific to the actual data. Do not generate generic ideas. Every idea must b
             ),
             max_tokens=2000,
             temperature=0.3,
+            validate=validate_ideas,
         )
-        raw_text = str(raw_text or "").strip()
-        if raw_text.startswith("```"):
-            parts = raw_text.split("```")
-            if len(parts) > 1:
-                raw_text = parts[1]
-            if raw_text.startswith("json"):
-                raw_text = raw_text[4:]
-        ideas = json.loads(raw_text.strip())
-        if not isinstance(ideas, list):
-            ideas = []
     except AIOperationPaymentRequired as exc:
         return jsonify(exc.payload or {"error": "Thinking Power exhausted"}), 402
     except json.JSONDecodeError:

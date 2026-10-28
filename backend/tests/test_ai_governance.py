@@ -671,6 +671,160 @@ def test_idempotent_retry_returns_cached_result_without_second_generation_or_cha
     assert AIProviderAttempt.query.count() == 1
 
 
+def test_validate_returns_and_caches_validated_value_before_settlement(
+    app, db, test_user, monkeypatch
+):
+    from app.routes import ai_agent
+
+    calls = {'generate': 0, 'validate': 0, 'settle': 0}
+
+    def generate():
+        calls['generate'] += 1
+        return 'raw reply', {
+            'provider': 'anthropic', 'model': 'claude-sonnet-4-6',
+            'input_tokens': 20, 'output_tokens': 10,
+        }
+
+    def validate(value):
+        calls['validate'] += 1
+        assert value == 'raw reply'
+        return {'validated': True}
+
+    monkeypatch.setattr(
+        ai_agent, '_reserve_preflight_credits',
+        lambda *_args, **_kwargs: {'ok': True, 'reserved': 100},
+    )
+    monkeypatch.setattr(ai_agent, '_charge_for_usage', lambda *_args, **_kwargs: 17)
+
+    def settle(*_args, **_kwargs):
+        calls['settle'] += 1
+        return {'ok': True, 'charged': 17, 'remaining': 283}
+
+    monkeypatch.setattr(ai_agent, '_settle_reserved_credits', settle)
+
+    kwargs = dict(
+        generate=generate,
+        validate=validate,
+        operation_type='structured_generation',
+        request_payload={'prompt': 'same request'},
+        idempotency_key='validated-result',
+    )
+    first = execute_customer_operation(test_user, **kwargs)
+    replay = execute_customer_operation(test_user, **kwargs)
+
+    assert first[0] == replay[0] == {'validated': True}
+    assert first[2]['charged_credits'] == 17
+    assert replay[2]['idempotent_replay'] is True
+    assert calls == {'generate': 1, 'validate': 1, 'settle': 1}
+
+
+def test_validate_failure_releases_reservation_and_keeps_absorbed_provider_cost(
+    app, db, test_user, monkeypatch
+):
+    from app.routes import ai_agent
+
+    starting_balance = test_user.credits_remaining
+
+    def reserve(user, *_args, **_kwargs):
+        user.credits_remaining -= 25
+        return {'ok': True, 'reserved': 25}
+
+    def release(user, amount):
+        user.credits_remaining += amount
+        return user.credits_remaining
+
+    monkeypatch.setattr(ai_agent, '_reserve_preflight_credits', reserve)
+    monkeypatch.setattr(ai_agent, '_release_reserved_credits', release)
+    monkeypatch.setattr(
+        ai_agent, '_settle_reserved_credits',
+        lambda *_args, **_kwargs: pytest.fail('validation failure must not settle'),
+    )
+
+    with pytest.raises(ValueError, match='invalid reply'):
+        execute_customer_operation(
+            test_user,
+            generate=lambda: ('raw reply', {
+                'provider': 'anthropic', 'model': 'claude-sonnet-4-6',
+                'input_tokens': 20, 'output_tokens': 10,
+            }),
+            validate=lambda _value: (_ for _ in ()).throw(ValueError('invalid reply')),
+            operation_type='structured_generation',
+            request_payload={'prompt': 'validate this'},
+            idempotency_key='validation-failure',
+        )
+
+    db.session.refresh(test_user)
+    operation = AIOperation.query.filter_by(operation_type='structured_generation').one()
+    attempt = AIProviderAttempt.query.filter_by(operation_id=operation.id).one()
+    assert test_user.credits_remaining == starting_balance
+    assert operation.status == 'failed'
+    assert operation.error_code == 'invalid_ai_reply'
+    assert operation.charged_credits == 0
+    assert operation.successful_provider_cost_usd == 0
+    assert operation.total_provider_cost_usd > 0
+    assert operation.result_json is None
+    assert attempt.outcome == 'invalid_response'
+    assert attempt.customer_billable is False
+
+
+def test_idempotent_retry_after_validation_failure_regenerates(
+    app, db, test_user, monkeypatch
+):
+    from app.routes import ai_agent
+
+    calls = {'generate': 0, 'reserve': 0, 'release': 0, 'settle': 0}
+
+    def reserve(user, *_args, **_kwargs):
+        calls['reserve'] += 1
+        user.credits_remaining -= 25
+        return {'ok': True, 'reserved': 25}
+
+    def release(user, amount):
+        calls['release'] += 1
+        user.credits_remaining += amount
+        return user.credits_remaining
+
+    def settle(user, *, reserved_credits, actual_credits):
+        calls['settle'] += 1
+        user.credits_remaining += reserved_credits - actual_credits
+        return {'ok': True, 'charged': actual_credits, 'remaining': user.credits_remaining}
+
+    def generate():
+        calls['generate'] += 1
+        return calls['generate'], {
+            'provider': 'anthropic', 'model': 'claude-sonnet-4-6',
+            'input_tokens': 20, 'output_tokens': 10,
+        }
+
+    def validate(value):
+        if value == 1:
+            raise ValueError('invalid first reply')
+        return {'attempt': value}
+
+    monkeypatch.setattr(ai_agent, '_reserve_preflight_credits', reserve)
+    monkeypatch.setattr(ai_agent, '_release_reserved_credits', release)
+    monkeypatch.setattr(ai_agent, '_settle_reserved_credits', settle)
+    monkeypatch.setattr(ai_agent, '_charge_for_usage', lambda *_args, **_kwargs: 7)
+    kwargs = dict(
+        generate=generate,
+        validate=validate,
+        operation_type='structured_generation',
+        request_payload={'prompt': 'retry this'},
+        idempotency_key='retry-after-invalid-reply',
+    )
+
+    with pytest.raises(ValueError, match='invalid first reply'):
+        execute_customer_operation(test_user, **kwargs)
+    result = execute_customer_operation(test_user, **kwargs)
+
+    operation = AIOperation.query.filter_by(operation_type='structured_generation').one()
+    assert result[0] == {'attempt': 2}
+    assert result[2]['idempotent_replay'] is False
+    assert operation.status == 'succeeded'
+    assert operation.result_json['value'] == {'attempt': 2}
+    assert calls == {'generate': 2, 'reserve': 2, 'release': 1, 'settle': 1}
+
+
 def test_persisted_action_is_billable_when_closing_narration_failed(app, db, test_user, monkeypatch):
     from app.routes import ai_agent
 

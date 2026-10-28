@@ -6,7 +6,7 @@ import pytest
 
 from app import connector_store
 from app.connector_store import append_sync_audit_event, mark_connector_sync_result, update_connector_settings
-from app.models import ConnectorSyncLog
+from app.models import AIOperation, ConnectorSyncLog
 
 def test_connector_status_returns_catalog(client, auth_headers):
     resp = client.get("/api/v1/connectors/status", headers=auth_headers)
@@ -555,18 +555,43 @@ def test_generate_ideas_ai_provider_failure_returns_safe_message(
 
 
 def test_generate_ideas_invalid_ai_json_returns_safe_message(
-    client, auth_headers, monkeypatch,
+    client, auth_headers, test_user, db, monkeypatch,
 ):
+    from app.routes import ai_agent
+
     connector_routes = importlib.import_module("app.routes.connectors")
+    starting_balance = test_user.credits_remaining
     monkeypatch.setattr(
         connector_routes,
         "fetch_pipeline_summary",
         lambda *_args, **_kwargs: {"summary": {"opportunity_count": 3}},
     )
     monkeypatch.setattr(
-        connector_routes,
-        "execute_customer_text_operation",
-        lambda *_args, **_kwargs: ("not valid JSON", {}, {}),
+        ai_agent,
+        "_generate_routed_chat_reply",
+        lambda *_args, **_kwargs: (
+            "not valid JSON",
+            {
+                "provider": "anthropic", "model": "claude-sonnet-4-6",
+                "input_tokens": 20, "output_tokens": 10,
+            },
+        ),
+    )
+
+    def reserve(user, *_args, **_kwargs):
+        user.credits_remaining -= 25
+        return {"ok": True, "reserved": 25}
+
+    def release(user, amount):
+        user.credits_remaining += amount
+        return user.credits_remaining
+
+    monkeypatch.setattr(ai_agent, "_reserve_preflight_credits", reserve)
+    monkeypatch.setattr(ai_agent, "_release_reserved_credits", release)
+    monkeypatch.setattr(
+        ai_agent,
+        "_settle_reserved_credits",
+        lambda *_args, **_kwargs: pytest.fail("invalid reply must not settle"),
     )
 
     response = client.post(
@@ -579,6 +604,69 @@ def test_generate_ideas_invalid_ai_json_returns_safe_message(
     error = response.get_json()["error"]
     assert error == "Jaspen couldn't generate ideas from this data. Please try again."
     assert "Expecting value" not in error
+    db.session.refresh(test_user)
+    operation = AIOperation.query.filter_by(operation_type="connector_idea_generation").one()
+    assert test_user.credits_remaining == starting_balance
+    assert operation.status == "failed"
+    assert operation.error_code == "invalid_ai_reply"
+    assert operation.charged_credits == 0
+    assert operation.total_provider_cost_usd > 0
+
+
+def test_generate_ideas_valid_ai_json_returns_ideas_and_charges(
+    client, auth_headers, test_user, db, monkeypatch,
+):
+    from app.routes import ai_agent
+
+    connector_routes = importlib.import_module("app.routes.connectors")
+    starting_balance = test_user.credits_remaining
+    monkeypatch.setattr(
+        connector_routes,
+        "fetch_pipeline_summary",
+        lambda *_args, **_kwargs: {"summary": {"opportunity_count": 3}},
+    )
+    monkeypatch.setattr(
+        ai_agent,
+        "_generate_routed_chat_reply",
+        lambda *_args, **_kwargs: (
+            '```json\n[{"title": "Improve conversion", "description": "Act on the signal"}]\n```',
+            {
+                "provider": "anthropic", "model": "claude-sonnet-4-6",
+                "input_tokens": 20, "output_tokens": 10,
+            },
+        ),
+    )
+
+    def reserve(user, *_args, **_kwargs):
+        user.credits_remaining -= 25
+        return {"ok": True, "reserved": 25}
+
+    def settle(user, *, reserved_credits, actual_credits):
+        user.credits_remaining += reserved_credits - actual_credits
+        return {"ok": True, "charged": actual_credits, "remaining": user.credits_remaining}
+
+    monkeypatch.setattr(ai_agent, "_reserve_preflight_credits", reserve)
+    monkeypatch.setattr(ai_agent, "_settle_reserved_credits", settle)
+    monkeypatch.setattr(ai_agent, "_charge_for_usage", lambda *_args, **_kwargs: 7)
+
+    response = client.post(
+        "/api/v1/connectors/generate-ideas",
+        headers=auth_headers,
+        json={"connector_id": "salesforce_insights"},
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["idea_count"] == 1
+    assert payload["ideas"][0]["title"] == "Improve conversion"
+    assert payload["ideas"][0]["prefill_statement"].startswith(
+        "I want to evaluate the following initiative for scoring:"
+    )
+    db.session.refresh(test_user)
+    operation = AIOperation.query.filter_by(operation_type="connector_idea_generation").one()
+    assert test_user.credits_remaining == starting_balance - 7
+    assert operation.status == "succeeded"
+    assert operation.charged_credits == 7
 
 
 def test_generate_ideas_preserves_payment_required_response(

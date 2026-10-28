@@ -130,7 +130,7 @@ def _claim_operation(user, *, operation_type, thread_id, customer_visible,
 def execute_customer_operation(user, *, generate, operation_type, request_payload,
                                model_type='orbit', max_tokens=900, thread_id=None,
                                customer_visible=True, subsidy_reason=None,
-                               idempotency_key=None):
+                               idempotency_key=None, validate=None):
     """Execute an arbitrary AI generator and settle its visible result once."""
     from .routes.ai_agent import (
         _charge_for_usage,
@@ -216,6 +216,33 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
     usage = dict(usage or {})
     if claimed is not None:
         usage['operation_id'] = claimed.id
+    if validate is not None:
+        try:
+            value = validate(value)
+        except Exception:
+            if reserved:
+                _release_reserved_credits(user, reserved)
+            failed_usage = {
+                **usage,
+                'degraded': True,
+                'operation_failed': True,
+                'error_code': 'invalid_ai_reply',
+            }
+            persist_operation(
+                user,
+                usage=failed_usage,
+                charged_credits=0,
+                operation_type=operation_type,
+                thread_id=thread_id,
+                success=False,
+                error_code='invalid_ai_reply',
+                subsidy_reason=subsidy_reason,
+                customer_visible=customer_visible,
+                idempotency_key=key,
+                request_fingerprint=fingerprint,
+            )
+            db.session.commit()
+            raise
     projected_credits, successful_cost = projected_charge_for_usage(usage)
     if should_charge:
         actual_credits = _charge_for_usage(usage, str(model_type or 'orbit'), user) if usage_is_billable_success(usage) else 0
@@ -391,7 +418,8 @@ def execute_customer_text_operation(user, *, messages, system_prompt, operation_
                                     strategy_objective='balanced', max_tokens=900,
                                     temperature=0.2, thread_id=None,
                                     customer_visible=True, subsidy_reason=None,
-                                    idempotency_key=None, routing_signals=None):
+                                    idempotency_key=None, routing_signals=None,
+                                    validate=None):
     """Execute one routed text result through the shared operation boundary."""
     from .routes.ai_agent import _generate_routed_chat_reply
 
@@ -435,6 +463,7 @@ def execute_customer_text_operation(user, *, messages, system_prompt, operation_
         customer_visible=customer_visible,
         subsidy_reason=subsidy_reason,
         idempotency_key=idempotency_key,
+        validate=validate,
     )
 
 
