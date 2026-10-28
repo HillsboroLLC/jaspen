@@ -498,6 +498,128 @@ def test_safe_data_context_failure_reason_uses_jira_public_message():
     assert "private-jira-host" not in reason
 
 
+def test_generate_ideas_connector_fetch_failure_uses_safe_labelled_reason(
+    client, auth_headers, monkeypatch, caplog,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    provider_host = "customer-account.provider.example.test"
+    raw_error = f"HTTP 420 from {provider_host}: <!DOCTYPE HTML><html>failed</html>"
+
+    def fail_fetch(*_args, **_kwargs):
+        raise RuntimeError(raw_error)
+
+    monkeypatch.setattr(connector_routes, "fetch_pipeline_summary", fail_fetch)
+
+    response = client.post(
+        "/api/v1/connectors/generate-ideas",
+        headers=auth_headers,
+        json={"connector_id": "salesforce_insights"},
+    )
+
+    assert response.status_code == 400
+    error = response.get_json()["error"]
+    assert error == "Salesforce returned an error (HTTP 420)."
+    assert "<" not in error
+    assert "DOCTYPE" not in error
+    assert provider_host not in error
+    assert raw_error in caplog.text
+
+
+def test_generate_ideas_ai_provider_failure_returns_safe_message(
+    client, auth_headers, monkeypatch, caplog,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    raw_error = "provider SDK failed at private-provider.example.test"
+    monkeypatch.setattr(
+        connector_routes,
+        "fetch_pipeline_summary",
+        lambda *_args, **_kwargs: {"summary": {"opportunity_count": 3}},
+    )
+
+    def fail_ai(*_args, **_kwargs):
+        raise RuntimeError(raw_error)
+
+    monkeypatch.setattr(connector_routes, "execute_customer_text_operation", fail_ai)
+
+    response = client.post(
+        "/api/v1/connectors/generate-ideas",
+        headers=auth_headers,
+        json={"connector_id": "salesforce_insights"},
+    )
+
+    assert response.status_code == 500
+    assert response.get_json() == {
+        "error": "Jaspen couldn't generate ideas from this data. Please try again."
+    }
+    assert raw_error in caplog.text
+
+
+def test_generate_ideas_invalid_ai_json_returns_safe_message(
+    client, auth_headers, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    monkeypatch.setattr(
+        connector_routes,
+        "fetch_pipeline_summary",
+        lambda *_args, **_kwargs: {"summary": {"opportunity_count": 3}},
+    )
+    monkeypatch.setattr(
+        connector_routes,
+        "execute_customer_text_operation",
+        lambda *_args, **_kwargs: ("not valid JSON", {}, {}),
+    )
+
+    response = client.post(
+        "/api/v1/connectors/generate-ideas",
+        headers=auth_headers,
+        json={"connector_id": "salesforce_insights"},
+    )
+
+    assert response.status_code == 500
+    error = response.get_json()["error"]
+    assert error == "Jaspen couldn't generate ideas from this data. Please try again."
+    assert "Expecting value" not in error
+
+
+def test_generate_ideas_preserves_payment_required_response(
+    client, auth_headers, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    monkeypatch.setattr(
+        connector_routes,
+        "fetch_pipeline_summary",
+        lambda *_args, **_kwargs: {"summary": {"opportunity_count": 3}},
+    )
+    payment_payload = {"error": "Thinking Power exhausted", "code": "payment_required"}
+
+    def require_payment(*_args, **_kwargs):
+        raise connector_routes.AIOperationPaymentRequired(payment_payload)
+
+    monkeypatch.setattr(connector_routes, "execute_customer_text_operation", require_payment)
+
+    response = client.post(
+        "/api/v1/connectors/generate-ideas",
+        headers=auth_headers,
+        json={"connector_id": "salesforce_insights"},
+    )
+
+    assert response.status_code == 402
+    assert response.get_json() == payment_payload
+
+
+def test_generate_ideas_preserves_unsupported_connector_response(client, auth_headers):
+    response = client.post(
+        "/api/v1/connectors/generate-ideas",
+        headers=auth_headers,
+        json={"connector_id": "unsupported_insights"},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "error": "Connector 'unsupported_insights' does not support idea generation yet."
+    }
+
+
 @pytest.mark.parametrize("connector_id", ["jira_sync", "smartsheet_sync"])
 def test_execution_result_used_by_plan_sync_import_and_webhooks_does_not_verify_data_context(
     client, auth_headers, test_user, connector_id,

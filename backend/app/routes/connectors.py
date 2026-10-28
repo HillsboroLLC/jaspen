@@ -2171,7 +2171,11 @@ def generate_ideas_from_connector():
         else:
             return jsonify({"error": f"Connector '{connector_id}' does not support idea generation yet."}), 400
     except Exception as exc:
-        return jsonify({"error": f"Could not fetch data from {connector_id}: {str(exc)}"}), 400
+        current_app.logger.exception(
+            "Connector data fetch failed during idea generation for %s",
+            connector_id,
+        )
+        return jsonify({"error": _safe_data_context_failure_reason(connector_id, exc)}), 400
 
     objective_guidance = {
         "cost": "Focus on cost reduction, process efficiency, and margin improvement opportunities.",
@@ -2236,8 +2240,20 @@ Be specific to the actual data. Do not generate generic ideas. Every idea must b
             ideas = []
     except AIOperationPaymentRequired as exc:
         return jsonify(exc.payload or {"error": "Thinking Power exhausted"}), 402
-    except Exception as exc:
-        return jsonify({"error": f"AI analysis failed: {str(exc)}"}), 500
+    except json.JSONDecodeError:
+        current_app.logger.exception(
+            "AI reply could not be parsed during connector idea generation"
+        )
+        return jsonify({
+            "error": "Jaspen couldn't generate ideas from this data. Please try again."
+        }), 500
+    except Exception:
+        current_app.logger.exception(
+            "AI provider failed during connector idea generation"
+        )
+        return jsonify({
+            "error": "Jaspen couldn't generate ideas from this data. Please try again."
+        }), 500
 
     for idea in ideas:
         if not isinstance(idea, dict):
