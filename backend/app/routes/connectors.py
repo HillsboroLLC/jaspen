@@ -1487,6 +1487,22 @@ def check_connector_setup(connector_id):
                 },
             )
             mark_connector_sync_result(user.id, connector_id, "success")
+        elif connector_id == "salesforce_insights":
+            _verify_data_context_read(user.id, connector_id, settings)
+            update_connector_settings(
+                user.id,
+                connector_id,
+                {
+                    "connection_status": "connected",
+                    "lifecycle_status": "connected",
+                    "last_verified_at": _iso_now(),
+                    "verified_instance_url": _text(
+                        settings.get("salesforce_instance_url")
+                        or settings.get("salesforce_auth_base_url")
+                    ),
+                },
+            )
+            mark_connector_sync_result(user.id, connector_id, "success")
         elif connector_id == "snowflake_insights":
             ok, err_msg = test_snowflake_connection(user.id)
             if not ok:
@@ -1539,9 +1555,7 @@ def check_connector_setup(connector_id):
             mark_connector_sync_result(user.id, connector_id, "success")
         else:
             generic_instance_url = ""
-            if connector_id == "salesforce_insights":
-                generic_instance_url = _text(settings.get("salesforce_instance_url") or settings.get("salesforce_auth_base_url"))
-            elif connector_id == "snowflake_insights":
+            if connector_id == "snowflake_insights":
                 generic_instance_url = _text(settings.get("snowflake_account"))
             update_connector_settings(
                 user.id,

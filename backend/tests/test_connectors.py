@@ -442,6 +442,71 @@ def test_jira_credential_health_and_setup_checks_do_not_verify_data_context(
     assert _jira_status(client, auth_headers)["data_context_freshness"] == "unconfirmed"
 
 
+def test_salesforce_setup_check_verifies_with_minimal_data_read(
+    client, auth_headers, test_user, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    update_connector_settings(test_user.id, "salesforce_insights", {
+        "connection_status": "disconnected",
+        "lifecycle_status": "configured",
+        "last_verified_at": None,
+        "salesforce_auth_base_url": "https://login.salesforce.test",
+        "salesforce_instance_url": "https://synthetic.salesforce.test",
+        "salesforce_client_id": "synthetic-client-id",
+        "salesforce_client_secret": "synthetic-client-secret",
+    })
+    calls = []
+    monkeypatch.setattr(
+        connector_routes,
+        "fetch_pipeline_summary",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or {"records": []},
+    )
+
+    response = client.get(
+        "/api/v1/connectors/salesforce_insights/check", headers=auth_headers
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert calls == [((test_user.id,), {"lookback_days": 1, "max_records": 1})]
+    settings = connector_store.get_connector_settings(test_user.id, "salesforce_insights")
+    assert settings["connection_status"] == "connected"
+    assert settings["lifecycle_status"] == "connected"
+    assert settings["last_verified_at"]
+    assert _connector_status(client, auth_headers, "salesforce_insights")["freshness"] == "confirmed"
+
+
+def test_salesforce_setup_check_failed_read_does_not_verify_data_chip(
+    client, auth_headers, test_user, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    update_connector_settings(test_user.id, "salesforce_insights", {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+        "last_verified_at": None,
+        "salesforce_auth_base_url": "https://login.salesforce.test",
+        "salesforce_instance_url": "https://synthetic.salesforce.test",
+        "salesforce_client_id": "synthetic-client-id",
+        "salesforce_client_secret": "synthetic-client-secret",
+    })
+
+    def fail_read(*_args, **_kwargs):
+        raise RuntimeError("synthetic Salesforce read failed")
+
+    monkeypatch.setattr(connector_routes, "fetch_pipeline_summary", fail_read)
+
+    response = client.get(
+        "/api/v1/connectors/salesforce_insights/check", headers=auth_headers
+    )
+
+    assert response.status_code == 503
+    assert response.get_json()["lifecycle_status"] == "degraded"
+    settings = connector_store.get_connector_settings(test_user.id, "salesforce_insights")
+    assert settings["connection_status"] == "disconnected"
+    assert settings["lifecycle_status"] == "degraded"
+    assert settings["last_verified_at"] is None
+    assert _connector_status(client, auth_headers, "salesforce_insights")["freshness"] != "confirmed"
+
+
 def test_smartsheet_data_context_read_updates_analysis_and_data_sources_freshness(
     client, auth_headers, test_user, monkeypatch,
 ):
