@@ -10,6 +10,8 @@ import { Jaspen } from './JaspenClient';
 import Button from './workspaceUi/components/Button';
 import { ScenarioModelerSkeleton } from '../../shared/components/SkeletonLoader';
 
+export const shouldCreateScenarioAfterUpdateError = (error) => Number(error?.status) === 404;
+
 // ============================================================================
 // HELPER: Extract editable levers from baseAnalysis
 // ============================================================================
@@ -959,14 +961,13 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
     if (existingId) {
       // Update existing scenario with new deltas, then re-apply
       try {
-        const existingScenario = isSlotA ? savedScenarioByLabel.a : savedScenarioByLabel.b;
         await Jaspen.updateScenario(existingId, {
           thread_id: threadId,
           deltas,
           label,
-          expected_updated_at: existingScenario?.updated_at,
         });
       } catch (err) {
+        if (!shouldCreateScenarioAfterUpdateError(err)) throw err;
         console.warn('[ScenarioModeler] updateScenario failed, falling back to create:', err);
         scenarioId = null; // fall through to create path
       }

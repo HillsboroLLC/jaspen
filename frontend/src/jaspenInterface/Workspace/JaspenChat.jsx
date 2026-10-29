@@ -2549,8 +2549,10 @@ const renderInlineExecutionView = () => {
     const attempt = () => {
       setWbsSaveState('saving');
       return Jaspen.upsertThreadWbs(sid, next)
-        .then(() => {
-          lastGoodWbsRef.current = next;
+        .then((response) => {
+          const saved = response?.project_wbs || next;
+          setThreadWbs(saved);
+          lastGoodWbsRef.current = saved;
           pendingWbsSaveRef.current = null;
           setWbsSaveState('saved');
           if (wbsSavedTimerRef.current) clearTimeout(wbsSavedTimerRef.current);

@@ -117,3 +117,32 @@ it('echoes the scenario object basis on its next write', async () => {
   });
   expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty('base_revision');
 });
+
+it('adopts each returned plan basis across repeated edits and a start-date change', async () => {
+  const fetchMock = jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(200, {
+      scorecard_id: 'card-basis',
+      project_wbs: { scorecard_id: 'card-basis', tasks: [], updated_at: 'plan-basis-1' },
+    }))
+    .mockImplementationOnce(() => json(200, {
+      scorecard_id: 'card-basis',
+      project_wbs: { scorecard_id: 'card-basis', tasks: [{ id: '1' }], updated_at: 'plan-basis-2' },
+    }))
+    .mockImplementationOnce(() => json(200, {
+      scorecard_id: 'card-basis',
+      project_wbs: { scorecard_id: 'card-basis', tasks: [{ id: '1' }, { id: '2' }], updated_at: 'plan-basis-3' },
+    }))
+    .mockImplementationOnce(() => json(200, {
+      scorecard_id: 'card-basis',
+      project_wbs: { scorecard_id: 'card-basis', tasks: [{ id: '1' }, { id: '2' }], updated_at: 'plan-basis-4' },
+    }));
+
+  await Jaspen.getThreadWbs('thread-basis', 'card-basis');
+  await Jaspen.upsertThreadWbs('thread-basis', { scorecard_id: 'card-basis', tasks: [{ id: '1' }] }, 'card-basis');
+  await Jaspen.upsertThreadWbs('thread-basis', { scorecard_id: 'card-basis', tasks: [{ id: '1' }, { id: '2' }] }, 'card-basis');
+  await Jaspen.setThreadWbsStartDate('thread-basis', '2026-11-01', 'card-basis');
+
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body).expected_updated_at).toBe('plan-basis-1');
+  expect(JSON.parse(fetchMock.mock.calls[2][1].body).expected_updated_at).toBe('plan-basis-2');
+  expect(JSON.parse(fetchMock.mock.calls[3][1].body).expected_updated_at).toBe('plan-basis-3');
+});

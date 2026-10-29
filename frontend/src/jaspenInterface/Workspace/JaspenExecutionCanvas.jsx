@@ -1218,7 +1218,7 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
       setStartDateSaving(true);
       setSaveError(null);
       const resp = await Jaspen.setThreadWbsStartDate(
-        threadId, d, scorecardId, wbsRef.current?.updated_at,
+        threadId, d, scorecardId,
       );
       const next = resp?.project_wbs;
       if (next && Array.isArray(next.tasks)) {

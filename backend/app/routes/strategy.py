@@ -52,6 +52,7 @@ from app.scenarios_store import (
     REVISION_UNSET,
     load_scenarios_data,
     save_project_scenarios_data,
+    save_session_and_project_scenarios_data,
 )
 from app.billing_config import (
     bootstrap_legacy_credits,
@@ -4734,10 +4735,16 @@ def delete_score_entry(thread_id, snapshot_id):
         scenarios.pop(str(snapshot_id), None)
         thread_data['scenarios'] = scenarios
         all_data[thread_id] = thread_data
-        _save_project_scenarios(current_user_id, all_data, thread_id)
+        save_session_and_project_scenarios_data(
+            current_user_id, thread_id, thread_data, source=all_data,
+        )
 
         return jsonify({'deleted': 'snapshot', 'thread_id': thread_id, 'snapshot_id': snapshot_id}), 200
 
+    except SessionAccessError as e:
+        db.session.rollback()
+        body, status = e.to_response()
+        return jsonify(body), status
     except Exception as e:
         db.session.rollback()
         current_app.logger.error("[delete_score_entry] %s", e)
@@ -8417,11 +8424,6 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                 provider_success = True
                 starter_plan = True
         if not provider_success:
-            if ai_settlement:
-                reverse_customer_operation_charge(
-                    user, ai_settlement, error_code='execution_plan_generation_failed',
-                )
-                ai_settlement = None
             return jsonify({
                 'success': False,
                 'code': 'execution_plan_generation_failed',
@@ -8465,7 +8467,8 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
         dep_count = _wbs_dependency_count(normalized_wbs)
 
         if isinstance(max_tasks, int) and task_count > max_tasks:
-            reverse_customer_operation_charge(user, ai_settlement, error_code='wbs_task_limit_reached')
+            if int((ai_settlement or {}).get('charged_credits') or 0) > 0:
+                reverse_customer_operation_charge(user, ai_settlement, error_code='wbs_task_limit_reached')
             ai_settlement = None
             return jsonify({
                 'error': 'Generated WBS exceeds task limit for current plan',
@@ -8476,7 +8479,8 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
             }), 403
 
         if isinstance(max_deps, int) and dep_count > max_deps:
-            reverse_customer_operation_charge(user, ai_settlement, error_code='wbs_dependency_limit_reached')
+            if int((ai_settlement or {}).get('charged_credits') or 0) > 0:
+                reverse_customer_operation_charge(user, ai_settlement, error_code='wbs_dependency_limit_reached')
             ai_settlement = None
             return jsonify({
                 'error': 'Generated WBS exceeds dependency limit for current plan',
@@ -8578,7 +8582,7 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
             } if recorded_decision else None),
         }), 200
     except RevisionConflict as e:
-        if user is not None and ai_settlement and not plan_persisted:
+        if user is not None and int((ai_settlement or {}).get('charged_credits') or 0) > 0 and not plan_persisted:
             reverse_customer_operation_charge(
                 user, ai_settlement, error_code='execution_plan_revision_conflict',
             )
@@ -8587,7 +8591,7 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
         body['session_id'] = e.session_id or thread_id
         return jsonify(body), status
     except Exception as e:
-        if user is not None and ai_settlement and not plan_persisted:
+        if user is not None and int((ai_settlement or {}).get('charged_credits') or 0) > 0 and not plan_persisted:
             reverse_customer_operation_charge(
                 user, ai_settlement, error_code='execution_plan_persistence_failed',
             )
@@ -8825,9 +8829,11 @@ def update_scenario(scenario_id):
             _rename_snapshot_in_session(
                 user_id, thread_id, scenario_id, scenario['label'], commit=False,
             )
-        new_revision = save_project_scenarios_data(
-            user_id, thread_id, updater=_apply_scenario_edit,
+        save = (
+            save_session_and_project_scenarios_data
+            if 'label' in data else save_project_scenarios_data
         )
+        new_revision = save(user_id, thread_id, updater=_apply_scenario_edit)
         return jsonify({**scenario, 'revision': new_revision}), 200
 
     except SessionAccessError as e:
@@ -8882,7 +8888,7 @@ def delete_scenario(scenario_id):
         except ValueError as delete_error:
             db.session.rollback()
             return jsonify({'error': str(delete_error)}), 400
-        new_revision = save_project_scenarios_data(
+        new_revision = save_session_and_project_scenarios_data(
             user_id, thread_id, updater=_apply_scenario_delete,
         )
         return jsonify({
@@ -9050,7 +9056,7 @@ def adopt_scenario(scenario_id):
             select=True,
             commit=False,
         )
-        new_revision = save_project_scenarios_data(
+        new_revision = save_session_and_project_scenarios_data(
             user_id, resolved_thread_id, updater=_apply_scenario_adopt,
         )
         _audit_strategy_event(
@@ -9164,8 +9170,10 @@ def _assert_object_basis(current, expected_updated_at, *, session_id):
         else ''
     )
     expected = str(expected_updated_at or '').strip()
-    if isinstance(current, dict) and (not expected or expected != current_basis):
+    if isinstance(current, dict) and expected != current_basis:
         raise RevisionConflict(expected or None, current_basis or None, session_id=session_id)
+    if not isinstance(current, dict) and expected:
+        raise RevisionConflict(expected, None, session_id=session_id)
 
 
 def _persist_generated_plan(user_id, thread_id, scorecard_id, normalized_wbs, plan_guard):
@@ -10089,6 +10097,7 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
                 expected_selected_scorecard_id=expected_selected_scorecard_id,
                 expected_snapshot_id=expected_snapshot_id,
                 expected_snapshot_revision=expected_snapshot_revision,
+                commit=False,
             )
             if not snapshot_meta:
                 return jsonify({'error': 'Snapshot not found'}), 404
@@ -10102,7 +10111,11 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
                 if isinstance(scenario.get('result'), dict):
                     scenario['result']['label'] = next_label
                 scenario['updated_at'] = datetime.utcnow().isoformat()
-                _save_project_scenarios(user_id, all_data, thread_id)
+                save_session_and_project_scenarios_data(
+                    user_id, thread_id, td, source=all_data,
+                )
+            else:
+                db.session.commit()
 
         if set_active:
             active_meta = _set_selected_snapshot_in_session(
@@ -10153,6 +10166,10 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
     except ScorecardConflictError as conflict:
         payload = conflict.payload if isinstance(conflict.payload, dict) else {}
         return jsonify(payload or {'error': str(conflict), 'code': 'scorecard_conflict'}), 409
+    except SessionAccessError as e:
+        db.session.rollback()
+        body, status = e.to_response()
+        return jsonify(body), status
     except Exception as e:
         current_app.logger.error("[update_scorecard_snapshot] %s", e)
         return jsonify({'error': str(e)}), 500
@@ -10845,12 +10862,14 @@ def delete_scorecard_snapshot(thread_id, snapshot_id):
             expected_selected_scorecard_id=expected_selected_scorecard_id,
             expected_snapshot_id=expected_snapshot_id,
             expected_snapshot_revision=expected_snapshot_revision,
+            commit=False,
         )
         if not snapshot_meta:
             return jsonify({'error': 'Snapshot not found'}), 404
 
+        # Stage the native scorecard tombstone in the same transaction as the
+        # legacy session snapshot and linked scenario deletion.
         archive_scorecard(user_id, snapshot_id, thread_id=thread_id)
-
         all_data = _load_scenarios(user_id)
         td = all_data.get(thread_id, {})
         scenarios = td.get('scenarios') if isinstance(td.get('scenarios'), dict) else {}
@@ -10858,8 +10877,11 @@ def delete_scorecard_snapshot(thread_id, snapshot_id):
             del scenarios[snapshot_id]
             if td.get('adopted_scenario_id') == snapshot_id:
                 td['adopted_scenario_id'] = None
-            _save_project_scenarios(user_id, all_data, thread_id)
-        db.session.commit()
+            save_session_and_project_scenarios_data(
+                user_id, thread_id, td, source=all_data,
+            )
+        else:
+            db.session.commit()
 
         peers = _canonical_thread_peers(user_id, thread_id)
         return jsonify({
@@ -10872,6 +10894,10 @@ def delete_scorecard_snapshot(thread_id, snapshot_id):
     except ScorecardConflictError as conflict:
         payload = conflict.payload if isinstance(conflict.payload, dict) else {}
         return jsonify(payload or {'error': str(conflict), 'code': 'scorecard_conflict'}), 409
+    except SessionAccessError as e:
+        db.session.rollback()
+        body, status = e.to_response()
+        return jsonify(body), status
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
@@ -11032,7 +11058,9 @@ def update_strategy_thread(thread_id):
                 thread_data['scenarios'] = next_scenarios
 
             all_data[resolved_thread_id] = thread_data
-            _save_project_scenarios(user_id, all_data, resolved_thread_id)
+            save_session_and_project_scenarios_data(
+                user_id, resolved_thread_id, thread_data, source=all_data,
+            )
         else:
             db.session.commit()
 

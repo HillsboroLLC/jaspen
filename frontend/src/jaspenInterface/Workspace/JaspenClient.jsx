@@ -29,6 +29,33 @@ let lastCreditsExhaustedNoticeAt = 0;
 // state management, which this phase explicitly does not do.
 const threadRevisions = new Map();
 const scenarioUpdatedAt = new Map();
+const planUpdatedAt = new Map();
+
+function planBasisKey(threadId, scorecardId = null) {
+  return `${String(threadId || '').trim()}:${String(scorecardId || '').trim() || '__active__'}`;
+}
+
+function rememberPlanBasis(threadId, scorecardId, updatedAt) {
+  const id = String(threadId || '').trim();
+  const basis = String(updatedAt || '').trim();
+  if (!id || !basis) return;
+  planUpdatedAt.set(planBasisKey(id, scorecardId), basis);
+}
+
+function capturePlanBasis(threadId, payload, scorecardId = null) {
+  const plan = payload?.project_wbs || payload?.wbs || null;
+  const resolvedScorecardId = scorecardId || payload?.scorecard_id || plan?.scorecard_id || null;
+  rememberPlanBasis(threadId, resolvedScorecardId, plan?.updated_at || payload?.updated_at);
+  return payload;
+}
+
+function withPlanBasis(threadId, scorecardId, body = {}) {
+  const plan = body?.project_wbs && typeof body.project_wbs === 'object' ? body.project_wbs : null;
+  const resolvedScorecardId = scorecardId || body?.scorecard_id || plan?.scorecard_id || null;
+  const basis = planUpdatedAt.get(planBasisKey(threadId, resolvedScorecardId))
+    || String(plan?.updated_at || '').trim();
+  return basis ? { ...body, expected_updated_at: basis } : { ...body };
+}
 
 function rememberScenarioBasis(scenarioId, updatedAt) {
   const id = String(scenarioId || '').trim();
@@ -46,8 +73,8 @@ function captureScenarioBasis(scenarioId, payload) {
 }
 
 function withScenarioBasis(scenarioId, body = {}) {
-  const basis = body?.expected_updated_at
-    || scenarioUpdatedAt.get(String(scenarioId || '').trim());
+  const basis = scenarioUpdatedAt.get(String(scenarioId || '').trim())
+    || body?.expected_updated_at;
   return basis ? { ...body, expected_updated_at: basis } : { ...body };
 }
 
@@ -398,12 +425,6 @@ async function patchThread(threadId, body = {}, { withSid = true } = {}) {
   return captureRevision(threadId, data);
 }
 
-function withProjectRevision(threadId, body = {}) {
-  const known = getThreadRevision(threadId);
-  return known == null || body?.base_revision != null
-    ? { ...(body || {}) }
-    : { ...(body || {}), base_revision: known };
-}
 async function upsertJSON(url, body, { withSid = false, sidOverride } = {}) {
   return _fetch(url, { method: 'PUT', body: JSON.stringify(body ?? {}), withSid, sidOverride });
 }
@@ -1038,46 +1059,6 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     return res.json();
   },
 
-  // ---------- Workspace (Beta) WBS / Execution Plan ----------
-  async getThreadWbs(threadId) {
-    if (!threadId) throw new Error('threadId required');
-    const url = endpoints.threadWbs(threadId);
-    const res = await fetch(url, {
-      method: 'GET',
-      credentials: 'include',
-      headers: {
-        ...buildAuthHeaders({}, 'GET'),
-        'Content-Type': 'application/json',
-        'X-Session-ID': getSid(),
-      },
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      throw new Error(`${url} -> ${res.status} ${txt}`);
-    }
-    return res.json();
-  },
-
-  async upsertThreadWbs(threadId, wbs) {
-    if (!threadId) throw new Error('threadId required');
-    const url = endpoints.threadWbs(threadId);
-    const res = await fetch(url, {
-      method: 'PATCH',
-      credentials: 'include',
-      headers: {
-        ...buildAuthHeaders({}, 'PATCH'),
-        'Content-Type': 'application/json',
-        'X-Session-ID': getSid(),
-      },
-      body: JSON.stringify(wbs || {}),
-    });
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '');
-      throw new Error(`${url} -> ${res.status} ${txt}`);
-    }
-    return res.json();
-  },
-
   // ---------- Workspace (Beta) cosmetic overrides ----------
   async getScorecardForWorkspace(threadId, scorecardId) {
     if (!threadId || !scorecardId) throw new Error('threadId and scorecardId required');
@@ -1340,7 +1321,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
       background ? { ...payload, background: true } : payload,
       { withSid: true, signal: abortSignal },
     );
-    if (!started?.job_id) return started;
+    if (!started?.job_id) return capturePlanBasis(threadId, started, payload?.scorecard_id);
     const deadline = Date.now() + PLAN_JOB_MAX_WAIT_MS;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, PLAN_JOB_POLL_MS));
@@ -1350,7 +1331,13 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         throw aborted;
       }
       const job = await getJSON(endpoints.aiWbsJob(threadId, started.job_id), { withSid: true });
-      if (job?.status === 'done') return captureRevision(threadId, job.result);
+      if (job?.status === 'done') {
+        return capturePlanBasis(
+          threadId,
+          captureRevision(threadId, job.result),
+          payload?.scorecard_id,
+        );
+      }
       if (job?.status === 'failed') throw buildHttpError(job.result_status || 500, job.result || {});
     }
     throw buildHttpError(504, { error: "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed." });
@@ -1361,30 +1348,39 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     const url = scorecardId
       ? `${base}?scorecard_id=${encodeURIComponent(scorecardId)}`
       : base;
-    return captureRevision(threadId, await getJSON(url, { withSid: true }));
+    return capturePlanBasis(
+      threadId,
+      captureRevision(threadId, await getJSON(url, { withSid: true })),
+      scorecardId,
+    );
   },
 
-  upsertThreadWbs: async (threadId, project_wbs, scorecardId = null) =>
-    captureRevision(threadId, await putJSON(
-      endpoints.threadWbs(threadId),
-      scorecardId ? { project_wbs, scorecard_id: scorecardId } : { project_wbs },
-      { withSid: true },
-    )),
+  upsertThreadWbs: async (threadId, project_wbs, scorecardId = null) => {
+    const body = scorecardId ? { project_wbs, scorecard_id: scorecardId } : { project_wbs };
+    return capturePlanBasis(
+      threadId,
+      captureRevision(threadId, await putJSON(
+        endpoints.threadWbs(threadId),
+        withPlanBasis(threadId, scorecardId, body),
+        { withSid: true },
+      )),
+      scorecardId,
+    );
+  },
 
   // Re-anchor an existing execution plan to a new project start date. The
   // backend shifts every task's start/due by the same delta so manual per-task
   // adjustments are preserved (the whole schedule slides). startDate is a
   // YYYY-MM-DD string. Returns { project_wbs, start_date, shifted_days }.
-  setThreadWbsStartDate: async (threadId, startDate, scorecardId = null, expectedUpdatedAt = null) =>
-    captureRevision(threadId, await postJSON(
+  setThreadWbsStartDate: async (threadId, startDate, scorecardId = null) =>
+    capturePlanBasis(threadId, captureRevision(threadId, await postJSON(
       endpoints.threadWbsStartDate(threadId),
-      {
+      withPlanBasis(threadId, scorecardId, {
         start_date: startDate,
         ...(scorecardId ? { scorecard_id: scorecardId } : {}),
-        ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}),
-      },
+      }),
       { withSid: true },
-    )),
+    )), scorecardId),
 
   // Per-artifact Workspace sidebar chat (durable server-side, cross-device).
   getWorkspaceChat: async (threadId, artifactId) =>

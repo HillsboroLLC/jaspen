@@ -1,6 +1,8 @@
 from app.models import AIOperation, UserSession
+from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.scorecards import upsert_scorecard
 import copy
+from unittest.mock import patch
 
 import pytest
 from flask_jwt_extended import create_access_token
@@ -392,6 +394,85 @@ def test_project_rename_updates_session_baseline_and_scenarios_atomically(
     assert row.scenarios_json['scenarios']['scenario-1']['result']['project_name'] == 'New name'
 
 
+def test_project_rename_lost_cas_rolls_back_both_halves(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    import app.scenarios_store as scenarios_store
+
+    tid = 'journey-rename-race'
+    _seed(test_user, db, tid)
+    save_project_scenarios_data(test_user.id, tid, {
+        'baseline': {**CARD, 'project_name': 'Old name'},
+        'scenarios': {},
+    })
+    row = UserSession.query.filter_by(session_id=tid).one()
+    monkeypatch.setattr(scenarios_store, '_compare_and_swap', lambda *_args, **_kwargs: 0)
+
+    response = client.patch(
+        f'/api/v1/strategy/threads/{tid}', headers=auth_headers,
+        json={'name': 'Unsaved name', 'base_revision': row.revision},
+    )
+
+    assert response.status_code == 409
+    assert response.get_json()['error'] == CONFLICT
+    db.session.expire_all()
+    row = UserSession.query.filter_by(session_id=tid).one()
+    assert row.payload['name'] != 'Unsaved name'
+    assert row.scenarios_json['baseline']['project_name'] == 'Old name'
+
+
+def test_older_plan_and_scenario_without_timestamps_save_twice(
+    client, db, test_user, auth_headers,
+):
+    tid = 'journey-older-object-bases'
+    _seed(test_user, db, tid)
+    save_project_scenarios_data(test_user.id, tid, {
+        'wbs_by_scorecard': {
+            'planner-card': {
+                'scorecard_id': 'planner-card',
+                'tasks': [{'id': 'one', 'title': 'Old plan'}],
+            },
+        },
+        'scenarios': {
+            'older-scenario': {
+                'scenario_id': 'older-scenario',
+                'label': 'Old scenario',
+                'deltas': {},
+            },
+        },
+    })
+
+    first_plan = client.patch(
+        f'/api/v1/strategy/threads/{tid}/wbs', headers=auth_headers,
+        json={'scorecard_id': 'planner-card', 'project_wbs': {
+            'scorecard_id': 'planner-card',
+            'tasks': [{'id': 'one', 'title': 'First plan edit'}],
+        }},
+    )
+    assert first_plan.status_code == 200, first_plan.get_json()
+    second_body = first_plan.get_json()['project_wbs']
+    second_body['tasks'][0]['title'] = 'Second plan edit'
+    assert client.patch(
+        f'/api/v1/strategy/threads/{tid}/wbs', headers=auth_headers,
+        json={'scorecard_id': 'planner-card', 'project_wbs': second_body},
+    ).status_code == 200
+
+    first_scenario = client.patch(
+        f'/api/v1/strategy/scenarios/older-scenario?thread_id={tid}',
+        headers=auth_headers,
+        json={'label': 'First scenario edit'},
+    )
+    assert first_scenario.status_code == 200, first_scenario.get_json()
+    assert client.patch(
+        f'/api/v1/strategy/scenarios/older-scenario?thread_id={tid}',
+        headers=auth_headers,
+        json={
+            'label': 'Second scenario edit',
+            'expected_updated_at': first_scenario.get_json()['updated_at'],
+        },
+    ).status_code == 200
+
+
 def test_score_delete_rolls_back_session_when_scenario_save_fails(
     client, db, test_user, auth_headers, monkeypatch,
 ):
@@ -407,7 +488,7 @@ def test_score_delete_rolls_back_session_when_scenario_save_fails(
         },
     })
     monkeypatch.setattr(
-        strategy, '_save_project_scenarios',
+        strategy, 'save_session_and_project_scenarios_data',
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError('injected')),
     )
     response = client.delete(
@@ -462,3 +543,87 @@ def test_organization_collaborator_stale_plan_write_is_refused(
     assert refused.get_json()['error'] == CONFLICT
     stored = load_scenarios_data(owner.id)[tid]
     assert stored['wbs_by_scorecard']['planner-card']['tasks'][0]['title'] == 'Owner wins'
+
+
+def test_journey_9_jira_binding_stays_with_built_plan_after_edit(
+    client, db, test_user, auth_headers, monkeypatch,
+    inline_plan_jobs, scripted_plan_provider,
+):
+    tid = 'journey-9-jira-after-build'
+    _seed(test_user, db, tid)
+    mock_accounting(monkeypatch)
+    scripted_plan_provider(_ai_plan())
+    status = _status(
+        client, auth_headers, tid, _build(client, auth_headers, tid).get_json()['job_id'],
+    )
+    assert status['status'] == 'done', status
+    plan = status['result']['project_wbs']
+
+    binding = PmSyncBinding(
+        user_id=test_user.id,
+        thread_id=tid,
+        plan_key='planner-card',
+        connector_id='jira_sync',
+        external_container_id='JST',
+        external_container_url='https://example.atlassian.net/browse/JST',
+        mode='push_only',
+        conflict_policy='manual_review',
+        policy_set_by_user_id=test_user.id,
+        field_policy_overrides={},
+        config={'task_issue_type': 'Task', 'group_under_epics': False},
+        user_map={},
+    )
+    db.session.add(binding)
+    db.session.commit()
+    calls = []
+
+    def request(_config, method, path, payload=None, timeout=30):
+        calls.append((method, path, payload))
+        if path == '/rest/api/3/issue/bulk':
+            updates = (payload or {}).get('issueUpdates') or []
+            return {
+                'issues': [{'key': f'JST-{index + 1}'} for index in range(len(updates))],
+                'errors': [],
+            }, {}
+        if path == '/rest/api/3/issueLink':
+            return {'id': 'link-1'}, {}
+        return {}, {}
+
+    with patch(
+        'app.pm_sync.service.jira_adapter.assert_connected',
+        return_value={'base_url': 'https://example.atlassian.net'},
+    ), patch(
+        'app.pm_sync.service.jira_adapter.request', side_effect=request,
+    ), patch(
+        'app.pm_sync.service.jira_adapter.set_identity',
+    ), patch(
+        'app.pm_sync.service.jira_adapter.recover_issue', return_value=None,
+    ):
+        first_sync = client.post(
+            f'/api/v1/connectors/threads/{tid}/jira/sync',
+            headers=auth_headers,
+            json={'plan_key': 'planner-card'},
+        )
+        assert first_sync.status_code == 200, first_sync.get_json()
+
+        plan['tasks'][0]['title'] = 'Edited after first Jira sync'
+        edit = client.patch(
+            f'/api/v1/strategy/threads/{tid}/wbs',
+            headers=auth_headers,
+            json={'scorecard_id': 'planner-card', 'project_wbs': plan},
+        )
+        assert edit.status_code == 200, edit.get_json()
+        second_sync = client.post(
+            f'/api/v1/connectors/threads/{tid}/jira/sync',
+            headers=auth_headers,
+            json={'plan_key': 'planner-card'},
+        )
+        assert second_sync.status_code == 200, second_sync.get_json()
+
+    assert PmSyncBinding.query.filter_by(
+        user_id=test_user.id, thread_id=tid, plan_key='planner-card',
+    ).one().id == binding.id
+    assert PmSyncLink.query.filter_by(
+        binding_id=binding.id, entity_type='task',
+    ).count() == len(plan['tasks'])
+    assert sum(1 for _method, path, _payload in calls if path == '/rest/api/3/issue/bulk') == 1

@@ -272,6 +272,32 @@ def save_project_scenarios_data(
     raise RevisionConflict(None, None, session_id=sid)
 
 
+def save_session_and_project_scenarios_data(
+    user_id,
+    project_id,
+    project_data=None,
+    *,
+    source=None,
+    base_revision=REVISION_UNSET,
+    updater=None,
+):
+    """Commit a staged session mutation and scenario mutation together.
+
+    Compound writes get one compare-and-swap attempt. A lost race rolls the
+    transaction back, including the staged session mutation, rather than
+    retrying only the scenario half.
+    """
+    return save_project_scenarios_data(
+        user_id,
+        project_id,
+        project_data,
+        source=source,
+        base_revision=base_revision,
+        updater=updater,
+        max_attempts=1,
+    )
+
+
 def clear_all_scenarios_data(user_id):
     """Deliberately clear every reachable attributed project's scenario data."""
     try:

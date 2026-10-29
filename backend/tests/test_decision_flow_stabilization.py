@@ -3976,7 +3976,11 @@ def test_execution_assistant_save_failure_reverses_charge_and_keeps_plan(
         'reverse_customer_operation_charge',
         lambda user, settlement, **kwargs: reversed_settlements.append((settlement, kwargs)) or 9,
     )
-    monkeypatch.setattr(strategy, '_save_project_scenarios', lambda *a, **k: False)
+    monkeypatch.setattr(
+        strategy,
+        '_persist_generated_plan',
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError('save failed')),
+    )
 
     response = client.post(
         f'/api/v1/strategy/threads/{tid}/execution-assistant',

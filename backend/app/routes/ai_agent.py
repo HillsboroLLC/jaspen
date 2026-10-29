@@ -8987,7 +8987,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         )
         def _reverse_plan_charge(error_code):
             nonlocal _settlement
-            if _settlement:
+            if int((_settlement or {}).get("charged_credits") or 0) > 0:
                 reverse_customer_operation_charge(user, _settlement, error_code=error_code)
                 _settlement = None
         provider_success = bool(generated.get("provider_success"))
@@ -9006,7 +9006,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 provider_success = True
                 starter_plan = True
         if not provider_success:
-            _reverse_plan_charge("execution_plan_generation_failed")
             failure = _tool_error(
                 "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.",
                 code="execution_plan_generation_failed",

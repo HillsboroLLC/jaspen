@@ -272,6 +272,11 @@ def test_chat_tool_plan_same_option_conflict_reverses_once(app, db, test_user, m
     tid = 'plan-tool-conflict'
     _seed(test_user, db, tid)
     mock_accounting(monkeypatch)
+    monkeypatch.setattr(
+        agent,
+        '_settle_reserved_credits',
+        lambda *a, **k: {'ok': True, 'charged': 9},
+    )
     monkeypatch.setattr(agent, 'get_llm_client', lambda: object(), raising=False)
     _provider(monkeypatch, [json.dumps(_ai_plan())])
     real_persist = strategy._persist_generated_plan
