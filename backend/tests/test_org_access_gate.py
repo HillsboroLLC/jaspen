@@ -29,7 +29,8 @@ from app.models import (
 from app.models_plan_jobs import PlanBuildJob
 from app.models_studio import StudioWorkspace
 from app.routes.sessions import load_user_sessions
-from app.scenarios_store import load_scenarios_data, save_scenarios_data
+from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
+from app.session_access import SessionForbidden
 from app.scorecards import list_scorecard_rows, upsert_scorecard
 from app.session_access import can_read_session, can_write_session
 from app.sharing import new_token
@@ -230,15 +231,17 @@ def test_scenario_data_is_hidden_and_never_cleared(db, client, app, team, enforc
     _remove(client, app, team)
 
     assert 'org-proj' not in load_scenarios_data(team['member'].id)
-    # Saving the (filtered) data back must not wipe the organization's row.
-    assert save_scenarios_data(team['member'].id, {}) is True
+    # A filtered read has no implicit whole-dict save, so it cannot wipe the row.
     db.session.refresh(team['project'])
     assert team['project'].scenarios_json == {'scenarios': {'s1': {'label': 'Plan A'}}}
 
 
 def test_scenario_save_never_writes_onto_former_org_work(db, client, app, team, enforce):
     _remove(client, app, team)
-    assert save_scenarios_data(team['member'].id, {'org-proj': {'scenarios': {'x': {}}}}) is True
+    with pytest.raises(SessionForbidden):
+        save_project_scenarios_data(
+            team['member'].id, 'org-proj', {'scenarios': {'x': {}}},
+        )
     rows = UserSession.query.filter_by(session_id='org-proj').all()
     assert len(rows) == 1
     assert not rows[0].scenarios_json

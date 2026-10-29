@@ -101,8 +101,8 @@ class RevisionConflict(SessionAccessError):
         super().__init__(
             409,
             'revision_conflict',
-            'This project was changed by someone else since you opened it. '
-            'Reload to get the latest version before saving again.',
+            "This project has newer changes. Reload to get the latest version. "
+            "Your changes weren't saved.",
         )
         self.expected_revision = expected_revision
         self.current_revision = current_revision
@@ -429,14 +429,28 @@ def check_revision(row, base_revision):
 
 
 def stamp_write(row, user_id):
-    """Record an accepted mutation: bump revision, stamp the editor.
+    """Record an accepted mutation with a database compare-and-swap."""
+    from sqlalchemy.orm.attributes import set_committed_value
 
-    Called once per accepted write, after check_revision() has passed.
-    """
-    row.revision = int(row.revision or 1) + 1
+    expected = int(row.revision or 1)
+    values = {UserSession.revision: UserSession.revision + 1}
     if user_id:
-        row.last_edited_by_user_id = str(user_id)
-    return row.revision
+        values[UserSession.last_edited_by_user_id] = str(user_id)
+    changed = UserSession.query.filter(
+        UserSession.id == row.id,
+        UserSession.revision == expected,
+    ).update(values, synchronize_session=False)
+    if changed != 1:
+        current = db.session.get(UserSession, row.id)
+        raise RevisionConflict(
+            expected,
+            int(current.revision or 1) if current is not None else None,
+            session_id=row.session_id,
+        )
+    set_committed_value(row, 'revision', expected + 1)
+    if user_id:
+        set_committed_value(row, 'last_edited_by_user_id', str(user_id))
+    return expected + 1
 
 
 def extract_base_revision(payload):

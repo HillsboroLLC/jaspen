@@ -44,7 +44,7 @@ from app.jira_sync import (
 )
 from app.jira_portfolio import classify_refresh_error, list_accessible_projects, portfolio_context_text, refresh_portfolio
 from app.models import ConnectorSyncLog, User
-from app.scenarios_store import load_scenarios_data, save_scenarios_data
+from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
 from app.salesforce_sync import (
     BadSignature as SalesforceBadSignature,
     SignatureExpired as SalesforceStateExpired,
@@ -860,7 +860,9 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
             if isinstance(_next_wbs, dict):
                 thread["project_wbs"] = _next_wbs
                 scenarios[thread_id_str] = thread
-                save_scenarios_data(user_id_str, scenarios)
+                save_project_scenarios_data(
+                    user_id_str, thread_id_str, thread, source=scenarios,
+                )
 
             _status = "success" if _result.get("success") else "skipped" if _result.get("skipped") else "failed"
             _errors = _result.get("errors") if isinstance(_result.get("errors"), list) else []
@@ -2612,7 +2614,7 @@ def import_thread_from_pm_tool(thread_id, connector_id):
     project_wbs["updated_at"] = _iso_now()
     thread["project_wbs"] = project_wbs
     scenarios[thread_id] = thread
-    save_scenarios_data(user.id, scenarios)
+    save_project_scenarios_data(user.id, thread_id, thread, source=scenarios)
 
     external_id_map = imported.get("external_id_map") if isinstance(imported.get("external_id_map"), dict) else {}
     update_thread_sync_profile(

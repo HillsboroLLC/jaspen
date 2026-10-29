@@ -3099,7 +3099,7 @@ def test_execution_provider_failure_cannot_create_or_overwrite_plan(client, db, 
     }
     if has_existing_plan:
         strategy._store_thread_wbs(stored[tid], 'planner-card', existing)
-    strategy._save_scenarios(test_user.id, stored)
+    strategy._save_project_scenarios(test_user.id, stored, tid)
     db.session.commit()
     mock_accounting(monkeypatch)
     monkeypatch.setattr(strategy, '_strategy_generate_reply', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('provider unavailable')))
@@ -3911,7 +3911,7 @@ def test_execution_assistant_persists_edits_before_returning_success(
         'name': 'Launch plan',
         'tasks': [{'id': 'task-1', 'title': 'Old title', 'status': 'todo'}],
     }
-    assert strategy._save_scenarios(test_user.id, stored)
+    assert strategy._save_project_scenarios(test_user.id, stored, tid)
     monkeypatch.setattr(
         strategy,
         'execute_customer_text_operation',
@@ -3954,7 +3954,7 @@ def test_execution_assistant_save_failure_reverses_charge_and_keeps_plan(
     stored = strategy._load_scenarios(test_user.id)
     stored[tid] = strategy._thread_entry()
     stored[tid]['project_wbs'] = original
-    assert strategy._save_scenarios(test_user.id, stored)
+    assert strategy._save_project_scenarios(test_user.id, stored, tid)
     monkeypatch.setattr(
         strategy,
         'execute_customer_text_operation',
@@ -3976,7 +3976,7 @@ def test_execution_assistant_save_failure_reverses_charge_and_keeps_plan(
         'reverse_customer_operation_charge',
         lambda user, settlement, **kwargs: reversed_settlements.append((settlement, kwargs)) or 9,
     )
-    monkeypatch.setattr(strategy, '_save_scenarios', lambda *a, **k: False)
+    monkeypatch.setattr(strategy, '_save_project_scenarios', lambda *a, **k: False)
 
     response = client.post(
         f'/api/v1/strategy/threads/{tid}/execution-assistant',

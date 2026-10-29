@@ -1,11 +1,21 @@
-import { Jaspen } from './JaspenClient';
+import {
+  Jaspen,
+  REVISION_CONFLICT_MESSAGE,
+  forgetThreadRevision,
+  getThreadRevision,
+  rememberThreadRevision,
+} from './JaspenClient';
 
 const json = (status, body) => Promise.resolve({
   ok: status < 400, status, headers: { get: () => 'application/json' },
   json: () => Promise.resolve(body), text: () => Promise.resolve(JSON.stringify(body)),
 });
 
-afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
+afterEach(() => {
+  forgetThreadRevision('thread-1');
+  jest.useRealTimers();
+  jest.restoreAllMocks();
+});
 
 async function flushPolls(times) {
   for (let i = 0; i < times; i += 1) {
@@ -22,15 +32,35 @@ it('starts a background build and returns the finished plan', async () => {
   const fetchMock = jest.spyOn(global, 'fetch')
     .mockImplementationOnce(() => json(202, { job_id: 'job-1', status: 'running' }))
     .mockImplementationOnce(() => json(200, { job_id: 'job-1', status: 'running' }))
-    .mockImplementationOnce(() => json(200, { job_id: 'job-1', status: 'done', result_status: 200, result: { success: true, project_wbs: { tasks: [1] } } }));
+    .mockImplementationOnce(() => json(200, { job_id: 'job-1', status: 'done', result_status: 200, result: { success: true, revision: 7, project_wbs: { tasks: [1] } } }));
 
   const pending = Jaspen.generateAiWbs('thread-1', { commit: true });
   await flushPolls(6);
   const result = await pending;
 
-  expect(result).toEqual({ success: true, project_wbs: { tasks: [1] } });
+  expect(result).toEqual({ success: true, revision: 7, project_wbs: { tasks: [1] } });
+  expect(getThreadRevision('thread-1')).toBe(7);
   expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ commit: true, background: true });
   expect(fetchMock.mock.calls[2][0]).toContain('/ai-wbs/jobs/job-1');
+});
+
+it('surfaces the exact D4 message for a plan-job revision conflict', async () => {
+  jest.useFakeTimers();
+  jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(202, { job_id: 'job-conflict', status: 'running' }))
+    .mockImplementationOnce(() => json(200, {
+      job_id: 'job-conflict', status: 'failed', result_status: 409,
+      result: { code: 'revision_conflict', error: REVISION_CONFLICT_MESSAGE },
+    }));
+
+  const pending = Jaspen.generateAiWbs('thread-1', { commit: true });
+  const assertion = expect(pending).rejects.toMatchObject({
+    status: 409,
+    message: REVISION_CONFLICT_MESSAGE,
+    data: { code: 'revision_conflict' },
+  });
+  await flushPolls(4);
+  await assertion;
 });
 
 it('throws the job error with its status', async () => {
@@ -49,4 +79,21 @@ it('keeps previews synchronous', async () => {
   const fetchMock = jest.spyOn(global, 'fetch').mockImplementationOnce(() => json(200, { success: true, committed: false }));
   await expect(Jaspen.generateAiWbs('thread-1', { commit: false })).resolves.toEqual({ success: true, committed: false });
   expect(JSON.parse(fetchMock.mock.calls[0][1].body).background).toBeUndefined();
+});
+
+it.each([
+  ['plan', () => Jaspen.upsertThreadWbs('thread-1', { tasks: [] }, 'card-1')],
+  ['scenario', () => Jaspen.createScenario('thread-1', { label: 'Scenario' })],
+])('sends the known revision and preserves D4 conflicts on the %s surface', async (_surface, request) => {
+  rememberThreadRevision('thread-1', 11);
+  const fetchMock = jest.spyOn(global, 'fetch').mockImplementationOnce(() => json(409, {
+    code: 'revision_conflict', error: REVISION_CONFLICT_MESSAGE,
+  }));
+
+  await expect(request()).rejects.toMatchObject({
+    status: 409,
+    message: REVISION_CONFLICT_MESSAGE,
+  });
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ base_revision: 11 });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });

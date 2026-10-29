@@ -5,7 +5,7 @@ from datetime import datetime
 from app.connectors.smartsheet import smartsheet_push_wbs
 from app.connector_runtime import request_json_with_backoff
 from app.connector_store import get_connector_settings, get_thread_sync_profile
-from app.scenarios_store import load_scenarios_data, save_scenarios_data
+from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
 
 
 WBS_TO_SMARTSHEET_FIELD_MAPPING = {
@@ -337,7 +337,7 @@ def apply_smartsheet_webhook_to_wbs(user_id, payload, enforce_thread_id=None, en
     project_wbs["updated_at"] = _iso_now()
     thread_data["project_wbs"] = project_wbs
     scenarios[thread_id] = thread_data
-    save_scenarios_data(user_id, scenarios)
+    save_project_scenarios_data(user_id, thread_id, thread_data, source=scenarios)
 
     return {
         "success": True,

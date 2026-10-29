@@ -289,17 +289,19 @@ def test_scorecards_are_not_altered_by_session_ownership_changes(db, team_setup)
 def test_scenario_writes_do_not_fork_a_shared_project(db, team_setup):
     """Found in the final foundation review.
 
-    save_scenarios_data() looked its target row up by the CALLER's user_id, so
+    The former whole-dict save looked its target row up by the CALLER's user_id, so
     a collaborator writing scenario data to a shared project inserted a second
     row under themselves -- the same silent fork Phase 1 removed from the
     session save path, reachable through a side door.
     """
-    from app.scenarios_store import save_scenarios_data
+    from app.scenarios_store import save_project_scenarios_data
 
     org, owner, editor = team_setup["org"], team_setup["owner"], team_setup["editor"]
     _seed_project(db, org, owner, session_id="sc-shared", visibility="team")
 
-    save_scenarios_data(editor.id, {"sc-shared": {"scenarios": {"a": {"label": "A"}}}})
+    save_project_scenarios_data(
+        editor.id, "sc-shared", {"scenarios": {"a": {"label": "A"}}},
+    )
 
     rows = UserSession.query.filter_by(session_id="sc-shared").all()
     assert len(rows) == 1, "scenario write forked the shared project"
@@ -313,10 +315,10 @@ def test_scenario_writes_do_not_fork_a_shared_project(db, team_setup):
 
 def test_scenario_writes_still_create_a_row_for_a_new_thread(db, team_setup):
     """No canonical row yet: create one, bound to the organization."""
-    from app.scenarios_store import save_scenarios_data
+    from app.scenarios_store import save_project_scenarios_data
 
     org, owner = team_setup["org"], team_setup["owner"]
-    save_scenarios_data(owner.id, {"sc-brand-new": {"scenarios": {}}})
+    save_project_scenarios_data(owner.id, "sc-brand-new", {"scenarios": {}})
 
     row = UserSession.query.filter_by(session_id="sc-brand-new").one()
     assert row.user_id == owner.id
@@ -325,13 +327,15 @@ def test_scenario_writes_still_create_a_row_for_a_new_thread(db, team_setup):
 
 
 def test_solo_scenario_writes_are_unchanged(db):
-    from app.scenarios_store import save_scenarios_data, load_scenarios_data
+    from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
 
     solo = _mk_user(db, "sc-solo@example.test", plan="free")
     org = _mk_org(db, solo, name="ScSolo", plan="free")
     _seed_project(db, org, solo, session_id="sc-solo", visibility="private")
 
-    save_scenarios_data(solo.id, {"sc-solo": {"scenarios": {"x": {"label": "X"}}}})
+    save_project_scenarios_data(
+        solo.id, "sc-solo", {"scenarios": {"x": {"label": "X"}}},
+    )
 
     assert UserSession.query.filter_by(session_id="sc-solo").count() == 1
     assert load_scenarios_data(solo.id)["sc-solo"]["scenarios"]["x"]["label"] == "X"

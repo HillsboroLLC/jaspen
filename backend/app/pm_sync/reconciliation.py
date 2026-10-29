@@ -12,7 +12,7 @@ from app.pm_sync.service import (
     _consume_binding_note, _sync_phases, ensure_start_date_field,
     ensure_task_parent, get_plan, push_binding,
 )
-from app.scenarios_store import load_scenarios_data, save_scenarios_data
+from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
 
 FIELDS = ("title", "description", "owner", "owner_email", "status", "start_date", "due_date")
 
@@ -83,7 +83,9 @@ def _save_plan(binding, plan):
     if str(thread.get("active_execution_scorecard_id") or "") == binding.plan_key or not by_scorecard:
         thread["project_wbs"] = plan
     data[binding.thread_id] = thread
-    save_scenarios_data(binding.user_id, data)
+    save_project_scenarios_data(
+        binding.user_id, binding.thread_id, thread, source=data,
+    )
 
 
 def _log(binding, trigger, result):

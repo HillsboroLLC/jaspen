@@ -77,7 +77,7 @@ from app.tool_registry import (
 )
 from sqlalchemy import or_
 from app.orgs import normalize_org_role, resolve_active_org_for_user
-from app.scenarios_store import save_scenarios_data
+from app.scenarios_store import clear_all_scenarios_data
 from app.scorecards import (
     COMPARISON_SESSION_LIMIT_MESSAGE,
     archive_thread_scorecards,
@@ -3604,7 +3604,7 @@ def _restore_thread_mutation_snapshot(user_id, undo_state):
     if not thread_id:
         return False
 
-    from .strategy import _load_scenarios, _save_scenarios
+    from .strategy import _load_scenarios, _save_project_scenarios
 
     all_data = _load_scenarios(user_id)
     snapshot_thread = undo_state.get("thread_data")
@@ -3612,7 +3612,7 @@ def _restore_thread_mutation_snapshot(user_id, undo_state):
         all_data[thread_id] = _clone_json_payload(snapshot_thread)
     else:
         all_data.pop(thread_id, None)
-    return _save_scenarios(user_id, all_data)
+    return _save_project_scenarios(user_id, all_data, thread_id)
 
 
 def _maybe_capture_turn_undo_snapshot(current_snapshot, *, tool_name, user_id, thread_id):
@@ -6761,7 +6761,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         _resolve_thread_wbs,
         _store_thread_wbs,
         _sanitize_deltas,
-        _save_scenarios,
+        _save_project_scenarios,
     )
 
     if tool_name == "record_option_decision":
@@ -8483,7 +8483,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     if isinstance(result, dict):
                         result["project_name"] = next_name
             all_data[thread_id] = td
-            _save_scenarios(user_id, all_data)
+            _save_project_scenarios(user_id, all_data, thread_id)
 
         # rename_thread (above) renames the THREAD + baseline project_name, but the
         # user may be viewing a specific idea's card (a synthesized sibling /
@@ -9052,7 +9052,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 thread_id, exc_info=True,
             )
         all_data[thread_id] = thread_data
-        _save_scenarios(user_id, all_data)
+        _save_project_scenarios(user_id, all_data, thread_id)
         sync_status = {"status": "skipped", "reason": "no_pm_tool_selected"}
         try:
             profile = get_thread_sync_profile(user_id, thread_id)
@@ -9123,7 +9123,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         updated_wbs, shifted_days = _shift_wbs_dates(resolved_wbs, new_start_date)
         _store_thread_wbs(td, active_scorecard_id, updated_wbs)
         all_data[thread_id] = td
-        if not _save_scenarios(user_id, all_data):
+        if not _save_project_scenarios(user_id, all_data, thread_id):
             return _tool_error("Failed to persist the new start date.", code="persist_failed")
         sync_status = _trigger_post_mutation_sync(user_id, thread_id, updated_wbs)
 
@@ -9271,7 +9271,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         normalized = _normalize_project_wbs({"project_wbs": {**current_wbs, "tasks": tasks}}, existing=current_wbs)
         _store_thread_wbs(td, active_scorecard_id, normalized)
         all_data[thread_id] = td
-        if not _save_scenarios(user_id, all_data):
+        if not _save_project_scenarios(user_id, all_data, thread_id):
             return _tool_error("Failed to persist WBS changes.", code="persist_failed")
         sync_status = _trigger_post_mutation_sync(user_id, thread_id, normalized)
 
@@ -14201,7 +14201,7 @@ def reset_threads():
                 current_app.logger.warning(f"[reset_threads] failed for {sid}: {e}")
 
     # Reset per-user scenario storage used by ScenarioModeler.
-    scenarios_cleared = save_scenarios_data(user_id, {})
+    scenarios_cleared = clear_all_scenarios_data(user_id)
 
     if user:
         _audit_ai_agent_event(

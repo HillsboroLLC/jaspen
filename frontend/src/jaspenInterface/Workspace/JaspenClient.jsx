@@ -51,7 +51,7 @@ export function isRevisionConflict(error) {
 }
 
 export const REVISION_CONFLICT_MESSAGE =
-  'This project changed since you opened it. Reload to get the latest version before saving again.';
+  "This project has newer changes. Reload to get the latest version. Your changes weren't saved.";
 
 /** Record whatever revision a server payload carries, wherever it sits. */
 function captureRevision(threadId, payload) {
@@ -374,6 +374,13 @@ async function patchThread(threadId, body = {}, { withSid = true } = {}) {
   }
   const data = await patchJSON(endpoints.updateThread(threadId), payload, { withSid });
   return captureRevision(threadId, data);
+}
+
+function withProjectRevision(threadId, body = {}) {
+  const known = getThreadRevision(threadId);
+  return known == null || body?.base_revision != null
+    ? { ...(body || {}) }
+    : { ...(body || {}), base_revision: known };
 }
 async function upsertJSON(url, body, { withSid = false, sidOverride } = {}) {
   return _fetch(url, { method: 'PUT', body: JSON.stringify(body ?? {}), withSid, sidOverride });
@@ -1190,32 +1197,41 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
 
   // Scenarios
   createScenario: async (threadId, { deltas = {}, label, session_id, baseline } = {}) =>
-    postJSON(endpoints.createScenario(threadId), { deltas, label, session_id: session_id || threadId, baseline: baseline || null }, { withSid: true }),
+    captureRevision(threadId, await postJSON(
+      endpoints.createScenario(threadId),
+      withProjectRevision(threadId, { deltas, label, session_id: session_id || threadId, baseline: baseline || null }),
+      { withSid: true },
+    )),
 
   listScenarios: async (threadId, { limit = 50, offset = 0 } = {}) =>
-    getJSON(`${endpoints.listScenarios(threadId)}?limit=${limit}&offset=${offset}`, { withSid: true }),
+    captureRevision(threadId, await getJSON(
+      `${endpoints.listScenarios(threadId)}?limit=${limit}&offset=${offset}`,
+      { withSid: true },
+    )),
 
   updateScenario: async (scenario_id, { thread_id, deltas = {}, label } = {}) =>
-    putJSON(endpoints.updateScenario(scenario_id, thread_id), { deltas, label }, { withSid: true }),
+    captureRevision(thread_id, await putJSON(
+      endpoints.updateScenario(scenario_id, thread_id),
+      withProjectRevision(thread_id, { deltas, label }),
+      { withSid: true },
+    )),
 
   applyScenario: async (scenario_id, thread_id) =>
-    _fetch(endpoints.applyScenario(scenario_id, thread_id), {
+    captureRevision(thread_id, await _fetch(endpoints.applyScenario(scenario_id, thread_id), {
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify(withProjectRevision(thread_id)),
       withSid: true,
-      retryable: true,
-    }),
+    })),
 
   adoptScenario: async (scenario_id, thread_id) =>
-    _fetch(
+    captureRevision(thread_id, await _fetch(
       endpoints.adoptScenario(scenario_id, thread_id),
       {
         method: 'POST',
-        body: JSON.stringify(thread_id ? { thread_id } : {}),
+        body: JSON.stringify(withProjectRevision(thread_id, thread_id ? { thread_id } : {})),
         withSid: true,
-        retryable: true,
       }
-    ),
+    )),
 
   renameSnapshot: async (threadId, snapshotId, label, options = {}) =>
     patchJSON(
@@ -1255,7 +1271,11 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     const payload = (promptOrPayload && typeof promptOrPayload === 'object')
       ? promptOrPayload
       : { prompt: String(promptOrPayload || '').trim() };
-    return postJSON(endpoints.aiScenario(threadId), payload, { withSid: true });
+    return captureRevision(threadId, await postJSON(
+      endpoints.aiScenario(threadId),
+      withProjectRevision(threadId, payload),
+      { withSid: true },
+    ));
   },
 
   setThreadObjective: async (threadId, strategy_objective, objective_explicitly_set = true) =>
@@ -1296,7 +1316,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
         throw aborted;
       }
       const job = await getJSON(endpoints.aiWbsJob(threadId, started.job_id), { withSid: true });
-      if (job?.status === 'done') return job.result;
+      if (job?.status === 'done') return captureRevision(threadId, job.result);
       if (job?.status === 'failed') throw buildHttpError(job.result_status || 500, job.result || {});
     }
     throw buildHttpError(504, { error: "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed." });
@@ -1307,26 +1327,26 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     const url = scorecardId
       ? `${base}?scorecard_id=${encodeURIComponent(scorecardId)}`
       : base;
-    return getJSON(url, { withSid: true });
+    return captureRevision(threadId, await getJSON(url, { withSid: true }));
   },
 
   upsertThreadWbs: async (threadId, project_wbs, scorecardId = null) =>
-    putJSON(
+    captureRevision(threadId, await putJSON(
       endpoints.threadWbs(threadId),
-      scorecardId ? { project_wbs, scorecard_id: scorecardId } : { project_wbs },
+      withProjectRevision(threadId, scorecardId ? { project_wbs, scorecard_id: scorecardId } : { project_wbs }),
       { withSid: true },
-    ),
+    )),
 
   // Re-anchor an existing execution plan to a new project start date. The
   // backend shifts every task's start/due by the same delta so manual per-task
   // adjustments are preserved (the whole schedule slides). startDate is a
   // YYYY-MM-DD string. Returns { project_wbs, start_date, shifted_days }.
   setThreadWbsStartDate: async (threadId, startDate, scorecardId = null) =>
-    postJSON(
+    captureRevision(threadId, await postJSON(
       endpoints.threadWbsStartDate(threadId),
-      scorecardId ? { start_date: startDate, scorecard_id: scorecardId } : { start_date: startDate },
+      withProjectRevision(threadId, scorecardId ? { start_date: startDate, scorecard_id: scorecardId } : { start_date: startDate }),
       { withSid: true },
-    ),
+    )),
 
   // Per-artifact Workspace sidebar chat (durable server-side, cross-device).
   getWorkspaceChat: async (threadId, artifactId) =>
