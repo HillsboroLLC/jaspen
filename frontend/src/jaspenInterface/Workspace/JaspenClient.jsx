@@ -28,6 +28,28 @@ let lastCreditsExhaustedNoticeAt = 0;
 // same thread. Threading it through component state would mean redesigning
 // state management, which this phase explicitly does not do.
 const threadRevisions = new Map();
+const scenarioUpdatedAt = new Map();
+
+function rememberScenarioBasis(scenarioId, updatedAt) {
+  const id = String(scenarioId || '').trim();
+  const basis = String(updatedAt || '').trim();
+  if (id && basis) scenarioUpdatedAt.set(id, basis);
+}
+
+function captureScenarioBasis(scenarioId, payload) {
+  const scenario = payload?.scenario && !payload?.scenario?.scorecard ? payload.scenario : payload;
+  rememberScenarioBasis(
+    scenarioId || scenario?.scenario_id || payload?.scenario_id,
+    scenario?.updated_at || payload?.scenario_updated_at || payload?.updated_at,
+  );
+  return payload;
+}
+
+function withScenarioBasis(scenarioId, body = {}) {
+  const basis = body?.expected_updated_at
+    || scenarioUpdatedAt.get(String(scenarioId || '').trim());
+  return basis ? { ...body, expected_updated_at: basis } : { ...body };
+}
 
 export function rememberThreadRevision(threadId, revision) {
   const id = String(threadId || '').trim();
@@ -1196,42 +1218,53 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     postJSON(endpoints.restoreThread(threadId), {}, { withSid: true }),
 
   // Scenarios
-  createScenario: async (threadId, { deltas = {}, label, session_id, baseline } = {}) =>
-    captureRevision(threadId, await postJSON(
+  createScenario: async (threadId, { deltas = {}, label, session_id, baseline } = {}) => {
+    const result = captureRevision(threadId, await postJSON(
       endpoints.createScenario(threadId),
-      withProjectRevision(threadId, { deltas, label, session_id: session_id || threadId, baseline: baseline || null }),
+      { deltas, label, session_id: session_id || threadId, baseline: baseline || null },
       { withSid: true },
-    )),
+    ));
+    return captureScenarioBasis(result?.scenario_id, result);
+  },
 
-  listScenarios: async (threadId, { limit = 50, offset = 0 } = {}) =>
-    captureRevision(threadId, await getJSON(
+  listScenarios: async (threadId, { limit = 50, offset = 0 } = {}) => {
+    const result = captureRevision(threadId, await getJSON(
       `${endpoints.listScenarios(threadId)}?limit=${limit}&offset=${offset}`,
       { withSid: true },
-    )),
+    ));
+    (result?.scenarios || []).forEach((scenario) => captureScenarioBasis(null, scenario));
+    return result;
+  },
 
-  updateScenario: async (scenario_id, { thread_id, deltas = {}, label } = {}) =>
-    captureRevision(thread_id, await putJSON(
+  updateScenario: async (scenario_id, { thread_id, deltas = {}, label, expected_updated_at } = {}) => {
+    const result = captureRevision(thread_id, await putJSON(
       endpoints.updateScenario(scenario_id, thread_id),
-      withProjectRevision(thread_id, { deltas, label }),
+      withScenarioBasis(scenario_id, { deltas, label, ...(expected_updated_at ? { expected_updated_at } : {}) }),
       { withSid: true },
-    )),
+    ));
+    return captureScenarioBasis(scenario_id, result);
+  },
 
-  applyScenario: async (scenario_id, thread_id) =>
-    captureRevision(thread_id, await _fetch(endpoints.applyScenario(scenario_id, thread_id), {
+  applyScenario: async (scenario_id, thread_id) => {
+    const result = captureRevision(thread_id, await _fetch(endpoints.applyScenario(scenario_id, thread_id), {
       method: 'POST',
-      body: JSON.stringify(withProjectRevision(thread_id)),
+      body: JSON.stringify(withScenarioBasis(scenario_id)),
       withSid: true,
-    })),
+    }));
+    return captureScenarioBasis(scenario_id, result);
+  },
 
-  adoptScenario: async (scenario_id, thread_id) =>
-    captureRevision(thread_id, await _fetch(
+  adoptScenario: async (scenario_id, thread_id) => {
+    const result = captureRevision(thread_id, await _fetch(
       endpoints.adoptScenario(scenario_id, thread_id),
       {
         method: 'POST',
-        body: JSON.stringify(withProjectRevision(thread_id, thread_id ? { thread_id } : {})),
+        body: JSON.stringify(withScenarioBasis(scenario_id, thread_id ? { thread_id } : {})),
         withSid: true,
       }
-    )),
+    ));
+    return captureScenarioBasis(scenario_id, result);
+  },
 
   renameSnapshot: async (threadId, snapshotId, label, options = {}) =>
     patchJSON(
@@ -1271,11 +1304,12 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     const payload = (promptOrPayload && typeof promptOrPayload === 'object')
       ? promptOrPayload
       : { prompt: String(promptOrPayload || '').trim() };
-    return captureRevision(threadId, await postJSON(
+    const result = captureRevision(threadId, await postJSON(
       endpoints.aiScenario(threadId),
-      withProjectRevision(threadId, payload),
+      payload,
       { withSid: true },
     ));
+    return captureScenarioBasis(result?.scenario_id, result);
   },
 
   setThreadObjective: async (threadId, strategy_objective, objective_explicitly_set = true) =>
@@ -1333,7 +1367,7 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
   upsertThreadWbs: async (threadId, project_wbs, scorecardId = null) =>
     captureRevision(threadId, await putJSON(
       endpoints.threadWbs(threadId),
-      withProjectRevision(threadId, scorecardId ? { project_wbs, scorecard_id: scorecardId } : { project_wbs }),
+      scorecardId ? { project_wbs, scorecard_id: scorecardId } : { project_wbs },
       { withSid: true },
     )),
 
@@ -1341,10 +1375,14 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
   // backend shifts every task's start/due by the same delta so manual per-task
   // adjustments are preserved (the whole schedule slides). startDate is a
   // YYYY-MM-DD string. Returns { project_wbs, start_date, shifted_days }.
-  setThreadWbsStartDate: async (threadId, startDate, scorecardId = null) =>
+  setThreadWbsStartDate: async (threadId, startDate, scorecardId = null, expectedUpdatedAt = null) =>
     captureRevision(threadId, await postJSON(
       endpoints.threadWbsStartDate(threadId),
-      withProjectRevision(threadId, scorecardId ? { start_date: startDate, scorecard_id: scorecardId } : { start_date: startDate }),
+      {
+        start_date: startDate,
+        ...(scorecardId ? { scorecard_id: scorecardId } : {}),
+        ...(expectedUpdatedAt ? { expected_updated_at: expectedUpdatedAt } : {}),
+      },
       { withSid: true },
     )),
 
@@ -1515,8 +1553,13 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
   },
 
   // Threads bundle
-  getThreadBundle: async (threadId, { msg_limit = 50, scn_limit = 50 } = {}) =>
-    getJSON(endpoints.threadBundle(threadId, msg_limit, scn_limit), { withSid: true }),
+  getThreadBundle: async (threadId, { msg_limit = 50, scn_limit = 50 } = {}) => {
+    const result = captureRevision(threadId, await getJSON(
+      endpoints.threadBundle(threadId, msg_limit, scn_limit), { withSid: true },
+    ));
+    (result?.scenarios || []).forEach((scenario) => captureScenarioBasis(null, scenario));
+    return result;
+  },
 
   // Score exactly one named queued option. Naming the target lets the client
   // continue through the rest of a queue when one option needs a Retry.

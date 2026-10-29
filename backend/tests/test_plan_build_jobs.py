@@ -239,6 +239,70 @@ def test_chat_tool_plan_falls_back_to_a_starter_plan(app, db, test_user, monkeyp
     assert 'starter plan' in result['confirmation']
 
 
+def test_chat_tool_plan_saves_over_unrelated_project_change(app, db, test_user, monkeypatch):
+    strategy, agent = modules()
+    tid = 'plan-tool-unrelated'
+    _seed(test_user, db, tid)
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(agent, 'get_llm_client', lambda: object(), raising=False)
+    _provider(monkeypatch, [json.dumps(_ai_plan())])
+    real_persist = strategy._persist_generated_plan
+
+    def persist_after_unrelated(user_id, thread_id, scorecard_id, plan, guard):
+        strategy._save_project_scenarios(
+            user_id,
+            {thread_id: {**strategy._load_scenarios(user_id).get(thread_id, {}), 'unrelated': True}},
+            thread_id,
+        )
+        return real_persist(user_id, thread_id, scorecard_id, plan, guard)
+
+    monkeypatch.setattr(strategy, '_persist_generated_plan', persist_after_unrelated)
+    result = agent._execute_mutation_tool(
+        'generate_execution_plan', {'scorecard_id': 'planner-card', 'decision_acknowledged': True},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert result['ok'] is True, result
+    stored = strategy._load_scenarios(test_user.id)[tid]
+    assert stored['unrelated'] is True
+    assert strategy._resolve_thread_wbs(stored, 'planner-card')
+
+
+def test_chat_tool_plan_same_option_conflict_reverses_once(app, db, test_user, monkeypatch):
+    strategy, agent = modules()
+    tid = 'plan-tool-conflict'
+    _seed(test_user, db, tid)
+    mock_accounting(monkeypatch)
+    monkeypatch.setattr(agent, 'get_llm_client', lambda: object(), raising=False)
+    _provider(monkeypatch, [json.dumps(_ai_plan())])
+    real_persist = strategy._persist_generated_plan
+    reversals = []
+    monkeypatch.setattr(
+        agent, 'reverse_customer_operation_charge',
+        lambda *_args, **kwargs: reversals.append(kwargs.get('error_code')),
+    )
+
+    def competing_plan_first(user_id, thread_id, scorecard_id, plan, guard):
+        competitor = {
+            'scorecard_id': scorecard_id, 'updated_at': 'competitor',
+            'tasks': [{'id': 'kept', 'title': 'Keep me'}],
+        }
+        real_persist(user_id, thread_id, scorecard_id, competitor, guard)
+        return real_persist(user_id, thread_id, scorecard_id, plan, guard)
+
+    monkeypatch.setattr(strategy, '_persist_generated_plan', competing_plan_first)
+    result = agent._execute_mutation_tool(
+        'generate_execution_plan', {'scorecard_id': 'planner-card', 'decision_acknowledged': True},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert result['ok'] is False
+    assert result['code'] == 'revision_conflict'
+    assert len(reversals) == 1
+    stored = strategy._resolve_thread_wbs(
+        strategy._load_scenarios(test_user.id)[tid], 'planner-card',
+    )
+    assert stored['tasks'][0]['title'] == 'Keep me'
+
+
 def test_starter_plan_traces_every_source_into_ordered_phases():
     from app.decision_lineage import STARTER_PLAN_LABEL, build_starter_plan, validate_plan_lineage
     sources = [

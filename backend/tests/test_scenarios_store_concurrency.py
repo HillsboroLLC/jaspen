@@ -11,7 +11,7 @@ from app.scenarios_store import (
     save_project_scenarios_data,
 )
 from app.session_access import RevisionConflict
-from app.routes.sessions import save_user_sessions
+from app.routes.sessions import load_user_sessions, save_user_sessions
 
 
 def _seed(user, *project_ids):
@@ -67,22 +67,21 @@ def test_alias_save_targets_canonical_row_and_never_creates_intake_row(db, test_
     assert row.scenarios_json['scenarios']['s']['label'] == 'Alias edit'
 
 
-def test_two_snapshot_writes_on_one_revision_have_one_winner(db, test_user):
+def test_two_stale_request_snapshots_apply_their_own_changes(db, test_user):
     _seed(test_user, 'race')
     first = load_scenarios_data(test_user.id)
     second = load_scenarios_data(test_user.id)
-    first['race']['winner'] = 'first'
-    second['race']['winner'] = 'second'
+    first['race']['first_change'] = True
+    second['race']['second_change'] = True
 
-    winning_revision = save_project_scenarios_data(
+    save_project_scenarios_data(
         test_user.id, 'race', first['race'], source=first,
     )
-    with pytest.raises(RevisionConflict):
-        save_project_scenarios_data(test_user.id, 'race', second['race'], source=second)
+    save_project_scenarios_data(test_user.id, 'race', second['race'], source=second)
 
     row = UserSession.query.filter_by(session_id='race').one()
-    assert row.revision == winning_revision
-    assert row.scenarios_json['winner'] == 'first'
+    assert row.scenarios_json['first_change'] is True
+    assert row.scenarios_json['second_change'] is True
 
 
 def test_rejected_write_is_atomic_for_all_projects(db, test_user):
@@ -98,7 +97,10 @@ def test_rejected_write_is_atomic_for_all_projects(db, test_user):
     stale['atomic-a']['value'] = 'stale'
 
     with pytest.raises(RevisionConflict):
-        save_project_scenarios_data(test_user.id, 'atomic-a', stale['atomic-a'], source=stale)
+        save_project_scenarios_data(
+            test_user.id, 'atomic-a', stale['atomic-a'], source=stale,
+            base_revision=stale.revisions['atomic-a'],
+        )
 
     after = {
         row.session_id: (row.scenarios_json, row.revision, row.payload)
@@ -148,6 +150,26 @@ def test_updater_retry_is_bounded(db, test_user, monkeypatch):
     assert len(attempts) == 3
     row = UserSession.query.filter_by(session_id='retry-bound').one()
     assert 'value' not in row.scenarios_json
+
+
+def test_stale_session_snapshot_advances_from_the_database_counter(db, test_user):
+    _seed(test_user, 'stale-counter')
+    stale_sessions = load_user_sessions(test_user.id)
+    before = UserSession.query.filter_by(session_id='stale-counter').one().revision
+
+    loaded = load_scenarios_data(test_user.id)
+    loaded['stale-counter']['scenario_change'] = True
+    save_project_scenarios_data(
+        test_user.id, 'stale-counter', loaded['stale-counter'], source=loaded,
+    )
+    after_scenario = UserSession.query.filter_by(session_id='stale-counter').one().revision
+
+    stale_sessions['stale-counter']['name'] = 'Renamed from stale snapshot'
+    assert save_user_sessions(test_user.id, stale_sessions)
+    row = UserSession.query.filter_by(session_id='stale-counter').one()
+    assert before < after_scenario < row.revision
+    assert row.scenarios_json['scenario_change'] is True
+    assert row.payload['name'] == 'Renamed from stale snapshot'
 
 
 def test_explicit_clear_all_still_clears_every_project(db, test_user):

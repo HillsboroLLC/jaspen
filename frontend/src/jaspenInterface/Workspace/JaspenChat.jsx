@@ -2090,6 +2090,7 @@ const refreshBundle = async (tid, { fallbackTid } = {}) => {
       label: s.label || 'Scenario',
       values: s.deltas || {},
       result: s.result || null,
+      updated_at: s.updated_at || null,
       timestamp: new Date(s.created_at || Date.now()).getTime(),
     }));
 
@@ -11734,6 +11735,7 @@ const handleScenarioSaved = useCallback((payload = {}) => {
     label: String(payload?.label || payload?.snapshot?.label || 'Scenario').trim() || 'Scenario',
     values: payload?.response?.scenario?.deltas || payload?.values || {},
     result: payload?.snapshot && typeof payload.snapshot === 'object' ? payload.snapshot : null,
+    updated_at: payload?.response?.scenario_updated_at || payload?.response?.updated_at || null,
     timestamp: Date.now(),
   };
 

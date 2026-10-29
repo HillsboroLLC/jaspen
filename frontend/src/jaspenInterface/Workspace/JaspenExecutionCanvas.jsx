@@ -1217,7 +1217,9 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
     try {
       setStartDateSaving(true);
       setSaveError(null);
-      const resp = await Jaspen.setThreadWbsStartDate(threadId, d, scorecardId);
+      const resp = await Jaspen.setThreadWbsStartDate(
+        threadId, d, scorecardId, wbsRef.current?.updated_at,
+      );
       const next = resp?.project_wbs;
       if (next && Array.isArray(next.tasks)) {
         // Record for undo, then swap in the re-anchored plan. Skip the debounced

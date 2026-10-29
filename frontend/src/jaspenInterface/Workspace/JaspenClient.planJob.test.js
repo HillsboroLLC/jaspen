@@ -81,19 +81,39 @@ it('keeps previews synchronous', async () => {
   expect(JSON.parse(fetchMock.mock.calls[0][1].body).background).toBeUndefined();
 });
 
-it.each([
-  ['plan', () => Jaspen.upsertThreadWbs('thread-1', { tasks: [] }, 'card-1')],
-  ['scenario', () => Jaspen.createScenario('thread-1', { label: 'Scenario' })],
-])('sends the known revision and preserves D4 conflicts on the %s surface', async (_surface, request) => {
+it('sends a plan object basis, not the project revision, and preserves D4 conflicts', async () => {
   rememberThreadRevision('thread-1', 11);
   const fetchMock = jest.spyOn(global, 'fetch').mockImplementationOnce(() => json(409, {
     code: 'revision_conflict', error: REVISION_CONFLICT_MESSAGE,
   }));
 
-  await expect(request()).rejects.toMatchObject({
+  await expect(Jaspen.upsertThreadWbs(
+    'thread-1', { tasks: [], updated_at: '2026-10-29T12:00:00' }, 'card-1',
+  )).rejects.toMatchObject({
     status: 409,
     message: REVISION_CONFLICT_MESSAGE,
   });
-  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ base_revision: 11 });
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+    project_wbs: { updated_at: '2026-10-29T12:00:00' },
+  });
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).not.toHaveProperty('base_revision');
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it('echoes the scenario object basis on its next write', async () => {
+  const fetchMock = jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(200, {
+      scenarios: [{ scenario_id: 'scenario-1', updated_at: 'basis-1' }],
+    }))
+    .mockImplementationOnce(() => json(200, {
+      scenario_id: 'scenario-1', updated_at: 'basis-2', label: 'Renamed',
+    }));
+
+  await Jaspen.listScenarios('thread-1');
+  await Jaspen.updateScenario('scenario-1', { thread_id: 'thread-1', label: 'Renamed' });
+
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+    expected_updated_at: 'basis-1', label: 'Renamed',
+  });
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty('base_revision');
 });

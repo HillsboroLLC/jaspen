@@ -453,7 +453,7 @@ def _session_query_for_user(user_id):
     return query.order_by(UserSession.updated_at.desc(), UserSession.id.desc())
 
 
-def save_user_sessions(user_id, sessions, session_ids_to_delete=None):
+def save_user_sessions(user_id, sessions, session_ids_to_delete=None, *, commit=True):
     """Upsert provided sessions; delete only explicitly requested session ids.
 
     Canonical-ownership behaviour (Phase 1):
@@ -545,7 +545,10 @@ def save_user_sessions(user_id, sessions, session_ids_to_delete=None):
                 )
             db.session.delete(row)
 
-        db.session.commit()
+        if commit:
+            db.session.commit()
+        else:
+            db.session.flush()
         return True
     except SessionAccessError:
         db.session.rollback()

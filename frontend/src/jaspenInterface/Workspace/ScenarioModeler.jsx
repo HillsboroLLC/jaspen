@@ -959,10 +959,12 @@ const ScenarioModeler = forwardRef(function ScenarioModeler({
     if (existingId) {
       // Update existing scenario with new deltas, then re-apply
       try {
+        const existingScenario = isSlotA ? savedScenarioByLabel.a : savedScenarioByLabel.b;
         await Jaspen.updateScenario(existingId, {
           thread_id: threadId,
           deltas,
           label,
+          expected_updated_at: existingScenario?.updated_at,
         });
       } catch (err) {
         console.warn('[ScenarioModeler] updateScenario failed, falling back to create:', err);

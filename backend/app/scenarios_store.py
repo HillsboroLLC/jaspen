@@ -14,6 +14,7 @@ from app.session_access import (
 )
 
 REVISION_UNSET = object()
+_MISSING = object()
 
 
 class ScenariosData(dict):
@@ -24,12 +25,14 @@ class ScenariosData(dict):
         self.row_ids = {}
         self.revisions = {}
         self.canonical_ids = {}
+        self.originals = {}
 
     def remember(self, key, row):
         key = str(key)
         self.row_ids[key] = row.id
         self.revisions[key] = int(row.revision or 1)
         self.canonical_ids[key] = str(row.session_id)
+        self.originals[key] = copy.deepcopy(self.get(key, {}))
 
 
 def _base_session_payload(user_id, session_id):
@@ -135,6 +138,29 @@ def _compare_and_swap(row, expected, next_payload, user_id):
     }, synchronize_session=False)
 
 
+def _apply_snapshot_delta(original, desired, current):
+    """Apply only a request's changes from its snapshot to current data.
+
+    Lists and scalar values are atomic. Dictionaries are merged recursively so
+    an unrelated plan, scenario, or session-side write that landed while the
+    request was running is retained.
+    """
+    if not isinstance(original, dict) or not isinstance(desired, dict):
+        return copy.deepcopy(desired)
+    merged = copy.deepcopy(current) if isinstance(current, dict) else {}
+    for key in original.keys() - desired.keys():
+        merged.pop(key, None)
+    for key, value in desired.items():
+        before = original.get(key, _MISSING)
+        if before is not _MISSING and value == before:
+            continue
+        if isinstance(value, dict) and isinstance(before, dict):
+            merged[key] = _apply_snapshot_delta(before, value, merged.get(key))
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
+
+
 def save_project_scenarios_data(
     user_id,
     project_id,
@@ -147,10 +173,9 @@ def save_project_scenarios_data(
 ):
     """Atomically write scenario data for exactly one canonical project.
 
-    Snapshot writes use the revision captured by ``load_scenarios_data`` and
-    never retry. Updater writes re-read and re-apply to current data after a
-    lost race, unless the caller declared ``base_revision``. Returns the new
-    revision.
+    Request snapshots are converted to a delta and applied to current data.
+    Updater writes likewise re-read and re-apply after a lost race, unless the
+    caller declared a project-wide ``base_revision``. Returns the new revision.
     """
     sid = str(project_id or '').strip()
     if not sid:
@@ -164,8 +189,18 @@ def save_project_scenarios_data(
         and base_revision is not None
         and str(base_revision).strip() != ''
     )
-    snapshot_revision = source.revisions.get(sid) if isinstance(source, ScenariosData) else None
-    attempts = 1 if explicit_revision or snapshot_revision is not None or updater is None else max(1, int(max_attempts))
+    snapshot_original = (
+        source.originals.get(sid, {})
+        if isinstance(source, ScenariosData)
+        else None
+    )
+    if updater is None and isinstance(source, ScenariosData):
+        desired = copy.deepcopy(project_data if isinstance(project_data, dict) else {})
+
+        def updater(current):
+            return _apply_snapshot_delta(snapshot_original, desired, current)
+
+    attempts = 1 if explicit_revision or updater is None else max(1, int(max_attempts))
 
     for attempt in range(attempts):
         try:
@@ -195,7 +230,7 @@ def save_project_scenarios_data(
 
             if revision_was_supplied:
                 check_revision(row, base_revision)
-            expected_claim = base_revision if explicit_revision else snapshot_revision
+            expected_claim = base_revision if explicit_revision else None
             if expected_claim is None and revision_required_for(row):
                 # Internal updater-style writes re-read on every attempt, so
                 # their basis is the row revision just read in this attempt.

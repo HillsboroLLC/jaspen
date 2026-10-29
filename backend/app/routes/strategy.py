@@ -1829,7 +1829,7 @@ def _scenario_snapshot_payload(result, scenario, thread_id):
     return snapshot
 
 
-def _persist_scenario_snapshot_to_session(user_id, thread_id, scenario, result, *, select=False):
+def _persist_scenario_snapshot_to_session(user_id, thread_id, scenario, result, *, select=False, commit=True):
     sessions = load_user_sessions(user_id) or {}
     resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, _load_scenarios(user_id), thread_id)
     resolved_thread_id = resolved_thread_id or thread_id
@@ -1911,7 +1911,7 @@ def _persist_scenario_snapshot_to_session(user_id, thread_id, scenario, result, 
     session['timestamp'] = datetime.utcnow().isoformat()
 
     sessions[session_key or resolved_thread_id] = session
-    persisted = save_user_sessions(user_id, sessions)
+    persisted = save_user_sessions(user_id, sessions, commit=commit)
     if not persisted:
         raise RuntimeError('Failed to persist scenario snapshot.')
 
@@ -1927,6 +1927,7 @@ def _rename_snapshot_in_session(
     expected_selected_scorecard_id=None,
     expected_snapshot_id=None,
     expected_snapshot_revision=None,
+    commit=True,
 ):
     sessions = load_user_sessions(user_id) or {}
     all_data = _load_scenarios(user_id)
@@ -1956,7 +1957,7 @@ def _rename_snapshot_in_session(
             session_id=native_row.session_id,
             source='peer_rename',
         )
-        db.session.commit()
+        db.session.commit() if commit else db.session.flush()
         peers = collect_peer_scorecards(user_id, resolved_thread_id)
         return {
             'snapshot': native_payload,
@@ -2046,7 +2047,7 @@ def _rename_snapshot_in_session(
     session['analysis_history'] = next_history
 
     sessions[session_key or resolved_thread_id] = session
-    persisted = save_user_sessions(user_id, sessions)
+    persisted = save_user_sessions(user_id, sessions, commit=commit)
     if not persisted:
         raise RuntimeError('Failed to persist snapshot rename.')
 
@@ -2061,6 +2062,7 @@ def _delete_snapshot_from_session(
     expected_selected_scorecard_id=None,
     expected_snapshot_id=None,
     expected_snapshot_revision=None,
+    commit=True,
 ):
     sessions = load_user_sessions(user_id) or {}
     all_data = _load_scenarios(user_id)
@@ -2076,7 +2078,7 @@ def _delete_snapshot_from_session(
         if native_row is None:
             return None
         native_row.archived_at = datetime.utcnow()
-        db.session.commit()
+        db.session.commit() if commit else db.session.flush()
         return {
             'deleted_snapshot_id': str(snapshot_id),
             'scorecard_snapshots': collect_peer_scorecards(user_id, resolved_thread_id),
@@ -2089,7 +2091,7 @@ def _delete_snapshot_from_session(
         if native_row is None:
             return None
         native_row.archived_at = datetime.utcnow()
-        db.session.commit()
+        db.session.commit() if commit else db.session.flush()
         return {
             'deleted_snapshot_id': str(snapshot_id),
             'scorecard_snapshots': collect_peer_scorecards(
@@ -2127,7 +2129,7 @@ def _delete_snapshot_from_session(
         ]
         session['analyses'] = list(session['analysis_history'])
         sessions[session_key or resolved_thread_id] = session
-        if not save_user_sessions(user_id, sessions):
+        if not save_user_sessions(user_id, sessions, commit=commit):
             raise RuntimeError('Failed to persist scorecard deletion.')
         return {
             'deleted_snapshot_id': target_id,
@@ -2162,7 +2164,7 @@ def _delete_snapshot_from_session(
     ]
 
     sessions[session_key or resolved_thread_id] = session
-    persisted = save_user_sessions(user_id, sessions)
+    persisted = save_user_sessions(user_id, sessions, commit=commit)
     if not persisted:
         raise RuntimeError('Failed to persist snapshot deletion.')
 
@@ -4725,7 +4727,7 @@ def delete_score_entry(thread_id, snapshot_id):
                 and str(item.get('id') or item.get('analysis_id') or '') != str(snapshot_id)
             ]
         sessions[session_key] = session
-        if not save_user_sessions(current_user_id, sessions):
+        if not save_user_sessions(current_user_id, sessions, commit=False):
             raise RuntimeError('Failed to persist scorecard deletion')
 
         scenarios = thread_data.get('scenarios') if isinstance(thread_data.get('scenarios'), dict) else {}
@@ -4737,6 +4739,7 @@ def delete_score_entry(thread_id, snapshot_id):
         return jsonify({'deleted': 'snapshot', 'thread_id': thread_id, 'snapshot_id': snapshot_id}), 200
 
     except Exception as e:
+        db.session.rollback()
         current_app.logger.error("[delete_score_entry] %s", e)
         return jsonify({'error': 'Failed to delete score entry'}), 500
 
@@ -7078,10 +7081,7 @@ def create_ai_scenario(thread_id):
         thread_data['baseline_inputs'] = baseline_inputs
         thread_data['lever_catalog'] = lever_catalog
         all_data[thread_id] = thread_data
-        new_revision = _save_project_scenarios(
-            user_id, all_data, thread_id,
-            base_revision=extract_base_revision(payload),
-        )
+        new_revision = _save_project_scenarios(user_id, all_data, thread_id)
 
         lever_context = _thread_levers_for_scenario_ai(user_id, thread_id, baseline_inputs, manual_deltas or None)
 
@@ -8417,6 +8417,11 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                 provider_success = True
                 starter_plan = True
         if not provider_success:
+            if ai_settlement:
+                reverse_customer_operation_charge(
+                    user, ai_settlement, error_code='execution_plan_generation_failed',
+                )
+                ai_settlement = None
             return jsonify({
                 'success': False,
                 'code': 'execution_plan_generation_failed',
@@ -8482,19 +8487,19 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
             }), 403
 
         if commit:
-            # Key the plan under the canonical idea id so it's always registered
-            # to the originating idea (never just the thread-level mirror).
-            _store_thread_wbs(thread_data, canonical_scorecard_id, normalized_wbs)
-            # Dependencies Jaspen authored in a GENERATED plan (spec §4.3). The
-            # plan-editing routes deliberately do not call this: a dependency the
-            # user typed into their own plan is theirs, not a Jaspen finding.
-            # Never allowed to fail the request.
+            new_revision = _persist_generated_plan(
+                user_id, thread_id, canonical_scorecard_id, normalized_wbs,
+                plan_guard,
+            )
+            if not new_revision:
+                raise RuntimeError('Failed to persist generated execution plan.')
+            plan_persisted = True
+            # Dependencies Jaspen authored in a generated plan are recorded
+            # only after that plan is durably saved.
             try:
                 from ..decision_ledger import record_generated_plan
                 record_generated_plan(
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    plan=normalized_wbs,
+                    user_id=user_id, thread_id=thread_id, plan=normalized_wbs,
                     organization_id=None,
                 )
             except Exception:  # noqa: BLE001
@@ -8502,25 +8507,6 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                     'decision_ledger: could not record generated plan for thread %s',
                     thread_id, exc_info=True,
                 )
-            all_data[thread_id] = thread_data
-
-            def _apply_generated_plan(current_thread):
-                current_plan = _resolve_thread_wbs(
-                    current_thread, canonical_scorecard_id,
-                )
-                if current_plan != plan_guard:
-                    raise RevisionConflict(None, None, session_id=thread_id)
-                _store_thread_wbs(
-                    current_thread, canonical_scorecard_id, normalized_wbs,
-                )
-                return current_thread
-
-            new_revision = _save_project_scenarios(
-                user_id, {}, thread_id, updater=_apply_generated_plan,
-            )
-            if not new_revision:
-                raise RuntimeError('Failed to persist generated execution plan.')
-            plan_persisted = True
             if recorded_decision is None:
                 from ..decision_records import record_execution_plan_decision
                 decision_record = record_execution_plan_decision(
@@ -8597,13 +8583,9 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                 user, ai_settlement, error_code='execution_plan_revision_conflict',
             )
             ai_settlement = None
-        return jsonify({
-            'error': 'This project has newer changes. Reload to get the latest version. Your changes weren\'t saved.',
-            'code': 'revision_conflict',
-            'expected_revision': e.expected_revision,
-            'current_revision': e.current_revision,
-            'session_id': e.session_id or thread_id,
-        }), 409
+        body, status = e.to_response()
+        body['session_id'] = e.session_id or thread_id
+        return jsonify(body), status
     except Exception as e:
         if user is not None and ai_settlement and not plan_persisted:
             reverse_customer_operation_charge(
@@ -8628,7 +8610,6 @@ def _create_scenario_record(
     plan_key=None,
     result=None,
     metadata=None,
-    base_revision=None,
 ):
     all_data = _load_scenarios(user_id)
     if thread_id not in all_data or not isinstance(all_data.get(thread_id), dict):
@@ -8677,9 +8658,7 @@ def _create_scenario_record(
     td['scenarios'] = scenarios
     all_data[thread_id] = td
 
-    new_revision = _save_project_scenarios(
-        user_id, all_data, thread_id, base_revision=base_revision,
-    )
+    new_revision = _save_project_scenarios(user_id, all_data, thread_id)
     if not new_revision:
         raise RuntimeError('Failed to persist scenario.')
     scenario['revision'] = new_revision
@@ -8725,7 +8704,6 @@ def create_scenario(thread_id):
                 baseline=baseline,
                 plan_key=plan_key,
                 result=computed_result,
-                base_revision=extract_base_revision(data),
             )
         except PermissionError as limit_error:
             payload = {}
@@ -8750,6 +8728,7 @@ def create_scenario(thread_id):
             'thread_id': thread_id,
             'label': created.get('label'),
             'created_at': created.get('created_at'),
+            'updated_at': created.get('updated_at'),
             'result': computed_result,
             'revision': created.get('revision'),
         }), 201
@@ -8812,6 +8791,8 @@ def update_scenario(scenario_id):
         if not scenario:
             return jsonify({'error': 'Scenario not found'}), 404
 
+        expected_updated_at = data.get('expected_updated_at')
+        _assert_object_basis(scenario, expected_updated_at, session_id=thread_id)
         if 'label' in data:
             scenario['label'] = data['label']
         if 'deltas' in data:
@@ -8830,21 +8811,30 @@ def update_scenario(scenario_id):
                 scenario['result'] = None  # no baseline to compute against
 
         scenario['updated_at'] = datetime.utcnow().isoformat()
-        new_revision = _save_project_scenarios(
-            user_id, all_data, thread_id,
-            base_revision=extract_base_revision(data),
-        )
+        desired_scenario = copy.deepcopy(scenario)
+
+        def _apply_scenario_edit(current_td):
+            scenarios = current_td.get('scenarios') if isinstance(current_td.get('scenarios'), dict) else {}
+            current_scenario = scenarios.get(scenario_id)
+            _assert_object_basis(current_scenario, expected_updated_at, session_id=thread_id)
+            scenarios[scenario_id] = desired_scenario
+            current_td['scenarios'] = scenarios
+            return current_td
+
         if 'label' in data:
-            try:
-                _rename_snapshot_in_session(user_id, thread_id, scenario_id, scenario['label'])
-            except Exception as rename_error:
-                current_app.logger.warning("[update_scenario] snapshot label sync failed: %s", rename_error)
+            _rename_snapshot_in_session(
+                user_id, thread_id, scenario_id, scenario['label'], commit=False,
+            )
+        new_revision = save_project_scenarios_data(
+            user_id, thread_id, updater=_apply_scenario_edit,
+        )
         return jsonify({**scenario, 'revision': new_revision}), 200
 
     except SessionAccessError as e:
         body, status = e.to_response()
         return jsonify(body), status
     except Exception as e:
+        db.session.rollback()
         current_app.logger.error("[update_scenario] %s", e)
         return jsonify({'error': str(e)}), 500
 
@@ -8869,21 +8859,32 @@ def delete_scenario(scenario_id):
         if scenario_id not in td.get('scenarios', {}):
             return jsonify({'error': 'Scenario not found'}), 404
 
+        expected_updated_at = data.get('expected_updated_at')
+        _assert_object_basis(td['scenarios'][scenario_id], expected_updated_at, session_id=thread_id)
         del td['scenarios'][scenario_id]
         if td.get('adopted_scenario_id') == scenario_id:
             td['adopted_scenario_id'] = None
 
-        new_revision = _save_project_scenarios(
-            user_id, all_data, thread_id,
-            base_revision=extract_base_revision(data),
-        )
+        def _apply_scenario_delete(current_td):
+            scenarios = current_td.get('scenarios') if isinstance(current_td.get('scenarios'), dict) else {}
+            _assert_object_basis(scenarios.get(scenario_id), expected_updated_at, session_id=thread_id)
+            scenarios.pop(scenario_id, None)
+            current_td['scenarios'] = scenarios
+            if current_td.get('adopted_scenario_id') == scenario_id:
+                current_td['adopted_scenario_id'] = None
+            return current_td
+
         snapshot_meta = None
         try:
-            snapshot_meta = _delete_snapshot_from_session(user_id, thread_id, scenario_id)
+            snapshot_meta = _delete_snapshot_from_session(
+                user_id, thread_id, scenario_id, commit=False,
+            )
         except ValueError as delete_error:
+            db.session.rollback()
             return jsonify({'error': str(delete_error)}), 400
-        except Exception as delete_error:
-            current_app.logger.warning("[delete_scenario] snapshot delete sync failed: %s", delete_error)
+        new_revision = save_project_scenarios_data(
+            user_id, thread_id, updater=_apply_scenario_delete,
+        )
         return jsonify({
             'success': True,
             'deleted_scenario_id': scenario_id,
@@ -8896,6 +8897,7 @@ def delete_scenario(scenario_id):
         body, status = e.to_response()
         return jsonify(body), status
     except Exception as e:
+        db.session.rollback()
         current_app.logger.error("[delete_scenario] %s", e)
         return jsonify({'error': str(e)}), 500
 
@@ -8937,13 +8939,23 @@ def apply_scenario(scenario_id):
         result['thread_id']    = thread_id
         result['label']        = scenario['label']
 
+        data = request.get_json(silent=True) or {}
+        expected_updated_at = data.get('expected_updated_at')
+        _assert_object_basis(scenario, expected_updated_at, session_id=thread_id)
         # Cache
         scenario['result'] = result
         scenario['updated_at'] = datetime.utcnow().isoformat()
-        data = request.get_json(silent=True) or {}
-        new_revision = _save_project_scenarios(
-            user_id, all_data, thread_id,
-            base_revision=extract_base_revision(data),
+        desired_scenario = copy.deepcopy(scenario)
+
+        def _apply_scenario_result(current_td):
+            scenarios = current_td.get('scenarios') if isinstance(current_td.get('scenarios'), dict) else {}
+            _assert_object_basis(scenarios.get(scenario_id), expected_updated_at, session_id=thread_id)
+            scenarios[scenario_id] = desired_scenario
+            current_td['scenarios'] = scenarios
+            return current_td
+
+        new_revision = save_project_scenarios_data(
+            user_id, thread_id, updater=_apply_scenario_result,
         )
         # Return in the shape ScenarioModeler.normalizeApplied() expects
         return jsonify({
@@ -8957,6 +8969,7 @@ def apply_scenario(scenario_id):
             'component_scores': result['component_scores'],
             'financial_impact': result['financial_impact'],
             'analysis_id': scenario_id,
+            'scenario_updated_at': scenario.get('updated_at'),
             'revision': new_revision,
         }), 200
 
@@ -9016,18 +9029,29 @@ def adopt_scenario(scenario_id):
             scenario['result'] = result
 
         td['adopted_scenario_id'] = scenario_id
+        expected_updated_at = data.get('expected_updated_at')
+        _assert_object_basis(scenario, expected_updated_at, session_id=resolved_thread_id)
         scenario['updated_at'] = datetime.utcnow().isoformat()
+        desired_scenario = copy.deepcopy(scenario)
 
-        new_revision = _save_project_scenarios(
-            user_id, all_data, resolved_thread_id,
-            base_revision=extract_base_revision(data),
-        )
+        def _apply_scenario_adopt(current_td):
+            scenarios = current_td.get('scenarios') if isinstance(current_td.get('scenarios'), dict) else {}
+            _assert_object_basis(scenarios.get(scenario_id), expected_updated_at, session_id=resolved_thread_id)
+            scenarios[scenario_id] = desired_scenario
+            current_td['scenarios'] = scenarios
+            current_td['adopted_scenario_id'] = scenario_id
+            return current_td
+
         snapshot_meta = _persist_scenario_snapshot_to_session(
             user_id,
             resolved_thread_id,
             scenario,
             result,
             select=True,
+            commit=False,
+        )
+        new_revision = save_project_scenarios_data(
+            user_id, resolved_thread_id, updater=_apply_scenario_adopt,
         )
         _audit_strategy_event(
             'scenario.adopted',
@@ -9043,6 +9067,7 @@ def adopt_scenario(scenario_id):
             'selected_scorecard_id': (snapshot_meta or {}).get('selected_scorecard_id'),
             'snapshot': (snapshot_meta or {}).get('snapshot'),
             'scorecard_snapshots': (snapshot_meta or {}).get('scorecard_snapshots'),
+            'scenario_updated_at': scenario.get('updated_at'),
             'revision': new_revision,
         }), 200
 
@@ -9050,6 +9075,7 @@ def adopt_scenario(scenario_id):
         body, status = e.to_response()
         return jsonify(body), status
     except Exception as e:
+        db.session.rollback()
         current_app.logger.error("[adopt_scenario] %s", e)
         return jsonify({'error': str(e)}), 500
 
@@ -9102,22 +9128,58 @@ def _store_thread_wbs(td, scorecard_id, normalized_wbs):
     if not isinstance(td, dict):
         return
     key = str(scorecard_id or '').strip()
+    preserve_unresolved_legacy = False
     if key:
         by_card = td.get('wbs_by_scorecard')
         if not isinstance(by_card, dict):
             by_card = {}
         legacy = td.get('project_wbs')
         if not by_card and isinstance(legacy, dict):
-            legacy_key = str(
-                legacy.get('scorecard_id') or legacy.get('source_scenario_id') or ''
-            ).strip()
+            legacy_key = str(legacy.get('scorecard_id') or '').strip()
+            source_scenario_id = str(legacy.get('source_scenario_id') or '').strip()
+            if not legacy_key and source_scenario_id:
+                scenarios = td.get('scenarios') if isinstance(td.get('scenarios'), dict) else {}
+                source = scenarios.get(source_scenario_id)
+                result = source.get('result') if isinstance(source, dict) else None
+                legacy_key = str(
+                    (result or {}).get('id') or (result or {}).get('analysis_id') or ''
+                ).strip()
             if legacy_key and legacy_key != key:
                 by_card[legacy_key] = legacy
+            elif not legacy_key:
+                preserve_unresolved_legacy = True
         by_card[key] = normalized_wbs
         td['wbs_by_scorecard'] = by_card
         # Whatever plan was just written becomes the active one for chat edits.
         td['active_execution_scorecard_id'] = key
-    td['project_wbs'] = normalized_wbs
+    if not preserve_unresolved_legacy:
+        td['project_wbs'] = normalized_wbs
+
+
+def _assert_object_basis(current, expected_updated_at, *, session_id):
+    """Protect one plan/scenario without coupling it to the project revision."""
+    current_basis = (
+        str(current.get('updated_at') or '').strip()
+        if isinstance(current, dict)
+        else ''
+    )
+    expected = str(expected_updated_at or '').strip()
+    if isinstance(current, dict) and (not expected or expected != current_basis):
+        raise RevisionConflict(expected or None, current_basis or None, session_id=session_id)
+
+
+def _persist_generated_plan(user_id, thread_id, scorecard_id, normalized_wbs, plan_guard):
+    """Shared atomic save for background and chat-generated plans."""
+    def _apply(current_thread):
+        current_plan = _resolve_thread_wbs(current_thread, scorecard_id)
+        if current_plan != plan_guard:
+            raise RevisionConflict(None, None, session_id=thread_id)
+        _store_thread_wbs(current_thread, scorecard_id, normalized_wbs)
+        return current_thread
+
+    return save_project_scenarios_data(
+        user_id, thread_id, updater=_apply,
+    )
 
 
 _GENERIC_WBS_NAMES = {
@@ -9436,6 +9498,12 @@ def upsert_thread_wbs(thread_id):
 
         resolved_existing = _resolve_thread_wbs(td, scorecard_id)
         existing_wbs = resolved_existing if isinstance(resolved_existing, dict) else None
+        incoming_wbs = payload.get('project_wbs') if isinstance(payload.get('project_wbs'), dict) else payload
+        expected_updated_at = (
+            payload.get('expected_updated_at')
+            or (incoming_wbs.get('updated_at') if isinstance(incoming_wbs, dict) else None)
+        )
+        _assert_object_basis(existing_wbs, expected_updated_at, session_id=thread_id)
         normalized_wbs = _normalize_project_wbs(payload, existing=existing_wbs)
 
         limits = get_wbs_limits_for_plan(plan_key)
@@ -9486,11 +9554,14 @@ def upsert_thread_wbs(thread_id):
 
         prior_tasks = existing_wbs.get('tasks') if isinstance(existing_wbs, dict) and isinstance(existing_wbs.get('tasks'), list) else []
         next_tasks = normalized_wbs.get('tasks') if isinstance(normalized_wbs.get('tasks'), list) else []
-        _store_thread_wbs(td, scorecard_id, normalized_wbs)
-        all_data[thread_id] = td
-        new_revision = _save_project_scenarios(
-            user_id, all_data, thread_id,
-            base_revision=extract_base_revision(payload),
+        def _apply_plan_edit(current_td):
+            current_wbs = _resolve_thread_wbs(current_td, scorecard_id)
+            _assert_object_basis(current_wbs, expected_updated_at, session_id=thread_id)
+            _store_thread_wbs(current_td, scorecard_id, normalized_wbs)
+            return current_td
+
+        new_revision = save_project_scenarios_data(
+            user_id, thread_id, updater=_apply_plan_edit,
         )
         _audit_strategy_event(
             'wbs.updated',
@@ -9549,13 +9620,24 @@ def reanchor_thread_wbs_start_date(thread_id):
         if not isinstance(resolved, dict) or not isinstance(resolved.get('tasks'), list) or not resolved.get('tasks'):
             return jsonify({'error': 'No execution plan found for this idea.'}), 404
 
-        updated_wbs, shifted_days = _shift_wbs_dates(resolved, new_start_date)
-        _store_thread_wbs(td, scorecard_id, updated_wbs)
-        all_data[thread_id] = td
-        new_revision = _save_project_scenarios(
-            user_id, all_data, thread_id,
-            base_revision=extract_base_revision(payload),
+        expected_updated_at = payload.get('expected_updated_at')
+        _assert_object_basis(resolved, expected_updated_at, session_id=thread_id)
+        saved = {}
+
+        def _apply_start_date(current_td):
+            current_wbs = _resolve_thread_wbs(current_td, scorecard_id)
+            _assert_object_basis(current_wbs, expected_updated_at, session_id=thread_id)
+            updated, days = _shift_wbs_dates(current_wbs, new_start_date)
+            _store_thread_wbs(current_td, scorecard_id, updated)
+            saved['wbs'] = updated
+            saved['days'] = days
+            return current_td
+
+        new_revision = save_project_scenarios_data(
+            user_id, thread_id, updater=_apply_start_date,
         )
+        updated_wbs = saved['wbs']
+        shifted_days = saved['days']
         _audit_strategy_event(
             'wbs.start_date_changed',
             user_id=user_id,
@@ -10924,7 +11006,8 @@ def update_strategy_thread(thread_id):
             session['analysis_history'] = next_history
 
         sessions[session_key or resolved_thread_id] = session
-        save_user_sessions(user_id, sessions)
+        if not save_user_sessions(user_id, sessions, commit=False):
+            raise RuntimeError('Failed to persist project rename')
 
         if isinstance(thread_data, dict):
             baseline = thread_data.get('baseline')
@@ -10950,6 +11033,8 @@ def update_strategy_thread(thread_id):
 
             all_data[resolved_thread_id] = thread_data
             _save_project_scenarios(user_id, all_data, resolved_thread_id)
+        else:
+            db.session.commit()
 
         _written = canonical_row(actor, resolved_thread_id, include_archived=True) if actor else None
         return jsonify({
@@ -10970,6 +11055,7 @@ def update_strategy_thread(thread_id):
         # which would hide a revision conflict from the client entirely.
         raise
     except Exception as e:
+        db.session.rollback()
         current_app.logger.error("[update_strategy_thread] %s", e)
         return jsonify({'error': str(e)}), 500
 
@@ -11524,11 +11610,17 @@ If no plan changes are needed, return "uiActions": [].
             try:
                 updated_wbs = _apply_execution_assistant_actions(project_wbs, ui_actions)
                 scorecard_id = str(updated_wbs.get('scorecard_id') or '').strip() or None
-                _store_thread_wbs(td, scorecard_id, updated_wbs)
-                all_data[thread_id] = td
-                if not _save_project_scenarios(user_id, all_data, thread_id):
-                    raise RuntimeError('The execution plan could not be saved.')
+                _persist_generated_plan(
+                    user_id, thread_id, scorecard_id, updated_wbs,
+                    copy.deepcopy(project_wbs),
+                )
                 applied_count = len(ui_actions)
+            except RevisionConflict as conflict:
+                reverse_customer_operation_charge(
+                    user, assistant_settlement, error_code='plan_refinement_revision_conflict',
+                )
+                body, status = conflict.to_response()
+                return jsonify(body), status
             except Exception:
                 reverse_customer_operation_charge(
                     user, assistant_settlement, error_code='plan_refinement_persistence_failed',

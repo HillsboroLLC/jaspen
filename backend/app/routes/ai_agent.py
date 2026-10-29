@@ -229,6 +229,7 @@ from .sessions import (
     hard_delete_user_session,
 )
 from app.session_access import (
+    RevisionConflict,
     SessionAccessError,
     SessionNotFound,
     can_archive_session,
@@ -6759,7 +6760,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         _resolve_user_model_selection,
         _resolve_thread_baseline,
         _resolve_thread_wbs,
-        _store_thread_wbs,
+        _persist_generated_plan,
         _sanitize_deltas,
         _save_project_scenarios,
     )
@@ -8928,6 +8929,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         from .strategy import _wbs_idea_identity, _existing_committed_plan
         _force_new = bool(tool_input.get("force") or tool_input.get("regenerate"))
         _existing_idea_id, _existing_idea_name = _wbs_idea_identity(scorecard, fallback_id=target_idea_id)
+        _plan_guard = copy.deepcopy(_resolve_thread_wbs(thread_data, _existing_idea_id))
         if not _force_new:
             _existing_plan = _existing_committed_plan(thread_data, _existing_idea_id)
             if _existing_plan:
@@ -8983,6 +8985,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             request_payload={"thread_id": thread_id, "scorecard_id": target_idea_id, "instruction": instruction},
             model_type=model_selection["model_type"], max_tokens=8000, thread_id=thread_id,
         )
+        def _reverse_plan_charge(error_code):
+            nonlocal _settlement
+            if _settlement:
+                reverse_customer_operation_charge(user, _settlement, error_code=error_code)
+                _settlement = None
         provider_success = bool(generated.get("provider_success"))
         starter_plan = False
         if not provider_success:
@@ -8999,6 +9006,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 provider_success = True
                 starter_plan = True
         if not provider_success:
+            _reverse_plan_charge("execution_plan_generation_failed")
             failure = _tool_error(
                 "Jaspen couldn't finish building this plan — try again. Your existing plan was not changed.",
                 code="execution_plan_generation_failed",
@@ -9033,17 +9041,27 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         from .strategy import _stamp_wbs_identity
         _stamp_wbs_identity(normalized_wbs, scorecard, fallback_id=exec_scorecard_id)
         exec_scorecard_id = str(normalized_wbs.get("scorecard_id") or exec_scorecard_id or "").strip() or None
-        _store_thread_wbs(thread_data, exec_scorecard_id, normalized_wbs)
+        try:
+            _persist_generated_plan(
+                user_id, thread_id, exec_scorecard_id, normalized_wbs, _plan_guard,
+            )
+        except RevisionConflict as conflict:
+            _reverse_plan_charge("execution_plan_revision_conflict")
+            return _tool_error(conflict.message, code=conflict.code)
+        except Exception:
+            _reverse_plan_charge("execution_plan_persistence_failed")
+            current_app.logger.exception("Failed to persist chat-generated execution plan")
+            return _tool_error(
+                "The execution plan could not be saved. Nothing changed.",
+                code="persist_failed",
+            )
         # Dependencies Jaspen authored in a GENERATED plan (spec §4.3). The
         # plan-editing routes deliberately do not call this: a dependency the
         # user typed into their own plan is theirs, not a Jaspen finding.
-        # Never allowed to fail the request.
         try:
             from ..decision_ledger import record_generated_plan
             record_generated_plan(
-                user_id=user_id,
-                thread_id=thread_id,
-                plan=normalized_wbs,
+                user_id=user_id, thread_id=thread_id, plan=normalized_wbs,
                 organization_id=None,
             )
         except Exception:  # noqa: BLE001
@@ -9051,8 +9069,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 'decision_ledger: could not record generated plan for thread %s',
                 thread_id, exc_info=True,
             )
-        all_data[thread_id] = thread_data
-        _save_project_scenarios(user_id, all_data, thread_id)
         sync_status = {"status": "skipped", "reason": "no_pm_tool_selected"}
         try:
             profile = get_thread_sync_profile(user_id, thread_id)
@@ -9120,10 +9136,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not isinstance(resolved_wbs, dict) or not (resolved_wbs.get("tasks") or []):
             return _tool_error("There's no execution plan to re-schedule yet.", code="no_plan")
 
-        updated_wbs, shifted_days = _shift_wbs_dates(resolved_wbs, new_start_date)
-        _store_thread_wbs(td, active_scorecard_id, updated_wbs)
-        all_data[thread_id] = td
-        if not _save_project_scenarios(user_id, all_data, thread_id):
+        plan_guard = copy.deepcopy(resolved_wbs)
+        updated_wbs, shifted_days = _shift_wbs_dates(copy.deepcopy(resolved_wbs), new_start_date)
+        try:
+            _persist_generated_plan(
+                user_id, thread_id, active_scorecard_id, updated_wbs, plan_guard,
+            )
+        except RevisionConflict as conflict:
+            return _tool_error(conflict.message, code=conflict.code)
+        except Exception:
             return _tool_error("Failed to persist the new start date.", code="persist_failed")
         sync_status = _trigger_post_mutation_sync(user_id, thread_id, updated_wbs)
 
@@ -9268,10 +9289,15 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     task["depends_on"] = [dep for dep in deps if str(dep) != task_id]
             confirmation = f"Removed task '{task_id}' from the WBS."
 
+        plan_guard = copy.deepcopy(current_wbs)
         normalized = _normalize_project_wbs({"project_wbs": {**current_wbs, "tasks": tasks}}, existing=current_wbs)
-        _store_thread_wbs(td, active_scorecard_id, normalized)
-        all_data[thread_id] = td
-        if not _save_project_scenarios(user_id, all_data, thread_id):
+        try:
+            _persist_generated_plan(
+                user_id, thread_id, active_scorecard_id, normalized, plan_guard,
+            )
+        except RevisionConflict as conflict:
+            return _tool_error(conflict.message, code=conflict.code)
+        except Exception:
             return _tool_error("Failed to persist WBS changes.", code="persist_failed")
         sync_status = _trigger_post_mutation_sync(user_id, thread_id, normalized)
 
