@@ -146,3 +146,156 @@ it('adopts each returned plan basis across repeated edits and a start-date chang
   expect(JSON.parse(fetchMock.mock.calls[2][1].body).expected_updated_at).toBe('plan-basis-2');
   expect(JSON.parse(fetchMock.mock.calls[3][1].body).expected_updated_at).toBe('plan-basis-3');
 });
+
+it('queues two quick inline edits until the first save returns its basis', async () => {
+  let releaseFirst;
+  const fetchMock = jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { scorecard_id: 'queue-card', tasks: [], updated_at: 'T1' },
+    }))
+    .mockImplementationOnce(() => new Promise((resolve) => {
+      releaseFirst = () => resolve(json(200, {
+        project_wbs: { scorecard_id: 'queue-card', tasks: [{ id: 1 }], updated_at: 'T2' },
+      }));
+    }))
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { scorecard_id: 'queue-card', tasks: [{ id: 1 }, { id: 2 }], updated_at: 'T3' },
+    }));
+
+  await Jaspen.getThreadWbs('queue-thread', 'queue-card');
+  const first = Jaspen.upsertThreadWbs(
+    'queue-thread', { scorecard_id: 'queue-card', tasks: [{ id: 1 }] }, 'queue-card',
+  );
+  const second = Jaspen.upsertThreadWbs(
+    'queue-thread', { scorecard_id: 'queue-card', tasks: [{ id: 1 }, { id: 2 }] }, 'queue-card',
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  releaseFirst();
+  await first;
+  await second;
+
+  const sent = fetchMock.mock.calls.slice(1).map((call) => (
+    JSON.parse(call[1].body).expected_updated_at
+  ));
+  expect(sent).toEqual(['T1', 'T2']);
+});
+
+it('runs the client plan lifecycle using each preceding response basis', async () => {
+  const staleEditorPlan = {
+    scorecard_id: 'lifecycle-card',
+    tasks: [{ id: '1' }, { id: '2' }],
+    updated_at: '2026-10-30T10:00:00Z',
+  };
+  const fetchMock = jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(200, { project_wbs: staleEditorPlan }))
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { ...staleEditorPlan, updated_at: '2026-10-30T10:00:01Z' },
+    }))
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { ...staleEditorPlan, updated_at: '2026-10-30T10:00:02Z' },
+    }))
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { ...staleEditorPlan, start_date: '2027-01-04', updated_at: '2026-10-30T10:00:03Z' },
+    }))
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { ...staleEditorPlan, updated_at: '2026-10-30T10:00:04Z' },
+    }));
+
+  await Jaspen.getThreadWbs('lifecycle-thread', 'lifecycle-card');
+  await Jaspen.upsertThreadWbs('lifecycle-thread', staleEditorPlan, 'lifecycle-card');
+  await Jaspen.upsertThreadWbs('lifecycle-thread', staleEditorPlan, 'lifecycle-card');
+  await Jaspen.setThreadWbsStartDate('lifecycle-thread', '2027-01-04', 'lifecycle-card');
+  await Jaspen.upsertThreadWbs('lifecycle-thread', staleEditorPlan, 'lifecycle-card');
+
+  expect(fetchMock.mock.calls.slice(1).map((call) => (
+    JSON.parse(call[1].body).expected_updated_at
+  ))).toEqual([
+    '2026-10-30T10:00:00Z',
+    '2026-10-30T10:00:01Z',
+    '2026-10-30T10:00:02Z',
+    '2026-10-30T10:00:03Z',
+  ]);
+});
+
+it('uses an editor plan basis when it is newer than the remembered basis', async () => {
+  const fetchMock = jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { scorecard_id: 'newer-card', tasks: [], updated_at: '2026-10-30T10:00:00Z' },
+    }))
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { scorecard_id: 'newer-card', tasks: [], updated_at: '2026-10-30T10:00:02Z' },
+    }));
+
+  await Jaspen.getThreadWbs('newer-thread', 'newer-card');
+  await Jaspen.upsertThreadWbs('newer-thread', {
+    scorecard_id: 'newer-card', tasks: [], updated_at: '2026-10-30T10:00:01Z',
+  }, 'newer-card');
+
+  expect(JSON.parse(fetchMock.mock.calls[1][1].body).expected_updated_at)
+    .toBe('2026-10-30T10:00:01Z');
+});
+
+it('queues scenario update, apply, adopt, and delete with the latest basis', async () => {
+  let releaseUpdate;
+  const fetchMock = jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(200, {
+      scenarios: [{ scenario_id: 'queued-scenario', updated_at: 'S1' }],
+    }))
+    .mockImplementationOnce(() => new Promise((resolve) => {
+      releaseUpdate = () => resolve(json(200, {
+        scenario_id: 'queued-scenario', updated_at: 'S2',
+      }));
+    }))
+    .mockImplementationOnce(() => json(200, { scenario_updated_at: 'S3' }))
+    .mockImplementationOnce(() => json(200, { scenario_updated_at: 'S4' }))
+    .mockImplementationOnce(() => json(200, { success: true }));
+
+  await Jaspen.listScenarios('scenario-thread');
+  const update = Jaspen.updateScenario('queued-scenario', {
+    thread_id: 'scenario-thread', label: 'Updated',
+  });
+  const apply = Jaspen.applyScenario('queued-scenario', 'scenario-thread');
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  releaseUpdate();
+  await update;
+  await apply;
+  await Jaspen.adoptScenario('queued-scenario', 'scenario-thread');
+  await Jaspen.deleteScenario('queued-scenario', 'scenario-thread');
+
+  expect(fetchMock.mock.calls.slice(1).map((call) => (
+    JSON.parse(call[1].body).expected_updated_at
+  ))).toEqual(['S1', 'S2', 'S3', 'S4']);
+});
+
+it('lets a failed inline save settle before retry and a later edit', async () => {
+  const fetchMock = jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { scorecard_id: 'retry-card', tasks: [], updated_at: 'R1' },
+    }))
+    .mockImplementationOnce(() => json(500, { error: 'Temporary failure' }))
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { scorecard_id: 'retry-card', tasks: [{ id: 1 }], updated_at: 'R2' },
+    }))
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { scorecard_id: 'retry-card', tasks: [{ id: 1 }, { id: 2 }], updated_at: 'R3' },
+    }));
+
+  await Jaspen.getThreadWbs('retry-thread', 'retry-card');
+  await expect(Jaspen.upsertThreadWbs(
+    'retry-thread', { scorecard_id: 'retry-card', tasks: [{ id: 1 }] }, 'retry-card',
+  )).rejects.toMatchObject({ status: 500 });
+  await Jaspen.upsertThreadWbs(
+    'retry-thread', { scorecard_id: 'retry-card', tasks: [{ id: 1 }] }, 'retry-card',
+  );
+  await Jaspen.upsertThreadWbs(
+    'retry-thread', { scorecard_id: 'retry-card', tasks: [{ id: 1 }, { id: 2 }] }, 'retry-card',
+  );
+
+  expect(fetchMock.mock.calls.slice(1).map((call) => (
+    JSON.parse(call[1].body).expected_updated_at
+  ))).toEqual(['R1', 'R1', 'R2']);
+});

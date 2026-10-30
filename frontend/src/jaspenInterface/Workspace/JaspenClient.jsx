@@ -30,6 +30,19 @@ let lastCreditsExhaustedNoticeAt = 0;
 const threadRevisions = new Map();
 const scenarioUpdatedAt = new Map();
 const planUpdatedAt = new Map();
+const planWriteQueues = new Map();
+const scenarioWriteQueues = new Map();
+
+function enqueueObjectWrite(queues, key, write) {
+  const previous = queues.get(key) || Promise.resolve();
+  const pending = previous.catch(() => undefined).then(write);
+  queues.set(key, pending);
+  const cleanup = () => {
+    if (queues.get(key) === pending) queues.delete(key);
+  };
+  pending.then(cleanup, cleanup);
+  return pending;
+}
 
 function planBasisKey(threadId, scorecardId = null) {
   return `${String(threadId || '').trim()}:${String(scorecardId || '').trim() || '__active__'}`;
@@ -52,9 +65,20 @@ function capturePlanBasis(threadId, payload, scorecardId = null) {
 function withPlanBasis(threadId, scorecardId, body = {}) {
   const plan = body?.project_wbs && typeof body.project_wbs === 'object' ? body.project_wbs : null;
   const resolvedScorecardId = scorecardId || body?.scorecard_id || plan?.scorecard_id || null;
-  const basis = planUpdatedAt.get(planBasisKey(threadId, resolvedScorecardId))
-    || String(plan?.updated_at || '').trim();
+  const rememberedBasis = planUpdatedAt.get(planBasisKey(threadId, resolvedScorecardId)) || '';
+  const editorBasis = String(plan?.updated_at || '').trim();
+  const basis = editorBasis > rememberedBasis ? editorBasis : rememberedBasis;
   return basis ? { ...body, expected_updated_at: basis } : { ...body };
+}
+
+function enqueuePlanWrite(threadId, scorecardId, body, write) {
+  const plan = body?.project_wbs && typeof body.project_wbs === 'object' ? body.project_wbs : null;
+  const resolvedScorecardId = scorecardId || body?.scorecard_id || plan?.scorecard_id || null;
+  return enqueueObjectWrite(
+    planWriteQueues,
+    planBasisKey(threadId, resolvedScorecardId),
+    () => write(withPlanBasis(threadId, resolvedScorecardId, body)),
+  );
 }
 
 function rememberScenarioBasis(scenarioId, updatedAt) {
@@ -76,6 +100,15 @@ function withScenarioBasis(scenarioId, body = {}) {
   const basis = scenarioUpdatedAt.get(String(scenarioId || '').trim())
     || body?.expected_updated_at;
   return basis ? { ...body, expected_updated_at: basis } : { ...body };
+}
+
+function enqueueScenarioWrite(scenarioId, body, write) {
+  const key = String(scenarioId || '').trim();
+  return enqueueObjectWrite(
+    scenarioWriteQueues,
+    key,
+    () => write(withScenarioBasis(scenarioId, body)),
+  );
 }
 
 export function rememberThreadRevision(threadId, revision) {
@@ -1218,34 +1251,57 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
   },
 
   updateScenario: async (scenario_id, { thread_id, deltas = {}, label, expected_updated_at } = {}) => {
-    const result = captureRevision(thread_id, await putJSON(
-      endpoints.updateScenario(scenario_id, thread_id),
-      withScenarioBasis(scenario_id, { deltas, label, ...(expected_updated_at ? { expected_updated_at } : {}) }),
-      { withSid: true },
+    const body = { deltas, label, ...(expected_updated_at ? { expected_updated_at } : {}) };
+    const result = captureRevision(thread_id, await enqueueScenarioWrite(
+      scenario_id,
+      body,
+      (queuedBody) => putJSON(
+        endpoints.updateScenario(scenario_id, thread_id),
+        queuedBody,
+        { withSid: true },
+      ),
     ));
     return captureScenarioBasis(scenario_id, result);
   },
 
   applyScenario: async (scenario_id, thread_id) => {
-    const result = captureRevision(thread_id, await _fetch(endpoints.applyScenario(scenario_id, thread_id), {
-      method: 'POST',
-      body: JSON.stringify(withScenarioBasis(scenario_id)),
-      withSid: true,
-    }));
+    const result = captureRevision(thread_id, await enqueueScenarioWrite(
+      scenario_id,
+      {},
+      (queuedBody) => _fetch(endpoints.applyScenario(scenario_id, thread_id), {
+        method: 'POST',
+        body: JSON.stringify(queuedBody),
+        withSid: true,
+      }),
+    ));
     return captureScenarioBasis(scenario_id, result);
   },
 
   adoptScenario: async (scenario_id, thread_id) => {
-    const result = captureRevision(thread_id, await _fetch(
-      endpoints.adoptScenario(scenario_id, thread_id),
-      {
+    const result = captureRevision(thread_id, await enqueueScenarioWrite(
+      scenario_id,
+      thread_id ? { thread_id } : {},
+      (queuedBody) => _fetch(endpoints.adoptScenario(scenario_id, thread_id), {
         method: 'POST',
-        body: JSON.stringify(withScenarioBasis(scenario_id, thread_id ? { thread_id } : {})),
+        body: JSON.stringify(queuedBody),
         withSid: true,
-      }
+      }),
     ));
     return captureScenarioBasis(scenario_id, result);
   },
+
+  deleteScenario: async (scenario_id, thread_id) => captureRevision(
+    thread_id,
+    await enqueueScenarioWrite(
+      scenario_id,
+      {},
+      (queuedBody) => _fetch(endpoints.updateScenario(scenario_id, thread_id), {
+        method: 'DELETE',
+        body: JSON.stringify(queuedBody),
+        withSid: true,
+      }),
+    ),
+  ),
 
   renameSnapshot: async (threadId, snapshotId, label, options = {}) =>
     patchJSON(
@@ -1359,10 +1415,15 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
     const body = scorecardId ? { project_wbs, scorecard_id: scorecardId } : { project_wbs };
     return capturePlanBasis(
       threadId,
-      captureRevision(threadId, await putJSON(
-        endpoints.threadWbs(threadId),
-        withPlanBasis(threadId, scorecardId, body),
-        { withSid: true },
+      captureRevision(threadId, await enqueuePlanWrite(
+        threadId,
+        scorecardId,
+        body,
+        (queuedBody) => putJSON(
+          endpoints.threadWbs(threadId),
+          queuedBody,
+          { withSid: true },
+        ),
       )),
       scorecardId,
     );
@@ -1372,15 +1433,22 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
   // backend shifts every task's start/due by the same delta so manual per-task
   // adjustments are preserved (the whole schedule slides). startDate is a
   // YYYY-MM-DD string. Returns { project_wbs, start_date, shifted_days }.
-  setThreadWbsStartDate: async (threadId, startDate, scorecardId = null) =>
-    capturePlanBasis(threadId, captureRevision(threadId, await postJSON(
-      endpoints.threadWbsStartDate(threadId),
-      withPlanBasis(threadId, scorecardId, {
-        start_date: startDate,
-        ...(scorecardId ? { scorecard_id: scorecardId } : {}),
-      }),
-      { withSid: true },
-    )), scorecardId),
+  setThreadWbsStartDate: async (threadId, startDate, scorecardId = null) => {
+    const body = {
+      start_date: startDate,
+      ...(scorecardId ? { scorecard_id: scorecardId } : {}),
+    };
+    return capturePlanBasis(threadId, captureRevision(threadId, await enqueuePlanWrite(
+      threadId,
+      scorecardId,
+      body,
+      (queuedBody) => postJSON(
+        endpoints.threadWbsStartDate(threadId),
+        queuedBody,
+        { withSid: true },
+      ),
+    )), scorecardId);
+  },
 
   // Per-artifact Workspace sidebar chat (durable server-side, cross-device).
   getWorkspaceChat: async (threadId, artifactId) =>
