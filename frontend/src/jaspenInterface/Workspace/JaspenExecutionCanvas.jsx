@@ -33,7 +33,7 @@ import {
   faArrowRotateRight, faArrowRotateLeft, faCalendar,
 } from '@fortawesome/free-solid-svg-icons';
 
-import { Jaspen } from './JaspenClient';
+import { Jaspen, isRevisionConflict, REVISION_CONFLICT_MESSAGE } from './JaspenClient';
 import PmSyncPanel from './PmSyncPanel';
 import ExecutionPlanExportButton from './ExecutionPlanExportButton';
 
@@ -1111,6 +1111,7 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
   const [view, setView] = useState('list');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
+  const [saveConflict, setSaveConflict] = useState(false);
   const saveTimer = useRef(null);
   const skipNextSave = useRef(true);
 
@@ -1135,10 +1136,13 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
       try {
         setSaving(true);
         setSaveError(null);
+        setSaveConflict(false);
         await Jaspen.upsertThreadWbs(threadId, wbs, scorecardId);
       } catch (e) {
         console.error('[ExecutionCanvas] save failed:', e);
-        setSaveError(String(e?.message || e || 'Save failed'));
+        const conflict = isRevisionConflict(e);
+        setSaveConflict(conflict);
+        setSaveError(conflict ? REVISION_CONFLICT_MESSAGE : String(e?.message || e || 'Save failed'));
       } finally {
         setSaving(false);
       }
@@ -1217,6 +1221,7 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
     try {
       setStartDateSaving(true);
       setSaveError(null);
+      setSaveConflict(false);
       const resp = await Jaspen.setThreadWbsStartDate(
         threadId, d, scorecardId,
       );
@@ -1233,7 +1238,9 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
       }
     } catch (e) {
       console.error('[ExecutionCanvas] start-date change failed:', e);
-      setSaveError(String(e?.message || e || 'Could not change start date'));
+      const conflict = isRevisionConflict(e);
+      setSaveConflict(conflict);
+      setSaveError(conflict ? REVISION_CONFLICT_MESSAGE : String(e?.message || e || 'Could not change start date'));
     } finally {
       setStartDateSaving(false);
     }
@@ -1554,7 +1561,9 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
               )}
               {saving && <span style={{ fontSize: 11.5, color: COLOR.mute }}>Saving…</span>}
               {!saving && saveError && (
-                <span style={{ fontSize: 11.5, color: '#dc2626' }} title={saveError}>Save failed — will retry</span>
+                <span style={{ fontSize: 11.5, color: '#dc2626' }} title={saveError}>
+                  {saveConflict ? REVISION_CONFLICT_MESSAGE : 'Save failed — will retry'}
+                </span>
               )}
               {!saving && !saveError && (
                 <span style={{ fontSize: 11.5, color: COLOR.mute, display: 'inline-flex', alignItems: 'center', gap: 4 }}>

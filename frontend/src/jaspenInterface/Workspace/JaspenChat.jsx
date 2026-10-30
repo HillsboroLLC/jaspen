@@ -137,6 +137,59 @@ const DISCOVERY_DATA_CONTEXTS = [
   { id: 'snowflake_insights', label: 'Snowflake' },
 ];
 
+export function classifyInlineWbsSaveFailure(error, failMessage) {
+  if (isRevisionConflict(error)) {
+    return {
+      message: REVISION_CONFLICT_MESSAGE,
+      retryable: false,
+      state: 'conflict',
+    };
+  }
+  return {
+    message: failMessage,
+    retryable: true,
+    state: 'error',
+  };
+}
+
+export function InlineWbsSaveStatus({ state, onRetry, onUndo }) {
+  if (state === 'saving') {
+    return (
+      <span style={{ fontSize: 12, color: EXEC_COLOR.ink, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+        <span className="jas-wbs-save-spinner" /> Saving…
+      </span>
+    );
+  }
+  if (state === 'saved') {
+    return <span style={{ fontSize: 12, color: EXEC_COLOR.greenInk, fontWeight: 600 }}>Saved ✓</span>;
+  }
+  if (state === 'conflict') {
+    return <span style={{ color: '#dc2626', fontSize: 12, fontWeight: 600 }}>{REVISION_CONFLICT_MESSAGE}</span>;
+  }
+  if (state !== 'error') return null;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+      <span style={{ color: '#dc2626', fontWeight: 600 }}>Save failed</span>
+      <button
+        type="button"
+        onClick={onRetry}
+        style={{
+          padding: '2px 9px', borderRadius: 6, border: '1px solid #dc2626',
+          background: '#fff', color: '#dc2626', fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
+        }}
+      >Retry</button>
+      <button
+        type="button"
+        onClick={onUndo}
+        style={{
+          padding: '2px 9px', borderRadius: 6, border: `1px solid ${EXEC_COLOR.line}`,
+          background: '#fff', color: EXEC_COLOR.ink, fontSize: 11.5, fontWeight: 500, cursor: 'pointer',
+        }}
+      >Undo change</button>
+    </span>
+  );
+}
+
 const isBaselineLikeLabel = (value) => {
   const normalized = String(value || '').trim().toLowerCase();
   return normalized === 'baseline' || normalized === 'original';
@@ -1795,7 +1848,7 @@ const [savedScenarios, setSavedScenarios] = useState([]);
   const [scenarioMutationVersion, setScenarioMutationVersion] = useState(0);
   const [wbsMutationVersion, setWbsMutationVersion] = useState(0);
   const [threadWbs, setThreadWbs] = useState(null);
-  // Inline execution-plan save status: 'idle' | 'saving' | 'saved' | 'error'.
+  // Inline execution-plan save status: idle | saving | saved | error | conflict.
   // Surfaced in the WBS header so optimistic edits aren't silently lost.
   const [wbsSaveState, setWbsSaveState] = useState('idle');
   const lastGoodWbsRef = useRef(null);      // last snapshot confirmed saved to server
@@ -2562,12 +2615,19 @@ const renderInlineExecutionView = () => {
         })
         .catch((e) => {
           console.error('[exec-inline] save failed:', e);
-          pendingWbsSaveRef.current = { sid, next, prev, failMessage };
-          setWbsSaveState('error');
-          showToast(failMessage, 'error', {
-            actionLabel: 'Retry',
-            onAction: attempt,
-          });
+          const failure = classifyInlineWbsSaveFailure(e, failMessage);
+          pendingWbsSaveRef.current = failure.retryable
+            ? { sid, next, prev, failMessage }
+            : null;
+          setWbsSaveState(failure.state);
+          if (failure.retryable) {
+            showToast(failure.message, 'error', {
+              actionLabel: 'Retry',
+              onAction: attempt,
+            });
+          } else {
+            showToast(failure.message, 'error');
+          }
         });
     };
     return attempt();
@@ -2770,35 +2830,11 @@ const renderInlineExecutionView = () => {
                 {phases.length} phase{phases.length === 1 ? '' : 's'} · {tasks.length} task{tasks.length === 1 ? '' : 's'}
               </span>
               {/* Inline save status — keeps optimistic WBS edits from failing silently */}
-              {wbsSaveState === 'saving' && (
-                <span style={{ fontSize: 12, color: EXEC_COLOR.ink, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  <span className="jas-wbs-save-spinner" /> Saving…
-                </span>
-              )}
-              {wbsSaveState === 'saved' && (
-                <span style={{ fontSize: 12, color: EXEC_COLOR.greenInk, fontWeight: 600 }}>Saved ✓</span>
-              )}
-              {wbsSaveState === 'error' && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                  <span style={{ color: '#dc2626', fontWeight: 600 }}>Save failed</span>
-                  <button
-                    type="button"
-                    onClick={retryWbsSave}
-                    style={{
-                      padding: '2px 9px', borderRadius: 6, border: '1px solid #dc2626',
-                      background: '#fff', color: '#dc2626', fontSize: 11.5, fontWeight: 600, cursor: 'pointer',
-                    }}
-                  >Retry</button>
-                  <button
-                    type="button"
-                    onClick={undoWbsSave}
-                    style={{
-                      padding: '2px 9px', borderRadius: 6, border: `1px solid ${EXEC_COLOR.line}`,
-                      background: '#fff', color: EXEC_COLOR.ink, fontSize: 11.5, fontWeight: 500, cursor: 'pointer',
-                    }}
-                  >Undo change</button>
-                </span>
-              )}
+              <InlineWbsSaveStatus
+                state={wbsSaveState}
+                onRetry={retryWbsSave}
+                onUndo={undoWbsSave}
+              />
             </div>
           </div>
           <ExecViewSwitcher value={inlineExecView} onChange={setInlineExecView} />

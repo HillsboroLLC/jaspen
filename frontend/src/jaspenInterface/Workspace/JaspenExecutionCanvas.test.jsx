@@ -85,6 +85,7 @@ it('serializes consecutive canvas autosaves and advances their basis', async () 
 
 it('shows the D4 message when a canvas autosave gets a real conflict', async () => {
   jest.useFakeTimers();
+  jest.spyOn(console, 'error').mockImplementation(() => {});
   const initialPlan = {
     scorecard_id: 'canvas-conflict-card',
     updated_at: 'D1',
@@ -112,6 +113,37 @@ it('shows the D4 message when a canvas autosave gets a real conflict', async () 
     await Promise.resolve();
   });
 
-  const error = await screen.findByText('Save failed — will retry');
+  const error = await screen.findByText(REVISION_CONFLICT_MESSAGE);
   expect(error).toHaveAttribute('title', REVISION_CONFLICT_MESSAGE);
+  expect(screen.queryByText('Save failed — will retry')).not.toBeInTheDocument();
+});
+
+it('shows the D4 message when a start-date change gets a real conflict', async () => {
+  jest.spyOn(console, 'error').mockImplementation(() => {});
+  const initialPlan = {
+    scorecard_id: 'start-date-conflict-card',
+    start_date: '2027-01-04',
+    updated_at: 'S1',
+    tasks: [{ id: 'task-1', title: 'Original', phase: 'Delivery', status: 'todo' }],
+  };
+  jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(200, { bindings: [] }))
+    .mockImplementationOnce(() => json(409, {
+      code: 'revision_conflict', error: REVISION_CONFLICT_MESSAGE,
+    }));
+
+  render(
+    <JaspenExecutionCanvas
+      threadId="start-date-conflict-thread"
+      scorecardId="start-date-conflict-card"
+      wbs={initialPlan}
+    />,
+  );
+  fireEvent.change(document.querySelector('input[type="date"]'), {
+    target: { value: '2027-01-11' },
+  });
+
+  const error = await screen.findByText(REVISION_CONFLICT_MESSAGE);
+  expect(error).toHaveAttribute('title', REVISION_CONFLICT_MESSAGE);
+  expect(screen.queryByText('Save failed — will retry')).not.toBeInTheDocument();
 });
