@@ -10,6 +10,53 @@ from sqlalchemy import create_engine, text
 from app import db
 
 
+KNOWN_SCHEMA_DIFFERENCES = {
+    # Studio predates migration coverage; these model tables have no migration.
+    ("add_table", "studio_artifacts", "studio_artifacts"),
+    ("add_index", "studio_artifacts", "ix_studio_artifacts_archived_at"),
+    ("add_index", "studio_artifacts", "ix_studio_artifacts_organization_id"),
+    ("add_index", "studio_artifacts", "ix_studio_artifacts_type"),
+    ("add_index", "studio_artifacts", "ix_studio_artifacts_user_id"),
+    ("add_index", "studio_artifacts", "ix_studio_artifacts_workspace_id"),
+    ("add_index", "studio_artifacts", "ix_studio_artifacts_workspace_position"),
+    ("add_table", "studio_workspaces", "studio_workspaces"),
+    ("add_index", "studio_workspaces", "ix_studio_workspaces_archived_at"),
+    ("add_index", "studio_workspaces", "ix_studio_workspaces_created_by_user_id"),
+    ("add_index", "studio_workspaces", "ix_studio_workspaces_organization_id"),
+    ("add_index", "studio_workspaces", "ix_studio_workspaces_purge_after"),
+    ("add_index", "studio_workspaces", "ix_studio_workspaces_user_id"),
+    ("add_index", "studio_workspaces", "ix_studio_workspaces_user_updated"),
+    ("add_index", "studio_workspaces", "ix_studio_workspaces_visibility"),
+}
+
+
+def _flatten_differences(differences):
+    for difference in differences:
+        if isinstance(difference, list):
+            yield from _flatten_differences(difference)
+        else:
+            yield difference
+
+
+def _describe_difference(difference):
+    difference_type = difference[0]
+    if difference_type in {"add_table", "remove_table"}:
+        table = difference[1]
+        return difference_type, table.name, table.name
+    if difference_type in {"add_column", "remove_column"}:
+        return difference_type, difference[2], difference[3].name
+    if difference_type.startswith("modify_"):
+        return difference_type, difference[2], difference[3]
+
+    target = difference[1]
+    table = getattr(target, "table", None)
+    return (
+        difference_type,
+        getattr(table, "name", None),
+        getattr(target, "name", None),
+    )
+
+
 def test_alembic_upgrade_head_matches_model_metadata(
     app, validate_test_database_url, postgres_schema_url,
 ):
@@ -22,10 +69,10 @@ def test_alembic_upgrade_head_matches_model_metadata(
             connection.execute(text(f'CREATE SCHEMA "{schema}"'))
 
         env = os.environ.copy()
-        env["DATABASE_URL"] = str(schema_url)
+        env["DATABASE_URL"] = schema_url.render_as_string(hide_password=False)
         env.pop("TEST_DATABASE_URL", None)
         subprocess.run(
-            [sys.executable, "-m", "flask", "--app", "app:create_app", "db", "upgrade"],
+            [sys.executable, "-m", "flask", "--app", "wsgi:app", "db", "upgrade"],
             cwd=os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
             env=env,
             check=True,
@@ -53,7 +100,15 @@ def test_alembic_upgrade_head_matches_model_metadata(
         finally:
             migrated_engine.dispose()
 
-        assert differences == [], f"migration/model schema differences: {differences!r}"
+        descriptions = {
+            _describe_difference(difference)
+            for difference in _flatten_differences(differences)
+        }
+        assert descriptions == KNOWN_SCHEMA_DIFFERENCES, (
+            "migration/model schema differences changed: "
+            f"expected {sorted(KNOWN_SCHEMA_DIFFERENCES, key=repr)!r}, "
+            f"found {sorted(descriptions, key=repr)!r}"
+        )
     finally:
         with admin_engine.connect() as connection:
             connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))

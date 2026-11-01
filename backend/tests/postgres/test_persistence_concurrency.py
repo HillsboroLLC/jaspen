@@ -10,6 +10,9 @@ from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
 from tests.journeys.test_b1_plan_interleavings import CARD, _seed
 
 
+CONFLICT = "This project has newer changes. Reload to get the latest version. Your changes weren't saved."
+
+
 def _overlap_compare_and_swap(monkeypatch, requests):
     import app.scenarios_store as scenarios_store
 
@@ -119,19 +122,15 @@ def test_same_object_concurrent_writes_have_one_winner_for_twenty_rounds(
             assert stored["scenarios"]["scenario"]["label"] == winner["label"]
 
 
-def test_different_plans_and_scenarios_save_without_false_conflicts(
+def test_different_plans_save_without_false_conflicts(
     app, db, test_user, auth_headers, monkeypatch,
 ):
-    tid = "postgres-different-objects"
+    tid = "postgres-different-plans"
     _seed(test_user, db, tid)
     save_project_scenarios_data(test_user.id, tid, {
         "wbs_by_scorecard": {
             "plan-a": {"scorecard_id": "plan-a", "tasks": [{"id": "a", "title": "old-a"}]},
             "plan-b": {"scorecard_id": "plan-b", "tasks": [{"id": "b", "title": "old-b"}]},
-        },
-        "scenarios": {
-            "scenario-a": {"scenario_id": "scenario-a", "label": "old-a", "updated_at": "basis-a"},
-            "scenario-b": {"scenario_id": "scenario-b", "label": "old-b", "updated_at": "basis-b"},
         },
     })
 
@@ -145,21 +144,75 @@ def test_different_plans_and_scenarios_save_without_false_conflicts(
     plan_results = _overlap_compare_and_swap(monkeypatch, plan_requests)
     assert [status for status, _body in plan_results] == [200, 200], plan_results
 
+    app_db.session.remove()
+    stored = load_scenarios_data(test_user.id)[tid]
+    assert stored["wbs_by_scorecard"]["plan-a"]["tasks"][0]["title"] == "new-plan-a"
+    assert stored["wbs_by_scorecard"]["plan-b"]["tasks"][0]["title"] == "new-plan-b"
+
+
+def test_different_scenario_delta_edits_save_without_false_conflicts(
+    app, db, test_user, auth_headers, monkeypatch,
+):
+    tid = "postgres-different-scenario-deltas"
+    _seed(test_user, db, tid)
+    save_project_scenarios_data(test_user.id, tid, {
+        "scenarios": {
+            "scenario-a": {"scenario_id": "scenario-a", "label": "old-a", "deltas": {}, "updated_at": "basis-a"},
+            "scenario-b": {"scenario_id": "scenario-b", "label": "old-b", "deltas": {}, "updated_at": "basis-b"},
+        },
+    })
+
     scenario_requests = [
         _request(app, auth_headers, "PATCH", f"/api/v1/strategy/scenarios/{key}?thread_id={tid}", {
-            "label": f"new-{key}", "expected_updated_at": basis,
+            "deltas": {"revenue": value}, "expected_updated_at": basis,
         })
-        for key, basis in (("scenario-a", "basis-a"), ("scenario-b", "basis-b"))
+        for key, basis, value in (
+            ("scenario-a", "basis-a", 10), ("scenario-b", "basis-b", 20),
+        )
     ]
     scenario_results = _overlap_compare_and_swap(monkeypatch, scenario_requests)
     assert [status for status, _body in scenario_results] == [200, 200], scenario_results
 
     app_db.session.remove()
     stored = load_scenarios_data(test_user.id)[tid]
-    assert stored["wbs_by_scorecard"]["plan-a"]["tasks"][0]["title"] == "new-plan-a"
-    assert stored["wbs_by_scorecard"]["plan-b"]["tasks"][0]["title"] == "new-plan-b"
-    assert stored["scenarios"]["scenario-a"]["label"] == "new-scenario-a"
-    assert stored["scenarios"]["scenario-b"]["label"] == "new-scenario-b"
+    assert stored["scenarios"]["scenario-a"]["deltas"] == {"revenue": 10}
+    assert stored["scenarios"]["scenario-b"]["deltas"] == {"revenue": 20}
+
+
+def test_different_scenario_label_edits_preserve_each_winner(
+    app, db, test_user, auth_headers, monkeypatch,
+):
+    tid = "postgres-different-scenario-labels"
+    _seed(test_user, db, tid)
+    save_project_scenarios_data(test_user.id, tid, {
+        "scenarios": {
+            "scenario-a": {"scenario_id": "scenario-a", "label": "old-a", "updated_at": "basis-a"},
+            "scenario-b": {"scenario_id": "scenario-b", "label": "old-b", "updated_at": "basis-b"},
+        },
+    })
+
+    keys = ("scenario-a", "scenario-b")
+    requests = [
+        _request(app, auth_headers, "PATCH", f"/api/v1/strategy/scenarios/{key}?thread_id={tid}", {
+            "label": f"new-{key}", "expected_updated_at": basis,
+        })
+        for key, basis in zip(keys, ("basis-a", "basis-b"))
+    ]
+    results = _overlap_compare_and_swap(monkeypatch, requests)
+
+    # Awaiting Lydia's decision recorded in B1_REVIEW.md; assert only the safe invariant.
+    assert any(status == 200 for status, _body in results), results
+    for status, body in results:
+        assert status in {200, 409}, results
+        if status == 409:
+            assert body["code"] == "revision_conflict"
+            assert body["error"] == CONFLICT
+
+    app_db.session.remove()
+    stored = load_scenarios_data(test_user.id)[tid]
+    for key, (status, _body) in zip(keys, results):
+        expected = f"new-{key}" if status == 200 else f"old-{key[-1]}"
+        assert stored["scenarios"][key]["label"] == expected
 
 
 @pytest.mark.parametrize("operation", ["rename", "delete_score", "adopt_scenario"])

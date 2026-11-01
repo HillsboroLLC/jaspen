@@ -154,7 +154,9 @@ def app(tmp_path_factory):
         postgres_admin_engine = create_engine(postgres_base_url, isolation_level="AUTOCOMMIT")
         with postgres_admin_engine.connect() as connection:
             connection.execute(text(f'CREATE SCHEMA "{postgres_schema}"'))
-        database_url = str(_postgres_schema_url(postgres_base_url, postgres_schema))
+        database_url = _postgres_schema_url(
+            postgres_base_url, postgres_schema,
+        ).render_as_string(hide_password=False)
     else:
         database_url = f"sqlite:///{db_file}"
 
@@ -203,7 +205,8 @@ def app(tmp_path_factory):
         _db.create_all()
         yield app
         _db.session.remove()
-        _db.drop_all()
+        if _db.engine.dialect.name != "postgresql":
+            _db.drop_all()
 
     if postgres_admin_engine is not None:
         with postgres_admin_engine.connect() as connection:
