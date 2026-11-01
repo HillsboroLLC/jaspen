@@ -27,6 +27,42 @@ KNOWN_SCHEMA_DIFFERENCES = {
     ("add_index", "studio_workspaces", "ix_studio_workspaces_user_id"),
     ("add_index", "studio_workspaces", "ix_studio_workspaces_user_updated"),
     ("add_index", "studio_workspaces", "ix_studio_workspaces_visibility"),
+
+    # Non-unique indexes present on only one side; structural, performance only.
+    ("add_index", "organization_members", "ix_organization_members_created_at"),
+    ("add_index", "organizations", "ix_organizations_created_at"),
+    ("remove_index", "user_datasets", "ix_user_datasets_created_at"),
+
+    # Renamed indexes on the same columns.
+    ("add_index", "decision_option_decisions", "ix_decision_option_decisions_decided_by_user_id"),
+    ("add_index", "decision_option_decisions", "ix_decision_option_decisions_decision_record_id"),
+    ("remove_index", "decision_option_decisions", "ix_decision_option_decisions_decided_by"),
+    ("remove_index", "decision_option_decisions", "ix_decision_option_decisions_record_id"),
+
+    # Uniqueness represented as a constraint plus plain index versus a unique index.
+    ("add_index", "leads", "ix_leads_normalized_email"),
+    ("add_index", "organizations", "ix_organizations_workos_organization_id"),
+    ("add_index", "payments", "ix_payments_external_reference"),
+    ("add_index", "user_auth_sessions", "ix_user_auth_sessions_token_jti"),
+    ("remove_constraint", "leads", "uq_leads_normalized_email"),
+    ("remove_constraint", "organizations", "uq_organizations_workos_organization_id"),
+    ("remove_constraint", "payments", "uq_payments_external_reference"),
+    ("remove_constraint", "user_auth_sessions", "user_auth_sessions_token_jti_key"),
+    ("remove_index", "leads", "ix_leads_normalized_email"),
+    ("remove_index", "organizations", "ix_organizations_workos_organization_id"),
+    ("remove_index", "payments", "ix_payments_external_reference"),
+    ("remove_index", "user_auth_sessions", "ix_user_auth_sessions_token_jti"),
+
+    # Unique constraints named differently from the model; naming or form only.
+    ("remove_constraint", "account_entitlements", "account_entitlements_external_reference_key"),
+    ("remove_constraint", "organization_invitations", "uq_organization_invitations_token"),
+    ("remove_constraint", "persistent_credit_grants", "persistent_credit_grants_external_reference_key"),
+    ("remove_constraint", "persistent_credit_transactions", "persistent_credit_transactions_idempotency_key_key"),
+    ("remove_constraint", "sso_login_states", "sso_login_states_state_hash_key"),
+    ("remove_constraint", "stripe_webhook_events", "stripe_webhook_events_stripe_event_id_key"),
+
+    # Unique index expressed differently by the model; form only.
+    ("remove_index", "org_idea_ledger", "ix_org_idea_ledger_ledger_id"),
 }
 
 

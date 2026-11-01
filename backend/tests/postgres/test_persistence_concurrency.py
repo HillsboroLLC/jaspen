@@ -125,9 +125,10 @@ def test_same_object_concurrent_writes_have_one_winner_for_twenty_rounds(
 def test_different_plans_save_without_false_conflicts(
     app, db, test_user, auth_headers, monkeypatch,
 ):
+    user_id = str(test_user.id)
     tid = "postgres-different-plans"
     _seed(test_user, db, tid)
-    save_project_scenarios_data(test_user.id, tid, {
+    save_project_scenarios_data(user_id, tid, {
         "wbs_by_scorecard": {
             "plan-a": {"scorecard_id": "plan-a", "tasks": [{"id": "a", "title": "old-a"}]},
             "plan-b": {"scorecard_id": "plan-b", "tasks": [{"id": "b", "title": "old-b"}]},
@@ -145,7 +146,7 @@ def test_different_plans_save_without_false_conflicts(
     assert [status for status, _body in plan_results] == [200, 200], plan_results
 
     app_db.session.remove()
-    stored = load_scenarios_data(test_user.id)[tid]
+    stored = load_scenarios_data(user_id)[tid]
     assert stored["wbs_by_scorecard"]["plan-a"]["tasks"][0]["title"] == "new-plan-a"
     assert stored["wbs_by_scorecard"]["plan-b"]["tasks"][0]["title"] == "new-plan-b"
 
@@ -153,9 +154,10 @@ def test_different_plans_save_without_false_conflicts(
 def test_different_scenario_delta_edits_save_without_false_conflicts(
     app, db, test_user, auth_headers, monkeypatch,
 ):
+    user_id = str(test_user.id)
     tid = "postgres-different-scenario-deltas"
     _seed(test_user, db, tid)
-    save_project_scenarios_data(test_user.id, tid, {
+    save_project_scenarios_data(user_id, tid, {
         "scenarios": {
             "scenario-a": {"scenario_id": "scenario-a", "label": "old-a", "deltas": {}, "updated_at": "basis-a"},
             "scenario-b": {"scenario_id": "scenario-b", "label": "old-b", "deltas": {}, "updated_at": "basis-b"},
@@ -174,7 +176,7 @@ def test_different_scenario_delta_edits_save_without_false_conflicts(
     assert [status for status, _body in scenario_results] == [200, 200], scenario_results
 
     app_db.session.remove()
-    stored = load_scenarios_data(test_user.id)[tid]
+    stored = load_scenarios_data(user_id)[tid]
     assert stored["scenarios"]["scenario-a"]["deltas"] == {"revenue": 10}
     assert stored["scenarios"]["scenario-b"]["deltas"] == {"revenue": 20}
 
@@ -182,9 +184,10 @@ def test_different_scenario_delta_edits_save_without_false_conflicts(
 def test_different_scenario_label_edits_preserve_each_winner(
     app, db, test_user, auth_headers, monkeypatch,
 ):
+    user_id = str(test_user.id)
     tid = "postgres-different-scenario-labels"
     _seed(test_user, db, tid)
-    save_project_scenarios_data(test_user.id, tid, {
+    save_project_scenarios_data(user_id, tid, {
         "scenarios": {
             "scenario-a": {"scenario_id": "scenario-a", "label": "old-a", "updated_at": "basis-a"},
             "scenario-b": {"scenario_id": "scenario-b", "label": "old-b", "updated_at": "basis-b"},
@@ -209,7 +212,7 @@ def test_different_scenario_label_edits_preserve_each_winner(
             assert body["error"] == CONFLICT
 
     app_db.session.remove()
-    stored = load_scenarios_data(test_user.id)[tid]
+    stored = load_scenarios_data(user_id)[tid]
     for key, (status, _body) in zip(keys, results):
         expected = f"new-{key}" if status == 200 else f"old-{key[-1]}"
         assert stored["scenarios"][key]["label"] == expected
