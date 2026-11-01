@@ -5,7 +5,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from app.models import Organization, OrganizationMember, SsoIdentity
+from app.models import Organization, OrganizationMember, SsoIdentity, SsoLoginState
 
 
 @pytest.fixture(autouse=True)
@@ -91,6 +91,19 @@ def test_sso_start_uses_active_enterprise_org_and_single_use_state(client, app, 
     replay = client.get(f'/api/v1/auth/sso/callback?code=test-code&state={state}')
     assert replay.status_code == 302
     assert 'sso_invalid_state' in replay.headers['Location']
+
+
+def test_sso_start_stores_safe_next(client, app, db, test_user):
+    org = _enterprise_org(db, test_user)
+    app.config.update(SSO_ENABLED=True, SSO_CLIENT_FACTORY=lambda: FakeSsoClient())
+
+    response = client.post('/api/v1/auth/sso/start', json={
+        'organization_id': org.id,
+        'next': '/\\evil.example',
+    })
+
+    assert response.status_code == 200
+    assert SsoLoginState.query.one().next_path == '/new'
 
 
 def test_sso_callback_links_existing_member_and_issues_scoped_session(client, app, db, test_user):

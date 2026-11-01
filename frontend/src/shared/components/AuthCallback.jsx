@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { authFetch } from "../auth/http";
+import { safeInternalPath } from "../auth/safeRedirect";
 import { useAuth } from "../auth/AuthContext";
 import {
   readPendingIntakeContext,
@@ -26,7 +27,7 @@ export default function AuthCallback() {
     const init = async () => {
       try {
         const params = new URLSearchParams(location.search);
-        const next = params.get("next") || "/new";
+        const next = safeInternalPath(params.get("next"));
 
         // Google confirmed who the user is; Jaspen's 2FA still applies. The
         // sign-in finishes in the same challenge form as password login.
