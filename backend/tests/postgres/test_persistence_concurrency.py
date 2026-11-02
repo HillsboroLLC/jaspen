@@ -203,7 +203,7 @@ def test_different_scenario_label_edits_preserve_each_winner(
     ]
     results = _overlap_compare_and_swap(monkeypatch, requests)
 
-    # Awaiting Lydia's decision recorded in B1_REVIEW.md; assert only the safe invariant.
+    # Temporary documented limitation: assert only the safe invariant.
     assert any(status == 200 for status, _body in results), results
     for status, body in results:
         assert status in {200, 409}, results

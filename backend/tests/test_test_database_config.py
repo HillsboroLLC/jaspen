@@ -1,12 +1,25 @@
 import pytest
+from sqlalchemy.engine import URL
 
 
 @pytest.mark.parametrize(
     "url",
     [
-        "postgresql+psycopg://user:password@example.com/jaspen_test",
-        "postgresql+psycopg://user:password@localhost/jaspen",
-        "sqlite:////tmp/jaspen_test.sqlite",
+        URL.create(
+            "postgresql+psycopg",
+            username="user",
+            password="placeholder",
+            host="example.com",
+            database="jaspen_test",
+        ),
+        URL.create(
+            "postgresql+psycopg",
+            username="user",
+            password="placeholder",
+            host="localhost",
+            database="jaspen",
+        ),
+        URL.create("sqlite", database="/tmp/jaspen_test.sqlite"),
     ],
 )
 def test_test_database_url_rejects_unsafe_targets(url, validate_test_database_url):
@@ -19,7 +32,13 @@ def test_test_database_url_accepts_only_named_local_test_databases(
     host, validate_test_database_url,
 ):
     parsed = validate_test_database_url(
-        f"postgresql+psycopg://user:password@{host}/jaspen_test"
+        URL.create(
+            "postgresql+psycopg",
+            username="user",
+            password="placeholder",
+            host=host,
+            database="jaspen_test",
+        )
     )
     assert parsed.host == host
     assert parsed.database == "jaspen_test"
