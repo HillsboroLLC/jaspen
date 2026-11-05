@@ -105,6 +105,10 @@ body.jaspen-sidebar-open .insights-page.drawer-open .insights-inner {
 .di-gap-list { margin: 4px 0 0; padding: 0; list-style: none; }
 .di-gap-list li { display: block; padding: 4px 0; border: 0; color: var(--di-ink); font-size: 13px; }
 .di-gap-list li span { display: inline-block; margin-right: 7px; color: var(--di-accent); font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.di-show-all { margin-top: 12px; padding: 0; border: 0; background: transparent; color: var(--di-accent); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.di-show-all:focus-visible { outline: 3px solid #F0F302; outline-offset: 2px; }
+.di-gap-toggle { justify-self: start; margin-top: 3px; }
+.di-overview .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .di-panel-empty { margin-top: 18px; padding: 18px; background: var(--di-tint); }
 .di-panel-empty p { margin-top: 0; }
 .di-panel-empty button { padding: 0; border: 0; background: transparent; color: var(--di-accent); font: inherit; font-weight: 700; cursor: pointer; }

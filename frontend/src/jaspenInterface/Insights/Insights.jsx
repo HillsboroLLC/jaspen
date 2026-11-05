@@ -46,7 +46,14 @@ function formatDate(value) {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatMonth(value) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(value || ''));
+  if (!match) return String(value || '');
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, 1);
+  return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
 
 function safeList(value) {
@@ -59,13 +66,71 @@ function projectHref(threadId) {
 
 function overviewSummary(metrics = {}) {
   const decisions = Number(metrics.decisions_made || 0);
-  const open = Number(metrics.needs_attention ?? metrics.in_progress ?? 0);
+  const open = Number(metrics.in_progress || 0);
   const lessons = Number(metrics.lessons_recorded || 0);
   if (!Number(metrics.decision_records || 0)) return 'Your decision history will take shape here as you work with Jaspen.';
   const decisionText = `${decisions} decision${decisions === 1 ? '' : 's'} made`;
   const openText = `${open} still ${open === 1 ? 'needs' : 'need'} attention`;
   const learningText = lessons ? `, with ${lessons} lesson${lessons === 1 ? '' : 's'} recorded` : '';
   return `${decisionText}; ${openText}${learningText}.`;
+}
+
+function ShowAllList({ items, renderItem, label, className }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? items : items.slice(0, 5);
+  return (
+    <>
+      <ul className={className}>{visible.map(renderItem)}</ul>
+      {items.length > 5 && (
+        <button type="button" className="di-show-all" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+          {expanded ? 'Show less' : 'Show all'}<span className="sr-only"> {label}</span>
+        </button>
+      )}
+    </>
+  );
+}
+
+function pluralCount(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function AttentionItems({ item }) {
+  const [expanded, setExpanded] = useState(false);
+  const unresolved = item.unresolved || {};
+  const gates = safeList(unresolved.gates);
+  const failedGates = gates.filter((gap) => gap.status !== 'unknown');
+  const unassessedGates = gates.filter((gap) => gap.status === 'unknown');
+  const assumptions = safeList(unresolved.assumptions);
+  const evidence = safeList(unresolved.missing_evidence);
+  const decided = ['decided', 'outcome_recorded'].includes(item.status);
+  const counts = [
+    failedGates.length ? pluralCount(failedGates.length, 'failed gate') : '',
+    unassessedGates.length ? `${unassessedGates.length} not yet assessed` : '',
+    assumptions.length ? pluralCount(assumptions.length, 'assumption') : '',
+    evidence.length ? pluralCount(evidence.length, 'evidence gap') : '',
+  ].filter(Boolean);
+  const details = [
+    ...failedGates.map((gap) => ({ ...gap, kind: decided ? 'Watch' : 'Failed gate' })),
+    ...assumptions.map((gap) => ({ ...gap, kind: 'Assumption' })),
+    ...evidence.map((gap) => ({ ...gap, kind: 'Missing evidence' })),
+  ];
+  const visible = expanded ? details : details.slice(0, 3);
+  const title = String(item.title || '').trim().toLocaleLowerCase();
+  return (
+    <>
+      <strong>{counts.length ? counts.join(' · ') : 'Decision still in progress'}</strong>
+      {visible.length > 0 && <ul className="di-gap-list">{visible.map((gap, index) => {
+        const option = String(gap.option || '').trim();
+        const showOption = option && option.toLocaleLowerCase() !== title;
+        return <li key={`${gap.kind}:${gap.label}:${index}`}><span>{gap.kind}</span>{showOption ? `${option}: ` : ''}{gap.label}</li>;
+      })}</ul>}
+      {details.length > 3 && (
+        <button type="button" className="di-show-all di-gap-toggle" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+          {expanded ? 'Show less' : 'Show all'}<span className="sr-only"> attention items for {item.title}</span>
+        </button>
+      )}
+    </>
+  );
 }
 
 export function DecisionIntelligenceOverview({ navigate }) {
@@ -133,7 +198,6 @@ export function DecisionIntelligenceOverview({ navigate }) {
           <p>Your decisions, open questions, outcomes, and lessons will appear here as they are recorded.</p>
           <div className="di-actions">
             <button type="button" className="int-btn int-btn-primary" onClick={() => navigate('/new')}>Start a decision</button>
-            <button type="button" className="int-btn int-btn-ghost" onClick={() => navigate('/new')}>Record a decision</button>
           </div>
         </div>
       )}
@@ -143,7 +207,7 @@ export function DecisionIntelligenceOverview({ navigate }) {
             <p>{overviewSummary(metrics)}</p>
             <dl>
               <div><dt>Decisions made</dt><dd>{metrics.decisions_made || 0}</dd></div>
-              <div><dt>Still open</dt><dd>{metrics.needs_attention ?? metrics.in_progress ?? 0}</dd></div>
+              <div><dt>Still open</dt><dd>{metrics.in_progress || 0}</dd></div>
               <div><dt>Plans in execution</dt><dd>{metrics.plans_in_execution || 0}</dd></div>
             </dl>
           </div>
@@ -152,28 +216,22 @@ export function DecisionIntelligenceOverview({ navigate }) {
             <section className="di-panel" aria-labelledby="di-decisions-title">
               <p className="di-kicker">Decided</p><h3 id="di-decisions-title">Choices on record</h3>
               {safeList(overview?.decisions).length ? (
-                <ul className="di-list">{safeList(overview.decisions).map((item) => (
+                <ShowAllList className="di-list" items={safeList(overview.decisions)} label="decisions" renderItem={(item) => (
                   <li key={item.id || `${item.record_id}:${item.decided_at || item.chosen_option}`}>
                     <a href={projectHref(item.thread_id)}>{item.title}</a>
                     <strong>{item.chosen_option}</strong>
                     <span>{item.decided_at ? formatDate(item.decided_at) : 'Decision date not recorded'}</span>
                   </li>
-                ))}</ul>
+                )} />
               ) : <div className="di-panel-empty"><p>No final decision is recorded yet.</p><button type="button" onClick={() => navigate('/new')}>Record a decision →</button></div>}
             </section>
 
             <section className="di-panel" aria-labelledby="di-open-title">
               <p className="di-kicker">Unresolved</p><h3 id="di-open-title">What still needs attention</h3>
               {safeList(overview?.open_items).length ? (
-                <ul className="di-list">{safeList(overview.open_items).map((item) => {
-                  const unresolved = item.unresolved || {};
-                  const gaps = [
-                    ...safeList(unresolved.gates).map((gap) => ({ ...gap, kind: `Gate · ${gap.status}` })),
-                    ...safeList(unresolved.assumptions).map((gap) => ({ ...gap, kind: 'Assumption' })),
-                    ...safeList(unresolved.missing_evidence).map((gap) => ({ ...gap, kind: 'Missing evidence' })),
-                  ];
-                  return <li key={item.record_id}><a href={projectHref(item.thread_id)}>{item.title}</a><strong>{gaps.length ? `${gaps.length} recorded gap${gaps.length === 1 ? '' : 's'}` : 'Decision still in progress'}</strong>{gaps.length > 0 && <ul className="di-gap-list">{gaps.map((gap, index) => <li key={`${gap.kind}:${gap.label}:${index}`}><span>{gap.kind}</span>{gap.option ? `${gap.option}: ` : ''}{gap.label}</li>)}</ul>}</li>;
-                })}</ul>
+                <ul className="di-list">{safeList(overview.open_items).map((item) => (
+                  <li key={item.record_id}><a href={projectHref(item.thread_id)}>{item.title}</a><AttentionItems item={item} /></li>
+                ))}</ul>
               ) : <div className="di-panel-empty"><p>Nothing is marked as open.</p><button type="button" onClick={() => navigate('/new')}>Start a decision →</button></div>}
             </section>
           </div>
@@ -181,8 +239,8 @@ export function DecisionIntelligenceOverview({ navigate }) {
           <section className="di-learning" aria-labelledby="di-learning-title">
             <div><p className="di-kicker">Organizational memory</p><h3 id="di-learning-title">What you’ve learned</h3></div>
             <div className="di-learning-columns">
-              <div><h4>Lessons</h4>{safeList(overview?.learning?.lessons).length ? <ul>{safeList(overview.learning.lessons).map((item, index) => <li key={`${item.record_id}:lesson:${index}`}><a href={projectHref(item.thread_id)}>{item.title}</a><span>{item.text}</span></li>)}</ul> : <p>No lessons recorded yet. Revisit a decision after results are known.</p>}</div>
-              <div><h4>Outcomes</h4>{safeList(overview?.learning?.outcomes).length ? <ul>{safeList(overview.learning.outcomes).map((item, index) => <li key={`${item.record_id}:outcome:${index}`}><a href={projectHref(item.thread_id)}>{item.title}</a><span>{item.text}</span></li>)}</ul> : <p>No outcomes recorded yet. Add an outcome when the real-world result is clear.</p>}</div>
+              <div><h4>Lessons</h4>{safeList(overview?.learning?.lessons).length ? <ShowAllList items={safeList(overview.learning.lessons)} label="lessons" renderItem={(item, index) => <li key={`${item.record_id}:lesson:${index}`}><a href={projectHref(item.thread_id)}>{item.title}</a><span>{item.text}</span></li>} /> : <p>No lessons recorded yet. Revisit a decision after results are known.</p>}</div>
+              <div><h4>Outcomes</h4>{safeList(overview?.learning?.outcomes).length ? <ShowAllList items={safeList(overview.learning.outcomes)} label="outcomes" renderItem={(item, index) => <li key={`${item.record_id}:outcome:${index}`}><a href={projectHref(item.thread_id)}>{item.title}</a><span>{item.text}</span></li>} /> : <p>No outcomes recorded yet. Add an outcome when the real-world result is clear.</p>}</div>
             </div>
           </section>
 
@@ -190,11 +248,11 @@ export function DecisionIntelligenceOverview({ navigate }) {
             <div><p className="di-kicker">Progress</p><h3 id="di-progress-title">Decision activity over time</h3></div>
             {months.length ? <div className="di-chart" role="group" aria-label="Decision records created and decisions made by month, starting at zero">
               <div className="di-chart-scale"><span>0</span><span>{chartMax}</span></div>
-              {months.map((item) => <div className="di-chart-row" key={item.month}><span>{item.month}</span><div><i className="is-record" style={{ width: `${(Number(item.records_created || 0) / chartMax) * 100}%` }} /><b>{item.records_created || 0} records</b></div><div><i className="is-decision" style={{ width: `${(Number(item.decisions_made || 0) / chartMax) * 100}%` }} /><b>{item.decisions_made || 0} decisions</b></div></div>)}
+              {months.map((item) => <div className="di-chart-row" key={item.month}><span>{formatMonth(item.month)}</span><div><i className="is-record" style={{ width: `${(Number(item.records_created || 0) / chartMax) * 100}%` }} /><b>{item.records_created || 0} records</b></div><div><i className="is-decision" style={{ width: `${(Number(item.decisions_made || 0) / chartMax) * 100}%` }} /><b>{item.decisions_made || 0} decisions</b></div></div>)}
             </div> : <p className="di-muted">Progress appears once a decision record has a stored date.</p>}
             <div className="di-plan-block">
               <h4>Plans in execution</h4>
-              {safeList(overview?.progress?.plans_in_execution).length ? <ul>{safeList(overview.progress.plans_in_execution).map((plan) => <li key={plan.record_id}><a href={projectHref(plan.thread_id)}>{plan.title}</a><span>{plan.tasks_total ? `${plan.tasks_completed} of ${plan.tasks_total} tasks completed` : 'Plan recorded; task progress is not available'}</span></li>)}</ul> : <p className="di-muted">No execution plans are currently in progress.</p>}
+              {safeList(overview?.progress?.plans_in_execution).length ? <ShowAllList items={safeList(overview.progress.plans_in_execution)} label="plans" renderItem={(plan) => <li key={plan.record_id}><a href={projectHref(plan.thread_id)}>{plan.title}</a><span>{plan.tasks_total ? `${plan.tasks_completed} of ${plan.tasks_total} tasks completed` : 'Plan recorded; task progress is not available'}</span></li>} /> : <p className="di-muted">No execution plans are currently in progress.</p>}
             </div>
           </section>
 

@@ -62,6 +62,13 @@ def test_admin_can_switch_organization_and_mine_without_bypassing_record_visibil
     shared = _record(db, org, member, "member-shared", visibility="team")
     _record(db, org, member, "member-private", visibility="private")
     own.record = {**own.record, "execution_plan": {"tasks": [{"id": "t1", "status": "in_progress"}]}}
+    shared.record = {
+        **shared.record,
+        "scorecards": [{
+            **shared.record["scorecards"][0],
+            "gates": [{"key": "approval", "label": "Approval", "status": "fail"}],
+        }],
+    }
     shared.outcomes = [{"summary": "Adoption reached the recorded target.", "recorded_at": "2026-11-03T10:00:00"}]
     shared.lessons_learned = [{"lesson": "Confirm ownership before rollout.", "recorded_at": "2026-11-04T10:00:00"}]
     for record, name in ((own, "Owner choice"), (shared, "Member choice")):
@@ -80,6 +87,9 @@ def test_admin_can_switch_organization_and_mine_without_bypassing_record_visibil
     assert {item["chosen_option"] for item in org_payload["decisions"]} == {"Owner choice", "Member choice"}
     assert {item["name"] for item in org_payload["activity_by_member"]} == {"Owner", "Member"}
     assert org_payload["open_items"][0]["unresolved"]["gates"][0]["label"] == "Approval"
+    assert org_payload["open_items"][0]["unresolved"]["assumptions"] == []
+    assert org_payload["metrics"]["in_progress"] == 0
+    assert org_payload["metrics"]["needs_attention"] == 0
     assert org_payload["learning"]["outcomes"][0]["text"] == "Adoption reached the recorded target."
     assert org_payload["learning"]["lessons"][0]["text"] == "Confirm ownership before rollout."
     assert org_payload["progress"]["plans_in_execution"][0]["tasks_total"] == 1
@@ -117,6 +127,7 @@ def test_scored_record_is_not_a_decision_and_results_are_not_truncated(client, d
     for index in range(1201):
         _record(db, org, owner, f"scored-{index}", score=70 + (index % 10))
     decided = _record(db, org, owner, "decided", status="decided")
+    _record(db, org, owner, "archived", status="archived")
     db.session.add(OptionDecision(
         decision_record_id=decided.id, option_key="chosen", option_name="Chosen option",
         final_decision="Proceed", decided_by_user_id=owner.id,
@@ -125,11 +136,56 @@ def test_scored_record_is_not_a_decision_and_results_are_not_truncated(client, d
     db.session.commit()
 
     payload = client.get("/api/v1/insights/overview?scope=mine", headers=_headers(app, owner)).get_json()
-    assert payload["metrics"]["decision_records"] == 1202
+    assert payload["metrics"]["decision_records"] == 1203
     assert payload["metrics"]["decisions_made"] == 1
     assert payload["metrics"]["in_progress"] == 1201
-    assert len(payload["open_items"]) == 1202  # decided record retains its stored unresolved gaps
+    assert payload["metrics"]["needs_attention"] == 1201
+    assert len(payload["open_items"]) == 1201
     assert payload["limits"] == {"records_capped": False, "items_capped": False}
+
+
+def test_superseded_record_is_counted_once(client, db, app):
+    owner = _user(db, "superseded@example.com", "Supersession Owner")
+    org = _organization(db, owner)
+    prior = _record(db, org, owner, "prior", status="decided")
+    successor = _record(db, org, owner, "successor", status="decided")
+    successor.supersedes_id = prior.id
+    for record, option_name in ((prior, "Old choice"), (successor, "Current choice")):
+        db.session.add(OptionDecision(
+            decision_record_id=record.id, option_key="choice", option_name=option_name,
+            final_decision=f"Proceed with {option_name}", decided_by_user_id=owner.id,
+            decided_at=datetime(2026, 11, 2),
+        ))
+    db.session.commit()
+
+    payload = client.get("/api/v1/insights/overview?scope=mine", headers=_headers(app, owner)).get_json()
+    assert payload["metrics"]["decision_records"] == 1
+    assert payload["metrics"]["decisions_made"] == 1
+    assert [item["chosen_option"] for item in payload["decisions"]] == ["Current choice"]
+
+
+def test_attention_deduplicates_assumption_and_missing_evidence_for_same_criterion(client, db, app):
+    owner = _user(db, "dedup@example.com", "Dedup Owner")
+    org = _organization(db, owner)
+    record = _record(db, org, owner, "dedup")
+    record.record = {
+        **record.record,
+        "scorecards": [{
+            "name": "Option A",
+            "gates": [],
+            "assumptions": [{"criterion_key": "cost", "assumption": "Cost remains in budget"}],
+            "evidence_profile": {"criteria": [
+                {"key": "cost", "label": "Cost evidence", "confidence": "assumed", "evidenced": False},
+                {"key": "timing", "label": "Timing evidence", "confidence": "assumed", "evidenced": False},
+            ]},
+        }],
+    }
+    db.session.commit()
+
+    payload = client.get("/api/v1/insights/overview?scope=mine", headers=_headers(app, owner)).get_json()
+    unresolved = payload["open_items"][0]["unresolved"]
+    assert [item["label"] for item in unresolved["assumptions"]] == ["Cost remains in budget"]
+    assert [item["label"] for item in unresolved["missing_evidence"]] == ["Timing evidence"]
 
 
 def test_individual_account_gets_an_org_and_empty_overview(client, db, app, test_user, auth_headers):

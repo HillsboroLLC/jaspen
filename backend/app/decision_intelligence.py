@@ -3,7 +3,7 @@
 from collections import defaultdict
 from datetime import datetime
 
-from app.decision_records import can_read_record
+from app.decision_records import can_read_record, successor_of
 from app.models import OrganizationMember, User
 from app.models_decision_record import DecisionRecord, OptionDecision
 
@@ -36,8 +36,19 @@ def _scorecards(record):
     return cards if isinstance(cards, list) else []
 
 
+def _item_identities(value, label):
+    identities = {" ".join(str(label or "").split()).casefold()}
+    if isinstance(value, dict):
+        for key in ("criterion_key", "criterion", "key"):
+            identity = " ".join(str(value.get(key) or "").split()).casefold()
+            if identity:
+                identities.add(identity)
+    return identities - {""}
+
+
 def _unresolved_items(record):
     gates, assumptions, evidence = [], [], []
+    assumption_identities = defaultdict(set)
     for card in _scorecards(record):
         if not isinstance(card, dict):
             continue
@@ -58,6 +69,7 @@ def _unresolved_items(record):
             label = _text(assumption, "assumption", "text", "label", "description")
             if label:
                 assumptions.append({"option": option, "label": label, "status": status})
+                assumption_identities[option.casefold()].update(_item_identities(assumption, label))
         profile = card.get("evidence_profile") if isinstance(card.get("evidence_profile"), dict) else {}
         for criterion in profile.get("criteria") if isinstance(profile.get("criteria"), list) else []:
             if not isinstance(criterion, dict):
@@ -67,7 +79,7 @@ def _unresolved_items(record):
             if evidenced is not False and confidence != "assumed":
                 continue
             label = _text(criterion, "label", "name", "criterion", "key")
-            if label:
+            if label and _item_identities(criterion, label).isdisjoint(assumption_identities[option.casefold()]):
                 evidence.append({"option": option, "label": label, "confidence": confidence or "missing"})
     return {"gates": gates, "assumptions": assumptions, "missing_evidence": evidence}
 
@@ -117,6 +129,7 @@ def build_decision_overview(user, scope_context):
         record for record in records
         if (scope_context["scope"] == "organization" or str(record.user_id or "") == str(user.id))
         and can_read_record(record, user, membership=membership)
+        and successor_of(record) is None
     ]
 
     record_ids = [str(record.id) for record in visible]
@@ -169,13 +182,21 @@ def build_decision_overview(user, scope_context):
             if record.decided_at:
                 monthly[record.decided_at.strftime("%Y-%m")]["decisions_made"] += 1
 
+        status = str(record.status or "")
         unresolved = _unresolved_items(record)
-        if str(record.status or "") in OPEN_RECORD_STATUSES or any(unresolved.values()):
+        if status in DECIDED_RECORD_STATUSES:
+            unresolved = {
+                "gates": [gate for gate in unresolved["gates"] if gate["status"] != "unknown"],
+                "assumptions": [],
+                "missing_evidence": [],
+            }
+        if status in OPEN_RECORD_STATUSES or (status in DECIDED_RECORD_STATUSES and unresolved["gates"]):
             open_items.append({
                 "record_id": str(record.id), "thread_id": str(record.thread_id),
                 "title": record.title, "status": record.status, "unresolved": unresolved,
                 "updated_at": _iso(record.updated_at), "owner_name": owner_name,
             })
+        if status in OPEN_RECORD_STATUSES:
             member_counts[owner_id]["open"] += 1
 
         for entry in record.outcomes if isinstance(record.outcomes, list) else []:
@@ -198,11 +219,15 @@ def build_decision_overview(user, scope_context):
 
         progress = _plan_progress(record)
         if progress and (progress["tasks_total"] == 0 or progress["tasks_completed"] < progress["tasks_total"]):
-            plans.append({"record_id": str(record.id), "thread_id": str(record.thread_id), "title": record.title, **progress})
+            plans.append({
+                "record_id": str(record.id), "thread_id": str(record.thread_id),
+                "title": record.title, "updated_at": _iso(record.updated_at), **progress,
+            })
 
     decisions.sort(key=lambda item: item.get("decided_at") or "", reverse=True)
     lessons.sort(key=lambda item: item.get("recorded_at") or "", reverse=True)
     outcomes.sort(key=lambda item: item.get("recorded_at") or "", reverse=True)
+    plans.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
     trend = [{"month": month, **monthly[month]} for month in sorted(monthly)]
 
     active_members = OrganizationMember.query.filter_by(organization_id=organization.id, status="active").all()
@@ -223,7 +248,8 @@ def build_decision_overview(user, scope_context):
         "metrics": {
             "decision_records": len(visible), "decisions_made": len(decisions),
             "in_progress": sum(1 for record in visible if str(record.status or "") in OPEN_RECORD_STATUSES),
-            "needs_attention": len(open_items), "lessons_recorded": len(lessons),
+            "needs_attention": sum(1 for record in visible if str(record.status or "") in OPEN_RECORD_STATUSES),
+            "lessons_recorded": len(lessons),
             "outcomes_recorded": len(outcomes), "plans_in_execution": len(plans),
         },
         "decisions": decisions, "open_items": open_items,
