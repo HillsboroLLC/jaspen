@@ -23,8 +23,8 @@
   }
 }
 
-.favorite-ai-provider-icon::after,
-.favorite-ai-collapsed-icon::after {
+.gd-nav-icon.favorite-ai-provider-icon::after,
+.gd-nav-icon.favorite-ai-collapsed-icon::after {
   position: absolute;
   z-index: 10;
   top: calc(100% + 7px);
@@ -39,6 +39,7 @@
   font-size: 0.7rem;
   font-weight: 500;
   line-height: 1.25;
+  white-space: nowrap;
   opacity: 0;
   pointer-events: none;
   transform: translateY(-2px);
