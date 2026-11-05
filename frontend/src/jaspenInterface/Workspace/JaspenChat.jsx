@@ -4328,9 +4328,7 @@ useEffect(() => {
   const canEditExecutionDependencies = canEditExecutionStructure;
   const showRealTeam = !isPlatformAdmin && effectiveCanManageOrg && PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
   const showLockedTeam = !showRealTeam && previewPlanCategory === 'individual' && (!isPlatformAdmin || customerPreviewActive);
-  // Dashboard / Projects / Scores / Insights / Reports / Activity render as
-  // disabled "Coming soon" menu items for launch (same for every plan), so the
-  // per-plan show/lock vars for those items were removed.
+  // The remaining launch placeholders render the same for every plan.
   const showRealConnectors = true;
   const showLockedConnectors = false;
   const canExportWbsCsv = (isPlatformAdmin && !customerPreviewActive) || PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
@@ -5605,10 +5603,9 @@ useEffect(() => {
             <span className="jas-ud-item-label">Scores</span>
             <span className="jas-ud-item-badge is-soon">Coming soon</span>
           </button>
-          <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
+          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/insights'); }}>
             <FontAwesomeIcon icon={faChartLine} />
             <span className="jas-ud-item-label">Insights</span>
-            <span className="jas-ud-item-badge is-soon">Coming soon</span>
           </button>
           <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
             <FontAwesomeIcon icon={faDownload} />

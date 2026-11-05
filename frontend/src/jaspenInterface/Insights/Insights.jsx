@@ -53,6 +53,160 @@ function safeList(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function projectHref(threadId) {
+  return `/new?session_id=${encodeURIComponent(String(threadId || ''))}`;
+}
+
+function overviewSummary(metrics = {}) {
+  const decisions = Number(metrics.decisions_made || 0);
+  const open = Number(metrics.needs_attention ?? metrics.in_progress ?? 0);
+  const lessons = Number(metrics.lessons_recorded || 0);
+  if (!Number(metrics.decision_records || 0)) return 'Your decision history will take shape here as you work with Jaspen.';
+  const decisionText = `${decisions} decision${decisions === 1 ? '' : 's'} made`;
+  const openText = `${open} still ${open === 1 ? 'needs' : 'need'} attention`;
+  const learningText = lessons ? `, with ${lessons} lesson${lessons === 1 ? '' : 's'} recorded` : '';
+  return `${decisionText}; ${openText}${learningText}.`;
+}
+
+export function DecisionIntelligenceOverview({ navigate }) {
+  const [scope, setScope] = useState('organization');
+  const [overview, setOverview] = useState(null);
+  const [overviewLoading, setOverviewLoading] = useState(true);
+  const [overviewError, setOverviewError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setOverviewLoading(true);
+      setOverviewError('');
+      try {
+        const response = await fetch(`${API_BASE}/api/v1/insights/overview?scope=${encodeURIComponent(scope)}`, {
+          method: 'GET', headers: buildAuthHeaders({}, 'GET'), credentials: 'include',
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload?.error || 'Unable to load decision insights.');
+        if (active) {
+          setOverview(payload);
+          if (payload?.can_manage && payload?.scope && payload.scope !== scope) setScope(payload.scope);
+        }
+      } catch (err) {
+        if (active) setOverviewError(err?.message || 'Unable to load decision insights.');
+      } finally {
+        if (active) setOverviewLoading(false);
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, [scope, reloadKey]);
+
+  const metrics = overview?.metrics || {};
+  const months = safeList(overview?.progress?.monthly);
+  const chartMax = Math.max(1, ...months.flatMap((item) => [Number(item.records_created || 0), Number(item.decisions_made || 0)]));
+  const hasRecords = Number(metrics.decision_records || 0) > 0;
+
+  return (
+    <section className="di-overview" aria-labelledby="di-overview-title">
+      <div className="di-masthead">
+        <div>
+          <p className="di-kicker">{overview?.calculation_label || 'Calculated insights'}</p>
+          <h2 id="di-overview-title">Your decisions, in view</h2>
+        </div>
+        {overview?.can_manage && (
+          <div className="di-scope-switch" role="group" aria-label="Decision insight scope">
+            <button type="button" className={scope === 'organization' ? 'is-active' : ''} aria-pressed={scope === 'organization'} onClick={() => setScope('organization')}>Organization</button>
+            <button type="button" className={scope === 'mine' ? 'is-active' : ''} aria-pressed={scope === 'mine'} onClick={() => setScope('mine')}>My activity</button>
+          </div>
+        )}
+      </div>
+
+      {overviewLoading && <div className="di-state" role="status">Calculating your decision overview…</div>}
+      {!overviewLoading && overviewError && (
+        <div className="di-state di-state-error" role="alert">
+          <p>{overviewError}</p>
+          <button type="button" className="int-btn int-btn-ghost" onClick={() => setReloadKey((value) => value + 1)}>Try again</button>
+        </div>
+      )}
+      {!overviewLoading && !overviewError && !hasRecords && (
+        <div className="di-empty">
+          <h3>No decision records yet</h3>
+          <p>Your decisions, open questions, outcomes, and lessons will appear here as they are recorded.</p>
+          <div className="di-actions">
+            <button type="button" className="int-btn int-btn-primary" onClick={() => navigate('/new')}>Start a decision</button>
+            <button type="button" className="int-btn int-btn-ghost" onClick={() => navigate('/new')}>Record a decision</button>
+          </div>
+        </div>
+      )}
+      {!overviewLoading && !overviewError && hasRecords && (
+        <>
+          <div className="di-summary">
+            <p>{overviewSummary(metrics)}</p>
+            <dl>
+              <div><dt>Decisions made</dt><dd>{metrics.decisions_made || 0}</dd></div>
+              <div><dt>Still open</dt><dd>{metrics.needs_attention ?? metrics.in_progress ?? 0}</dd></div>
+              <div><dt>Plans in execution</dt><dd>{metrics.plans_in_execution || 0}</dd></div>
+            </dl>
+          </div>
+
+          <div className="di-columns">
+            <section className="di-panel" aria-labelledby="di-decisions-title">
+              <p className="di-kicker">Decided</p><h3 id="di-decisions-title">Choices on record</h3>
+              {safeList(overview?.decisions).length ? (
+                <ul className="di-list">{safeList(overview.decisions).map((item) => (
+                  <li key={item.id || `${item.record_id}:${item.decided_at || item.chosen_option}`}>
+                    <a href={projectHref(item.thread_id)}>{item.title}</a>
+                    <strong>{item.chosen_option}</strong>
+                    <span>{item.decided_at ? formatDate(item.decided_at) : 'Decision date not recorded'}</span>
+                  </li>
+                ))}</ul>
+              ) : <div className="di-panel-empty"><p>No final decision is recorded yet.</p><button type="button" onClick={() => navigate('/new')}>Record a decision →</button></div>}
+            </section>
+
+            <section className="di-panel" aria-labelledby="di-open-title">
+              <p className="di-kicker">Unresolved</p><h3 id="di-open-title">What still needs attention</h3>
+              {safeList(overview?.open_items).length ? (
+                <ul className="di-list">{safeList(overview.open_items).map((item) => {
+                  const unresolved = item.unresolved || {};
+                  const gaps = [
+                    ...safeList(unresolved.gates).map((gap) => ({ ...gap, kind: `Gate · ${gap.status}` })),
+                    ...safeList(unresolved.assumptions).map((gap) => ({ ...gap, kind: 'Assumption' })),
+                    ...safeList(unresolved.missing_evidence).map((gap) => ({ ...gap, kind: 'Missing evidence' })),
+                  ];
+                  return <li key={item.record_id}><a href={projectHref(item.thread_id)}>{item.title}</a><strong>{gaps.length ? `${gaps.length} recorded gap${gaps.length === 1 ? '' : 's'}` : 'Decision still in progress'}</strong>{gaps.length > 0 && <ul className="di-gap-list">{gaps.map((gap, index) => <li key={`${gap.kind}:${gap.label}:${index}`}><span>{gap.kind}</span>{gap.option ? `${gap.option}: ` : ''}{gap.label}</li>)}</ul>}</li>;
+                })}</ul>
+              ) : <div className="di-panel-empty"><p>Nothing is marked as open.</p><button type="button" onClick={() => navigate('/new')}>Start a decision →</button></div>}
+            </section>
+          </div>
+
+          <section className="di-learning" aria-labelledby="di-learning-title">
+            <div><p className="di-kicker">Organizational memory</p><h3 id="di-learning-title">What you’ve learned</h3></div>
+            <div className="di-learning-columns">
+              <div><h4>Lessons</h4>{safeList(overview?.learning?.lessons).length ? <ul>{safeList(overview.learning.lessons).map((item, index) => <li key={`${item.record_id}:lesson:${index}`}><a href={projectHref(item.thread_id)}>{item.title}</a><span>{item.text}</span></li>)}</ul> : <p>No lessons recorded yet. Revisit a decision after results are known.</p>}</div>
+              <div><h4>Outcomes</h4>{safeList(overview?.learning?.outcomes).length ? <ul>{safeList(overview.learning.outcomes).map((item, index) => <li key={`${item.record_id}:outcome:${index}`}><a href={projectHref(item.thread_id)}>{item.title}</a><span>{item.text}</span></li>)}</ul> : <p>No outcomes recorded yet. Add an outcome when the real-world result is clear.</p>}</div>
+            </div>
+          </section>
+
+          <section className="di-progress" aria-labelledby="di-progress-title">
+            <div><p className="di-kicker">Progress</p><h3 id="di-progress-title">Decision activity over time</h3></div>
+            {months.length ? <div className="di-chart" role="group" aria-label="Decision records created and decisions made by month, starting at zero">
+              <div className="di-chart-scale"><span>0</span><span>{chartMax}</span></div>
+              {months.map((item) => <div className="di-chart-row" key={item.month}><span>{item.month}</span><div><i className="is-record" style={{ width: `${(Number(item.records_created || 0) / chartMax) * 100}%` }} /><b>{item.records_created || 0} records</b></div><div><i className="is-decision" style={{ width: `${(Number(item.decisions_made || 0) / chartMax) * 100}%` }} /><b>{item.decisions_made || 0} decisions</b></div></div>)}
+            </div> : <p className="di-muted">Progress appears once a decision record has a stored date.</p>}
+            <div className="di-plan-block">
+              <h4>Plans in execution</h4>
+              {safeList(overview?.progress?.plans_in_execution).length ? <ul>{safeList(overview.progress.plans_in_execution).map((plan) => <li key={plan.record_id}><a href={projectHref(plan.thread_id)}>{plan.title}</a><span>{plan.tasks_total ? `${plan.tasks_completed} of ${plan.tasks_total} tasks completed` : 'Plan recorded; task progress is not available'}</span></li>)}</ul> : <p className="di-muted">No execution plans are currently in progress.</p>}
+            </div>
+          </section>
+
+          {scope === 'organization' && overview?.can_manage && safeList(overview?.activity_by_member).length > 0 && (
+            <section className="di-members" aria-labelledby="di-members-title"><p className="di-kicker">Organization</p><h3 id="di-members-title">Activity by member</h3><div className="di-member-grid">{overview.activity_by_member.map((member) => <div key={member.user_id}><strong>{member.name}</strong><span>{member.decisions} decisions · {member.open} open · {member.records} records</span></div>)}</div></section>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function normalizeChartPayload(chart = {}) {
   const labels = safeList(chart?.data?.labels).map((item) => String(item ?? ''));
   const values = safeList(chart?.data?.values).map((value) => {
@@ -553,9 +707,17 @@ export default function Insights() {
         <div>
           <p className="int-eyebrow">Insights</p>
           <h1>Insights</h1>
-          <p>Upload company datasets, run AI analysis, and review trends, anomalies, opportunities, and risks.</p>
+          <p>See what you’ve decided, what remains open, what you’ve learned, and how the work is progressing.</p>
         </div>
       </header>
+
+      <DecisionIntelligenceOverview navigate={navigate} />
+
+      <div className="insights-data-heading">
+        <p className="di-kicker">Data analysis</p>
+        <h2>Analyze your data</h2>
+        <p>Upload company datasets, run AI analysis, and review trends, anomalies, opportunities, and risks.</p>
+      </div>
 
       {isEnterprise && connectors.length > 0 && (
         <section className="insights-section insights-ideas-section">

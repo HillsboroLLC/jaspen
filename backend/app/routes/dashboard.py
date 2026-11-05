@@ -1,12 +1,12 @@
 from datetime import datetime
 
-from flask import Blueprint, current_app, jsonify
+from flask import Blueprint, jsonify
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from sqlalchemy import desc
 
-from app.admin_policy import is_global_admin
 from app.models import OrganizationMember, User, UserSession
-from app.orgs import can_manage_org, normalize_org_role, resolve_active_org_for_user
+from app.organization_scope import resolve_customer_scope
+from app.orgs import normalize_org_role
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -245,17 +245,20 @@ def get_dashboard_data():
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    org, membership = resolve_active_org_for_user(user)
-    if not org or not membership:
+    scope_context = resolve_customer_scope(user, "organization")
+    if not scope_context:
         return jsonify({"error": "No active organization"}), 404
 
+    org = scope_context["organization"]
+    membership = scope_context["membership"]
+
     plan_key = str(org.plan_key or "").strip().lower()
-    global_admin = is_global_admin(user, app_config=current_app.config)
+    global_admin = scope_context["is_global_admin"]
     if plan_key not in ALLOWED_PLANS and not global_admin:
         return jsonify({"error": "Dashboard is available on Team and Business plans."}), 403
 
-    membership_role = normalize_org_role(membership.role)
-    manager_scope = global_admin or can_manage_org(membership_role)
+    membership_role = scope_context["role"]
+    manager_scope = scope_context["can_manage"]
 
     members = (
         OrganizationMember.query

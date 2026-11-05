@@ -15,11 +15,26 @@ from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_ope
 
 from app import db
 from app.models import User, UserDataset
+from app.decision_intelligence import build_decision_overview
+from app.organization_scope import resolve_customer_scope
 
 insights_bp = Blueprint('insights', __name__)
 
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 _ALLOWED_EXTENSIONS = {'.csv', '.xlsx', '.xls'}
+
+
+@insights_bp.route('/overview', methods=['GET'])
+@jwt_required()
+def decision_overview():
+    user_id = str(get_jwt_identity() or '').strip()
+    user = db.session.get(User, user_id) if user_id else None
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+    scope_context = resolve_customer_scope(user, request.args.get('scope'))
+    if not scope_context:
+        return jsonify({'error': 'No active organization'}), 404
+    return jsonify(build_decision_overview(user, scope_context)), 200
 
 
 def _pagination_params():
