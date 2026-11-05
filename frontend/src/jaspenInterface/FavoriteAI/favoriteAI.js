@@ -7,7 +7,7 @@ export const PROVIDERS = {
     id: 'chatgpt',
     name: 'ChatGPT',
     url: 'https://chatgpt.com/',
-    color: '#412991',
+    color: 'currentColor',
   },
   claude: {
     id: 'claude',
@@ -65,4 +65,12 @@ export function buildCopiedPrompt(summary, includeProjectSummary) {
 export function labelReturnedThinking(providerId, text) {
   const provider = PROVIDERS[providerId] || PROVIDERS.chatgpt;
   return `Ideas from my ${provider.name} brainstorm:\n\n${String(text || '').trim()}`;
+}
+
+export function appendComposerDraft(currentDraft, addition) {
+  const current = String(currentDraft || '');
+  const next = String(addition || '').trim();
+  if (!current.trim()) return next;
+  if (!next) return current;
+  return `${current.trimEnd()}\n\n${next}`;
 }

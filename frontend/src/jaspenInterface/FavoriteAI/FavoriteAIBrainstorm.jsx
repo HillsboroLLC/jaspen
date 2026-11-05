@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import * as S from '../GuidedDecision/guidedDecisionStyles';
 import ProviderLogo from './ProviderLogo';
 import {
@@ -63,7 +64,12 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
       if (event.key === 'Escape') setOpen(false);
     };
     document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [open]);
 
   useEffect(() => {
@@ -135,10 +141,9 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
           <button
             key={id}
             type="button"
-            className="gd-nav-icon favorite-ai-provider-icon"
-            style={{ color: PROVIDERS[id].color }}
+            className={`gd-nav-icon favorite-ai-provider-icon favorite-ai-provider-icon--${id}`}
+            style={id === 'chatgpt' ? undefined : { color: PROVIDERS[id].color }}
             onClick={() => showDialog(id)}
-            title={TOOLTIP}
             data-tooltip={TOOLTIP}
             aria-label={`Brainstorm with ${PROVIDERS[id].name}`}
           >
@@ -148,10 +153,9 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
       </div>
       <button
         type="button"
-        className="gd-nav-icon favorite-ai-collapsed-icon"
-        style={{ color: provider.color }}
+        className={`gd-nav-icon favorite-ai-collapsed-icon favorite-ai-provider-icon--${providerId}`}
+        style={providerId === 'chatgpt' ? undefined : { color: provider.color }}
         onClick={() => showDialog(providerId)}
-        title={TOOLTIP}
         data-tooltip={TOOLTIP}
         aria-label={TOOLTIP}
       >
@@ -178,10 +182,16 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
         </div>
       )}
 
-      {open && (
-        <div style={S.overlay} role="dialog" aria-modal="true" aria-label="Brainstorm with your favorite AI tool">
+      {open && createPortal(
+        <div
+          className="favorite-ai-overlay"
+          style={{ ...S.overlay, zIndex: 7000 }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Brainstorm with your favorite AI tool"
+        >
           <div style={S.backdrop} onClick={() => setOpen(false)} />
-          <div style={{ ...S.wizardCard, maxWidth: '680px', overflow: 'auto' }} className="favorite-ai-modal">
+          <div style={{ ...S.wizardCard, maxWidth: '680px' }} className="gd-modal-card favorite-ai-modal">
             <button
               type="button"
               style={S.closeBtn}
@@ -203,7 +213,12 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
                     onClick={() => chooseProvider(id)}
                     aria-pressed={id === providerId}
                   >
-                    <span style={{ color: PROVIDERS[id].color }}><ProviderLogo provider={id} size={16} /></span>
+                    <span
+                      className={`favorite-ai-provider-logo favorite-ai-provider-logo--${id}`}
+                      style={id === 'chatgpt' ? undefined : { color: PROVIDERS[id].color }}
+                    >
+                      <ProviderLogo provider={id} size={16} />
+                    </span>
                     {PROVIDERS[id].name}
                   </button>
                 ))}
@@ -263,26 +278,27 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
               )}
             </div>
 
-            <div className="favorite-ai-footer">
+            <div className="favorite-ai-footer gd-wizard-footer">
               <button
                 type="button"
-                className="favorite-ai-step-link"
+                className="favorite-ai-step-link gd-back-link"
                 onClick={() => setStep(step === 'start' ? 'return' : 'start')}
               >
                 {step === 'start' ? 'Bring your thinking back' : 'Back to starting prompt'}
               </button>
               {step === 'start' ? (
-                <button type="button" className="favorite-ai-primary" onClick={copyAndOpen}>
+                <button type="button" className="favorite-ai-primary gd-btn gd-btn--primary" onClick={copyAndOpen}>
                   Copy prompt and open {provider.name}
                 </button>
               ) : (
-                <button type="button" className="favorite-ai-primary" onClick={addToJaspen}>
+                <button type="button" className="favorite-ai-primary gd-btn gd-btn--primary" onClick={addToJaspen}>
                   Add to Jaspen
                 </button>
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

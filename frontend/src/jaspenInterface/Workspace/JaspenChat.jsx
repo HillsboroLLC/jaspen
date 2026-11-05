@@ -31,7 +31,7 @@ import {
   GuidedDecisionModal,
   Walkthrough,
 } from '../GuidedDecision';
-import { FavoriteAIBrainstorm } from '../FavoriteAI';
+import { appendComposerDraft, FavoriteAIBrainstorm } from '../FavoriteAI';
 import ExecutionPlanExportButton from './ExecutionPlanExportButton';
 import PmSyncPanel from './PmSyncPanel';
 import ConnectorContextChip from './ConnectorContextChip';
@@ -4136,29 +4136,25 @@ useEffect(() => {
     buildDefaultNotifications().map((item) => item.id)
   );
 
+  const focusComposerAtEnd = useCallback(() => {
+    // Focus the composer so the user can review and press Send themselves.
+    requestAnimationFrame(() => {
+      try {
+        intakeInputRef.current?.focus();
+        const el = intakeInputRef.current;
+        if (el) el.selectionStart = el.selectionEnd = el.value.length;
+      } catch { /* noop */ }
+    });
+  }, []);
   const handleGuidedUse = useCallback((text) => {
     setInput(text);
     setGuidedDecisionOpen(false);
-    // Focus the composer so the user can review and press Send themselves.
-    requestAnimationFrame(() => {
-      try {
-        intakeInputRef.current?.focus();
-        const el = intakeInputRef.current;
-        if (el) el.selectionStart = el.selectionEnd = el.value.length;
-      } catch { /* noop */ }
-    });
-  }, []);
+    focusComposerAtEnd();
+  }, [focusComposerAtEnd]);
   const handleBrainstormUse = useCallback((text) => {
-    setInput(text);
-    // Focus the composer so the user can review and press Send themselves.
-    requestAnimationFrame(() => {
-      try {
-        intakeInputRef.current?.focus();
-        const el = intakeInputRef.current;
-        if (el) el.selectionStart = el.selectionEnd = el.value.length;
-      } catch { /* noop */ }
-    });
-  }, []);
+    setInput((currentDraft) => appendComposerDraft(currentDraft, text));
+    focusComposerAtEnd();
+  }, [focusComposerAtEnd]);
   const [threadUsage, setThreadUsage] = useState(null);
   const [threadUsageLoading, setThreadUsageLoading] = useState(false);
   const [threadUsageError, setThreadUsageError] = useState('');

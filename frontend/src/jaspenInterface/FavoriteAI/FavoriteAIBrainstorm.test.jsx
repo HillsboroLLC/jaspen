@@ -2,7 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import FavoriteAIBrainstorm from './FavoriteAIBrainstorm';
-import { BRAINSTORM_PROMPT, buildCopiedPrompt } from './favoriteAI';
+import { appendComposerDraft, BRAINSTORM_PROMPT, buildCopiedPrompt } from './favoriteAI';
 
 const summary = {
   title: 'Choose a launch market',
@@ -34,12 +34,41 @@ describe('FavoriteAIBrainstorm', () => {
 
     for (const provider of ['ChatGPT', 'Claude', 'Gemini']) {
       const button = screen.getByRole('button', { name: `Brainstorm with ${provider}` });
-      expect(button).toHaveAttribute('title', 'Brainstorm with your favorite AI tool');
+      expect(button).not.toHaveAttribute('title');
+      expect(button).toHaveAttribute('data-tooltip', 'Brainstorm with your favorite AI tool');
       expect(button).toContainHTML('<svg');
       expect(button).not.toContainHTML('linearGradient');
     }
+    expect(screen.getByRole('button', { name: 'Brainstorm with ChatGPT' }))
+      .not.toHaveAttribute('style');
+    expect(screen.getByRole('button', { name: 'Brainstorm with ChatGPT' }).querySelector('svg'))
+      .toHaveAttribute('fill', 'currentColor');
     expect(screen.getByRole('button', { name: 'Brainstorm with your favorite AI tool' }))
       .toHaveClass('favorite-ai-collapsed-icon');
+  });
+
+  test('renders the dialog above the walkthrough with its footer actions', async () => {
+    const user = userEvent.setup();
+    render(<FavoriteAIBrainstorm projectSummary={summary} onAddToComposer={jest.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Brainstorm with ChatGPT' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Brainstorm with your favorite AI tool' });
+    expect(dialog).toHaveStyle({ zIndex: 7000 });
+    expect(dialog.parentElement).toBe(document.body);
+    expect(screen.getByRole('button', { name: 'Bring your thinking back' })).toHaveClass('gd-back-link');
+    expect(screen.getByRole('button', { name: 'Copy prompt and open ChatGPT' }))
+      .toHaveClass('gd-btn--primary');
+  });
+
+  test('preserves an existing composer draft and appends returned thinking after a blank line', () => {
+    expect(appendComposerDraft(
+      'My existing draft',
+      'Ideas from my Claude brainstorm:\n\nAustin is stronger.'
+    )).toBe(
+      'My existing draft\n\nIdeas from my Claude brainstorm:\n\nAustin is stronger.'
+    );
+    expect(appendComposerDraft('', 'New thinking')).toBe('New thinking');
   });
 
   test('keeps project context off by default and copies exactly the visible preview when enabled', async () => {
