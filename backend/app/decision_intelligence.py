@@ -13,6 +13,7 @@ DECIDED_RECORD_STATUSES = frozenset({"decided", "outcome_recorded"})
 RESOLVED_ASSUMPTION_STATUSES = frozenset({"resolved", "closed", "verified"})
 PASSING_GATE_STATUSES = frozenset({"pass", "passed"})
 COMPLETED_TASK_STATUSES = frozenset({"done", "complete", "completed"})
+FAILED_GATE_STATUSES = frozenset({"fail", "failed"})
 
 
 def _iso(value):
@@ -115,6 +116,32 @@ def _current_option_decisions(rows):
     return current
 
 
+def _stored_kit(record):
+    payload = record.record if isinstance(record.record, dict) else {}
+    kit = str(payload.get("decision_kit") or "").strip()
+    if kit:
+        return kit
+    for card in _scorecards(record):
+        if isinstance(card, dict) and str(card.get("decision_kit") or "").strip():
+            return str(card["decision_kit"]).strip()
+    return None
+
+
+def _top_score(record):
+    scores = []
+    for card in _scorecards(record):
+        if not isinstance(card, dict):
+            continue
+        value = card.get("jaspen_score")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            scores.append(value)
+    return max(scores) if scores else None
+
+
+def _entry_count(value):
+    return len(value) if isinstance(value, list) else 0
+
+
 def build_decision_overview(user, scope_context):
     """Build an uncapped overview. Resource visibility is always can_read_record."""
     organization = scope_context["organization"]
@@ -146,7 +173,7 @@ def build_decision_overview(user, scope_context):
     users = User.query.filter(User.id.in_(user_ids)).all() if user_ids else []
     names = {str(item.id): str(item.name or item.email or item.id) for item in users}
 
-    decisions, open_items, lessons, outcomes, plans = [], [], [], [], []
+    decisions, open_items, lessons, outcomes, plans, rows = [], [], [], [], [], []
     monthly = defaultdict(lambda: {"records_created": 0, "decisions_made": 0})
     member_counts = defaultdict(lambda: {"records": 0, "decisions": 0, "open": 0})
 
@@ -183,7 +210,8 @@ def build_decision_overview(user, scope_context):
                 monthly[record.decided_at.strftime("%Y-%m")]["decisions_made"] += 1
 
         status = str(record.status or "")
-        unresolved = _unresolved_items(record)
+        stored_unresolved = _unresolved_items(record)
+        unresolved = stored_unresolved
         if status in DECIDED_RECORD_STATUSES:
             unresolved = {
                 "gates": [gate for gate in unresolved["gates"] if gate["status"] != "unknown"],
@@ -224,6 +252,55 @@ def build_decision_overview(user, scope_context):
                 "title": record.title, "updated_at": _iso(record.updated_at), **progress,
             })
 
+        decided_at = record.decided_at
+        if not decided_at and current_options:
+            decided_at = max((item.decided_at for item in current_options if item.decided_at), default=None)
+        days_to_decide = None
+        if record.created_at and decided_at:
+            days_to_decide = max(0, (decided_at - record.created_at).days)
+        failed_gates = [item for item in stored_unresolved["gates"] if item["status"] in FAILED_GATE_STATUSES]
+        unassessed_gates = [item for item in stored_unresolved["gates"] if item["status"] not in FAILED_GATE_STATUSES]
+        record_lessons = _entry_count(record.lessons_learned)
+        record_outcomes = _entry_count(record.outcomes)
+        option_lessons = sum(_entry_count(item.lessons_learned) for item in current_options)
+        option_outcomes = sum(_entry_count(item.outcomes) for item in current_options)
+        tags = [str(tag).strip() for tag in record.tags if str(tag).strip()] if isinstance(record.tags, list) else []
+        rows.append({
+            "id": str(record.id),
+            "thread_id": str(record.thread_id),
+            "title": record.title,
+            "owner": {"id": owner_id or None, "name": owner_name},
+            "status": status,
+            "decision_type": str(record.decision_type or "").strip() or None,
+            "decision_kit": _stored_kit(record),
+            "created_at": _iso(record.created_at),
+            "decided_at": _iso(decided_at),
+            "days_to_decide": days_to_decide,
+            "chosen_options": ([
+                str(item.option_name or item.final_decision).strip()
+                for item in current_options if str(item.option_name or item.final_decision or "").strip()
+            ] or ([str(record.final_decision).strip()] if str(record.final_decision or "").strip() else [])),
+            "top_option_score": _top_score(record),
+            "gaps": {
+                "failed_gates": len(failed_gates),
+                "not_assessed_gates": len(unassessed_gates),
+                "open_assumptions": len(stored_unresolved["assumptions"]),
+                "missing_evidence": len(stored_unresolved["missing_evidence"]),
+                "items": {
+                    "failed_gates": failed_gates,
+                    "not_assessed_gates": unassessed_gates,
+                    "open_assumptions": stored_unresolved["assumptions"],
+                    "missing_evidence": stored_unresolved["missing_evidence"],
+                },
+            },
+            "plan": progress or {"tasks_total": 0, "tasks_completed": 0},
+            "lesson_count": record_lessons + option_lessons,
+            "outcome_count": record_outcomes + option_outcomes,
+            "lessons": [entry for entry in lessons if entry["record_id"] == str(record.id)],
+            "outcomes": [entry for entry in outcomes if entry["record_id"] == str(record.id)],
+            "tags": tags,
+        })
+
     decisions.sort(key=lambda item: item.get("decided_at") or "", reverse=True)
     lessons.sort(key=lambda item: item.get("recorded_at") or "", reverse=True)
     outcomes.sort(key=lambda item: item.get("recorded_at") or "", reverse=True)
@@ -237,18 +314,39 @@ def build_decision_overview(user, scope_context):
     activity_by_member = [
         {"user_id": member_id, "name": member_names.get(member_id, "Unknown"), **member_counts[member_id]}
         for member_id in member_ids if member_counts[member_id]["records"]
-    ] if scope_context["scope"] == "organization" and scope_context["can_manage"] else []
+    ] if scope_context["scope"] == "organization" and scope_context["can_view_organization"] else []
+
+    def facet_values(key):
+        return sorted({str(row.get(key) or "").strip() for row in rows if str(row.get(key) or "").strip()}, key=str.casefold)
+
+    facets = {"statuses": facet_values("status")}
+    types_kits = sorted({
+        value for row in rows for value in (row.get("decision_type"), row.get("decision_kit")) if value
+    }, key=str.casefold)
+    members = sorted(
+        ({"id": row["owner"]["id"], "name": row["owner"]["name"]} for row in rows if row["owner"]["id"]),
+        key=lambda item: item["name"].casefold(),
+    )
+    unique_members = {item["id"]: item for item in members}
+    tags_present = sorted({tag for row in rows for tag in row["tags"]}, key=str.casefold)
+    if types_kits:
+        facets["types_kits"] = types_kits
+    if unique_members:
+        facets["members"] = list(unique_members.values())
+    if tags_present:
+        facets["tags"] = tags_present
 
     return {
         "organization": {"id": organization.id, "name": organization.name},
         "scope": scope_context["scope"],
         "requested_scope": scope_context["requested_scope"],
         "can_manage": scope_context["can_manage"],
+        "can_view_organization": scope_context["can_view_organization"],
         "calculation_label": "Calculated insights",
         "metrics": {
             "decision_records": len(visible), "decisions_made": len(decisions),
             "in_progress": sum(1 for record in visible if str(record.status or "") in OPEN_RECORD_STATUSES),
-            "needs_attention": sum(1 for record in visible if str(record.status or "") in OPEN_RECORD_STATUSES),
+            "needs_attention": sum(1 for row in rows if row["gaps"]["failed_gates"] > 0),
             "lessons_recorded": len(lessons),
             "outcomes_recorded": len(outcomes), "plans_in_execution": len(plans),
         },
@@ -256,5 +354,7 @@ def build_decision_overview(user, scope_context):
         "learning": {"outcomes": outcomes, "lessons": lessons},
         "progress": {"monthly": trend, "plans_in_execution": plans},
         "activity_by_member": activity_by_member,
+        "rows": rows,
+        "facets": facets,
         "limits": {"records_capped": False, "items_capped": False},
     }

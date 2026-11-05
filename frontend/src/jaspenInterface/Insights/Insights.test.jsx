@@ -6,119 +6,108 @@ import { DecisionIntelligenceOverview } from './Insights';
 
 jest.mock('../Workspace/JaspenAiDrawer', () => () => null);
 jest.mock('../Workspace/JaspenClient', () => ({ Jaspen: {} }));
+jest.mock('react-chartjs-2', () => {
+  const ReactModule = require('react');
+  function Chart({ data, options }) {
+    return ReactModule.createElement('div', { 'data-testid': 'chart' },
+      (data.labels || []).map((label, index) => ReactModule.createElement('button', {
+        type: 'button', key: `${label}:${index}`, onClick: () => options?.onClick?.({}, [{ index }]),
+      }, `Chart: ${label}`)));
+  }
+  return { Bar: Chart, Line: Chart, Pie: Chart };
+});
 
-function response(payload, ok = true) {
-  return { ok, json: async () => payload };
-}
+function response(payload, ok = true) { return { ok, json: async () => payload }; }
 
-const EMPTY = {
-  organization: { id: 'org-1', name: 'Acme' },
-  scope: 'mine', requested_scope: 'organization', can_manage: false,
-  calculation_label: 'Calculated insights',
-  metrics: { decision_records: 0, decisions_made: 0, in_progress: 0, needs_attention: 0, lessons_recorded: 0, outcomes_recorded: 0, plans_in_execution: 0 },
-  decisions: [], open_items: [], learning: { lessons: [], outcomes: [] },
-  progress: { monthly: [], plans_in_execution: [] }, activity_by_member: [],
+const ROWS = [
+  {
+    id: 'r1', thread_id: 't1', title: 'Choose vendor', owner: { id: 'u1', name: 'Ava' }, status: 'recorded',
+    decision_type: 'vendor', decision_kit: null, created_at: '2026-10-01T12:00:00', decided_at: null,
+    days_to_decide: null, chosen_options: [], top_option_score: 78, tags: ['procurement'],
+    gaps: { failed_gates: 1, not_assessed_gates: 0, open_assumptions: 1, missing_evidence: 0, items: {
+      failed_gates: [{ label: 'Security approval' }], not_assessed_gates: [],
+      open_assumptions: [{ label: 'Adoption holds' }], missing_evidence: [],
+    } }, plan: { tasks_total: 0, tasks_completed: 0 }, lesson_count: 0, outcome_count: 0, lessons: [], outcomes: [],
+  },
+  {
+    id: 'r2', thread_id: 't2', title: 'Open new region', owner: { id: 'u2', name: 'Ben' }, status: 'decided',
+    decision_type: null, decision_kit: 'general', created_at: '2026-09-01T12:00:00', decided_at: '2026-09-11T12:00:00',
+    days_to_decide: 10, chosen_options: ['Northeast'], top_option_score: 91, tags: ['growth'],
+    gaps: { failed_gates: 0, not_assessed_gates: 0, open_assumptions: 0, missing_evidence: 0, items: {
+      failed_gates: [], not_assessed_gates: [], open_assumptions: [], missing_evidence: [],
+    } }, plan: { tasks_total: 10, tasks_completed: 4 }, lesson_count: 1, outcome_count: 1,
+    lessons: [{ text: 'Sequence hiring first.' }], outcomes: [{ text: 'Launch approved.' }],
+  },
+];
+
+const BASE = {
+  organization: { id: 'org-1', name: 'Acme' }, scope: 'mine', requested_scope: 'organization', can_manage: false,
+  can_view_organization: false, calculation_label: 'Calculated insights', rows: ROWS,
+  facets: { statuses: ['decided', 'recorded'], types_kits: ['general', 'vendor'], members: [{ id: 'u1', name: 'Ava' }, { id: 'u2', name: 'Ben' }], tags: ['growth', 'procurement'] },
 };
 
-afterEach(() => {
-  jest.restoreAllMocks();
-});
+beforeEach(() => window.localStorage.clear());
+afterEach(() => jest.restoreAllMocks());
 
-it('shows the organization switch only to managers and reloads my activity', async () => {
-  const organization = {
-    ...EMPTY, scope: 'organization', requested_scope: 'organization', can_manage: true,
-    metrics: { ...EMPTY.metrics, decision_records: 1, decisions_made: 1 },
-    decisions: [{ record_id: 'r1', thread_id: 't1', title: 'Choose vendor', chosen_option: 'Vendor A', decided_at: '2026-11-01T12:00:00' }],
-  };
-  const mine = { ...organization, scope: 'mine', requested_scope: 'mine', decisions: [], metrics: { ...organization.metrics, decisions_made: 0 } };
-  global.fetch = jest.fn()
-    .mockResolvedValueOnce(response(organization))
-    .mockResolvedValueOnce(response(mine));
-
+it('hides the organization switch for a single-user account', async () => {
+  global.fetch = jest.fn().mockResolvedValue(response({ ...BASE, rows: [], facets: { statuses: [] } }));
   render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
-  expect(await screen.findByRole('button', { name: 'Organization' })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'My activity' })).toBeVisible();
-  expect(await screen.findByText('Vendor A')).toBeVisible();
-  expect(screen.getByText('Nov 1, 2026')).toBeVisible();
-  expect(screen.queryByText(/12:00:00/)).not.toBeInTheDocument();
-
-  await userEvent.click(screen.getByRole('button', { name: 'My activity' }));
-  await waitFor(() => expect(global.fetch).toHaveBeenLastCalledWith(
-    expect.stringContaining('scope=mine'), expect.any(Object),
-  ));
-});
-
-it('does not show a scope switch to non-managers and provides empty-state next steps', async () => {
-  const navigate = jest.fn();
-  global.fetch = jest.fn().mockResolvedValue(response(EMPTY));
-  render(<DecisionIntelligenceOverview navigate={navigate} />);
-
   expect(await screen.findByText('No decision records yet')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Organization' })).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole('button', { name: 'Start a decision' }));
-  expect(navigate).toHaveBeenCalledWith('/new');
-  expect(screen.queryByRole('button', { name: 'Record a decision' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'My activity' })).not.toBeInTheDocument();
 });
 
-it('orders the top three attention items and keeps the remainder collapsed', async () => {
-  const overview = {
-    ...EMPTY,
-    metrics: { ...EMPTY.metrics, decision_records: 1, in_progress: 1, needs_attention: 1 },
-    open_items: [{
-      record_id: 'r1', thread_id: 't1', title: 'Choose vendor', status: 'recorded',
-      unresolved: {
-        gates: [
-          { option: 'Choose vendor', label: 'Legal approval', status: 'fail' },
-          { option: 'Vendor B', label: 'Security review', status: 'failed' },
-          { option: 'Vendor B', label: 'Finance review', status: 'unknown' },
-        ],
-        assumptions: [
-          { option: 'Vendor B', label: 'Adoption remains steady', status: 'open' },
-          { option: 'Vendor B', label: 'Hiring stays on plan', status: 'open' },
-        ],
-        missing_evidence: [{ option: 'Vendor B', label: 'Reference evidence', confidence: 'assumed' }],
-      },
-    }],
-  };
-  global.fetch = jest.fn().mockResolvedValue(response(overview));
+it('shows the scope switch only when the server allows organization viewing', async () => {
+  global.fetch = jest.fn()
+    .mockResolvedValueOnce(response({ ...BASE, scope: 'organization', can_manage: true, can_view_organization: true }))
+    .mockResolvedValue(response({ ...BASE, scope: 'mine', can_manage: true, can_view_organization: true }));
   render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
-
-  expect(await screen.findByText('2 failed gates · 1 not yet assessed · 2 assumptions · 1 evidence gap')).toBeVisible();
-  const gapList = screen.getByText('Legal approval').closest('ul');
-  expect(within(gapList).getAllByRole('listitem').map((node) => node.textContent)).toEqual([
-    'Failed gateLegal approval',
-    'Failed gateVendor B: Security review',
-    'AssumptionVendor B: Adoption remains steady',
-  ]);
-  expect(screen.queryByText('Finance review')).not.toBeInTheDocument();
-  expect(screen.queryByText('Hiring stays on plan')).not.toBeInTheDocument();
-  expect(screen.queryByText('Reference evidence')).not.toBeInTheDocument();
-  expect(screen.queryByText(/Choose vendor: Legal approval/)).not.toBeInTheDocument();
-
-  await userEvent.click(screen.getByRole('button', { name: 'Show all attention items for Choose vendor' }));
-  expect(screen.getByText((_, node) => node?.parentElement?.classList.contains('di-gap-list') && node.textContent.includes('Hiring stays on plan'))).toBeVisible();
-  expect(screen.getByText((_, node) => node?.parentElement?.classList.contains('di-gap-list') && node.textContent.includes('Reference evidence'))).toBeVisible();
-  expect(screen.queryByText('Finance review')).not.toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: 'Organization' })).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: 'My activity' }));
+  await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('scope=mine'), expect.any(Object)));
 });
 
-it('shows five recent decisions before the list is expanded and formats month labels', async () => {
-  const decisions = Array.from({ length: 6 }, (_, index) => ({
-    id: `d${index}`, record_id: `r${index}`, thread_id: `t${index}`,
-    title: `Decision ${index + 1}`, chosen_option: `Choice ${index + 1}`,
-    decided_at: `2026-10-${String(20 - index).padStart(2, '0')}T12:34:56`,
-  }));
-  const overview = {
-    ...EMPTY,
-    metrics: { ...EMPTY.metrics, decision_records: 6, decisions_made: 6 },
-    decisions,
-    progress: { monthly: [{ month: '2026-10', records_created: 6, decisions_made: 6 }], plans_in_execution: [] },
-  };
-  global.fetch = jest.fn().mockResolvedValue(response(overview));
+it('filters every dashboard surface and chart clicks apply a filter', async () => {
+  global.fetch = jest.fn().mockResolvedValue(response(BASE));
   render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
+  expect(await screen.findByRole('button', { name: /Decisions\s*2/ })).toBeVisible();
+  await userEvent.selectOptions(screen.getByLabelText('Status'), ['decided']);
+  expect(screen.getByRole('button', { name: /Decisions\s*1/ })).toBeVisible();
+  expect(screen.queryByText('Choose vendor')).not.toBeInTheDocument();
+  expect(screen.getByText('Open new region')).toBeVisible();
+  await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+  await userEvent.click(screen.getAllByRole('button', { name: 'Chart: recorded' })[0]);
+  expect(screen.getByRole('button', { name: /Decisions\s*1/ })).toBeVisible();
+  expect(screen.getByText('Choose vendor')).toBeVisible();
+});
 
-  expect(await screen.findByText('Choice 5')).toBeVisible();
-  expect(screen.queryByText('Choice 6')).not.toBeInTheDocument();
-  expect(screen.getByText('Oct 2026')).toBeVisible();
-  await userEvent.click(screen.getByRole('button', { name: 'Show all decisions' }));
-  expect(screen.getByText('Choice 6')).toBeVisible();
+it('clicking a KPI tile applies its filter', async () => {
+  global.fetch = jest.fn().mockResolvedValue(response(BASE));
+  render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
+  await userEvent.click(await screen.findByRole('button', { name: /Needs attention\s*1/ }));
+  expect(screen.getByText('Choose vendor')).toBeVisible();
+  expect(screen.queryByText('Open new region')).not.toBeInTheDocument();
+});
+
+it('sorts and expands the decision table', async () => {
+  global.fetch = jest.fn().mockResolvedValue(response(BASE));
+  render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
+  const table = (await screen.findByRole('heading', { name: 'Decisions' })).closest('section');
+  await userEvent.click(within(table).getByRole('button', { name: 'Decision' }));
+  const rowButtons = within(table).getAllByRole('button', { name: /Choose vendor|Open new region/ });
+  expect(rowButtons[0]).toHaveTextContent('Choose vendor');
+  await userEvent.click(within(table).getByRole('button', { name: 'Choose vendor' }));
+  expect(within(table).getByText('Security approval')).toBeVisible();
+  expect(within(table).getByRole('link', { name: /Open project/ })).toHaveAttribute('href', '/new?session_id=t1');
+});
+
+it('clear filters resets search and restores rows', async () => {
+  global.fetch = jest.fn().mockResolvedValue(response(BASE));
+  render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
+  const search = await screen.findByLabelText('Search decisions');
+  await userEvent.type(search, 'region');
+  expect(screen.queryByText('Choose vendor')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+  expect(screen.getByText('Choose vendor')).toBeVisible();
+  expect(search).toHaveValue('');
 });

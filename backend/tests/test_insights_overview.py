@@ -64,6 +64,7 @@ def test_admin_can_switch_organization_and_mine_without_bypassing_record_visibil
     own.record = {**own.record, "execution_plan": {"tasks": [{"id": "t1", "status": "in_progress"}]}}
     shared.record = {
         **shared.record,
+        "decision_kit": "rfp_vendor_selection",
         "scorecards": [{
             **shared.record["scorecards"][0],
             "gates": [{"key": "approval", "label": "Approval", "status": "fail"}],
@@ -71,6 +72,8 @@ def test_admin_can_switch_organization_and_mine_without_bypassing_record_visibil
     }
     shared.outcomes = [{"summary": "Adoption reached the recorded target.", "recorded_at": "2026-11-03T10:00:00"}]
     shared.lessons_learned = [{"lesson": "Confirm ownership before rollout.", "recorded_at": "2026-11-04T10:00:00"}]
+    shared.tags = ["procurement"]
+    shared.decision_type = "vendor"
     for record, name in ((own, "Owner choice"), (shared, "Member choice")):
         db.session.add(OptionDecision(
             decision_record_id=record.id, option_key="option-a", option_name=name,
@@ -83,16 +86,30 @@ def test_admin_can_switch_organization_and_mine_without_bypassing_record_visibil
     org_payload = client.get("/api/v1/insights/overview?scope=organization", headers=_headers(app, owner)).get_json()
     assert org_payload["scope"] == "organization"
     assert org_payload["can_manage"] is True
+    assert org_payload["can_view_organization"] is True
     assert org_payload["metrics"]["decision_records"] == 2
     assert {item["chosen_option"] for item in org_payload["decisions"]} == {"Owner choice", "Member choice"}
     assert {item["name"] for item in org_payload["activity_by_member"]} == {"Owner", "Member"}
     assert org_payload["open_items"][0]["unresolved"]["gates"][0]["label"] == "Approval"
     assert org_payload["open_items"][0]["unresolved"]["assumptions"] == []
     assert org_payload["metrics"]["in_progress"] == 0
-    assert org_payload["metrics"]["needs_attention"] == 0
+    assert org_payload["metrics"]["needs_attention"] == 1
     assert org_payload["learning"]["outcomes"][0]["text"] == "Adoption reached the recorded target."
     assert org_payload["learning"]["lessons"][0]["text"] == "Confirm ownership before rollout."
     assert org_payload["progress"]["plans_in_execution"][0]["tasks_total"] == 1
+    assert len(org_payload["rows"]) == 2
+    shared_row = next(item for item in org_payload["rows"] if item["thread_id"] == "member-shared")
+    assert shared_row["owner"] == {"id": str(member.id), "name": "Member"}
+    assert shared_row["decision_type"] == "vendor"
+    assert shared_row["decision_kit"] == "rfp_vendor_selection"
+    assert shared_row["chosen_options"] == ["Member choice"]
+    assert shared_row["top_option_score"] == 80
+    assert shared_row["gaps"]["failed_gates"] == 1
+    assert shared_row["lesson_count"] == 1
+    assert shared_row["outcome_count"] == 1
+    assert shared_row["tags"] == ["procurement"]
+    assert set(org_payload["facets"]["types_kits"]) == {"rfp_vendor_selection", "vendor"}
+    assert org_payload["facets"]["tags"] == ["procurement"]
 
     mine_payload = client.get("/api/v1/insights/overview?scope=mine", headers=_headers(app, owner)).get_json()
     assert mine_payload["scope"] == "mine"
@@ -117,8 +134,26 @@ def test_non_admin_org_request_falls_back_to_mine_and_cross_org_is_isolated(clie
     assert payload["requested_scope"] == "organization"
     assert payload["scope"] == "mine"
     assert payload["can_manage"] is False
+    assert payload["can_view_organization"] is False
     assert payload["metrics"]["decision_records"] == 1
     assert payload["open_items"][0]["thread_id"] == "member-own"
+
+
+def test_multi_member_org_admin_can_view_organization_scope(client, db, app):
+    owner = _user(db, "scope-owner@example.com", "Scope Owner")
+    admin = _user(db, "scope-admin@example.com", "Scope Admin")
+    creator = _user(db, "scope-creator@example.com", "Scope Creator")
+    org = _organization(db, owner, (admin, "admin"), (creator, "creator"))
+    _record(db, org, admin, "admin-own", visibility="team")
+    _record(db, org, creator, "creator-team", visibility="team")
+    db.session.commit()
+
+    payload = client.get(
+        "/api/v1/insights/overview?scope=organization", headers=_headers(app, admin)
+    ).get_json()
+    assert payload["scope"] == "organization"
+    assert payload["can_view_organization"] is True
+    assert {row["thread_id"] for row in payload["rows"]} == {"admin-own", "creator-team"}
 
 
 def test_scored_record_is_not_a_decision_and_results_are_not_truncated(client, db, app):
@@ -139,7 +174,7 @@ def test_scored_record_is_not_a_decision_and_results_are_not_truncated(client, d
     assert payload["metrics"]["decision_records"] == 1203
     assert payload["metrics"]["decisions_made"] == 1
     assert payload["metrics"]["in_progress"] == 1201
-    assert payload["metrics"]["needs_attention"] == 1201
+    assert payload["metrics"]["needs_attention"] == 0
     assert len(payload["open_items"]) == 1201
     assert payload["limits"] == {"records_capped": False, "items_capped": False}
 
@@ -162,6 +197,7 @@ def test_superseded_record_is_counted_once(client, db, app):
     assert payload["metrics"]["decision_records"] == 1
     assert payload["metrics"]["decisions_made"] == 1
     assert [item["chosen_option"] for item in payload["decisions"]] == ["Current choice"]
+    assert [item["thread_id"] for item in payload["rows"]] == ["successor"]
 
 
 def test_attention_deduplicates_assumption_and_missing_evidence_for_same_criterion(client, db, app):
@@ -193,7 +229,9 @@ def test_individual_account_gets_an_org_and_empty_overview(client, db, app, test
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["organization"]["id"]
-    assert payload["scope"] == "organization"
+    assert payload["scope"] == "mine"
+    assert payload["requested_scope"] == "organization"
+    assert payload["can_view_organization"] is False
     assert payload["metrics"]["decision_records"] == 0
     assert payload["decisions"] == []
 
