@@ -163,6 +163,7 @@ body.jaspen-sidebar-open .insights-page.drawer-open .insights-inner {
 .di-clear,
 .di-filter-toggle { min-height: 38px; padding: 0 12px; border: 1px solid var(--di-ink); background: transparent; color: var(--di-ink); font: 700 13px 'Source Sans 3', sans-serif; cursor: pointer; }
 .di-filter-toggle { display: none; }
+.di-updated { margin: 8px 0 0; color: var(--di-muted); font-size: 12px; }
 .di-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .di-chips button { padding: 5px 9px; border: 1px solid var(--di-accent); border-radius: 999px; background: transparent; color: var(--di-accent); font: 700 12px 'Source Sans 3', sans-serif; cursor: pointer; }
 

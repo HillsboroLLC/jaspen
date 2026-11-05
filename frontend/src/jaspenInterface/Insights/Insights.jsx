@@ -64,6 +64,13 @@ function projectHref(threadId) {
   return `/new?session_id=${encodeURIComponent(String(threadId || ''))}`;
 }
 
+function updatedLabel(updatedAt, now) {
+  if (!updatedAt) return '';
+  const minutes = Math.max(0, Math.floor((now - updatedAt) / 60000));
+  if (minutes === 0) return 'Updated just now';
+  return `Updated ${minutes} min ago`;
+}
+
 export function DecisionIntelligenceOverview({ navigate }) {
   const storageKey = 'jaspen:decision-dashboard:v1';
   const saved = useMemo(() => {
@@ -77,35 +84,89 @@ export function DecisionIntelligenceOverview({ navigate }) {
   const [overview, setOverview] = useState(null);
   const [overviewLoading, setOverviewLoading] = useState(true);
   const [overviewError, setOverviewError] = useState('');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+  const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const [reloadKey, setReloadKey] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [sort, setSort] = useState({ key: 'created_at', direction: 'desc' });
   const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState('');
+  const requestGeneration = useRef(0);
 
   useEffect(() => {
+    const generation = ++requestGeneration.current;
     let active = true;
-    const load = async () => {
-      setOverviewLoading(true);
-      setOverviewError('');
+    let inFlight = false;
+    let refreshTimer = null;
+    let abortController = null;
+
+    const stopTimer = () => {
+      if (refreshTimer) window.clearInterval(refreshTimer);
+      refreshTimer = null;
+    };
+    const load = async ({ initial = false } = {}) => {
+      if (inFlight) return;
+      inFlight = true;
+      if (initial) {
+        setOverviewLoading(true);
+        setOverviewError('');
+      }
+      abortController = new AbortController();
       try {
         const response = await fetch(`${API_BASE}/api/v1/insights/overview?scope=${encodeURIComponent(scope)}`, {
-          method: 'GET', headers: buildAuthHeaders({}, 'GET'), credentials: 'include',
+          method: 'GET', headers: buildAuthHeaders({}, 'GET'), credentials: 'include', signal: abortController.signal,
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload?.error || 'Unable to load decision insights.');
-        if (active) {
+        if (active && requestGeneration.current === generation) {
+          const completedAt = Date.now();
           setOverview(payload);
+          setOverviewError('');
+          setLastUpdatedAt(completedAt);
+          setRelativeTimeNow(completedAt);
           if (payload?.scope && payload.scope !== scope) setScope(payload.scope);
         }
       } catch (err) {
-        if (active) setOverviewError(err?.message || 'Unable to load decision insights.');
+        if (active && requestGeneration.current === generation && initial && err?.name !== 'AbortError') {
+          setOverviewError(err?.message || 'Unable to load decision insights.');
+        }
       } finally {
-        if (active) setOverviewLoading(false);
+        if (active && requestGeneration.current === generation) {
+          inFlight = false;
+          setRelativeTimeNow(Date.now());
+          if (initial) setOverviewLoading(false);
+        }
       }
     };
-    load();
-    return () => { active = false; };
+
+    const startTimer = () => {
+      stopTimer();
+      if (document.visibilityState === 'visible') {
+        refreshTimer = window.setInterval(() => load(), 60000);
+      }
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      load();
+      startTimer();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshWhenVisible();
+      else stopTimer();
+    };
+
+    load({ initial: true });
+    startTimer();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', refreshWhenVisible);
+    return () => {
+      active = false;
+      requestGeneration.current += 1;
+      stopTimer();
+      abortController?.abort();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', refreshWhenVisible);
+    };
   }, [scope, reloadKey]);
 
   useEffect(() => {
@@ -278,6 +339,7 @@ export function DecisionIntelligenceOverview({ navigate }) {
               <label className="di-search">Search<input type="search" aria-label="Search decisions" value={filters.search} onChange={(event) => setFilter('search', event.target.value)} placeholder="Decision, option, owner…" /></label>
               <button type="button" className="di-clear" onClick={clearFilters}>Clear filters</button>
             </div>
+            <p className="di-updated" aria-live="polite">{updatedLabel(lastUpdatedAt, relativeTimeNow)}</p>
             {chips.length > 0 && <div className="di-chips" aria-label="Active filters">{chips.map(([key, label], index) => <button type="button" key={`${key}:${label}:${index}`} onClick={() => removeChip(key, key === 'status' ? label : '')}>{label} <span aria-hidden="true">×</span><span className="sr-only">Remove filter</span></button>)}</div>}
           </div>
 
