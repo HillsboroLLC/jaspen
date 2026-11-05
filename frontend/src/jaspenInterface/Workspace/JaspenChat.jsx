@@ -31,6 +31,7 @@ import {
   GuidedDecisionModal,
   Walkthrough,
 } from '../GuidedDecision';
+import { FavoriteAIBrainstorm } from '../FavoriteAI';
 import ExecutionPlanExportButton from './ExecutionPlanExportButton';
 import PmSyncPanel from './PmSyncPanel';
 import ConnectorContextChip from './ConnectorContextChip';
@@ -4138,6 +4139,17 @@ useEffect(() => {
   const handleGuidedUse = useCallback((text) => {
     setInput(text);
     setGuidedDecisionOpen(false);
+    // Focus the composer so the user can review and press Send themselves.
+    requestAnimationFrame(() => {
+      try {
+        intakeInputRef.current?.focus();
+        const el = intakeInputRef.current;
+        if (el) el.selectionStart = el.selectionEnd = el.value.length;
+      } catch { /* noop */ }
+    });
+  }, []);
+  const handleBrainstormUse = useCallback((text) => {
+    setInput(text);
     // Focus the composer so the user can review and press Send themselves.
     requestAnimationFrame(() => {
       try {
@@ -8272,6 +8284,34 @@ const collectedSignals = useMemo(() => {
   }
   return signals;
 }, [knowledgeSignals, messages, connectedDataSources, activeContextSourceIds]);
+
+const brainstormProjectSummary = useMemo(() => {
+  const baselineTitleSource =
+    (analysisResult?._baseline_scorecard && typeof analysisResult._baseline_scorecard === 'object'
+      ? analysisResult._baseline_scorecard
+      : null) ||
+    bundleBaselineScorecard ||
+    analysisResult ||
+    activeScorecard;
+  const title = deriveIdeaTitle({ result: baselineTitleSource, messages, fallback: '' });
+  const options = mergedScoreWorkspaceSnapshots.map((snapshot) => (
+    snapshot?.project_name || snapshot?.title || snapshot?.label || ''
+  ));
+  const openQuestions = collectedSignals
+    .filter((signal) => !signal.complete)
+    .map((signal) => signal.hint
+      ? `${signal.label}: ${signal.hint}`
+      : signal.label);
+
+  return { title, options, openQuestions };
+}, [
+  activeScorecard,
+  analysisResult,
+  bundleBaselineScorecard,
+  collectedSignals,
+  mergedScoreWorkspaceSnapshots,
+  messages,
+]);
 
 const renderCollectedSignals = () => {
   if (!sessionId) return null;
@@ -13302,6 +13342,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         {!sessionId && <div className="jas-titlebar-left" />}
 
         <div className="jas-titlebar-right">
+          <FavoriteAIBrainstorm
+            projectSummary={brainstormProjectSummary}
+            onAddToComposer={handleBrainstormUse}
+          />
           <GuidedDecisionButton onClick={() => setGuidedDecisionOpen(true)} />
           {showIntakeTopbarUtilities && (
             <button
