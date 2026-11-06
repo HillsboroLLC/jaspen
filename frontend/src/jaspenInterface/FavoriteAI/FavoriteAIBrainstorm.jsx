@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import * as S from '../GuidedDecision/guidedDecisionStyles';
 import ProviderLogo from './ProviderLogo';
@@ -31,46 +31,71 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState('start');
   const [includeSummary, setIncludeSummary] = useState(false);
-  const [returnedText, setReturnedText] = useState('');
+  const [promptText, setPromptText] = useState(() => buildCopiedPrompt(projectSummary, false));
   const [copyError, setCopyError] = useState(false);
+  const [popupError, setPopupError] = useState(false);
   const [returnNudge, setReturnNudge] = useState(false);
   const previewRef = useRef(null);
-  const pasteRef = useRef(null);
+  const modalRef = useRef(null);
+  const closeButtonRef = useRef(null);
+  const lastTriggerRef = useRef(null);
   const awaitingReturnRef = useRef(false);
   const leftForProviderRef = useRef(false);
 
   const provider = PROVIDERS[providerId];
-  const copiedPrompt = useMemo(
-    () => buildCopiedPrompt(projectSummary, includeSummary),
-    [includeSummary, projectSummary]
-  );
-
   const chooseProvider = useCallback((nextProviderId) => {
     setProviderId(nextProviderId);
     saveProvider(nextProviderId);
   }, []);
 
-  const showDialog = useCallback((nextProviderId, nextStep = 'start') => {
+  const closeDialog = useCallback((restoreFocus = true) => {
+    setOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => lastTriggerRef.current?.focus());
+  }, []);
+
+  const showDialog = useCallback((nextProviderId, nextStep = 'start', trigger = null) => {
     if (nextProviderId) chooseProvider(nextProviderId);
+    lastTriggerRef.current = trigger || document.activeElement;
     setStep(nextStep);
     setCopyError(false);
+    setPopupError(false);
     setReturnNudge(false);
+    if (nextStep === 'start') setPromptText(buildCopiedPrompt(projectSummary, includeSummary));
     setOpen(true);
-  }, [chooseProvider]);
+  }, [chooseProvider, includeSummary, projectSummary]);
 
   useEffect(() => {
     if (!open) return undefined;
     const onKeyDown = (event) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeDialog();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = modalRef.current?.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', onKeyDown);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    requestAnimationFrame(() => closeButtonRef.current?.focus());
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       document.body.style.overflow = previousOverflow;
     };
-  }, [open]);
+  }, [closeDialog, open]);
 
   useEffect(() => {
     const markLeft = () => {
@@ -102,17 +127,37 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
     setReturnNudge(false);
   }, []);
 
-  const openProvider = useCallback(() => {
-    markProviderTrip();
-    window.open(provider.url, '_blank', 'noopener,noreferrer');
-    setOpen(false);
+  const openProviderWindow = useCallback(() => {
+    try {
+      const providerWindow = window.open(provider.url, '_blank');
+      if (!providerWindow) return false;
+      providerWindow.opener = null;
+      markProviderTrip();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }, [markProviderTrip, provider.url]);
+
+  const openProvider = useCallback(() => {
+    if (openProviderWindow()) closeDialog(false);
+    else setPopupError(true);
+  }, [closeDialog, openProviderWindow]);
 
   const copyAndOpen = async () => {
     setCopyError(false);
+    setPopupError(false);
+    let copyRequest;
     try {
-      await navigator.clipboard.writeText(copiedPrompt);
-      openProvider();
+      copyRequest = navigator.clipboard.writeText(promptText);
+    } catch (_) {
+      copyRequest = Promise.reject(_);
+    }
+    const providerOpened = openProviderWindow();
+    try {
+      await copyRequest;
+      if (providerOpened) closeDialog(false);
+      else setPopupError(true);
     } catch (_) {
       setCopyError(true);
       requestAnimationFrame(() => {
@@ -122,16 +167,15 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
     }
   };
 
-  const addToJaspen = () => {
-    const trimmed = returnedText.trim();
-    if (!trimmed) {
-      pasteRef.current?.focus();
-      return;
-    }
-    onAddToComposer(labelReturnedThinking(providerId, trimmed));
-    setReturnedText('');
-    setOpen(false);
+  const returnToComposer = () => {
+    onAddToComposer(labelReturnedThinking(providerId, ''));
+    closeDialog(false);
     setReturnNudge(false);
+  };
+
+  const toggleSummary = (checked) => {
+    setIncludeSummary(checked);
+    setPromptText(buildCopiedPrompt(projectSummary, checked));
   };
 
   return (
@@ -142,8 +186,7 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
             key={id}
             type="button"
             className={`gd-nav-icon favorite-ai-provider-icon favorite-ai-provider-icon--${id}`}
-            style={id === 'chatgpt' ? undefined : { color: PROVIDERS[id].color }}
-            onClick={() => showDialog(id)}
+            onClick={(event) => showDialog(id, 'start', event.currentTarget)}
             data-tooltip={TOOLTIP}
             aria-label={`Brainstorm with ${PROVIDERS[id].name}`}
           >
@@ -154,8 +197,7 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
       <button
         type="button"
         className={`gd-nav-icon favorite-ai-collapsed-icon favorite-ai-provider-icon--${providerId}`}
-        style={providerId === 'chatgpt' ? undefined : { color: provider.color }}
-        onClick={() => showDialog(providerId)}
+        onClick={(event) => showDialog(providerId, 'start', event.currentTarget)}
         data-tooltip={TOOLTIP}
         aria-label={TOOLTIP}
       >
@@ -167,9 +209,9 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
           <button
             type="button"
             className="favorite-ai-nudge-copy"
-            onClick={() => showDialog(providerId, 'return')}
+            onClick={returnToComposer}
           >
-            Bring your {provider.name} thinking back to Jaspen
+            Continue in Jaspen with your {provider.name} summary
           </button>
           <button
             type="button"
@@ -190,12 +232,13 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
           aria-modal="true"
           aria-label="Brainstorm with your favorite AI tool"
         >
-          <div style={S.backdrop} onClick={() => setOpen(false)} />
-          <div style={{ ...S.wizardCard, maxWidth: '680px' }} className="gd-modal-card favorite-ai-modal">
+          <div style={S.backdrop} onClick={() => closeDialog()} />
+          <div ref={modalRef} style={{ ...S.wizardCard, maxWidth: '680px' }} className="gd-modal-card favorite-ai-modal">
             <button
+              ref={closeButtonRef}
               type="button"
               style={S.closeBtn}
-              onClick={() => setOpen(false)}
+              onClick={() => closeDialog()}
               aria-label="Close AI brainstorm dialog"
             >
               ×
@@ -213,10 +256,7 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
                     onClick={() => chooseProvider(id)}
                     aria-pressed={id === providerId}
                   >
-                    <span
-                      className={`favorite-ai-provider-logo favorite-ai-provider-logo--${id}`}
-                      style={id === 'chatgpt' ? undefined : { color: PROVIDERS[id].color }}
-                    >
+                    <span className={`favorite-ai-provider-logo favorite-ai-provider-logo--${id}`}>
                       <ProviderLogo provider={id} size={16} />
                     </span>
                     {PROVIDERS[id].name}
@@ -228,11 +268,15 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
             <div className="favorite-ai-body">
               {step === 'start' ? (
                 <>
+                  <aside className="favorite-ai-integration-note">
+                    <strong>Exploring a more connected experience</strong>
+                    <span>We're exploring deeper provider integrations to make brainstorming alongside Jaspen easier. For now, use the assistant you prefer and bring your summary back when you're ready.</span>
+                  </aside>
                   <label className="favorite-ai-toggle">
                     <input
                       type="checkbox"
                       checked={includeSummary}
-                      onChange={(event) => setIncludeSummary(event.target.checked)}
+                      onChange={(event) => toggleSummary(event.target.checked)}
                     />
                     <span>Include this project's summary</span>
                   </label>
@@ -246,35 +290,35 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
                     id="favorite-ai-prompt-preview"
                     ref={previewRef}
                     className="favorite-ai-preview"
-                    value={copiedPrompt}
-                    readOnly
+                    value={promptText}
+                    onChange={(event) => setPromptText(event.target.value)}
                     rows={includeSummary ? 13 : 10}
                   />
+                  <p className="favorite-ai-edit-help">Edit this prompt before copying if you want to change the emphasis or add context.</p>
                   {copyError && (
                     <div className="favorite-ai-copy-error" role="alert">
-                      <span>Clipboard access failed. The prompt is selected so you can copy it manually.</span>
+                      <span>Clipboard access failed. The prompt is selected so you can copy it manually, then continue in {provider.name}.</span>
+                      <button type="button" onClick={openProvider}>Open {provider.name}</button>
+                    </div>
+                  )}
+                  {popupError && !copyError && (
+                    <div className="favorite-ai-copy-error" role="alert">
+                      <span>The prompt was copied, but your browser blocked the new tab.</span>
                       <button type="button" onClick={openProvider}>Open {provider.name}</button>
                     </div>
                   )}
                 </>
               ) : (
-                <>
+                <div className="favorite-ai-return-card">
+                  <div className="favorite-ai-return-number" aria-hidden="true">1</div>
                   <p className="favorite-ai-return-help">
-                    Paste the useful parts of your {provider.name} brainstorm. Jaspen will place them in the composer for you to review before sending.
+                    Ask {provider.name} for the structured Jaspen summary when you're ready to return.
                   </p>
-                  <label className="favorite-ai-preview-label" htmlFor="favorite-ai-return-text">
-                    Your brainstorm
-                  </label>
-                  <textarea
-                    id="favorite-ai-return-text"
-                    ref={pasteRef}
-                    className="favorite-ai-preview favorite-ai-return-text"
-                    value={returnedText}
-                    onChange={(event) => setReturnedText(event.target.value)}
-                    placeholder={`Paste your ${provider.name} summary here`}
-                    rows={10}
-                  />
-                </>
+                  <div className="favorite-ai-return-number" aria-hidden="true">2</div>
+                  <p className="favorite-ai-return-help">
+                    Continue to Jaspen, paste the summary into the existing composer, then review or edit it before sending. Jaspen never submits it automatically.
+                  </p>
+                </div>
               )}
             </div>
 
@@ -291,8 +335,8 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
                   Copy prompt and open {provider.name}
                 </button>
               ) : (
-                <button type="button" className="favorite-ai-primary gd-btn gd-btn--primary" onClick={addToJaspen}>
-                  Add to Jaspen
+                <button type="button" className="favorite-ai-primary gd-btn gd-btn--primary" onClick={returnToComposer}>
+                  Continue in Jaspen
                 </button>
               )}
             </div>

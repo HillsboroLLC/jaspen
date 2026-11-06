@@ -1,31 +1,29 @@
-export const BRAINSTORM_PROMPT = `Help me think rigorously about this decision before I evaluate it in Jaspen. Explore meaningfully different alternatives, surface the assumptions behind each one, identify missing information and gaps, and challenge the way I have framed the decision. Point out important trade-offs and risks, and identify the evidence that would most change the answer. Ask focused questions when they would improve the thinking.
+export const BRAINSTORM_PROMPT = `Help me think rigorously about this decision before I evaluate it in Jaspen. Explore meaningfully different options, challenge how I have framed the decision, and ask focused questions when they would improve the thinking. Help me clarify the decision, objectives, criteria, priorities, constraints, assumptions, available evidence, risks, trade-offs, and open questions as applicable.
 
-Close with a short, paste-ready summary for Jaspen that includes the options considered, key assumptions, open questions, and a recommendation if you have one. Keep that closing summary factual, and distinguish what I told you from what you inferred.`;
+When I say I am ready to return to Jaspen, prepare a comprehensive, well-organized summary that I can paste into Jaspen. Include the decision, objectives, options, criteria and priorities, constraints, assumptions, evidence, risks, trade-offs, and open questions that emerged, omitting sections that do not apply. Include a recommendation only if one is supported, and present it as advice rather than a decision made for me.
+
+Keep the summary factual. Clearly distinguish information I stated, information verified from a named source, estimates, and assumptions or inferences. Do not label something verified unless a source or direct evidence supports it.`;
 
 export const PROVIDERS = {
   chatgpt: {
     id: 'chatgpt',
     name: 'ChatGPT',
     url: 'https://chatgpt.com/',
-    color: 'currentColor',
   },
   claude: {
     id: 'claude',
     name: 'Claude',
     url: 'https://claude.ai/new',
-    color: '#D97757',
   },
   gemini: {
     id: 'gemini',
     name: 'Gemini',
     url: 'https://gemini.google.com/app',
-    color: '#8E75B2',
   },
   copilot: {
     id: 'copilot',
     name: 'Copilot',
     url: 'https://copilot.microsoft.com/',
-    color: 'currentColor',
   },
 };
 
@@ -75,8 +73,8 @@ export function labelReturnedThinking(providerId, text) {
 
 export function appendComposerDraft(currentDraft, addition) {
   const current = String(currentDraft || '');
-  const next = String(addition || '').trim();
-  if (!current.trim()) return next;
-  if (!next) return current;
-  return `${current.trimEnd()}\n\n${next}`;
+  const next = String(addition || '');
+  if (!current.trim()) return next.trimStart();
+  if (!next.trim()) return current;
+  return `${current.trimEnd()}\n\n${next.trimStart()}`;
 }
