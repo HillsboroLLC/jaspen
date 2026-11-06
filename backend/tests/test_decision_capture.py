@@ -1117,3 +1117,32 @@ def test_plan_intent_is_required_in_the_schema(app):
         if item['name'] == 'generate_execution_plan'
     )
     assert tool['input_schema']['required'] == ['planning_intent']
+
+
+def test_named_option_decides_which_plan_is_built(app, db, test_user, monkeypatch):
+    from app.models_decision_record import OptionDecision
+
+    strategy, agent = modules()
+    tid = 'capture-plan-target'
+    _seed(db, test_user, tid, _cards())
+    _fake_plan_build(strategy, agent, monkeypatch)
+    # An exploratory plan for Boulder leaves Boulder as the idea in view.
+    agent._execute_mutation_tool(
+        'generate_execution_plan', {'scorecard_id': 'card-b', 'planning_intent': 'exploratory'},
+        user=test_user, user_id=test_user.id, thread_id=tid, view_context={'active_scorecard_id': 'card-b'},
+    )
+    built = agent._execute_mutation_tool(
+        'generate_execution_plan', {'option_key': 'option-a', 'planning_intent': 'committed'},
+        user=test_user, user_id=test_user.id, thread_id=tid, view_context={'active_scorecard_id': 'card-b'},
+    )
+    assert built['ok'] is True, built
+    assert built['project_wbs']['scorecard_id'] == 'card-a'
+    assert _plan(test_user, tid, 'card-a')['planning_intent'] == 'committed'
+    assert _plan(test_user, tid, 'card-b')['planning_intent'] == 'exploratory'
+    assert [(row.option_key, row.disposition) for row in OptionDecision.query.all()] == [('option-a', 'pursue')]
+
+    missing = agent._execute_mutation_tool(
+        'generate_execution_plan', {'option_key': 'option-zzz', 'planning_intent': 'committed'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert missing['ok'] is False and missing['code'] == 'decision_option_required'

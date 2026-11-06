@@ -9770,7 +9770,24 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             or None
         )
         scorecard = None
-        if target_idea_id:
+        named_option_key = str(tool_input.get("option_key") or "").strip()
+        if named_option_key:
+            # The option the request names decides which plan is built, ahead
+            # of whichever idea happens to be open in the view.
+            from ..decision_records import execution_option_key as _plan_option_key
+
+            named_cards = [
+                card for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+                if _plan_option_key(card) == named_option_key
+            ]
+            if not named_cards:
+                return _tool_error(
+                    "That option is not part of this session. Nothing was built.",
+                    code="decision_option_required",
+                )
+            scorecard = named_cards[-1]
+            target_idea_id = str(scorecard.get("id") or scorecard.get("analysis_id") or "").strip() or None
+        if target_idea_id and scorecard is None:
             for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id):
                 cid = str(card.get("id") or card.get("analysis_id") or "")
                 if cid and cid == target_idea_id:
@@ -9955,7 +9972,8 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         normalized_wbs["ai_summary"] = str(raw_wbs.get("summary") or "").strip()
         # Persist under the active idea so each idea's plan stands on its own.
         exec_scorecard_id = (
-            view_active_scorecard_id
+            (target_idea_id if named_option_key else None)
+            or view_active_scorecard_id
             or str(tool_input.get("scorecard_id") or "").strip()
             or str(adopted_id or "").strip()
             or str(thread_data.get("active_execution_scorecard_id") or "").strip()
