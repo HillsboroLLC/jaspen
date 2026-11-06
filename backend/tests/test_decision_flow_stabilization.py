@@ -3766,15 +3766,20 @@ def test_chat_decision_ambiguous_name_lists_options_and_records_nothing(
 
     assert response.status_code == 200, response.get_json()
     payload = response.get_json()
-    # Nothing was recorded, so the prose is withheld; a card asks which option.
+    # Nothing was recorded, so the prose is withheld. A fixed status label
+    # (not a code-written question) and the session's option names remain.
     assert payload['reply'] == ''
     card = next(
         item['artifact']['data'] for item in payload['artifact_messages']
         if item['artifact']['type'] == 'status'
     )
     assert card['tone'] == 'info'
-    assert card['message'] == "I couldn't record that yet: which option did you mean — North Agency or South Agency?"
+    assert card['message'] == "Nothing saved yet: the option wasn't clear."
+    assert '?' not in card['message']
     assert [a['value'] for a in card['actions']] == ['North Agency', 'South Agency']
+    result = payload['actions'][0]['result']
+    assert result['code'] == 'decision_option_ambiguous'
+    assert '?' not in result['error']
     assert payload['actions'][0]['result']['non_blocking'] is True
     assert payload['actions'][0]['result']['option_names'] == ['North Agency', 'South Agency']
     assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
@@ -3864,7 +3869,7 @@ def test_chat_override_confirms_then_records_override_through_conversation(
             session=kwargs['session'],
         )
         return (
-            result['confirmation'],
+            result.get('confirmation') or 'Should I record that override?',
             {'provider': 'test', 'model': 'test-model', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2},
             [{'tool': 'record_option_decision', 'input': {}, 'result': result}],
             [],

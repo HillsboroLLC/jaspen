@@ -166,11 +166,13 @@ def client(app):
 @pytest.fixture
 def db(app):
     with app.app_context():
-        from app.models_decision_record import DecisionRecord
+        from app.models_decision_record import DecisionRecord, DecisionSignal, OptionDecision
 
         for model in (
             PmSyncLink,
             PmSyncBinding,
+            DecisionSignal,
+            OptionDecision,
             DecisionRecord,
             AIProviderAttempt,
             AIOperation,

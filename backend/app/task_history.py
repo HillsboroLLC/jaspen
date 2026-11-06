@@ -21,7 +21,7 @@ def _stamp(value=None):
     return value or datetime.utcnow().isoformat()
 
 
-def commit_task(task, *, basis, ref=None, at=None):
+def commit_task(task, *, basis, ref=None, at=None, actor_user_id=None):
     if basis not in COMMITMENT_BASES:
         raise ValueError('invalid task commitment basis')
     if isinstance(task.get('commitment'), dict):
@@ -32,6 +32,8 @@ def commit_task(task, *, basis, ref=None, at=None):
         'basis': basis,
         'ref': ref,
     }
+    if actor_user_id:
+        task['commitment']['actor_user_id'] = str(actor_user_id)
     return task['commitment']
 
 
@@ -39,7 +41,7 @@ def confirm_task_commitment(task, *, user_quote, actor_user_id=None, at=None):
     quote = str(user_quote or '').strip()
     if not quote:
         raise ValueError('a verified user quote is required')
-    return commit_task(task, basis='person_confirmed', ref=quote, at=at)
+    return commit_task(task, basis='person_confirmed', ref=quote, at=at, actor_user_id=actor_user_id)
 
 
 def commit_task_from_stated_date(task, *, signal_id, due_date, at=None):

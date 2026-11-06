@@ -105,3 +105,23 @@ it('shows query results exactly, with formatted numbers and a row count', () => 
   expect(screen.getByText('—')).toBeInTheDocument();
   expect(screen.getByText('Showing 2 of 48 rows')).toBeInTheDocument();
 });
+
+it('lists every option that needs override confirmation', () => {
+  render(<ConfirmCard
+    data={{
+      kind: 'decision_override',
+      option_name: 'Aurora bid',
+      override_of: 'decline',
+      options: [
+        { option_name: 'Aurora bid', override_of: 'decline', failed_check_labels: [] },
+        { option_name: 'Denver bid', override_of: 'failed_required_check', failed_check_labels: ['Bonding capacity'] },
+      ],
+      actions: [{ label: 'Record override', value: 'Yes, record it.' }, { label: 'Cancel', value: "No, don't record it." }],
+    }}
+    showActions
+  />);
+  expect(screen.getByText('Aurora bid')).toBeInTheDocument();
+  expect(screen.getByText('Denver bid')).toBeInTheDocument();
+  expect(screen.getByText("Overrides Jaspen's No-Bid.")).toBeInTheDocument();
+  expect(screen.getByText('Overrides a failed required check: Bonding capacity.')).toBeInTheDocument();
+});

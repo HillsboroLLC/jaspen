@@ -3,9 +3,14 @@ import React, { useState } from 'react';
 // Choice-prompt primitive (C.9). The agent emits a structured block in its reply:
 //
 //   [[choice]]
-//   {"question":"...","options":[{"label":"A","description":"..."},{"label":"B"}],
-//    "allow_text":true,"allow_multi":false}
+//   {"question":"...","options":[{"label":"A","description":"..."},{"label":"B"},
+//    {"label":"C","exclusive":true}],"allow_text":true,"allow_multi":false}
 //   [[/choice]]
+//
+// With allow_multi, an option marked "exclusive" stands alone: selecting it
+// clears the others, and selecting any other option clears it. The selected
+// labels are still sent back as one message joined by ", ", exactly as the
+// agent offered them, so the server can verify the answer came from the card.
 //
 // The frontend parses it out of the assistant text and renders clickable option
 // cards (exactly like the option boxes Claude shows the user). Clicking an option
@@ -36,7 +41,11 @@ export function parseChoicePrompt(raw) {
             options: parsed.options
               .map((o) => (typeof o === 'string' ? { label: o } : o))
               .filter((o) => o && String(o.label || '').trim())
-              .map((o) => ({ label: String(o.label).trim(), description: String(o.description || '').trim() || undefined })),
+              .map((o) => ({
+                label: String(o.label).trim(),
+                description: String(o.description || '').trim() || undefined,
+                exclusive: o.exclusive === true,
+              })),
             allow_text: parsed.allow_text !== false,
             allow_multi: Boolean(parsed.allow_multi),
           };
@@ -58,6 +67,7 @@ export default function ChoicePrompt({ choice, onChoose, disabled = false, accen
   const [selected, setSelected] = useState([]);
   const [showOther, setShowOther] = useState(false);
   const [otherText, setOtherText] = useState('');
+  const [focused, setFocused] = useState(-1);
 
   if (!choice || !Array.isArray(choice.options) || !choice.options.length) return null;
   const { question, options, allow_text, allow_multi } = choice;
@@ -68,9 +78,16 @@ export default function ChoicePrompt({ choice, onChoose, disabled = false, accen
     onChoose?.(v);
   };
 
+  const exclusiveLabels = new Set(options.filter((o) => o.exclusive).map((o) => o.label));
   const toggleMulti = (label) => {
-    setSelected((prev) => (prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]));
+    setSelected((prev) => {
+      if (prev.includes(label)) return prev.filter((l) => l !== label);
+      if (exclusiveLabels.has(label)) return [label];
+      return [...prev.filter((l) => !exclusiveLabels.has(l)), label];
+    });
   };
+  // Keep the sent answer in the order the agent listed the options.
+  const orderedSelection = options.map((o) => o.label).filter((label) => selected.includes(label));
 
   return (
     <div style={{ marginTop: 10, border: '1px solid #e6eaf2', borderRadius: 12, padding: 14, background: '#fbfcfe' }}>
@@ -79,7 +96,11 @@ export default function ChoicePrompt({ choice, onChoose, disabled = false, accen
           {question}
         </div>
       )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div
+        role={allow_multi ? 'group' : undefined}
+        aria-label={allow_multi ? (question || undefined) : undefined}
+        style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+      >
         {options.map((opt, i) => {
           const isSel = allow_multi && selected.includes(opt.label);
           return (
@@ -87,12 +108,18 @@ export default function ChoicePrompt({ choice, onChoose, disabled = false, accen
               key={i}
               type="button"
               disabled={disabled}
+              aria-pressed={allow_multi ? isSel : undefined}
+              data-exclusive={opt.exclusive ? 'true' : undefined}
+              onFocus={() => setFocused(i)}
+              onBlur={() => setFocused((current) => (current === i ? -1 : current))}
               onClick={() => (allow_multi ? toggleMulti(opt.label) : submit(opt.label))}
               onMouseEnter={(e) => { if (!disabled && !isSel) e.currentTarget.style.borderColor = accent; }}
               onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.borderColor = '#e6eaf2'; }}
               style={{
                 textAlign: 'left', padding: '10px 12px', borderRadius: 9,
                 border: `1px solid ${isSel ? accent : '#e6eaf2'}`,
+                outline: focused === i ? `2px solid ${accent}` : 'none',
+                outlineOffset: 2,
                 background: isSel ? `${accent}0d` : '#fff',
                 cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.6 : 1,
                 display: 'flex', flexDirection: 'column', gap: 2,
@@ -111,7 +138,7 @@ export default function ChoicePrompt({ choice, onChoose, disabled = false, accen
         <button
           type="button"
           disabled={disabled}
-          onClick={() => submit(selected.join(', '))}
+          onClick={() => submit(orderedSelection.join(', '))}
           style={{ marginTop: 10, border: 'none', borderRadius: 8, background: accent, color: '#fff', padding: '8px 14px', fontSize: 13, fontWeight: 600, cursor: disabled ? 'default' : 'pointer' }}
         >
           Send {selected.length} selected

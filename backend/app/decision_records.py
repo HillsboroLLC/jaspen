@@ -1220,14 +1220,37 @@ def _metrics(value):
     return out
 
 
-def append_outcome(record, summary, extra=None, actor=None):
+OUTCOME_SOURCES = frozenset({'manual', 'conversation', 'choice'})
+
+
+def _provenance(source, user_quote, objective_met_quote=None):
+    """Where a human-authored outcome or lesson came from. Never derived."""
+    normalized = str(source or 'manual').strip().lower()
+    if normalized not in OUTCOME_SOURCES:
+        raise ValueError(f'source must be one of {sorted(OUTCOME_SOURCES)}')
+    quote = _clip(user_quote, 4000) or None
+    if normalized != 'manual' and not quote:
+        raise ValueError('a verified user quote is required for conversational entries')
+    out = {'source': normalized}
+    if quote:
+        out['user_quote'] = quote
+    met_quote = _clip(objective_met_quote, 4000) or None
+    if met_quote:
+        out['objective_met_quote'] = met_quote
+    return out
+
+
+def append_outcome(record, summary, extra=None, actor=None, *, source='manual',
+                   user_quote=None, objective_met_quote=None):
     """Record WHAT HAPPENED after a decision. Append-only.
 
     `objective_met` is captured only when the human states it. It is never
     inferred from execution completing, from a metric moving, or from the
-    decision having been made at all.
+    decision having been made at all. Conversational entries carry the exact
+    customer quote; a conversational `objective_met` needs its own quote.
     """
     extra = extra if isinstance(extra, dict) else {}
+    provenance = _provenance(source, user_quote, objective_met_quote)
 
     status = str(extra.get('status') or '').strip().lower() or None
     if status and status not in OUTCOME_STATUSES:
@@ -1235,6 +1258,8 @@ def append_outcome(record, summary, extra=None, actor=None):
 
     objective_met = extra.get('objective_met')
     if objective_met is not None and not isinstance(objective_met, bool):
+        objective_met = None
+    if provenance['source'] != 'manual' and 'objective_met_quote' not in provenance:
         objective_met = None
 
     entry = {
@@ -1251,6 +1276,7 @@ def append_outcome(record, summary, extra=None, actor=None):
         'recorded_by_name': _actor_name(actor),
         'recorded_at': datetime.utcnow().isoformat(),
         'outcome_date': _clip(extra.get('outcome_date'), 64) or None,
+        **provenance,
     }
     # Fields the original implementation carried; kept for older readers.
     if 'went_with_recommendation' in extra:
@@ -1282,13 +1308,14 @@ def append_outcome(record, summary, extra=None, actor=None):
     return record
 
 
-def append_lesson(record, lesson, extra=None, actor=None):
+def append_lesson(record, lesson, extra=None, actor=None, *, source='manual', user_quote=None):
     """Record WHAT THE ORGANIZATION LEARNED. Append-only.
 
     A lesson may be added long after the outcome, when more is known, and may
     optionally cite the outcome it came from.
     """
     extra = extra if isinstance(extra, dict) else {}
+    provenance = _provenance(source, user_quote)
 
     outcome_id = str(extra.get('outcome_id') or '').strip() or None
     if outcome_id:
@@ -1306,6 +1333,7 @@ def append_lesson(record, lesson, extra=None, actor=None):
         'recorded_by_user_id': str(getattr(actor, 'id', '') or '') or None,
         'recorded_by_name': _actor_name(actor),
         'recorded_at': datetime.utcnow().isoformat(),
+        **provenance,
     }
 
     lessons = list(record.lessons_learned or [])
