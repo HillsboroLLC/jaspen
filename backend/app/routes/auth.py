@@ -65,6 +65,7 @@ from app.orgs import (
     role_has_capacity,
 )
 from app.sso_provider import SsoProviderError, get_sso_client
+from app.safe_redirect import safe_internal_path
 
 
 auth_bp = Blueprint('auth', __name__)
@@ -219,10 +220,7 @@ def _frontend_base_url():
 
 
 def _safe_next_path(candidate):
-    path = str(candidate or '').strip()
-    if not path or not path.startswith('/') or path.startswith('//'):
-        return '/new'
-    return path
+    return safe_internal_path(candidate, '/new')
 
 
 def _frontend_callback_url(next_path):

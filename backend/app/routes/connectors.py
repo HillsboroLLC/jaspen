@@ -45,6 +45,7 @@ from app.jira_sync import (
 from app.jira_portfolio import classify_refresh_error, list_accessible_projects, portfolio_context_text, refresh_portfolio
 from app.models import ConnectorSyncLog, User
 from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
+from app.safe_redirect import safe_internal_path
 from app.salesforce_sync import (
     BadSignature as SalesforceBadSignature,
     SignatureExpired as SalesforceStateExpired,
@@ -203,10 +204,7 @@ def _frontend_base_url():
 
 
 def _safe_next_path(candidate):
-    path = str(candidate or "").strip()
-    if not path or not path.startswith("/") or path.startswith("//"):
-        return "/connectors-manage"
-    return path
+    return safe_internal_path(candidate, "/connectors-manage")
 
 
 def _frontend_redirect(next_path, params=None):

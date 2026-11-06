@@ -5,6 +5,7 @@ import { API_BASE } from '../../config/apiBase';
 import FieldError from '../../shared/components/FieldError';
 import { readAuthQueryNotice } from './authStatus';
 import { addSignupReferralCodeToParams } from '../../shared/inviteLink';
+import { safeInternalPath } from '../../shared/auth/safeRedirect';
 
 export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChange, initialMfaData }) {
   const { login, signup, setUser } = useAuth();
@@ -104,7 +105,8 @@ export default function AuthModal({ isOpen, mode = 'email', onClose, onModeChang
     try {
       const current = new URLSearchParams(window.location.search || '');
       const next = current.get('next');
-      if (next && next.startsWith('/')) return next;
+      const safeNext = safeInternalPath(next, null);
+      if (safeNext) return safeNext;
       if (current.get('source') === 'decision-profile-email') return '/decision-profile';
     } catch {}
     return '/new';

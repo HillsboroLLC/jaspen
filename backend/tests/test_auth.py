@@ -1,8 +1,23 @@
+import importlib
 from datetime import datetime
+from urllib.parse import parse_qs, urlparse
 from itsdangerous import URLSafeTimedSerializer
 from werkzeug.security import generate_password_hash
 
 from app.models import User
+
+
+def test_google_start_stores_safe_next_in_state(client, app, monkeypatch):
+    monkeypatch.setitem(app.config, "GOOGLE_CLIENT_ID", "test-client")
+    monkeypatch.setitem(app.config, "GOOGLE_CLIENT_SECRET", "test-secret")
+    auth_routes = importlib.import_module("app.routes.auth")
+
+    for hostile_next in ("//evil.example", "/\\evil.example", "/%09/evil.example"):
+        resp = client.get("/api/v1/auth/google/start", query_string={"next": hostile_next})
+        assert resp.status_code == 302
+        state = parse_qs(urlparse(resp.headers["Location"]).query)["state"][0]
+        with app.app_context():
+            assert auth_routes._google_state_serializer().loads(state)["next"] == "/new"
 
 
 def test_signup_success(client):
@@ -419,6 +434,24 @@ def test_verify_email_with_next_path_logs_in_and_redirects_to_it(client, app, te
     assert client.get_cookie(app.config["JWT_ACCESS_COOKIE_NAME"]) is not None
     db.session.refresh(test_user)
     assert test_user.email_verified is True
+
+
+def test_verify_email_rechecks_unsafe_next_from_existing_token(client, app, test_user):
+    with app.app_context():
+        serializer = URLSafeTimedSerializer(
+            secret_key=app.config["SECRET_KEY"] or app.config["JWT_SECRET_KEY"],
+            salt="email-verification",
+        )
+        token = serializer.dumps({
+            "user_id": str(test_user.id),
+            "email": str(test_user.email).lower(),
+            "next_path": "/\\evil.example",
+        })
+
+    resp = client.get(f"/api/v1/auth/verify-email?token={token}")
+
+    assert resp.status_code == 302
+    assert resp.headers["Location"].endswith("/auth/callback?next=%2Fnew")
 
 
 def test_verify_email_without_next_path_keeps_prior_homepage_redirect(client, app, test_user, db):

@@ -15,6 +15,25 @@ def test_connector_status_returns_catalog(client, auth_headers):
     assert "connectors" in data
 
 
+def test_salesforce_oauth_start_falls_back_for_unsafe_next(
+    client, auth_headers, test_user,
+):
+    update_connector_settings(test_user.id, "salesforce_insights", {
+        "salesforce_auth_base_url": "https://login.salesforce.test",
+        "salesforce_client_id": "synthetic-client-id",
+        "salesforce_client_secret": "synthetic-client-secret",
+    })
+
+    response = client.get(
+        "/api/v1/connectors/salesforce/oauth/start",
+        query_string={"next": "/\\evil.example"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["next"] == "/connectors-manage"
+
+
 def _store_connector_status(user_id, **updates):
     state = connector_store.load_connector_state(user_id)
     connector = state.setdefault("connectors", {}).setdefault("jira_sync", {})
