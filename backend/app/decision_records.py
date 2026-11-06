@@ -42,7 +42,14 @@ DISPOSITION_SOURCES = frozenset({
 DECISION_SIGNAL_KINDS = frozenset({
     'rationale', 'tradeoff', 'assumption', 'concern', 'evidence_note',
     'commitment', 'success_measure', 'review_timing',
+    # A date someone else set (bid due, RFP closes). Distinct from a
+    # commitment, which the customer or their team made.
+    'deadline',
+    # Something that must hold before a pursued option proceeds. Its status
+    # changes are new rows that supersede the earlier one, so history stays.
+    'condition',
 })
+CONDITION_STATUSES = frozenset({'open', 'met', 'not_met', 'waived'})
 DECISION_SIGNAL_SOURCES = frozenset({'conversation', 'choice', 'system_event', 'connector'})
 
 
@@ -844,6 +851,9 @@ def find_execution_plan_decision(user, thread_id, option_key, *, decision_kit=No
         return None
     option_decision = current_option_decision(record, wanted_key)
     if option_decision is not None:
+        if option_decision.disposition and option_decision.disposition != DISPOSITION_PURSUE:
+            # Not pursued or still being evaluated is never a plan decision.
+            return None
         verdict = option_decision.kit_verdict if isinstance(option_decision.kit_verdict, dict) else {}
         if decision_kit and verdict.get('verdict_key') not in {'advance', 'advance_with_conditions'}:
             return None
@@ -926,6 +936,15 @@ def record_execution_plan_decision(
         if plan_built else f'Moving forward with {option_name}.'
     )
     prior = current_option_decision(record, option_key)
+    if (
+        prior is not None
+        and prior.disposition == DISPOSITION_PURSUE
+        and not is_plan_decision_source(prior.source)
+    ):
+        # The customer already said they are pursuing this option, in their
+        # own words. Building its plan carries that decision out; it is not a
+        # new decision, so their row (quote, reason, conditions) stays current.
+        return prior
     if (
         plan_built
         and prior is not None
@@ -1027,6 +1046,12 @@ def option_dispositions(record, *, session=None, scorecard_rows=None):
     )
     options = []
     counts = {'pursued': 0, 'not_pursued': 0, 'open': 0, 'archived': 0}
+    conditions_by_option = {}
+    for signal in current_decision_signals(decision_signals_for(record)):
+        if signal.kind == 'condition' and signal.option_key:
+            status = str((signal.structured or {}).get('status') or 'open')
+            bucket = conditions_by_option.setdefault(signal.option_key, {})
+            bucket[status] = bucket.get(status, 0) + 1
     for key, grouped_cards in option_cards.items():
         card_ids = {str(card.get('id') or card.get('analysis_id') or '') for card in grouped_cards}
         option_plans = [plan for plan_id, plan in plans.items() if str(plan_id) in card_ids and isinstance(plan, dict)]
@@ -1044,8 +1069,13 @@ def option_dispositions(record, *, session=None, scorecard_rows=None):
             state = 'open'
         state_source = row.source if row else ('plan_created' if option_plans else 'no_disposition')
         state_since = row.decided_at.isoformat() if row and row.decided_at else (plan_times[0] if plan_times else None)
-        if row is None and option_plans:
+        # A plan the customer built only to preview or compare is not a
+        # pursuit signal; any other plan is.
+        committed_plans = [plan for plan in option_plans if plan.get('planning_intent') != 'exploratory']
+        if row is None and committed_plans:
             state = 'pursued'
+        elif row is None and option_plans:
+            state_source = 'exploratory_plan'
         all_rows_archived = bool(rows_by_option.get(key)) and all(
             item.archived_at is not None for item in rows_by_option[key]
         )
@@ -1070,6 +1100,10 @@ def option_dispositions(record, *, session=None, scorecard_rows=None):
                 'actor_name': item.decided_by_name,
                 'time': item.decided_at.isoformat() if item.decided_at else None,
             } for item in history_by_option.get(key, [])],
+            'against_recommendation': bool(
+                row is not None and disposition == DISPOSITION_PURSUE and isinstance(row.override_info, dict)
+            ),
+            'conditions': conditions_by_option.get(key, {}) if state == 'pursued' else {},
             'plan_ids': plan_ids,
             'first_plan_at': plan_times[0] if plan_times else None,
             'first_scored_at': min(first_times) if first_times else None,
@@ -1113,15 +1147,37 @@ def record_decision_signal(
         raise ValueError('user_quote is required for conversational and choice signals')
     if not content:
         raise ValueError('content is required')
-    for key in ('date', 'review_by'):
+    for key in ('date', 'review_by', 'due_by'):
         if structured.get(key) and not _iso_datetime(str(structured[key])):
             raise ValueError(f'{key} must be an ISO date')
+    if kind == 'deadline' and not structured.get('date'):
+        raise ValueError('a deadline needs its date')
+    if kind == 'condition':
+        status = str(structured.get('status') or 'open').strip().lower()
+        if status not in CONDITION_STATUSES:
+            raise ValueError('invalid condition status')
+        if status != 'open' and source not in {'conversation', 'choice', 'system_event'}:
+            raise ValueError('a condition status change needs the customer or a system event as its source')
+        structured = {**structured, 'status': status}
+    if supersedes_id and DecisionSignal.query.filter_by(
+        id=str(supersedes_id), decision_record_id=str(record.id),
+    ).first() is None:
+        raise ValueError('the superseded signal is not part of this decision record')
     existing = DecisionSignal.query.filter_by(
         decision_record_id=str(record.id), kind=kind, option_key=option_key,
     ).all()
     canonical = json.dumps(structured, sort_keys=True, default=str)
+    wanted_supersedes = str(supersedes_id) if supersedes_id else None
     for row in existing:
-        if row.user_quote == quote and json.dumps(row.structured or {}, sort_keys=True, default=str) == canonical:
+        # A repeat only when every part matches: two conditions from one quote,
+        # or two status changes in one message, are separate records.
+        if (
+            row.retracted_at is None
+            and row.user_quote == quote
+            and row.content == content
+            and (row.supersedes_id or None) == wanted_supersedes
+            and json.dumps(row.structured or {}, sort_keys=True, default=str) == canonical
+        ):
             return row, False
     row = DecisionSignal(
         organization_id=record.organization_id,
@@ -1149,6 +1205,13 @@ def retract_decision_signal(signal, *, actor_user_id):
         signal.retracted_by = str(actor_user_id) if actor_user_id else None
         db.session.commit()
     return signal
+
+
+def current_decision_signals(signals):
+    """Signals neither withdrawn nor superseded by a later status."""
+    live = [signal for signal in signals if signal.retracted_at is None]
+    superseded = {str(signal.supersedes_id) for signal in live if signal.supersedes_id}
+    return [signal for signal in live if str(signal.id) not in superseded]
 
 
 def decision_signals_for(record, option_key=None):

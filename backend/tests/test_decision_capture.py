@@ -103,10 +103,7 @@ def test_two_options_pursued_in_one_message_never_touch_the_sibling(app, db, tes
         ('option-a', 'pursue', 'conversation'), ('option-b', 'pursue', 'conversation'),
     ]
     assert OptionDecision.query.filter_by(option_key='option-c').count() == 0
-    assert result['receipts'] == [
-        'Decision recorded: Moving forward with Adams County Bid.',
-        'Decision recorded: Moving forward with Boulder Transit Bid.',
-    ]
+    assert 'receipts' not in result and 'confirmation' not in result
     assert result['decisions'][0]['rationale_signal_id']
     _assert_no_customer_wording(result)
 
@@ -122,7 +119,7 @@ def test_still_evaluating_is_recorded_and_shown_in_facts(app, db, test_user):
         {'option_key': 'option-c', 'disposition': 'still_evaluating', 'user_request_quote': 'still on the table'},
     ]}, message)
     assert result['ok'] is True
-    assert result['receipts'] == ['Recorded: Still evaluating Cherry Creek Bid.']
+    assert 'receipts' not in result and 'confirmation' not in result
 
     facts = decision_facts(test_user, tid)
     by_key = {item['option_key']: item for item in facts['options']}
@@ -210,7 +207,9 @@ def test_quote_mismatch_writes_nothing(app, db, test_user):
     assert OptionDecision.query.count() == 0
 
 
-def test_override_requires_confirmation_with_facts_only_then_records(app, db, test_user):
+def test_pursuit_against_no_bid_is_recorded_with_the_recommendation_kept(app, db, test_user):
+    from app.decision_capture import decision_facts
+    from app.decision_records import create_or_refresh_record, option_dispositions
     from app.models_decision_record import OptionDecision
 
     _, agent = modules()
@@ -218,41 +217,44 @@ def test_override_requires_confirmation_with_facts_only_then_records(app, db, te
     cards = _cards()
     cards[2]['recommendation'] = {'verdict_key': 'decline', 'label': 'No-Bid'}
     _seed(db, test_user, tid, cards)
-    first_message = "We're bidding on Cherry Creek and Adams anyway."
-    _set_history(test_user, tid, [{'role': 'user', 'content': first_message}])
-    first = _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
-        {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'bidding on Cherry Creek'},
+    message = "We're bidding on Cherry Creek and Adams anyway, the client relationship matters."
+    _set_history(test_user, tid, [{'role': 'user', 'content': message}])
+    result = _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'bidding on Cherry Creek',
+         'rationale_quote': 'the client relationship matters'},
         {'option_key': 'option-a', 'disposition': 'pursue', 'user_request_quote': 'Adams anyway'},
-    ]}, first_message)
+    ]}, message)
 
-    assert first['ok'] is True
-    assert first['confirmation_required'] is True
-    assert 'confirmation' not in first
-    statuses = {item['option_key']: item['status'] for item in first['decisions']}
-    assert statuses == {'option-c': 'confirmation_required', 'option-a': 'recorded'}
-    assert first['receipts'] == ['Decision recorded: Moving forward with Adams County Bid.']
-    card = first['artifact']['data']
-    assert card['kind'] == 'decision_override'
-    assert [a['label'] for a in card['actions']] == ['Record override', 'Cancel']
-    assert first['pending_option_decisions']['option-c']['override_of'] == 'decline'
-    _assert_no_customer_wording(first)
-    assert OptionDecision.query.filter_by(option_key='option-c').count() == 0
+    assert result['ok'] is True, result
+    assert 'confirmation_required' not in result and 'artifact' not in result
+    assert 'receipts' not in result and 'pending_option_decisions' not in result
+    statuses = {item['option_key']: item['status'] for item in result['decisions']}
+    assert statuses == {'option-c': 'recorded', 'option-a': 'recorded'}
+    against = next(item for item in result['decisions'] if item['option_key'] == 'option-c')['against_recommendation']
+    assert against == {'override_of': 'decline', 'recommendation': 'No-Bid', 'failed_check_labels': []}
+    assert 'against_recommendation' not in next(
+        item for item in result['decisions'] if item['option_key'] == 'option-a'
+    )
+    _assert_no_customer_wording(result)
 
-    confirm = 'Yes, record it.'
-    _set_history(test_user, tid, [
-        {'role': 'user', 'content': first_message},
-        {'role': 'assistant', 'content': 'Jaspen recommended No-Bid on Cherry Creek. Record it anyway'},
-        {'role': 'user', 'content': confirm},
-    ])
-    second = _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
-        {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': confirm},
-    ]}, confirm)
-    assert second['ok'] is True and not second.get('confirmation_required')
     row = OptionDecision.query.filter_by(option_key='option-c').one()
-    assert row.user_quote == 'bidding on Cherry Creek'
-    assert row.override_info['override_of'] == 'decline'
-    assert row.capture_metadata['override_confirmation_quote'] == confirm
-    assert second['pending_option_decisions'] == {}
+    assert (row.disposition, row.user_quote, row.rationale) == (
+        'pursue', 'bidding on Cherry Creek', 'the client relationship matters',
+    )
+    assert row.override_info == {
+        'override_of': 'decline', 'override_reason': 'the client relationship matters', 'failed_check_labels': [],
+    }
+    assert row.capture_metadata['against_recommendation'] is True
+
+    facts = {item['option_key']: item for item in decision_facts(test_user, tid)['options']}
+    assert facts['option-c']['disposition']['state'] == 'pursued'
+    assert facts['option-c']['disposition']['against_recommendation']['override_of'] == 'decline'
+    assert 'against_recommendation' not in facts['option-a']['disposition']
+    record, _ = create_or_refresh_record(test_user, tid)
+    derived = {item['option_key']: item for item in option_dispositions(record)['options']}
+    assert derived['option-c']['against_recommendation'] is True
+    assert derived['option-a']['against_recommendation'] is False
+    assert derived['option-c']['state'] == 'pursued'
 
 
 def test_legacy_single_form_still_maps_to_dispositions(app, db, test_user):
@@ -269,7 +271,7 @@ def test_legacy_single_form_still_maps_to_dispositions(app, db, test_user):
     assert (row.disposition, row.final_decision, row.capture_metadata) == (
         'still_evaluating', 'Deferred Boulder Transit Bid.', {'deferred': True},
     )
-    assert result['confirmation'] == 'Decision recorded: Deferred Boulder Transit Bid.'
+    assert 'confirmation' not in result and 'receipts' not in result
 
 
 def test_context_signals_commitment_review_and_retraction(app, db, test_user):
@@ -354,12 +356,12 @@ def test_confirm_task_commitment_writes_person_confirmed(app, db, test_user):
     task = _plan(test_user, tid, 'card-b')['tasks'][0]
     assert task['commitment']['basis'] == 'person_confirmed'
     assert task['commitment']['due_date'] == '2026-12-01'
-    assert result['receipts'] == ['Commitment recorded: Kickoff.']
+    assert 'receipts' not in result and 'confirmation' not in result
 
     again = _call(agent, test_user, tid, 'confirm_task_commitment', {
         'task_id': 't9', 'option_key': 'option-b', 'user_request_quote': 'still December 1',
     }, 'still December 1')
-    assert again['already_committed'] is True and again['receipts'] == []
+    assert again['already_committed'] is True and 'receipts' not in again
     _assert_no_customer_wording(again)
 
 
@@ -398,7 +400,7 @@ def test_outcome_too_early_then_achieved_objective_met_needs_quote_and_lesson_li
     statuses = [(item['status'], item['objective_met'], item['source']) for item in row.outcomes]
     assert statuses == [('too_early', None, 'conversation'), ('achieved', None, 'conversation'), ('achieved', True, 'conversation')]
     assert row.outcomes[2]['objective_met_quote'] == 'hit our margin goal'
-    assert met['receipts'] == ['Outcome recorded: Achieved for Adams County Bid.']
+    assert 'receipts' not in met and 'confirmation' not in met
 
     lesson = _call(agent, test_user, tid, 'record_lesson', {
         'option_key': 'option-a', 'lesson': 'Early bonding wins time', 'outcome_id': met['outcome_id'],
@@ -493,13 +495,14 @@ def test_capture_code_paths_contain_no_canned_customer_sentences():
         inspect.getsource(getattr(agent, name)) for name in (
             '_execute_record_option_decision', '_execute_record_decision_context',
             '_execute_confirm_task_commitment', '_execute_record_outcome', '_execute_record_lesson',
-            '_decision_facts_prompt_suffix', '_pending_override_facts',
+            '_decision_facts_prompt_suffix', '_against_recommendation', '_normalize_decision_conditions',
         )
     ]
     combined = '\n'.join(sources)
     for banned in (
         "record it?", "which option did you mean", "That overrides Jaspen's No-Bid",
         "A confirmation card is shown; ask", "Would you like", "Do you want",
+        "Decision recorded", "Recorded: ", "Commitment recorded", "Outcome recorded", "Lesson recorded",
     ):
         assert banned.casefold() not in combined.casefold(), banned
     guidance = agent._SYSTEM_PROMPT_PREFIX
@@ -516,36 +519,35 @@ def test_verify_user_quote_accepts_quotes_from_the_sent_message(app, message):
     assert agent.verify_user_quote('Boulder', message)
 
 
-def test_unconfirmed_override_expires_and_same_turn_repeat_never_self_confirms(app, db, test_user):
+def test_stale_pending_override_state_is_ignored_and_dropped(app, db, test_user):
     from app.models_decision_record import OptionDecision
+    from app.routes.sessions import load_user_sessions, save_user_sessions
 
     _, agent = modules()
-    tid = 'capture-override-expiry'
+    tid = 'capture-override-stale'
     cards = _cards()
     cards[2]['recommendation'] = {'verdict_key': 'decline', 'label': 'No-Bid'}
     _seed(db, test_user, tid, cards)
-    first = "We're bidding on Cherry Creek."
-    _set_history(test_user, tid, [{'role': 'user', 'content': first}])
-    entry = {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'bidding on Cherry Creek'}
-    assert _call(agent, test_user, tid, 'record_option_decision', {'decisions': [entry]}, first)['confirmation_required']
-    repeat = _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
-        {**entry, 'user_request_quote': 'Cherry Creek'},
-    ]}, first)
-    assert repeat['confirmation_required'] is True
-    assert OptionDecision.query.count() == 0
+    sessions = load_user_sessions(test_user.id)
+    sessions[tid]['pending_option_decisions'] = {'option-c': {
+        'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'old quote',
+        'override_of': 'decline', 'requested_user_turn': 1,
+    }}
+    assert save_user_sessions(test_user.id, sessions)
 
-    later = 'Ok fine, go with Cherry Creek.'
-    _set_history(test_user, tid, [
-        {'role': 'user', 'content': first},
-        {'role': 'user', 'content': "No, don't record it."},
-        {'role': 'user', 'content': later},
-    ])
-    result = _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
-        {**entry, 'user_request_quote': 'go with Cherry Creek'},
-    ]}, later)
-    assert result['confirmation_required'] is True
-    assert result['pending_option_decisions']['option-c']['user_request_quote'] == 'go with Cherry Creek'
-    assert OptionDecision.query.count() == 0
+    message = 'Go with Cherry Creek.'
+    session = load_user_sessions(test_user.id)[tid]
+    result, _ = agent._execute_local_tool(
+        'record_option_decision', {'decisions': [
+            {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'Go with Cherry Creek'},
+        ]},
+        readiness={}, user=test_user, user_id=test_user.id, thread_id=tid,
+        user_turn_count=2, mutations_this_turn=0, user_message=message, session=session,
+    )
+    assert result['ok'] is True and result['decisions'][0]['status'] == 'recorded'
+    row = OptionDecision.query.filter_by(option_key='option-c').one()
+    assert row.user_quote == 'Go with Cherry Creek'
+    assert 'pending_option_decisions' not in session and 'pending_option_decision' not in session
 
 
 def test_choice_provenance_survives_artifact_cards_after_the_reply():
@@ -610,9 +612,11 @@ def test_partial_multi_option_call_states_what_was_not_saved(app, db, test_user)
         [{'tool': 'record_option_decision', 'result': result}], user_message=message,
     )
     types = [item['artifact']['type'] for item in entries]
-    assert 'receipts' in types
+    assert 'receipts' not in types
     status = next(item['artifact']['data'] for item in entries if item['artifact']['type'] == 'status')
-    assert [a['value'] for a in status['actions']] == ['Adams County Bid', 'Adams Rail Bid']
+    assert status['message'] == "Nothing saved yet for one option: it wasn't clear which."
+    # The AI's reply stands and asks in its own words: no second set of buttons.
+    assert 'actions' not in status
 
 
 def test_capture_only_turns_offer_no_undo(app):
@@ -621,3 +625,495 @@ def test_capture_only_turns_offer_no_undo(app):
     assert not agent._has_undoable_mutations([{'tool': 'record_option_decision', 'success': True}])
     assert agent._has_undoable_mutations([{'tool': 'confirm_task_commitment', 'success': True}])
     assert agent._has_undoable_mutations([{'tool': 'update_wbs_task', 'success': True}])
+
+
+# ── Phase 1 corrections (Nov 6 live test) ──────────────────────────────────
+
+
+def _kit_cards():
+    cards = _cards()
+    cards[2]['recommendation'] = {'verdict_key': 'decline', 'label': 'No-Bid'}
+    return cards
+
+
+def _use_rfp_kit(user, tid):
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    sessions = load_user_sessions(user.id)
+    sessions[tid]['decision_kit'] = 'rfp_bid'
+    assert save_user_sessions(user.id, sessions)
+
+
+def test_conditional_pursuit_counts_as_pursued_with_open_condition(app, db, test_user):
+    from app.decision_capture import decision_facts
+    from app.decision_records import create_or_refresh_record, option_dispositions
+    from app.models_decision_record import DecisionSignal, OptionDecision
+
+    _, agent = modules()
+    tid = 'capture-conditional'
+    _seed(db, test_user, tid, _kit_cards())
+    _use_rfp_kit(test_user, tid)
+    message = "We'll pursue Cherry Creek contingent on bonding, and Adams if the sub signs by Dec 1."
+    result = _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'pursue Cherry Creek',
+         'conditions': [{'content': 'Acceptable bonding secured', 'user_quote': 'contingent on bonding'}]},
+        {'option_key': 'option-a', 'disposition': 'pursue', 'user_request_quote': 'Adams',
+         'conditions': [{'content': 'Subcontractor signs', 'user_quote': 'if the sub signs by Dec 1',
+                         'due_by': '2026-12-01'}]},
+    ]}, message)
+    assert result['ok'] is True, result
+    assert 'receipts' not in result and 'artifact' not in result
+    _assert_no_customer_wording(result)
+
+    rows = {row.option_key: row for row in OptionDecision.query.all()}
+    assert rows['option-c'].disposition == 'pursue'
+    assert rows['option-c'].kit_verdict['verdict_key'] == 'advance_with_conditions'
+    assert rows['option-c'].capture_metadata['conditional'] is True
+    assert rows['option-c'].capture_metadata['against_recommendation'] is True
+    conditions = DecisionSignal.query.filter_by(kind='condition').order_by(DecisionSignal.option_key).all()
+    assert [(c.option_key, c.structured.get('status'), c.user_quote) for c in conditions] == [
+        ('option-a', 'open', 'if the sub signs by Dec 1'),
+        ('option-c', 'open', 'contingent on bonding'),
+    ]
+    assert conditions[0].structured['due_by'] == '2026-12-01'
+
+    facts = {item['option_key']: item for item in decision_facts(test_user, tid, today=date(2026, 12, 5))['options']}
+    assert facts['option-c']['disposition']['state'] == 'pursued'
+    assert facts['option-c']['disposition']['conditional'] is True
+    assert facts['option-c']['conditions'][0]['status'] == 'open'
+    follow = decision_facts(test_user, tid, today=date(2026, 12, 5))['follow_up_facts']
+    assert {'kind': 'condition_past_due', 'option_key': 'option-a',
+            'condition_signal_id': str(conditions[0].id), 'due_by': '2026-12-01'} in follow
+
+    record, _ = create_or_refresh_record(test_user, tid)
+    derived = option_dispositions(record)
+    by_key = {item['option_key']: item for item in derived['options']}
+    assert by_key['option-c']['state'] == 'pursued'
+    assert by_key['option-c']['conditions'] == {'open': 1}
+    # The five agreed metrics stay as they are.
+    assert set(derived['reconciliation']) == {
+        'pursued', 'not_pursued', 'open', 'archived', 'scored_options', 'reconciles',
+    }
+    assert derived['reconciliation']['pursued'] == 2 and derived['reconciliation']['reconciles'] is True
+
+
+def test_condition_status_changes_keep_history_and_need_the_customer(app, db, test_user):
+    from app.decision_capture import decision_facts
+    from app.models_decision_record import DecisionSignal
+
+    _, agent = modules()
+    tid = 'capture-condition-status'
+    _seed(db, test_user, tid, _kit_cards())
+    first = 'Pursue Cherry Creek contingent on bonding.'
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'Pursue Cherry Creek',
+         'conditions': [{'content': 'Bonding secured', 'user_quote': 'contingent on bonding'}]},
+    ]}, first)
+    open_condition = DecisionSignal.query.filter_by(kind='condition').one()
+
+    # A status change needs the current condition id and the customer's words.
+    missing = _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'condition', 'option_key': 'option-c', 'content': 'Bonding secured',
+        'structured': {'status': 'met'}, 'user_request_quote': 'bonding came through',
+    }, 'Good news, bonding came through.')
+    assert missing['ok'] is False and missing['code'] == 'condition_signal_required'
+    unquoted = _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'condition', 'condition_signal_id': str(open_condition.id),
+        'structured': {'status': 'met'}, 'user_request_quote': 'the surety approved it',
+    }, 'Good news, bonding came through.')
+    assert unquoted['ok'] is False and unquoted['code'] == 'decision_quote_required'
+
+    met = _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'condition', 'condition_signal_id': str(open_condition.id),
+        'structured': {'status': 'met'}, 'user_request_quote': 'bonding came through',
+    }, 'Good news, bonding came through.')
+    assert met['ok'] is True, met
+    assert met['superseded_condition_id'] == str(open_condition.id)
+    assert 'receipts' not in met
+
+    rows = DecisionSignal.query.filter_by(kind='condition').order_by(DecisionSignal.created_at).all()
+    assert [(row.structured['status'], row.retracted_at) for row in rows] == [('open', None), ('met', None)]
+    assert rows[1].supersedes_id == str(open_condition.id) and rows[1].option_key == 'option-c'
+    facts = {item['option_key']: item for item in decision_facts(test_user, tid)['options']}
+    current = facts['option-c']['conditions']
+    assert len(current) == 1 and current[0]['status'] == 'met' and current[0]['earlier_statuses'] == 1
+
+    again = _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'condition', 'condition_signal_id': str(open_condition.id),
+        'structured': {'status': 'waived'}, 'user_request_quote': 'waived',
+    }, 'They waived it.')
+    assert again['ok'] is False and again['code'] == 'condition_superseded'
+
+
+def test_conditions_belong_to_pursuits_and_need_quotes(app, db, test_user):
+    from app.models_decision_record import OptionDecision
+
+    _, agent = modules()
+    tid = 'capture-condition-validation'
+    _seed(db, test_user, tid, _cards())
+    message = 'Not Boulder unless the price drops.'
+    wrong_disposition = _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-b', 'disposition': 'not_pursue', 'user_request_quote': 'Not Boulder',
+         'conditions': [{'content': 'Price drops', 'user_quote': 'unless the price drops'}]},
+    ]}, message)
+    assert wrong_disposition['ok'] is False and wrong_disposition['code'] == 'invalid_decision_conditions'
+    unquoted = _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-b', 'disposition': 'pursue', 'user_request_quote': 'Boulder',
+         'conditions': [{'content': 'Price drops', 'user_quote': 'if pricing falls'}]},
+    ]}, message)
+    assert unquoted['ok'] is False and unquoted['code'] == 'decision_condition_quote_required'
+    assert OptionDecision.query.count() == 0
+
+
+def test_deadline_and_commitment_are_kept_distinct(app, db, test_user):
+    from app.decision_capture import decision_facts
+    from app.models_decision_record import DecisionSignal
+
+    _, agent = modules()
+    tid = 'capture-deadline'
+    _seed(db, test_user, tid, _cards())
+    message = "Bid is due Dec 12, and we'll have the surety letter for Adams by Friday Dec 5."
+    deadline = _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'deadline', 'content': 'Bid due', 'structured': {'date': '2026-12-12', 'set_by': 'client'},
+        'user_request_quote': 'Bid is due Dec 12',
+    }, message)
+    commitment = _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'commitment', 'option_key': 'option-a', 'content': 'Surety letter ready',
+        'structured': {'date': '2026-12-05', 'owner': 'our team'},
+        'user_request_quote': "we'll have the surety letter for Adams by Friday Dec 5",
+    }, message)
+    no_date = _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'deadline', 'content': 'Bid due', 'user_request_quote': 'Bid is due',
+    }, message)
+    assert deadline['ok'] is True and commitment['ok'] is True
+    assert no_date['ok'] is False and no_date['code'] == 'invalid_context_date'
+    assert 'receipts' not in deadline and 'receipts' not in commitment
+
+    rows = {row.kind: row for row in DecisionSignal.query.all()}
+    assert (rows['deadline'].option_key, rows['deadline'].structured) == (
+        None, {'date': '2026-12-12', 'set_by': 'client'},
+    )
+    assert (rows['commitment'].option_key, rows['commitment'].structured) == (
+        'option-a', {'date': '2026-12-05', 'owner': 'our team'},
+    )
+    facts = decision_facts(test_user, tid)
+    assert facts['decision_level']['deadlines'] == [{
+        'signal_id': str(rows['deadline'].id), 'content': 'Bid due', 'date': '2026-12-12', 'set_by': 'client',
+    }]
+    by_key = {item['option_key']: item for item in facts['options']}
+    assert by_key['option-a']['deadlines'] == []
+    assert by_key['option-a']['signals']['commitment']['count'] == 1
+
+
+def test_background_note_failure_never_replaces_the_reply(app):
+    _, agent = modules()
+    failed_note = {'tool': 'record_decision_context', 'result': {
+        'ok': False, 'code': 'decision_quote_required', 'error': 'Quote the user',
+    }}
+    assert agent._apply_option_decision_failure_state('Here is the comparison.', [failed_note]) == (
+        'Here is the comparison.', None,
+    )
+    assert agent._artifact_entries_from_actions([failed_note], user_message='Bid is due Dec 12.') == []
+    # A failed decision save still withholds prose that may claim it saved.
+    failed_decision = {'tool': 'record_option_decision', 'result': {
+        'ok': False, 'code': 'decision_quote_required', 'error': 'Quote the user',
+    }}
+    assert agent._apply_option_decision_failure_state('Recorded!', [failed_decision])[0] == ''
+
+
+def test_capture_results_never_produce_receipts_even_if_present(app):
+    _, agent = modules()
+    actions = [{'tool': tool, 'result': {'ok': True, 'receipts': ['Saved.'], 'confirmation': 'Saved.'}}
+               for tool in agent._DECISION_CAPTURE_TOOLS]
+    assert agent._artifact_entries_from_actions(actions, user_message='x') == []
+
+
+def test_tool_trace_carries_names_and_codes_only(app):
+    _, agent = modules()
+    result = {'ok': True, 'decisions': [
+        {'status': 'recorded', 'disposition': 'pursue', 'option_name': 'Secret Bid', 'option_key': 'k'},
+    ], 'kind': 'deadline', 'content': 'customer words', 'user_quote': 'customer words'}
+    entry = agent._tool_trace_entry('record_option_decision', result, thread_id='t1', user_turn_count=3)
+    assert entry == {
+        'event': 'agent_tool_call', 'thread_id': 't1', 'user_turn': 3, 'tool': 'record_option_decision',
+        'ok': True, 'code': None, 'kind': 'deadline',
+        'decision_statuses': [{'status': 'recorded', 'disposition': 'pursue', 'code': None}],
+    }
+    assert 'customer words' not in json.dumps(entry) and 'Secret Bid' not in json.dumps(entry)
+
+
+def _fake_plan_build(strategy, agent, monkeypatch):
+    calls = []
+    monkeypatch.setattr(strategy, 'get_llm_client', lambda: object())
+
+    def fake_plan(*args, **kwargs):
+        calls.append(kwargs)
+        required = [item for item in kwargs.get('lineage_sources', []) if item.get('required')]
+        return ({'tasks': [{
+            'id': 'task-1', 'title': 'Kickoff', 'estimated_days': 2,
+            'lineage': [{'type': item['type'], 'ref': item['ref']} for item in required],
+        }]}, {'provider': 'test', 'input_tokens': 1, 'output_tokens': 1}, True, None)
+
+    monkeypatch.setattr(strategy, '_generate_ai_wbs_suggestion', fake_plan)
+
+    def fake_operation(_user, *, generate, **kwargs):
+        generated, usage = generate()
+        return generated, usage, {'charged_credits': 0, 'reserved_credits': 0}
+
+    monkeypatch.setattr(agent, 'execute_customer_operation', fake_operation)
+    return calls
+
+
+def test_exploratory_plan_records_no_decision_and_is_not_pursued(app, db, test_user, monkeypatch):
+    from app.decision_records import create_or_refresh_record, option_dispositions
+    from app.models_decision_record import OptionDecision
+
+    strategy, agent = modules()
+    tid = 'capture-exploratory-plan'
+    _seed(db, test_user, tid, _cards())
+    _fake_plan_build(strategy, agent, monkeypatch)
+    built = agent._execute_mutation_tool(
+        'generate_execution_plan', {'scorecard_id': 'card-b', 'planning_intent': 'exploratory'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert built['ok'] is True, built
+    assert built.get('confirmation_required') is not True
+    assert built['decision_recorded'] is False and built['planning_intent'] == 'exploratory'
+    assert OptionDecision.query.count() == 0
+    record, _ = create_or_refresh_record(test_user, tid)
+    by_key = {item['option_key']: item for item in option_dispositions(record)['options']}
+    assert by_key['option-b']['state'] == 'open'
+    assert by_key['option-b']['state_source'] == 'exploratory_plan'
+    assert by_key['option-b']['plan_ids'] == ['card-b']
+
+
+def test_missing_planning_intent_records_nothing(app, db, test_user, monkeypatch):
+    from app.models_decision_record import OptionDecision
+
+    strategy, agent = modules()
+    tid = 'capture-unstated-plan'
+    _seed(db, test_user, tid, _cards())
+    _fake_plan_build(strategy, agent, monkeypatch)
+    built = agent._execute_mutation_tool(
+        'generate_execution_plan', {'scorecard_id': 'card-a'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert built['ok'] is True and built['decision_recorded'] is False
+    assert OptionDecision.query.count() == 0
+
+
+def test_committed_plan_keeps_the_customers_own_pursue_row(app, db, test_user, monkeypatch):
+    from app.models_decision_record import OptionDecision
+
+    strategy, agent = modules()
+    tid = 'capture-plan-keeps-row'
+    _seed(db, test_user, tid, _kit_cards())
+    message = 'Pursue Cherry Creek contingent on bonding.'
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'Pursue Cherry Creek',
+         'conditions': [{'content': 'Bonding secured', 'user_quote': 'contingent on bonding'}]},
+    ]}, message)
+    _fake_plan_build(strategy, agent, monkeypatch)
+    built = agent._execute_mutation_tool(
+        'generate_execution_plan', {'scorecard_id': 'card-c', 'planning_intent': 'committed'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert built['ok'] is True, built
+    rows = OptionDecision.query.filter_by(option_key='option-c').all()
+    assert len(rows) == 1
+    assert (rows[0].source, rows[0].user_quote, rows[0].superseded_at) == (
+        'conversation', 'Pursue Cherry Creek', None,
+    )
+
+
+def test_committed_plan_after_not_pursue_keeps_history_and_flags_it(app, db, test_user, monkeypatch):
+    from app.decision_capture import decision_facts
+    from app.models_decision_record import OptionDecision
+
+    strategy, agent = modules()
+    tid = 'capture-plan-after-no'
+    _seed(db, test_user, tid, _cards())
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-b', 'disposition': 'not_pursue', 'user_request_quote': 'pass on Boulder'},
+    ]}, 'We pass on Boulder.')
+    _fake_plan_build(strategy, agent, monkeypatch)
+    built = agent._execute_mutation_tool(
+        'generate_execution_plan', {'scorecard_id': 'card-b', 'planning_intent': 'committed'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert built['ok'] is True and built['decision_recorded'] is True
+    rows = OptionDecision.query.filter_by(option_key='option-b').order_by(OptionDecision.created_at).all()
+    assert [(row.disposition, row.superseded_at is None) for row in rows] == [
+        ('not_pursue', False), ('pursue', True),
+    ]
+    follow = decision_facts(test_user, tid)['follow_up_facts']
+    assert any(item['kind'] == 'plan_conflicts_disposition' and item['option_key'] == 'option-b' for item in follow)
+
+
+def test_plan_tool_schema_states_intent_and_guidance_has_no_fixed_confirmation(app):
+    _, agent = modules()
+    tool = next(
+        item for item in agent._anthropic_tool_definitions(enable_mutation_tools=True)
+        if item['name'] == 'generate_execution_plan'
+    )
+    assert tool['input_schema']['properties']['planning_intent']['enum'] == ['committed', 'exploratory']
+    context = next(
+        item for item in agent._anthropic_tool_definitions(enable_mutation_tools=True)
+        if item['name'] == 'record_decision_context'
+    )
+    kinds = context['input_schema']['properties']['kind']['enum']
+    assert 'deadline' in kinds and 'condition' in kinds
+    decision = next(
+        item for item in agent._anthropic_tool_definitions(enable_mutation_tools=True)
+        if item['name'] == 'record_option_decision'
+    )
+    assert 'conditions' in decision['input_schema']['properties']['decisions']['items']['properties']
+    guidance = agent._SYSTEM_PROMPT_PREFIX
+    assert 'decision_acknowledged' not in guidance
+    assert "this records that you're moving forward" not in guidance.casefold()
+    assert 'confirmation card is shown; ask once' not in guidance
+
+
+# ── Review fixes ───────────────────────────────────────────────────────────
+
+
+def test_exploratory_plan_stays_exploratory_after_an_edit(app, db, test_user, monkeypatch):
+    from app.decision_records import create_or_refresh_record, option_dispositions
+
+    strategy, agent = modules()
+    tid = 'capture-exploratory-edit'
+    _seed(db, test_user, tid, _cards())
+    _fake_plan_build(strategy, agent, monkeypatch)
+    built = agent._execute_mutation_tool(
+        'generate_execution_plan', {'scorecard_id': 'card-b', 'planning_intent': 'exploratory'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert built['ok'] is True, built
+    task_id = built['project_wbs']['tasks'][0]['id']
+    edited = agent._execute_mutation_tool(
+        'update_wbs_task', {'task_id': task_id, 'field': 'status', 'new_value': 'in_progress'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert edited['ok'] is True, edited
+    assert _plan(test_user, tid, 'card-b')['planning_intent'] == 'exploratory'
+    record, _ = create_or_refresh_record(test_user, tid)
+    by_key = {item['option_key']: item for item in option_dispositions(record)['options']}
+    assert by_key['option-b']['state'] == 'open'
+
+
+def test_exploratory_plan_never_auto_syncs(app):
+    _, agent = modules()
+    assert agent._trigger_post_mutation_sync('u', 't', {'planning_intent': 'exploratory', 'tasks': []}) == {
+        'status': 'skipped', 'reason': 'exploratory_plan',
+    }
+
+
+def test_two_conditions_from_one_quote_are_both_kept(app, db, test_user):
+    from app.models_decision_record import DecisionSignal
+
+    _, agent = modules()
+    tid = 'capture-two-conditions'
+    _seed(db, test_user, tid, _cards())
+    message = 'Pursue Cherry Creek if we get bonding and insurance.'
+    result = _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'Pursue Cherry Creek',
+         'conditions': [
+             {'content': 'Bonding secured', 'user_quote': 'if we get bonding and insurance'},
+             {'content': 'Insurance secured', 'user_quote': 'if we get bonding and insurance'},
+         ]},
+    ]}, message)
+    ids = result['decisions'][0]['condition_signal_ids']
+    assert len(set(ids)) == 2
+    assert sorted(row.content for row in DecisionSignal.query.filter_by(kind='condition')) == [
+        'Bonding secured', 'Insurance secured',
+    ]
+
+    both = 'Both bonding and insurance came through.'
+    first, second = ids
+    met_a = _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'condition', 'condition_signal_id': first, 'structured': {'status': 'met'},
+        'user_request_quote': 'bonding and insurance came through',
+    }, both)
+    met_b = _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'condition', 'condition_signal_id': second, 'structured': {'status': 'met'},
+        'user_request_quote': 'bonding and insurance came through',
+    }, both)
+    assert met_a['ok'] and met_b['ok'] and met_a['signal_id'] != met_b['signal_id']
+    assert met_b['superseded_condition_id'] == second and met_b['created'] is True
+    from app.decision_capture import decision_facts
+    current = {c['content']: c['status'] for c in {
+        o['option_key']: o for o in decision_facts(test_user, tid)['options']
+    }['option-c']['conditions']}
+    assert current == {'Bonding secured': 'met', 'Insurance secured': 'met'}
+
+
+def test_bad_condition_fails_only_its_own_entry(app, db, test_user):
+    from app.models_decision_record import OptionDecision
+
+    _, agent = modules()
+    tid = 'capture-condition-partial'
+    _seed(db, test_user, tid, _cards())
+    message = "We're going with Adams and Boulder, Boulder contingent on bonding."
+    result = _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-a', 'disposition': 'pursue', 'user_request_quote': 'going with Adams'},
+        {'option_key': 'option-b', 'disposition': 'pursue', 'user_request_quote': 'Boulder',
+         'conditions': [{'content': 'Bonding', 'user_quote': 'pending a bond'}]},
+    ]}, message)
+    assert result['ok'] is True
+    statuses = {item.get('option_key'): (item['status'], item.get('code')) for item in result['decisions']}
+    assert statuses == {
+        'option-a': ('recorded', None),
+        'option-b': ('not_recorded', 'decision_condition_quote_required'),
+    }
+    # Boulder is never stored as an unconditional pursuit.
+    assert [row.option_key for row in OptionDecision.query.all()] == ['option-a']
+
+
+def test_condition_failure_status_card_never_shows_tool_text(app):
+    _, agent = modules()
+    action = {'tool': 'record_option_decision', 'result': {
+        'ok': False, 'code': 'decision_condition_quote_required', 'non_blocking': True, 'option_names': [],
+        'error': 'Each condition needs an exact quote',
+    }}
+    card = agent._artifact_entries_from_actions([action], user_message='x')[0]['artifact']['data']
+    assert card['message'] == "This decision wasn't saved. Your message is saved."
+
+
+def test_new_condition_needs_a_pursued_option_and_lapses_when_not_pursued(app, db, test_user):
+    from app.decision_capture import decision_facts
+    from app.decision_records import create_or_refresh_record, option_dispositions
+
+    _, agent = modules()
+    tid = 'capture-condition-scope'
+    _seed(db, test_user, tid, _cards())
+    no_option = _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'condition', 'content': 'Bonding', 'user_request_quote': 'if bonding works out',
+    }, 'Only if bonding works out.')
+    assert no_option['ok'] is False and no_option['code'] == 'condition_option_not_pursued'
+    undecided = _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'condition', 'option_key': 'option-c', 'content': 'Bonding',
+        'user_request_quote': 'if bonding works out',
+    }, 'Cherry Creek only if bonding works out.')
+    assert undecided['ok'] is False and undecided['code'] == 'condition_option_not_pursued'
+
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'Pursue Cherry Creek',
+         'conditions': [{'content': 'Bonding', 'user_quote': 'by Dec 1', 'due_by': '2026-12-01'}]},
+    ]}, 'Pursue Cherry Creek if bonding is in place by Dec 1.')
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-c', 'disposition': 'not_pursue', 'user_request_quote': 'drop Cherry Creek'},
+    ]}, "Let's drop Cherry Creek.")
+    facts = decision_facts(test_user, tid, today=date(2026, 12, 5))
+    option = {o['option_key']: o for o in facts['options']}['option-c']
+    assert option['conditions'] == [] and 'conditional' not in option['disposition']
+    assert not [f for f in facts['follow_up_facts'] if f['kind'] == 'condition_past_due']
+    record, _ = create_or_refresh_record(test_user, tid)
+    assert {o['option_key']: o for o in option_dispositions(record)['options']}['option-c']['conditions'] == {}
+
+
+def test_plan_intent_is_required_in_the_schema(app):
+    _, agent = modules()
+    tool = next(
+        item for item in agent._anthropic_tool_definitions(enable_mutation_tools=True)
+        if item['name'] == 'generate_execution_plan'
+    )
+    assert tool['input_schema']['required'] == ['planning_intent']

@@ -16,6 +16,7 @@ from .decision_records import (
     _find_existing_record,
     can_read_record,
     canonical_context,
+    current_decision_signals,
     decision_signals_for,
     execution_option_key,
     is_plan_decision_source,
@@ -235,6 +236,51 @@ def _review_dates(signals):
     return out
 
 
+def _condition_facts(signals, all_signals):
+    by_id = {str(signal.id): signal for signal in all_signals}
+    out = []
+    for signal in signals:
+        if signal.kind != 'condition':
+            continue
+        structured = signal.structured if isinstance(signal.structured, dict) else {}
+        history = 0
+        cursor = signal
+        while cursor is not None and cursor.supersedes_id:
+            history += 1
+            cursor = by_id.get(str(cursor.supersedes_id))
+        fact = {
+            'signal_id': str(signal.id),
+            'content': _clip(signal.content),
+            'status': structured.get('status') or 'open',
+            'source': signal.source,
+            'since': signal.occurred_at.isoformat() if signal.occurred_at else None,
+        }
+        due_by = normalize_iso_date(structured.get('due_by'))
+        if due_by:
+            fact['due_by'] = due_by
+        if history:
+            fact['earlier_statuses'] = history
+        out.append(fact)
+    return out
+
+
+def _deadline_facts(signals):
+    out = []
+    for signal in signals:
+        if signal.kind != 'deadline':
+            continue
+        structured = signal.structured if isinstance(signal.structured, dict) else {}
+        fact = {
+            'signal_id': str(signal.id),
+            'content': _clip(signal.content),
+            'date': normalize_iso_date(structured.get('date')),
+        }
+        if structured.get('set_by'):
+            fact['set_by'] = _clip(structured['set_by'])
+        out.append(fact)
+    return out
+
+
 def _outcome_state(outcomes):
     if not outcomes:
         return 'none'
@@ -277,7 +323,8 @@ def decision_facts(user, thread_id, *, today=None, session_row=None):
     for row in rows:
         rows_by_option.setdefault(str(row.option_key), []).append(row)
 
-    signals = [signal for signal in decision_signals_for(record) if signal.retracted_at is None]
+    all_signals = decision_signals_for(record)
+    signals = current_decision_signals(all_signals)
     signals_by_option = {}
     for signal in signals:
         signals_by_option.setdefault(signal.option_key, []).append(signal)
@@ -307,6 +354,24 @@ def decision_facts(user, thread_id, *, today=None, session_row=None):
             disposition['quote'] = _clip(current.user_quote)
         if current is not None and current.rationale:
             disposition['rationale'] = _clip(current.rationale)
+        override = current.override_info if current is not None and isinstance(current.override_info, dict) else None
+        if override and current.disposition == 'pursue':
+            # The customer's choice and Jaspen's recommendation, side by side.
+            verdict = current.kit_verdict if isinstance(current.kit_verdict, dict) else {}
+            snapshot = verdict.get('recommendation_snapshot') if isinstance(verdict.get('recommendation_snapshot'), dict) else {}
+            disposition['against_recommendation'] = {
+                'override_of': override.get('override_of'),
+                'jaspen_recommendation': snapshot.get('label') or snapshot.get('verdict') or None,
+                'failed_check_labels': list(override.get('failed_check_labels') or []),
+            }
+        # Conditions describe a pursuit; once the option isn't pursued they no
+        # longer apply (their history stays in the record).
+        conditions = (
+            _condition_facts(signals_by_option.get(key, []), all_signals)
+            if option['state'] == 'pursued' else []
+        )
+        if conditions:
+            disposition['conditional'] = True
         outcome_state = _outcome_state(outcomes)
         entry = {
             'option_key': key,
@@ -316,6 +381,8 @@ def decision_facts(user, thread_id, *, today=None, session_row=None):
             'disposition': disposition,
             'plan': progress,
             'signals': _signals_by_kind(option_signals),
+            'conditions': conditions,
+            'deadlines': _deadline_facts(option_signals),
             'success_measures': [
                 {'signal_id': str(signal.id), 'content': _clip(signal.content),
                  'review_by': normalize_iso_date((signal.structured or {}).get('review_by'))}
@@ -339,6 +406,12 @@ def decision_facts(user, thread_id, *, today=None, session_row=None):
             follow_up.append({'kind': 'review_due', 'option_key': key, 'review_by': due[0]})
         if progress['status'] == 'complete' and not outcomes:
             follow_up.append({'kind': 'implementation_complete_without_outcome', 'option_key': key})
+        for condition in conditions:
+            if condition['status'] == 'open' and condition.get('due_by') and condition['due_by'] < today:
+                follow_up.append({
+                    'kind': 'condition_past_due', 'option_key': key,
+                    'condition_signal_id': condition['signal_id'], 'due_by': condition['due_by'],
+                })
         # A plan built after the customer said not pursue or still evaluating:
         # the plan-created row supersedes their stated disposition.
         if current is not None and is_plan_decision_source(current.source) and current.supersedes_id:
@@ -360,6 +433,7 @@ def decision_facts(user, thread_id, *, today=None, session_row=None):
     decision_outcomes = [item for item in (record.outcomes or []) if isinstance(item, dict)]
     decision_level = {
         'signals': _signals_by_kind(decision_signals),
+        'deadlines': _deadline_facts(decision_signals),
         'outcome_state': _outcome_state(decision_outcomes),
         'outcomes_count': len(decision_outcomes),
         'lessons_count': len([item for item in (record.lessons_learned or []) if isinstance(item, dict)]),

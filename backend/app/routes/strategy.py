@@ -6540,7 +6540,7 @@ def _normalize_project_wbs(
         **{key: payload.get(key, base.get(key)) for key in (
             'ai_generated', 'ai_generated_at', 'ai_summary', 'generation_status',
             'generation_error', 'scorecard_id', 'scorecard_name', 'idea_name',
-            'starter_plan_note',
+            'starter_plan_note', 'planning_intent',
             'decision_basis', 'decision_basis_reason', 'decision_basis_history',
         ) if key in payload or key in base},
         'version': int(base.get('version') or payload.get('version') or 1),

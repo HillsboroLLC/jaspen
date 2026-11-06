@@ -3501,7 +3501,7 @@ def test_narration_failure_keeps_completed_action_but_marks_degraded(app, test_u
     assert receipts[-1]['artifact'] == {'type': 'receipts', 'data': {'items': ['Queued all seven.']}}
 
 
-def test_chat_execution_plan_confirms_records_and_does_not_reprompt_for_regenerate(app, db, test_user, monkeypatch):
+def test_chat_execution_plan_committed_records_silently_and_does_not_reprompt_for_regenerate(app, db, test_user, monkeypatch):
     from app.models_decision_record import DecisionRecord
 
     strategy, agent = modules()
@@ -3541,26 +3541,18 @@ def test_chat_execution_plan_confirms_records_and_does_not_reprompt_for_regenera
 
     monkeypatch.setattr(agent, 'execute_customer_operation', fake_operation)
 
-    confirmation = agent._execute_mutation_tool(
-        'generate_execution_plan', {}, user=test_user, user_id=test_user.id, thread_id=tid,
-    )
-    assert confirmation['ok'] is True
-    assert confirmation['confirmation_required'] is True
-    assert confirmation['option_key'] == 'option-general'
-    assert confirmation['confirmation'] == (
-        "This records that you're moving forward with General expansion "
-        '(Proceed with conditions) — go ahead?'
-    )
-    assert provider_calls == []
-    assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
-
+    # A clear request to plan the option is the pursuit signal: no fixed
+    # confirmation step, recorded silently with the plan.
     built = agent._execute_mutation_tool(
         'generate_execution_plan',
-        {'decision_acknowledged': True, 'option_key': 'option-general'},
+        {'planning_intent': 'committed', 'option_key': 'option-general'},
         user=test_user, user_id=test_user.id, thread_id=tid,
     )
     assert built['ok'] is True
+    assert built.get('confirmation_required') is not True
     assert built['decision_recorded'] is True
+    assert built['planning_intent'] == 'committed'
+    assert built['project_wbs']['planning_intent'] == 'committed'
     assert built['project_wbs']['tasks'][0]['title'] == 'Validate staffing for General expansion'
     record = DecisionRecord.query.filter_by(thread_id=tid).one()
     assert record.final_decision is None
@@ -3579,6 +3571,10 @@ def test_chat_execution_plan_confirms_records_and_does_not_reprompt_for_regenera
     assert regenerated['ok'] is True
     assert regenerated.get('confirmation_required') is not True
     assert len(provider_calls) == 2
+    # Rebuilding the committed plan without a stated intent keeps it committed
+    # and never adds a second decision.
+    assert regenerated['project_wbs']['planning_intent'] == 'committed'
+    assert OptionDecision.query.filter_by(decision_record_id=record.id).count() == 1
 
 
 def test_chat_decision_tool_records_verified_non_override(app, db, test_user):
@@ -3718,7 +3714,7 @@ def test_chat_decision_matches_name_in_two_option_conversation(
     mock_record_decision_conversation_provider(
         agent, monkeypatch, test_user, tid,
         option_name='the agency',
-        provider_reply=lambda result: result['confirmation'],
+        provider_reply=lambda result: 'Good choice; the agency gets you moving fastest.',
     )
 
     response = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
@@ -3728,10 +3724,14 @@ def test_chat_decision_matches_name_in_two_option_conversation(
 
     assert response.status_code == 200, response.get_json()
     payload = response.get_json()
-    assert payload['reply'] == 'Decision recorded: Moving forward with Contract Marketing Agency.'
+    # Saved silently: the AI's own reply stands and no receipt is shown.
+    assert payload['reply'] == 'Good choice; the agency gets you moving fastest.'
+    assert not [
+        item for item in payload.get('artifact_messages') or []
+        if item['artifact']['type'] == 'receipts'
+    ]
     result = payload['actions'][0]['result']
-    assert result['decision_line'] == payload['reply']
-    assert result['option_decision']['option_key'] == 'option-agency'
+    assert result['decisions'][0]['option_key'] == 'option-agency'
     record = DecisionRecord.query.filter_by(thread_id=tid).one()
     decision = OptionDecision.query.filter_by(decision_record_id=record.id).one()
     assert decision.option_key == 'option-agency'
@@ -3826,7 +3826,7 @@ def test_chat_decision_failure_replaces_false_recorded_reply(
     assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
 
 
-def test_chat_override_confirms_then_records_override_through_conversation(
+def test_chat_pursuit_against_no_bid_records_at_once_through_conversation(
     client, db, test_user, auth_headers, monkeypatch,
 ):
     from app.models_decision_record import DecisionRecord, OptionDecision
@@ -3869,7 +3869,7 @@ def test_chat_override_confirms_then_records_override_through_conversation(
             session=kwargs['session'],
         )
         return (
-            result.get('confirmation') or 'Should I record that override?',
+            'Noted. The surety risk is still worth watching.',
             {'provider': 'test', 'model': 'test-model', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2},
             [{'tool': 'record_option_decision', 'input': {}, 'result': result}],
             [],
@@ -3883,19 +3883,10 @@ def test_chat_override_confirms_then_records_override_through_conversation(
         'message': "We're going to bid on Override proposal.",
     })
     assert first.status_code == 200, first.get_json()
-    override_cards = [
-        item['artifact']['data'] for item in first.get_json()['artifact_messages']
-        if item['artifact']['type'] == 'confirm'
-    ]
-    assert override_cards[0]['kind'] == 'decision_override'
-    assert [a['label'] for a in override_cards[0]['actions']] == ['Record override', 'Cancel']
-    assert DecisionRecord.query.filter_by(thread_id=tid).count() == 0
-
-    confirmed = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
-        'thread_id': tid,
-        'message': 'Yes, record it.',
-    })
-    assert confirmed.status_code == 200, confirmed.get_json()
+    # Disagreeing with Jaspen is a clear decision: recorded at once, with no
+    # confirm card and no receipt.
+    types = [item['artifact']['type'] for item in first.get_json().get('artifact_messages') or []]
+    assert 'confirm' not in types and 'receipts' not in types
     record = DecisionRecord.query.filter_by(thread_id=tid).one()
     decision = OptionDecision.query.filter_by(decision_record_id=record.id).one()
     assert decision.final_decision == 'Moving forward with Override proposal.'
