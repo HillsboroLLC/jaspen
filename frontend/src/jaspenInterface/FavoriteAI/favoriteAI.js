@@ -21,6 +21,12 @@ export const PROVIDERS = {
     url: 'https://gemini.google.com/app',
     color: '#8E75B2',
   },
+  copilot: {
+    id: 'copilot',
+    name: 'Copilot',
+    url: 'https://copilot.microsoft.com/',
+    color: 'currentColor',
+  },
 };
 
 export const PROVIDER_IDS = Object.keys(PROVIDERS);

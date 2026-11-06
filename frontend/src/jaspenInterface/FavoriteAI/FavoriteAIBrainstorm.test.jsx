@@ -32,13 +32,19 @@ describe('FavoriteAIBrainstorm', () => {
   test('renders provider icons with individual labels and the shared tooltip', () => {
     render(<FavoriteAIBrainstorm projectSummary={summary} onAddToComposer={jest.fn()} />);
 
-    for (const provider of ['ChatGPT', 'Claude', 'Gemini']) {
+    for (const provider of ['ChatGPT', 'Claude', 'Gemini', 'Copilot']) {
       const button = screen.getByRole('button', { name: `Brainstorm with ${provider}` });
       expect(button).not.toHaveAttribute('title');
       expect(button).toHaveAttribute('data-tooltip', 'Brainstorm with your favorite AI tool');
       expect(button).toContainHTML('<svg');
       expect(button).not.toContainHTML('linearGradient');
+      expect(button).not.toContainHTML('radialGradient');
     }
+    const order = screen.getAllByRole('button', { name: /^Brainstorm with (ChatGPT|Claude|Gemini|Copilot)$/ })
+      .map((button) => button.getAttribute('aria-label'));
+    expect(order).toEqual([
+      'Brainstorm with ChatGPT', 'Brainstorm with Claude', 'Brainstorm with Gemini', 'Brainstorm with Copilot',
+    ]);
     expect(screen.getByRole('button', { name: 'Brainstorm with ChatGPT' }))
       .not.toHaveAttribute('style');
     expect(screen.getByRole('button', { name: 'Brainstorm with ChatGPT' }).querySelector('svg'))
@@ -97,6 +103,7 @@ describe('FavoriteAIBrainstorm', () => {
   test.each([
     ['Claude', 'https://claude.ai/new'],
     ['Gemini', 'https://gemini.google.com/app'],
+    ['Copilot', 'https://copilot.microsoft.com/'],
   ])('opens %s at its fixed URL without putting prompt text in the URL', async (name, url) => {
     const user = userEvent.setup();
     const writeText = jest.fn().mockResolvedValue(undefined);
@@ -173,5 +180,21 @@ describe('FavoriteAIBrainstorm', () => {
     render(<FavoriteAIBrainstorm projectSummary={summary} onAddToComposer={jest.fn()} />);
     expect(screen.getByRole('button', { name: 'Brainstorm with your favorite AI tool' }))
       .toHaveStyle({ color: '#D97757' });
+  });
+
+  test('remembers Copilot and labels its returned thinking', async () => {
+    const user = userEvent.setup();
+    const onAddToComposer = jest.fn();
+    const { unmount } = render(<FavoriteAIBrainstorm projectSummary={summary} onAddToComposer={onAddToComposer} />);
+    await user.click(screen.getByRole('button', { name: 'Brainstorm with Copilot' }));
+    expect(localStorage.getItem('jaspen.brainstormProvider')).toBe('copilot');
+    await user.click(screen.getByRole('button', { name: 'Bring your thinking back' }));
+    await user.type(screen.getByLabelText('Your brainstorm'), 'Two options look strong.');
+    await user.click(screen.getByRole('button', { name: 'Add to Jaspen' }));
+    expect(onAddToComposer).toHaveBeenCalledWith(expect.stringContaining('Ideas from my Copilot brainstorm:'));
+    unmount();
+    render(<FavoriteAIBrainstorm projectSummary={summary} onAddToComposer={jest.fn()} />);
+    expect(screen.getByRole('button', { name: 'Brainstorm with your favorite AI tool' }))
+      .toHaveClass('favorite-ai-provider-icon--copilot');
   });
 });
