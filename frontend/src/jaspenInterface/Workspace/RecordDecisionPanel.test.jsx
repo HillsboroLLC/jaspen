@@ -50,9 +50,13 @@ afterEach(() => {
 
 describe('RecordDecisionPanel', () => {
   it.each([
-    [null, 'Decision recorded: moving forward with Proposal · Change'],
-    [{ override_of: 'decline' }, "Decision recorded: pursuing Proposal despite Jaspen's No-Bid · Change"],
-  ])('shows the exact build decision line and Change opens the existing panel', async (overrideInfo, expected) => {
+    ['build_execution_plan', null, 'Decision recorded: moving forward with Proposal · Change'],
+    ['plan_created', null, 'Decision recorded: moving forward with Proposal · Change'],
+    ['legacy_plan', null, 'Decision recorded: moving forward with Proposal · Change'],
+    ['build_execution_plan', { override_of: 'decline' }, "Decision recorded: pursuing Proposal despite Jaspen's No-Bid · Change"],
+    ['plan_created', { override_of: 'decline' }, "Decision recorded: pursuing Proposal despite Jaspen's No-Bid · Change"],
+    ['legacy_plan', { override_of: 'decline' }, "Decision recorded: pursuing Proposal despite Jaspen's No-Bid · Change"],
+  ])('shows the exact %s decision line and Change opens the existing panel', async (source, overrideInfo, expected) => {
     global.fetch = mockFetch([
       ['/search', () => ({ results: [] })],
       ['?thread_id=', () => ({
@@ -61,7 +65,8 @@ describe('RecordDecisionPanel', () => {
           current_state: 'current',
           final_decision: 'Moving forward with Proposal — execution plan built.',
           option_decision: {
-            source: 'build_execution_plan',
+            source,
+            plan_decision: true,
             option_name: 'Proposal',
             override_info: overrideInfo,
           },
@@ -89,7 +94,7 @@ describe('RecordDecisionPanel', () => {
           ...PENDING_RECORD,
           current_state: 'current',
           final_decision: 'Moving forward with Proposal — execution plan built.',
-          option_decision: { source: 'build_execution_plan', option_name: 'Proposal' },
+          option_decision: { source: 'build_execution_plan', plan_decision: true, option_name: 'Proposal' },
         } : PENDING_RECORD],
       })],
     ]);

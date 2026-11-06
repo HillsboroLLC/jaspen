@@ -753,4 +753,17 @@ def create_app():
             "body_preview": result.get("body", "")[:1200] if dry_run else None,
         }, default=str))
 
+    @app.cli.group("decision-intelligence")
+    def decision_intelligence_cli():
+        """Decision-intelligence data maintenance."""
+
+    @decision_intelligence_cli.command("backfill")
+    @click.option("--dry-run", is_flag=True, help="Report changes without committing them.")
+    def decision_intelligence_backfill_cli(dry_run):
+        """Backfill dispositions, first-scored times, and legacy plans."""
+        from app.decision_intelligence_backfill import backfill_decision_intelligence
+
+        result = backfill_decision_intelligence(dry_run=dry_run)
+        click.echo(json.dumps({"dry_run": bool(dry_run), **result}, sort_keys=True))
+
     return app

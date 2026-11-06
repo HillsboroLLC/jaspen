@@ -232,9 +232,7 @@ export default function AppMenu() {
     effectiveIsCreator ||
     isPlatformAdmin;
 
-  // Dashboard / Projects / Scores / Insights / Reports / Activity are shown as
-  // disabled "Coming soon" menu items for launch — their plan-gating vars were
-  // removed since the items render the same (disabled) for every plan.
+  // The remaining launch placeholders render the same for every plan.
   const showRealTeam =!isPlatformAdmin && effectiveCanManageOrg && PLAN_RANK[effectivePlanKey] >= PLAN_RANK.team;
   const showLockedTeam =
     !showRealTeam && previewPlanCategory === 'individual' && !isPlatformAdmin;
@@ -555,10 +553,9 @@ export default function AppMenu() {
             <span className="jas-ud-item-badge is-soon">Coming soon</span>
           </button>
 
-          <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
+          <button className={menuItemClass('/insights')} onClick={() => { close(); navigate('/insights'); }}>
             <FontAwesomeIcon icon={faChartLine} />
             <span className="jas-ud-item-label">Insights</span>
-            <span className="jas-ud-item-badge is-soon">Coming soon</span>
           </button>
 
           <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">

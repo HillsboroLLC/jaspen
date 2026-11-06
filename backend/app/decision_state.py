@@ -139,6 +139,24 @@ def mark_option_scored(session, option_key, display_name=None):
     if key:
         register_option(session, display_name or (registry.get(key) or {}).get("display_name"), authoritative_key=key)
         registry[key]["status"] = "scored"
+        if not registry[key].get("first_scored_at"):
+            try:
+                from .models import Scorecard
+                thread_id = str(session.get("session_id") or "").strip()
+                candidates = Scorecard.query.filter_by(thread_id=thread_id).order_by(
+                    Scorecard.created_at.asc(), Scorecard.id.asc(),
+                ).all() if thread_id else []
+                row = next((
+                    item for item in candidates
+                    if str((item.data or {}).get("option_key") or f"scorecard:{item.id}") == key
+                ), None)
+                if row is not None and row.created_at:
+                    registry[key]["first_scored_at"] = row.created_at.isoformat()
+                    registry[key]["first_scored_source"] = "scorecard.created_at"
+            except Exception:
+                # The durable DecisionRecord refresh performs the same derivation;
+                # scoring must never fail because this denormalized copy cannot.
+                pass
 
 
 def option_attributes(session, option_key, display_name=None):

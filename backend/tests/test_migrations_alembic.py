@@ -832,6 +832,43 @@ def test_share_disclosure_migration_keeps_legacy_inserts_compatible(tmp_path):
     assert column[4] == "'{}'"  # database-level default
 
 
+def test_decision_intelligence_migration_preserves_option_decision_source(tmp_path):
+    db_path = str(tmp_path / 'decision_intelligence_source.sqlite')
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute('''CREATE TABLE decision_option_decisions (
+            id VARCHAR(36) PRIMARY KEY,
+            option_name VARCHAR(255),
+            final_decision TEXT,
+            source VARCHAR(32) NOT NULL,
+            kit_verdict JSON,
+            capture_metadata JSON
+        )''')
+        conn.execute(
+            'INSERT INTO decision_option_decisions VALUES (?, ?, ?, ?, ?, ?)',
+            ('decision-1', 'Proposal', 'Moving forward with Proposal.',
+             'build_execution_plan', json.dumps({'verdict_key': 'advance'}), '{}'),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    revision = ScriptDirectory(MIGRATIONS_DIR).get_revision('a4d7c9e2f105').module
+    with _migration_ops(db_path):
+        revision.upgrade()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            'SELECT source, disposition FROM decision_option_decisions WHERE id = ?',
+            ('decision-1',),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row == ('build_execution_plan', 'pursue')
+
+
 def test_scorecard_reuse_migration_backfills_identity_and_adds_indexes(tmp_path):
     db_path = str(tmp_path / 'scorecard_reuse.sqlite')
     conn = sqlite3.connect(db_path)

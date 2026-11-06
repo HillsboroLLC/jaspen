@@ -19,12 +19,44 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from . import db
 from .models_decision_record import (
+    DecisionSignal,
     DecisionRecord,
     OptionDecision,
     DECISION_RECORD_SCHEMA_VERSION,
     DECISION_RECORD_STATUSES,
     LIBRARY_CONSENT_LEVELS,
 )
+
+DISPOSITION_PURSUE = 'pursue'
+DISPOSITION_NOT_PURSUE = 'not_pursue'
+DISPOSITION_STILL_EVALUATING = 'still_evaluating'
+DISPOSITIONS = frozenset({
+    DISPOSITION_PURSUE, DISPOSITION_NOT_PURSUE, DISPOSITION_STILL_EVALUATING,
+})
+PLAN_DECISION_SOURCES = frozenset({
+    'build_execution_plan', 'plan_created', 'legacy_plan',
+})
+DISPOSITION_SOURCES = frozenset({
+    'conversation', 'choice', 'plan_deleted', 'manual',
+}) | PLAN_DECISION_SOURCES
+DECISION_SIGNAL_KINDS = frozenset({
+    'rationale', 'tradeoff', 'assumption', 'concern', 'evidence_note',
+    'commitment', 'success_measure', 'review_timing',
+    # A date someone else set (bid due, RFP closes). Distinct from a
+    # commitment, which the customer or their team made.
+    'deadline',
+    # Something that must hold before a pursued option proceeds. Its status
+    # changes are new rows that supersede the earlier one, so history stays.
+    'condition',
+})
+CONDITION_STATUSES = frozenset({'open', 'met', 'not_met', 'waived'})
+DECISION_SIGNAL_SOURCES = frozenset({'conversation', 'choice', 'system_event', 'connector'})
+
+
+def is_plan_decision_source(source):
+    """Treat historical and current plan-decision sources as one read alias."""
+    return str(source or '').strip().lower() in PLAN_DECISION_SOURCES
+
 
 # Fields in `record` that are DERIVED from thread storage and safe to refresh.
 # Human-owned fields (final_decision, outcomes, lessons_learned, consent) live
@@ -460,11 +492,92 @@ def _find_existing_record(organization_id, attribution_user_id, thread_id):
     )
 
 
+def _iso_datetime(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, str) and value.strip():
+        try:
+            return datetime.fromisoformat(value.strip().replace('Z', '+00:00')).isoformat()
+        except ValueError:
+            return None
+    return None
+
+
+def _with_first_scored_times(payload, *, existing_payload=None, session_row=None, record_created_at=None):
+    """Stamp each option once from durable scorecard rows, preserving older snapshots."""
+    from .models import Scorecard
+
+    payload = {**(payload if isinstance(payload, dict) else {})}
+    cards = [dict(card) for card in (payload.get('scorecards') or []) if isinstance(card, dict)]
+    old_cards = (existing_payload or {}).get('scorecards') if isinstance(existing_payload, dict) else []
+    # A DecisionRecord is the durable score history. Archiving or purging the
+    # operational Scorecard rows must not make an already-scored option vanish.
+    live_ids = {str(card.get('id') or card.get('analysis_id') or '') for card in cards}
+    for old in old_cards if isinstance(old_cards, list) else []:
+        old_id = str(old.get('id') or old.get('analysis_id') or '') if isinstance(old, dict) else ''
+        if old_id and old_id not in live_ids:
+            cards.append(dict(old))
+            live_ids.add(old_id)
+    preserved = {}
+    for card in old_cards if isinstance(old_cards, list) else []:
+        if not isinstance(card, dict):
+            continue
+        key = str(card.get('option_key') or f"scorecard:{card.get('id') or ''}").strip()
+        if key and card.get('first_scored_at'):
+            preserved[key] = (card.get('first_scored_at'), card.get('first_scored_source'))
+
+    thread_id = str(payload.get('source', {}).get('thread_id') or getattr(session_row, 'session_id', '') or '')
+    query = Scorecard.query.filter_by(thread_id=thread_id)
+    if session_row is not None and getattr(session_row, 'organization_id', None):
+        query = query.filter_by(organization_id=str(session_row.organization_id))
+    elif session_row is not None:
+        query = query.filter_by(user_id=str(session_row.user_id))
+    rows = query.order_by(Scorecard.created_at.asc(), Scorecard.id.asc()).all() if thread_id else []
+    earliest = {}
+    for row in rows:
+        data = row.data if isinstance(row.data, dict) else {}
+        key = str(data.get('option_key') or f'scorecard:{row.id}').strip()
+        if key and key not in earliest and row.created_at:
+            earliest[key] = row.created_at.isoformat()
+
+    registry = {}
+    if session_row is not None:
+        session_payload = dict(session_row.payload or {})
+        registry = dict(session_payload.get('option_registry') or {})
+    for card in cards:
+        key = str(card.get('option_key') or f"scorecard:{card.get('id') or ''}").strip()
+        if not key:
+            continue
+        if key in preserved:
+            first_at, source = preserved[key]
+        elif key in earliest:
+            first_at, source = earliest[key], 'scorecard.created_at'
+        else:
+            generated_field = 'generated_at' if card.get('generated_at') else 'createdAt'
+            first_at = _iso_datetime(card.get(generated_field))
+            source = f'scorecard.{generated_field}' if first_at else None
+            if not first_at:
+                first_at = _iso_datetime(record_created_at)
+                source = 'decision_record.created_at' if first_at else None
+        card['first_scored_at'] = first_at
+        card['first_scored_source'] = source
+        if key in registry and isinstance(registry[key], dict) and not registry[key].get('first_scored_at'):
+            registry[key] = {**registry[key], 'first_scored_at': first_at, 'first_scored_source': source}
+    payload['scorecards'] = cards
+    payload['scorecard_ids'] = [card.get('id') for card in cards if card.get('id')]
+    if session_row is not None and registry:
+        session_payload = dict(session_row.payload or {})
+        session_payload['option_registry'] = registry
+        session_row.payload = session_payload
+        flag_modified(session_row, 'payload')
+    return payload
+
+
 def create_or_refresh_record(user, thread_id):
     """One active record per thread. Creating twice refreshes the DERIVED
     analysis fields and never touches human-owned fields (final decision,
     outcomes, lessons, consent, advanced status)."""
-    _row, organization_id, attribution_user_id = canonical_context(user, thread_id)
+    session_row, organization_id, attribution_user_id = canonical_context(user, thread_id)
     attribution_user_id = attribution_user_id or str(user.id)
 
     payload, promoted = assemble_record_payload(
@@ -472,6 +585,12 @@ def create_or_refresh_record(user, thread_id):
     )
 
     existing = _find_existing_record(organization_id, attribution_user_id, thread_id)
+    payload = _with_first_scored_times(
+        payload,
+        existing_payload=existing.record if existing else None,
+        session_row=session_row,
+        record_created_at=existing.created_at if existing else datetime.utcnow(),
+    )
     if existing:
         # Copy BEFORE mutating: mutating the loaded dict in place makes
         # SQLAlchemy's flush-time comparison see old == new and skip the
@@ -609,6 +728,11 @@ def record_option_decision(
     rationale=None,
     kit_verdict=None,
     override_info=None,
+    disposition=None,
+    user_quote=None,
+    basis_snapshot=None,
+    capture_metadata=None,
+    decided_at=None,
 ):
     """Append an option-scoped decision and supersede only that option's prior one."""
     wanted = str(option_key or '').strip()
@@ -618,20 +742,44 @@ def record_option_decision(
     if not final_text:
         raise ValueError('final_decision is required')
     source = str(source or 'manual').strip().lower()
-    if source not in {'manual', 'build_execution_plan'}:
-        raise ValueError('decision source must be manual or build_execution_plan')
+    if source not in DISPOSITION_SOURCES:
+        raise ValueError('invalid decision source')
+    if disposition is None:
+        verdict = (kit_verdict or {}).get('verdict_key') if isinstance(kit_verdict, dict) else None
+        disposition = {
+            'advance': DISPOSITION_PURSUE,
+            'advance_with_conditions': DISPOSITION_PURSUE,
+            'decline': DISPOSITION_NOT_PURSUE,
+            'deferred': DISPOSITION_STILL_EVALUATING,
+        }.get(verdict)
+        if disposition is None and source == 'manual':
+            # The legacy panel's action is explicitly "record this option";
+            # generic panels have no kit verdict, but the act itself is a
+            # human choice. This is source semantics, never text parsing.
+            disposition = DISPOSITION_PURSUE
+        if disposition is None and is_plan_decision_source(source):
+            disposition = DISPOSITION_PURSUE
+    if disposition not in DISPOSITIONS:
+        raise ValueError('disposition is required and must use the canonical vocabulary')
 
     prior = current_option_decision(record, wanted)
     normalized_verdict = kit_verdict if isinstance(kit_verdict, dict) else None
     normalized_override = override_info if isinstance(override_info, dict) else None
     normalized_rationale = _clip(rationale, 4000) or None
     normalized_name = _clip(option_name, 255) or None
+    normalized_quote = _clip(user_quote, 4000) or None
+    normalized_basis = basis_snapshot if isinstance(basis_snapshot, dict) else None
+    normalized_metadata = capture_metadata if isinstance(capture_metadata, dict) else {}
 
     # Repeating the same human act is idempotent. This is what prevents an
     # existing plan rebuild from manufacturing another decision or prompting.
     if prior is not None and (
         prior.final_decision == final_text
-        and prior.source == source
+        and (
+            prior.source == source
+            or (is_plan_decision_source(prior.source) and is_plan_decision_source(source))
+        )
+        and prior.disposition == disposition
         and (prior.kit_verdict or None) == normalized_verdict
         and (prior.rationale or None) == normalized_rationale
     ):
@@ -645,12 +793,16 @@ def record_option_decision(
         final_decision=final_text,
         rationale=normalized_rationale,
         source=source,
+        disposition=disposition,
+        user_quote=normalized_quote,
+        basis_snapshot=normalized_basis,
+        capture_metadata=normalized_metadata,
         kit_verdict=normalized_verdict,
         override_info=normalized_override,
         decided_by_user_id=str(decided_by_user_id) if decided_by_user_id else None,
         decided_by_name=_clip(decided_by_name, 255) or _display_name_for(decided_by_user_id),
         supersedes_id=str(prior.id) if prior else None,
-        decided_at=now,
+        decided_at=decided_at or now,
     )
     if prior is not None:
         prior.superseded_at = now
@@ -699,6 +851,9 @@ def find_execution_plan_decision(user, thread_id, option_key, *, decision_kit=No
         return None
     option_decision = current_option_decision(record, wanted_key)
     if option_decision is not None:
+        if option_decision.disposition and option_decision.disposition != DISPOSITION_PURSUE:
+            # Not pursued or still being evaluated is never a plan decision.
+            return None
         verdict = option_decision.kit_verdict if isinstance(option_decision.kit_verdict, dict) else {}
         if decision_kit and verdict.get('verdict_key') not in {'advance', 'advance_with_conditions'}:
             return None
@@ -719,7 +874,10 @@ def find_execution_plan_decision(user, thread_id, option_key, *, decision_kit=No
     return None
 
 
-def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=None, plan_built=False):
+def record_execution_plan_decision(
+    user, thread_id, scorecard, *, decision_kit=None, plan_built=False,
+    basis_snapshot=None,
+):
     """Record the user's successful Build-plan choice through the shared writer.
 
     A successfully saved plan is the human decision signal. This helper
@@ -779,15 +937,26 @@ def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=N
     )
     prior = current_option_decision(record, option_key)
     if (
+        prior is not None
+        and prior.disposition == DISPOSITION_PURSUE
+        and not is_plan_decision_source(prior.source)
+    ):
+        # The customer already said they are pursuing this option, in their
+        # own words. Building its plan carries that decision out; it is not a
+        # new decision, so their row (quote, reason, conditions) stays current.
+        return prior
+    if (
         plan_built
         and prior is not None
-        and prior.source == 'build_execution_plan'
+        and is_plan_decision_source(prior.source)
         and prior.final_decision == f'Moving forward with {option_name}.'
     ):
         # This is completion metadata for the same human decision, not a new
         # decision event. Update it only after the caller has saved the plan.
         now = datetime.utcnow()
         prior.final_decision = decision_text
+        if basis_snapshot is not None and prior.basis_snapshot is None:
+            prior.basis_snapshot = basis_snapshot
         prior.updated_at = now
         record.updated_at = now
         _sync_option_decision_summary(record)
@@ -799,11 +968,13 @@ def record_execution_plan_decision(user, thread_id, scorecard, *, decision_kit=N
         option_key,
         decision_text,
         decided_by_user_id=user.id,
-        source='build_execution_plan',
+        source='plan_created',
+        disposition=DISPOSITION_PURSUE,
         option_name=option_name,
         rationale=override_reason,
         kit_verdict=kit_verdict,
         override_info=override_info,
+        basis_snapshot=basis_snapshot,
     )
     return option_decision
 
@@ -816,6 +987,238 @@ def execution_option_key(scorecard):
         return key
     scorecard_id = str(card.get('id') or card.get('analysis_id') or '').strip()
     return f'scorecard:{scorecard_id}' if scorecard_id else ''
+
+
+def option_dispositions(record, *, session=None, scorecard_rows=None):
+    """Return the deterministic option-state read model and reconciliation."""
+    from .models import Scorecard
+
+    payload = record.record if isinstance(record.record, dict) else {}
+    cards = [card for card in (payload.get('scorecards') or []) if isinstance(card, dict)]
+    option_cards = {}
+    for card in cards:
+        key = execution_option_key(card)
+        if key:
+            option_cards.setdefault(key, []).append(card)
+
+    rows = scorecard_rows
+    if rows is None:
+        rows = Scorecard.query.filter_by(thread_id=str(record.thread_id)).all()
+    rows_by_option = {}
+    for row in rows or []:
+        data = row.data if isinstance(row.data, dict) else {}
+        key = str(data.get('option_key') or f'scorecard:{row.id}').strip()
+        rows_by_option.setdefault(key, []).append(row)
+
+    if session is None:
+        from .models import UserSession
+        session = (
+            UserSession.query.filter_by(session_id=str(record.thread_id))
+            .order_by(UserSession.created_at.asc()).first()
+        )
+    scenarios = (
+        session.scenarios_json if hasattr(session, 'scenarios_json')
+        else session.get('scenarios_json') if isinstance(session, dict) else {}
+    )
+    scenarios = scenarios if isinstance(scenarios, dict) else {}
+    plans = scenarios.get('wbs_by_scorecard') if isinstance(scenarios.get('wbs_by_scorecard'), dict) else {}
+    if not plans and isinstance(scenarios.get('project_wbs'), dict):
+        legacy = scenarios['project_wbs']
+        legacy_id = str(legacy.get('scorecard_id') or '').strip()
+        if legacy_id:
+            plans = {legacy_id: legacy}
+
+    decision_rows = (
+        OptionDecision.query.filter_by(decision_record_id=str(record.id))
+        .order_by(OptionDecision.decided_at.asc(), OptionDecision.created_at.asc()).all()
+    )
+    history_by_option = {}
+    superseded_ids = {str(row.supersedes_id) for row in decision_rows if row.supersedes_id}
+    current = {}
+    for row in decision_rows:
+        history_by_option.setdefault(str(row.option_key), []).append(row)
+        if str(row.id) not in superseded_ids:
+            current[str(row.option_key)] = row
+
+    session_archived = bool(
+        getattr(session, 'archived_at', None)
+        if not isinstance(session, dict) else session.get('archived_at')
+    )
+    options = []
+    counts = {'pursued': 0, 'not_pursued': 0, 'open': 0, 'archived': 0}
+    conditions_by_option = {}
+    for signal in current_decision_signals(decision_signals_for(record)):
+        if signal.kind == 'condition' and signal.option_key:
+            status = str((signal.structured or {}).get('status') or 'open')
+            bucket = conditions_by_option.setdefault(signal.option_key, {})
+            bucket[status] = bucket.get(status, 0) + 1
+    for key, grouped_cards in option_cards.items():
+        card_ids = {str(card.get('id') or card.get('analysis_id') or '') for card in grouped_cards}
+        option_plans = [plan for plan_id, plan in plans.items() if str(plan_id) in card_ids and isinstance(plan, dict)]
+        plan_ids = [str(plan_id) for plan_id in plans if str(plan_id) in card_ids]
+        plan_times = sorted(
+            value for value in (_iso_datetime(plan.get('created_at')) for plan in option_plans) if value
+        )
+        row = current.get(key)
+        disposition = row.disposition if row else None
+        if disposition == DISPOSITION_PURSUE:
+            state = 'pursued'
+        elif disposition == DISPOSITION_NOT_PURSUE:
+            state = 'not_pursued'
+        else:
+            state = 'open'
+        state_source = row.source if row else ('plan_created' if option_plans else 'no_disposition')
+        state_since = row.decided_at.isoformat() if row and row.decided_at else (plan_times[0] if plan_times else None)
+        # A plan the customer built only to preview or compare is not a
+        # pursuit signal; any other plan is.
+        committed_plans = [plan for plan in option_plans if plan.get('planning_intent') != 'exploratory']
+        if row is None and committed_plans:
+            state = 'pursued'
+        elif row is None and option_plans:
+            state_source = 'exploratory_plan'
+        all_rows_archived = bool(rows_by_option.get(key)) and all(
+            item.archived_at is not None for item in rows_by_option[key]
+        )
+        if state == 'open' and (all_rows_archived or session_archived):
+            state = 'archived'
+            state_source = 'session_archived' if session_archived else 'scorecards_archived'
+        counts[state] += 1
+        first_times = [card.get('first_scored_at') for card in grouped_cards if card.get('first_scored_at')]
+        options.append({
+            'option_key': key,
+            'option_name': next((card.get('name') for card in grouped_cards if card.get('name')), None),
+            'state': state,
+            'state_source': state_source,
+            'state_since': state_since,
+            'still_evaluating': disposition == DISPOSITION_STILL_EVALUATING,
+            'history': [{
+                'disposition': item.disposition,
+                'source': item.source,
+                'plan_decision': is_plan_decision_source(item.source),
+                'quote': item.user_quote,
+                'actor_user_id': item.decided_by_user_id,
+                'actor_name': item.decided_by_name,
+                'time': item.decided_at.isoformat() if item.decided_at else None,
+            } for item in history_by_option.get(key, [])],
+            'against_recommendation': bool(
+                row is not None and disposition == DISPOSITION_PURSUE and isinstance(row.override_info, dict)
+            ),
+            'conditions': conditions_by_option.get(key, {}) if state == 'pursued' else {},
+            'plan_ids': plan_ids,
+            'first_plan_at': plan_times[0] if plan_times else None,
+            'first_scored_at': min(first_times) if first_times else None,
+        })
+    total = len(options)
+    return {
+        'options': options,
+        'reconciliation': {
+            **counts,
+            'scored_options': total,
+            'reconciles': sum(counts.values()) == total,
+        },
+    }
+
+
+def _record_option_keys(record):
+    payload = record.record if isinstance(record.record, dict) else {}
+    return {
+        execution_option_key(card) for card in (payload.get('scorecards') or [])
+        if isinstance(card, dict) and execution_option_key(card)
+    }
+
+
+def record_decision_signal(
+    record, *, kind, content, source, option_key=None, user_quote=None,
+    structured=None, actor_user_id=None, occurred_at=None, supersedes_id=None,
+):
+    kind = str(kind or '').strip().lower()
+    source = str(source or '').strip().lower()
+    option_key = str(option_key or '').strip() or None
+    quote = _clip(user_quote, 4000) or None
+    content = _clip(content, 8000)
+    structured = structured if isinstance(structured, dict) else {}
+    if kind not in DECISION_SIGNAL_KINDS:
+        raise ValueError('invalid decision signal kind')
+    if source not in DECISION_SIGNAL_SOURCES:
+        raise ValueError('invalid decision signal source')
+    if option_key and option_key not in _record_option_keys(record):
+        raise ValueError('option_key is not part of this decision record')
+    if source in {'conversation', 'choice'} and not quote:
+        raise ValueError('user_quote is required for conversational and choice signals')
+    if not content:
+        raise ValueError('content is required')
+    for key in ('date', 'review_by', 'due_by'):
+        if structured.get(key) and not _iso_datetime(str(structured[key])):
+            raise ValueError(f'{key} must be an ISO date')
+    if kind == 'deadline' and not structured.get('date'):
+        raise ValueError('a deadline needs its date')
+    if kind == 'condition':
+        status = str(structured.get('status') or 'open').strip().lower()
+        if status not in CONDITION_STATUSES:
+            raise ValueError('invalid condition status')
+        if status != 'open' and source not in {'conversation', 'choice', 'system_event'}:
+            raise ValueError('a condition status change needs the customer or a system event as its source')
+        structured = {**structured, 'status': status}
+    if supersedes_id and DecisionSignal.query.filter_by(
+        id=str(supersedes_id), decision_record_id=str(record.id),
+    ).first() is None:
+        raise ValueError('the superseded signal is not part of this decision record')
+    existing = DecisionSignal.query.filter_by(
+        decision_record_id=str(record.id), kind=kind, option_key=option_key,
+    ).all()
+    canonical = json.dumps(structured, sort_keys=True, default=str)
+    wanted_supersedes = str(supersedes_id) if supersedes_id else None
+    for row in existing:
+        # A repeat only when every part matches: two conditions from one quote,
+        # or two status changes in one message, are separate records.
+        if (
+            row.retracted_at is None
+            and row.user_quote == quote
+            and row.content == content
+            and (row.supersedes_id or None) == wanted_supersedes
+            and json.dumps(row.structured or {}, sort_keys=True, default=str) == canonical
+        ):
+            return row, False
+    row = DecisionSignal(
+        organization_id=record.organization_id,
+        attribution_user_id=record.user_id,
+        thread_id=str(record.thread_id),
+        decision_record_id=str(record.id),
+        option_key=option_key,
+        kind=kind,
+        content=content,
+        user_quote=quote,
+        structured=structured,
+        source=source,
+        actor_user_id=str(actor_user_id) if actor_user_id else None,
+        occurred_at=occurred_at or datetime.utcnow(),
+        supersedes_id=str(supersedes_id) if supersedes_id else None,
+    )
+    db.session.add(row)
+    db.session.commit()
+    return row, True
+
+
+def retract_decision_signal(signal, *, actor_user_id):
+    if signal.retracted_at is None:
+        signal.retracted_at = datetime.utcnow()
+        signal.retracted_by = str(actor_user_id) if actor_user_id else None
+        db.session.commit()
+    return signal
+
+
+def current_decision_signals(signals):
+    """Signals neither withdrawn nor superseded by a later status."""
+    live = [signal for signal in signals if signal.retracted_at is None]
+    superseded = {str(signal.supersedes_id) for signal in live if signal.supersedes_id}
+    return [signal for signal in live if str(signal.id) not in superseded]
+
+
+def decision_signals_for(record, option_key=None):
+    query = DecisionSignal.query.filter_by(decision_record_id=str(record.id))
+    if option_key is not None:
+        query = query.filter_by(option_key=str(option_key))
+    return query.order_by(DecisionSignal.occurred_at.asc(), DecisionSignal.created_at.asc()).all()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -880,14 +1283,37 @@ def _metrics(value):
     return out
 
 
-def append_outcome(record, summary, extra=None, actor=None):
+OUTCOME_SOURCES = frozenset({'manual', 'conversation', 'choice'})
+
+
+def _provenance(source, user_quote, objective_met_quote=None):
+    """Where a human-authored outcome or lesson came from. Never derived."""
+    normalized = str(source or 'manual').strip().lower()
+    if normalized not in OUTCOME_SOURCES:
+        raise ValueError(f'source must be one of {sorted(OUTCOME_SOURCES)}')
+    quote = _clip(user_quote, 4000) or None
+    if normalized != 'manual' and not quote:
+        raise ValueError('a verified user quote is required for conversational entries')
+    out = {'source': normalized}
+    if quote:
+        out['user_quote'] = quote
+    met_quote = _clip(objective_met_quote, 4000) or None
+    if met_quote:
+        out['objective_met_quote'] = met_quote
+    return out
+
+
+def append_outcome(record, summary, extra=None, actor=None, *, source='manual',
+                   user_quote=None, objective_met_quote=None):
     """Record WHAT HAPPENED after a decision. Append-only.
 
     `objective_met` is captured only when the human states it. It is never
     inferred from execution completing, from a metric moving, or from the
-    decision having been made at all.
+    decision having been made at all. Conversational entries carry the exact
+    customer quote; a conversational `objective_met` needs its own quote.
     """
     extra = extra if isinstance(extra, dict) else {}
+    provenance = _provenance(source, user_quote, objective_met_quote)
 
     status = str(extra.get('status') or '').strip().lower() or None
     if status and status not in OUTCOME_STATUSES:
@@ -895,6 +1321,8 @@ def append_outcome(record, summary, extra=None, actor=None):
 
     objective_met = extra.get('objective_met')
     if objective_met is not None and not isinstance(objective_met, bool):
+        objective_met = None
+    if provenance['source'] != 'manual' and 'objective_met_quote' not in provenance:
         objective_met = None
 
     entry = {
@@ -911,6 +1339,7 @@ def append_outcome(record, summary, extra=None, actor=None):
         'recorded_by_name': _actor_name(actor),
         'recorded_at': datetime.utcnow().isoformat(),
         'outcome_date': _clip(extra.get('outcome_date'), 64) or None,
+        **provenance,
     }
     # Fields the original implementation carried; kept for older readers.
     if 'went_with_recommendation' in extra:
@@ -942,13 +1371,14 @@ def append_outcome(record, summary, extra=None, actor=None):
     return record
 
 
-def append_lesson(record, lesson, extra=None, actor=None):
+def append_lesson(record, lesson, extra=None, actor=None, *, source='manual', user_quote=None):
     """Record WHAT THE ORGANIZATION LEARNED. Append-only.
 
     A lesson may be added long after the outcome, when more is known, and may
     optionally cite the outcome it came from.
     """
     extra = extra if isinstance(extra, dict) else {}
+    provenance = _provenance(source, user_quote)
 
     outcome_id = str(extra.get('outcome_id') or '').strip() or None
     if outcome_id:
@@ -966,6 +1396,7 @@ def append_lesson(record, lesson, extra=None, actor=None):
         'recorded_by_user_id': str(getattr(actor, 'id', '') or '') or None,
         'recorded_by_name': _actor_name(actor),
         'recorded_at': datetime.utcnow().isoformat(),
+        **provenance,
     }
 
     lessons = list(record.lessons_learned or [])

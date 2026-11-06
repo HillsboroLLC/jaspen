@@ -177,18 +177,27 @@ export function ReceiptsCard({ data }) {
 
 export function ConfirmCard({ data, onSendText = null, showActions = false }) {
   if (data?.kind === 'decision_override') {
-    const checks = Array.isArray(data.failed_check_labels) ? data.failed_check_labels.filter(Boolean) : [];
+    const listed = Array.isArray(data.options) && data.options.length
+      ? data.options
+      : [{ option_name: data.option_name, override_of: data.override_of, failed_check_labels: data.failed_check_labels }];
     return (
       <div style={cardStyle} data-card="confirm">
         <div style={{ ...eyebrowStyle, marginBottom: 8 }}>Override</div>
-        <div style={{ fontSize: 13.5, color: C.navy, lineHeight: 1.5 }}>
-          Moving forward with <strong>{data.option_name || 'this option'}</strong>
-        </div>
-        <div style={{ fontSize: 12, color: C.ink, marginTop: 4 }}>
-          {data.override_of === 'decline'
-            ? "Overrides Jaspen's No-Bid."
-            : `Overrides a failed required check${checks.length ? `: ${checks.join(', ')}` : ''}.`}
-        </div>
+        {listed.map((item, index) => {
+          const checks = Array.isArray(item?.failed_check_labels) ? item.failed_check_labels.filter(Boolean) : [];
+          return (
+            <div key={`${item?.option_name || 'option'}-${index}`} style={{ marginTop: index ? 10 : 0 }}>
+              <div style={{ fontSize: 13.5, color: C.navy, lineHeight: 1.5 }}>
+                Moving forward with <strong>{item?.option_name || 'this option'}</strong>
+              </div>
+              <div style={{ fontSize: 12, color: C.ink, marginTop: 4 }}>
+                {item?.override_of === 'decline'
+                  ? "Overrides Jaspen's No-Bid."
+                  : `Overrides a failed required check${checks.length ? `: ${checks.join(', ')}` : ''}.`}
+              </div>
+            </div>
+          );
+        })}
         {showActions && <ActionButtons actions={data?.actions} onSendText={onSendText} />}
       </div>
     );

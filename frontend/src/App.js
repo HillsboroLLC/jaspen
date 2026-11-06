@@ -9,7 +9,6 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import ProtectedRoute from './homeSections/ProtectedRoute';
 import RequireTeamAccess from './shared/auth/RequireTeamAccess';
-import RequireDashboardAccess from './shared/auth/RequireDashboardAccess';
 import { useAuth } from './shared/auth/AuthContext';
 import { AppShell } from './jaspenInterface/layout';
 import { JaspenAIProvider } from './jaspenInterface/shared/JaspenAIContext';
@@ -42,7 +41,6 @@ import { applyTrackingPolicy } from './thirdPartyTracking';
 // Lazily loaded internal routes for bundle splitting.
 const PricingResult = lazy(() => import('./jaspenInterface/PricingResult/PricingResult'));
 const SharedPage = lazy(() => import('./jaspenInterface/Sharing/SharedPage'));
-const Dashboard = lazy(() => import('./jaspenInterface/Jaspen Cleanup/Dashboard/Dashboard'));
 const Projects = lazy(() => import('./jaspenInterface/Projects/Projects'));
 const Scores = lazy(() => import('./jaspenInterface/Scores/Scores'));
 const Insights = lazy(() => import('./jaspenInterface/Insights/Insights'));
@@ -148,13 +146,7 @@ function AnimatedAppRoutes({ withShell }) {
             {/* Protected (Market) */}
             <Route
               path="/dashboard"
-              element={
-                <ProtectedRoute>
-                  <RequireDashboardAccess>
-                    {withShell(<Dashboard />, { title: 'Dashboard', showHeader: false, fullBleed: true, noPadding: true, backToJaspen: true })}
-                  </RequireDashboardAccess>
-                </ProtectedRoute>
-              }
+              element={<ProtectedRoute><Navigate to="/insights" replace /></ProtectedRoute>}
             />
             <Route
               path="/new"

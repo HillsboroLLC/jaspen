@@ -46,11 +46,329 @@ function formatDate(value) {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatMonth(value) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(value || ''));
+  if (!match) return String(value || '');
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, 1);
+  return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
 
 function safeList(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function projectHref(threadId) {
+  return `/new?session_id=${encodeURIComponent(String(threadId || ''))}`;
+}
+
+function updatedLabel(updatedAt, now) {
+  if (!updatedAt) return '';
+  const minutes = Math.max(0, Math.floor((now - updatedAt) / 60000));
+  if (minutes === 0) return 'Updated just now';
+  return `Updated ${minutes} min ago`;
+}
+
+export function DecisionIntelligenceOverview({ navigate }) {
+  const storageKey = 'jaspen:decision-dashboard:v1';
+  const saved = useMemo(() => {
+    try { return JSON.parse(window.localStorage.getItem(storageKey) || '{}'); } catch (_) { return {}; }
+  }, []);
+  const emptyFilters = {
+    range: 'all', statuses: [], typeKit: '', member: '', tag: '', search: '', quick: '', gap: '',
+  };
+  const [scope, setScope] = useState(saved.scope === 'mine' ? 'mine' : 'organization');
+  const [filters, setFilters] = useState({ ...emptyFilters, ...(saved.filters || {}) });
+  const [overview, setOverview] = useState(null);
+  const [overviewLoading, setOverviewLoading] = useState(true);
+  const [overviewError, setOverviewError] = useState('');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+  const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
+  const [reloadKey, setReloadKey] = useState(0);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [sort, setSort] = useState({ key: 'created_at', direction: 'desc' });
+  const [page, setPage] = useState(1);
+  const [expanded, setExpanded] = useState('');
+  const requestGeneration = useRef(0);
+
+  useEffect(() => {
+    const generation = ++requestGeneration.current;
+    let active = true;
+    let inFlight = false;
+    let refreshTimer = null;
+    let abortController = null;
+
+    const stopTimer = () => {
+      if (refreshTimer) window.clearInterval(refreshTimer);
+      refreshTimer = null;
+    };
+    const load = async ({ initial = false } = {}) => {
+      if (inFlight) return;
+      inFlight = true;
+      if (initial) {
+        setOverviewLoading(true);
+        setOverviewError('');
+      }
+      abortController = new AbortController();
+      try {
+        const response = await fetch(`${API_BASE}/api/v1/insights/overview?scope=${encodeURIComponent(scope)}`, {
+          method: 'GET', headers: buildAuthHeaders({}, 'GET'), credentials: 'include', signal: abortController.signal,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload?.error || 'Unable to load decision insights.');
+        if (active && requestGeneration.current === generation) {
+          const completedAt = Date.now();
+          setOverview(payload);
+          setOverviewError('');
+          setLastUpdatedAt(completedAt);
+          setRelativeTimeNow(completedAt);
+          if (payload?.scope && payload.scope !== scope) setScope(payload.scope);
+        }
+      } catch (err) {
+        if (active && requestGeneration.current === generation && initial && err?.name !== 'AbortError') {
+          setOverviewError(err?.message || 'Unable to load decision insights.');
+        }
+      } finally {
+        if (active && requestGeneration.current === generation) {
+          inFlight = false;
+          setRelativeTimeNow(Date.now());
+          if (initial) setOverviewLoading(false);
+        }
+      }
+    };
+
+    const startTimer = () => {
+      stopTimer();
+      if (document.visibilityState === 'visible') {
+        refreshTimer = window.setInterval(() => load(), 60000);
+      }
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      load();
+      startTimer();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshWhenVisible();
+      else stopTimer();
+    };
+
+    load({ initial: true });
+    startTimer();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', refreshWhenVisible);
+    return () => {
+      active = false;
+      requestGeneration.current += 1;
+      stopTimer();
+      abortController?.abort();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', refreshWhenVisible);
+    };
+  }, [scope, reloadKey]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(storageKey, JSON.stringify({ scope, filters })); } catch (_) { /* convenience only */ }
+  }, [scope, filters]);
+
+  const rows = safeList(overview?.rows);
+  const setFilter = (key, value) => {
+    setFilters((current) => ({ ...current, [key]: value }));
+    setPage(1);
+  };
+  const dateFloor = useMemo(() => {
+    const now = new Date();
+    if (filters.range === '30') return new Date(now.getTime() - (30 * 86400000));
+    if (filters.range === '90') return new Date(now.getTime() - (90 * 86400000));
+    if (filters.range === 'year') return new Date(now.getFullYear(), 0, 1);
+    return null;
+  }, [filters.range]);
+  const filteredRows = useMemo(() => rows.filter((row) => {
+    const created = row.created_at ? new Date(row.created_at) : null;
+    if (dateFloor && (!created || created < dateFloor)) return false;
+    if (filters.statuses.length && !filters.statuses.includes(row.status)) return false;
+    if (filters.typeKit && row.decision_type !== filters.typeKit && row.decision_kit !== filters.typeKit) return false;
+    if (filters.member && row.owner?.id !== filters.member) return false;
+    if (filters.tag && !safeList(row.tags).includes(filters.tag)) return false;
+    const haystack = [row.title, row.owner?.name, ...safeList(row.chosen_options), ...safeList(row.tags)].join(' ').toLowerCase();
+    if (filters.search && !haystack.includes(filters.search.trim().toLowerCase())) return false;
+    if (filters.quick === 'decided' && !['decided', 'outcome_recorded'].includes(row.status)) return false;
+    if (filters.quick === 'open' && !['in_analysis', 'recorded'].includes(row.status)) return false;
+    if (filters.quick === 'attention' && !Number(row.gaps?.failed_gates)) return false;
+    if (filters.quick === 'plans' && !(Number(row.plan?.tasks_total) > Number(row.plan?.tasks_completed))) return false;
+    if (filters.quick === 'learning' && !(Number(row.lesson_count) + Number(row.outcome_count))) return false;
+    if (filters.quick === 'timed' && row.days_to_decide == null) return false;
+    if (filters.gap && !Number(row.gaps?.[filters.gap])) return false;
+    return true;
+  }), [rows, dateFloor, filters]);
+
+  const decidedRows = filteredRows.filter((row) => ['decided', 'outcome_recorded'].includes(row.status));
+  const openRows = filteredRows.filter((row) => ['in_analysis', 'recorded'].includes(row.status));
+  const attentionRows = filteredRows.filter((row) => Number(row.gaps?.failed_gates));
+  const planRows = filteredRows.filter((row) => Number(row.plan?.tasks_total) > Number(row.plan?.tasks_completed));
+  const planTasks = planRows.reduce((sum, row) => sum + Number(row.plan?.tasks_total || 0), 0);
+  const completedTasks = planRows.reduce((sum, row) => sum + Number(row.plan?.tasks_completed || 0), 0);
+  const learningCount = filteredRows.reduce((sum, row) => sum + Number(row.lesson_count || 0) + Number(row.outcome_count || 0), 0);
+  const decisionDays = filteredRows.map((row) => row.days_to_decide).filter((value) => value != null).sort((a, b) => a - b);
+  const medianDays = decisionDays.length ? (decisionDays.length % 2
+    ? decisionDays[(decisionDays.length - 1) / 2]
+    : Math.round((decisionDays[(decisionDays.length / 2) - 1] + decisionDays[decisionDays.length / 2]) / 2)) : null;
+
+  const statusLabels = [...new Set(filteredRows.map((row) => row.status))].sort();
+  const statusColors = ['#1B2342', '#A0036C', '#2E7D72', '#B56A12', '#6A5A8C', '#68728F'];
+  const statusChart = {
+    labels: statusLabels,
+    datasets: [{ data: statusLabels.map((status) => filteredRows.filter((row) => row.status === status).length), backgroundColor: statusLabels.map((_, index) => statusColors[index % statusColors.length]) }],
+  };
+  const typeLabels = [...new Set(filteredRows.flatMap((row) => [row.decision_kit || row.decision_type].filter(Boolean)))].sort();
+  const typeChart = { labels: typeLabels, datasets: [{ label: 'Decisions', data: typeLabels.map((label) => filteredRows.filter((row) => (row.decision_kit || row.decision_type) === label).length), backgroundColor: '#A0036C' }] };
+  const gapDefinitions = [
+    ['failed_gates', 'Failed gates'], ['open_assumptions', 'Assumptions'], ['missing_evidence', 'Missing evidence'],
+  ];
+  const gapLabels = [];
+  const gapKinds = [];
+  const gapCounts = {};
+  filteredRows.forEach((row) => gapDefinitions.forEach(([key, label]) => {
+    safeList(row.gaps?.items?.[key]).forEach((item) => {
+      const name = item.label || label;
+      const identity = `${key}:${name}`;
+      gapCounts[identity] = (gapCounts[identity] || 0) + 1;
+    });
+  }));
+  Object.entries(gapCounts).sort((a, b) => b[1] - a[1]).slice(0, 8).forEach(([identity]) => {
+    const split = identity.indexOf(':'); gapKinds.push(identity.slice(0, split)); gapLabels.push(identity.slice(split + 1));
+  });
+  const gapChart = { labels: gapLabels, datasets: [{ label: 'Records', data: gapLabels.map((_, index) => gapCounts[`${gapKinds[index]}:${gapLabels[index]}`]), backgroundColor: '#B56A12' }] };
+
+  const bucketRows = {};
+  const weekly = ['30', '90'].includes(filters.range);
+  filteredRows.forEach((row) => {
+    const date = row.created_at ? new Date(row.created_at) : null;
+    if (!date || Number.isNaN(date.getTime())) return;
+    if (weekly) date.setDate(date.getDate() - date.getDay());
+    const key = weekly ? date.toISOString().slice(0, 10) : date.toISOString().slice(0, 7);
+    bucketRows[key] = bucketRows[key] || {};
+    bucketRows[key][row.status] = (bucketRows[key][row.status] || 0) + 1;
+  });
+  const timeLabels = Object.keys(bucketRows).sort();
+  const timeChart = { labels: timeLabels.map((label) => weekly ? formatDate(label) : formatMonth(label)), datasets: statusLabels.map((status, index) => ({ label: status, data: timeLabels.map((label) => bucketRows[label][status] || 0), backgroundColor: statusColors[index % statusColors.length] })) };
+  const memberLabels = safeList(overview?.facets?.members).filter((member) => filteredRows.some((row) => row.owner?.id === member.id));
+  const memberChart = { labels: memberLabels.map((member) => member.name), datasets: [{ label: 'Decisions', data: memberLabels.map((member) => filteredRows.filter((row) => row.owner?.id === member.id).length), backgroundColor: '#2E7D72' }] };
+  const rootStyles = getComputedStyle(document.documentElement);
+  const chartText = rootStyles.getPropertyValue('--color-text-secondary').trim() || '#5B6280';
+  const chartGrid = rootStyles.getPropertyValue('--color-border-default').trim() || '#E4E6EE';
+  const chartSurface = rootStyles.getPropertyValue('--color-surface-default').trim() || '#FFFFFF';
+  const chartInk = rootStyles.getPropertyValue('--color-text-primary').trim() || '#1B2342';
+  const chartBase = { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { color: chartText } }, tooltip: { backgroundColor: chartSurface, bodyColor: chartInk, titleColor: chartInk, borderColor: chartGrid, borderWidth: 1 } } };
+  const axis = { ticks: { color: chartText, precision: 0 }, grid: { color: chartGrid } };
+  const stackedOptions = { ...chartBase, onClick: (_, elements) => elements[0] && setFilter('statuses', [statusLabels[elements[0].datasetIndex]]), scales: { x: { ...axis, stacked: true }, y: { ...axis, stacked: true, beginAtZero: true } } };
+  const barOptions = { ...chartBase, scales: { x: axis, y: { ...axis, beginAtZero: true } } };
+
+  const sortValue = (row, key) => {
+    if (key === 'owner') return row.owner?.name || '';
+    if (key === 'chosen') return safeList(row.chosen_options).join(', ');
+    if (key === 'score') return row.top_option_score ?? -1;
+    if (key === 'gaps') return Number(row.gaps?.failed_gates || 0) + Number(row.gaps?.not_assessed_gates || 0) + Number(row.gaps?.open_assumptions || 0) + Number(row.gaps?.missing_evidence || 0);
+    return row[key] ?? '';
+  };
+  const sortedRows = [...filteredRows].sort((a, b) => {
+    const left = sortValue(a, sort.key); const right = sortValue(b, sort.key);
+    return (typeof left === 'number' ? left - right : String(left).localeCompare(String(right))) * (sort.direction === 'asc' ? 1 : -1);
+  });
+  const pageCount = Math.max(1, Math.ceil(sortedRows.length / 25));
+  const tableRows = sortedRows.slice((page - 1) * 25, page * 25);
+  const toggleSort = (key) => setSort((current) => ({ key, direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc' }));
+  const clearFilters = () => { setFilters(emptyFilters); setPage(1); };
+  const chips = [
+    filters.range !== 'all' && ['range', { 30: 'Last 30 days', 90: 'Last 90 days', year: 'This year' }[filters.range]],
+    ...filters.statuses.map((value) => ['status', value]), filters.typeKit && ['typeKit', filters.typeKit],
+    filters.member && ['member', safeList(overview?.facets?.members).find((item) => item.id === filters.member)?.name],
+    filters.tag && ['tag', filters.tag], filters.search && ['search', `Search: ${filters.search}`],
+    filters.quick && ['quick', { decided: 'Decided', open: 'Open', attention: 'Needs attention', plans: 'Plans in execution', learning: 'Lessons and outcomes recorded', timed: 'Has decision timing' }[filters.quick]],
+    filters.gap && ['gap', gapDefinitions.find(([key]) => key === filters.gap)?.[1]],
+  ].filter(Boolean);
+  const removeChip = (key, value) => {
+    if (key === 'status') setFilter('statuses', filters.statuses.filter((item) => item !== value));
+    else setFilter(key, key === 'range' ? 'all' : '');
+  };
+  const hasRecords = rows.length > 0;
+
+  return (
+    <section className="di-overview" aria-labelledby="di-overview-title">
+      <div className="di-masthead">
+        <div>
+          <p className="di-kicker">{overview?.calculation_label || 'Calculated insights'}</p>
+          <h2 id="di-overview-title">Decision dashboard</h2>
+        </div>
+        {overview?.can_view_organization && (
+          <div className="di-scope-switch" role="group" aria-label="Decision insight scope">
+            <button type="button" className={scope === 'organization' ? 'is-active' : ''} aria-pressed={scope === 'organization'} onClick={() => setScope('organization')}>Organization</button>
+            <button type="button" className={scope === 'mine' ? 'is-active' : ''} aria-pressed={scope === 'mine'} onClick={() => setScope('mine')}>My activity</button>
+          </div>
+        )}
+      </div>
+
+      {overviewLoading && <div className="di-state" role="status">Loading your decision dashboard…</div>}
+      {!overviewLoading && overviewError && (
+        <div className="di-state di-state-error" role="alert">
+          <p>{overviewError}</p>
+          <button type="button" className="int-btn int-btn-ghost" onClick={() => setReloadKey((value) => value + 1)}>Try again</button>
+        </div>
+      )}
+      {!overviewLoading && !overviewError && !hasRecords && (
+        <div className="di-empty">
+          <h3>No decision records yet</h3>
+          <p>Your decisions, open questions, outcomes, and lessons will appear here as they are recorded.</p>
+          <div className="di-actions">
+            <button type="button" className="int-btn int-btn-primary" onClick={() => navigate('/new')}>Start a decision</button>
+          </div>
+        </div>
+      )}
+      {!overviewLoading && !overviewError && hasRecords && (
+        <>
+          <div className="di-filter-shell">
+            <button type="button" className="di-filter-toggle" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((value) => !value)}>Filters {chips.length ? `(${chips.length})` : ''}</button>
+            <div className={`di-filters ${filtersOpen ? 'is-open' : ''}`}>
+              <label>Date range<select aria-label="Date range" value={filters.range} onChange={(event) => setFilter('range', event.target.value)}><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="year">This year</option><option value="all">All time</option></select></label>
+              <label>Status<select aria-label="Status" multiple value={filters.statuses} onChange={(event) => setFilter('statuses', [...event.target.selectedOptions].map((option) => option.value))}>{safeList(overview?.facets?.statuses).map((value) => <option key={value}>{value}</option>)}</select></label>
+              {safeList(overview?.facets?.types_kits).length > 0 && <label>Type / kit<select aria-label="Decision type or kit" value={filters.typeKit} onChange={(event) => setFilter('typeKit', event.target.value)}><option value="">All</option>{overview.facets.types_kits.map((value) => <option key={value}>{value}</option>)}</select></label>}
+              {scope === 'organization' && <label>Member<select aria-label="Member" value={filters.member} onChange={(event) => setFilter('member', event.target.value)}><option value="">All</option>{safeList(overview?.facets?.members).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>}
+              {safeList(overview?.facets?.tags).length > 0 && <label>Tag<select aria-label="Tag" value={filters.tag} onChange={(event) => setFilter('tag', event.target.value)}><option value="">All</option>{overview.facets.tags.map((value) => <option key={value}>{value}</option>)}</select></label>}
+              <label className="di-search">Search<input type="search" aria-label="Search decisions" value={filters.search} onChange={(event) => setFilter('search', event.target.value)} placeholder="Decision, option, owner…" /></label>
+              <button type="button" className="di-clear" onClick={clearFilters}>Clear filters</button>
+            </div>
+            <p className="di-updated" aria-live="polite">{updatedLabel(lastUpdatedAt, relativeTimeNow)}</p>
+            {chips.length > 0 && <div className="di-chips" aria-label="Active filters">{chips.map(([key, label], index) => <button type="button" key={`${key}:${label}:${index}`} onClick={() => removeChip(key, key === 'status' ? label : '')}>{label} <span aria-hidden="true">×</span><span className="sr-only">Remove filter</span></button>)}</div>}
+          </div>
+
+          <div className="di-kpis" aria-label="Dashboard metrics">
+            {[
+              ['decisions', 'Decisions', filteredRows.length, ''], ['decided', 'Decided', decidedRows.length, 'decided'], ['open', 'Open', openRows.length, 'open'],
+              ['attention', 'Needs attention', attentionRows.length, 'attention'], ['median', 'Median days to decide', medianDays ?? '—', 'timed'],
+              ['plans', 'Plans in execution', `${planRows.length}${planTasks ? ` · ${Math.round((completedTasks / planTasks) * 100)}%` : ''}`, 'plans'],
+              ['learning', 'Lessons and outcomes recorded', learningCount, 'learning'],
+            ].map(([id, label, value, quick]) => <button type="button" key={id} className={filters.quick === quick && quick ? 'is-active' : ''} onClick={() => (id === 'decisions' ? clearFilters() : setFilter('quick', filters.quick === quick ? '' : quick))}><span>{label}</span><strong>{value}</strong></button>)}
+          </div>
+
+          {filteredRows.length === 0 ? <div className="di-empty di-filtered-empty"><h3>No decisions match these filters</h3><p>Clear or remove a filter to bring your decision history back into view.</p><button type="button" className="int-btn int-btn-primary" onClick={clearFilters}>Clear filters</button></div> : <>
+            <div className="di-dashboard-grid">
+              <section className="di-card di-card-wide"><h3>Decisions over time</h3><div className="di-chart-canvas"><Bar data={timeChart} options={stackedOptions} /></div><p className="sr-only">{timeLabels.map((label) => `${label}: ${Object.values(bucketRows[label]).reduce((a, b) => a + b, 0)}`).join('; ')}</p></section>
+              <section className="di-card"><h3>Status mix</h3><div className="di-chart-canvas"><Pie data={statusChart} options={{ ...chartBase, onClick: (_, elements) => elements[0] && setFilter('statuses', [statusLabels[elements[0].index]]) }} /></div><p className="sr-only">{statusLabels.map((label, index) => `${label}: ${statusChart.datasets[0].data[index]}`).join('; ')}</p></section>
+              {typeLabels.length > 0 && <section className="di-card"><h3>By decision type / kit</h3><div className="di-chart-canvas"><Bar data={typeChart} options={{ ...barOptions, onClick: (_, elements) => elements[0] && setFilter('typeKit', typeLabels[elements[0].index]) }} /></div><p className="sr-only">{typeLabels.map((label, index) => `${label}: ${typeChart.datasets[0].data[index]}`).join('; ')}</p></section>}
+              {gapLabels.length > 0 && <section className="di-card"><h3>Most common gaps</h3><div className="di-chart-canvas"><Bar data={gapChart} options={{ ...barOptions, indexAxis: 'y', onClick: (_, elements) => elements[0] && setFilter('gap', gapKinds[elements[0].index]) }} /></div><p className="sr-only">{gapLabels.map((label, index) => `${label}: ${gapChart.datasets[0].data[index]}`).join('; ')}</p></section>}
+              {scope === 'organization' && memberLabels.length > 0 && <section className="di-card"><h3>Activity by member</h3><div className="di-chart-canvas"><Bar data={memberChart} options={{ ...barOptions, onClick: (_, elements) => elements[0] && setFilter('member', memberLabels[elements[0].index].id) }} /></div><p className="sr-only">{memberLabels.map((member, index) => `${member.name}: ${memberChart.datasets[0].data[index]}`).join('; ')}</p></section>}
+            </div>
+
+            <section className="di-table-card" aria-labelledby="di-table-title"><div className="di-table-head"><div><p className="di-kicker">Current records</p><h3 id="di-table-title">Decisions</h3></div><span>{filteredRows.length} result{filteredRows.length === 1 ? '' : 's'}</span></div><div className="di-table-wrap"><table><thead><tr>{[
+              ['title', 'Decision'], ...(scope === 'organization' ? [['owner', 'Owner']] : []), ['status', 'Status'], ['chosen', 'Chosen option'], ['score', 'Score'], ['gaps', 'Gaps'], ['created_at', 'Created'], ['decided_at', 'Decided'],
+            ].map(([key, label]) => <th key={key}><button type="button" onClick={() => toggleSort(key)}>{label}{sort.key === key ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : ''}</button></th>)}</tr></thead><tbody>{tableRows.map((row) => <React.Fragment key={row.id}><tr><td><button type="button" className="di-expand" aria-expanded={expanded === row.id} onClick={() => setExpanded(expanded === row.id ? '' : row.id)}>{row.title}</button></td>{scope === 'organization' && <td>{row.owner?.name || '—'}</td>}<td>{row.status}</td><td>{safeList(row.chosen_options).join(', ') || '—'}</td><td>{row.top_option_score ?? '—'}</td><td>{Number(row.gaps?.failed_gates || 0) + Number(row.gaps?.not_assessed_gates || 0) + Number(row.gaps?.open_assumptions || 0) + Number(row.gaps?.missing_evidence || 0)}</td><td>{formatDate(row.created_at)}</td><td>{formatDate(row.decided_at)}</td></tr>{expanded === row.id && <tr className="di-detail-row"><td colSpan={scope === 'organization' ? 8 : 7}><div><h4>Top gaps</h4><ul>{[['failed_gates', 'Failed gates'], ['not_assessed_gates', 'Not yet assessed'], ['open_assumptions', 'Assumptions'], ['missing_evidence', 'Missing evidence']].flatMap(([key, label]) => safeList(row.gaps?.items?.[key]).slice(0, 3).map((item, index) => <li key={`${key}:${index}`}><strong>{label}:</strong> {item.label}</li>))}{!Object.values(row.gaps?.items || {}).some((items) => safeList(items).length) && <li>No open gaps recorded.</li>}</ul></div><div><h4>Lessons and outcomes</h4><ul>{[...safeList(row.lessons), ...safeList(row.outcomes)].slice(0, 6).map((item, index) => <li key={index}>{item.text}</li>)}{!(row.lesson_count + row.outcome_count) && <li>Nothing recorded yet.</li>}</ul></div><a href={projectHref(row.thread_id)}>Open project →</a></td></tr>}</React.Fragment>)}</tbody></table></div><div className="di-pagination"><button type="button" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Previous</button><span>Page {page} of {pageCount}</span><button type="button" disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)}>Next</button></div></section>
+          </>}
+        </>
+      )}
+    </section>
+  );
 }
 
 function normalizeChartPayload(chart = {}) {
@@ -553,9 +871,17 @@ export default function Insights() {
         <div>
           <p className="int-eyebrow">Insights</p>
           <h1>Insights</h1>
-          <p>Upload company datasets, run AI analysis, and review trends, anomalies, opportunities, and risks.</p>
+          <p>See what you’ve decided, what remains open, what you’ve learned, and how the work is progressing.</p>
         </div>
       </header>
+
+      <DecisionIntelligenceOverview navigate={navigate} />
+
+      <div className="insights-data-heading">
+        <p className="di-kicker">Data analysis</p>
+        <h2>Analyze your data</h2>
+        <p>Upload company datasets, run AI analysis, and review trends, anomalies, opportunities, and risks.</p>
+      </div>
 
       {isEnterprise && connectors.length > 0 && (
         <section className="insights-section insights-ideas-section">
