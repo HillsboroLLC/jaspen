@@ -31,6 +31,7 @@ import {
   GuidedDecisionModal,
   Walkthrough,
 } from '../GuidedDecision';
+import { appendComposerDraft, FavoriteAIBrainstorm } from '../FavoriteAI';
 import ExecutionPlanExportButton from './ExecutionPlanExportButton';
 import PmSyncPanel from './PmSyncPanel';
 import ConnectorContextChip from './ConnectorContextChip';
@@ -4135,9 +4136,7 @@ useEffect(() => {
     buildDefaultNotifications().map((item) => item.id)
   );
 
-  const handleGuidedUse = useCallback((text) => {
-    setInput(text);
-    setGuidedDecisionOpen(false);
+  const focusComposerAtEnd = useCallback(() => {
     // Focus the composer so the user can review and press Send themselves.
     requestAnimationFrame(() => {
       try {
@@ -4147,6 +4146,15 @@ useEffect(() => {
       } catch { /* noop */ }
     });
   }, []);
+  const handleGuidedUse = useCallback((text) => {
+    setInput(text);
+    setGuidedDecisionOpen(false);
+    focusComposerAtEnd();
+  }, [focusComposerAtEnd]);
+  const handleBrainstormUse = useCallback((text) => {
+    setInput((currentDraft) => appendComposerDraft(currentDraft, text));
+    focusComposerAtEnd();
+  }, [focusComposerAtEnd]);
   const [threadUsage, setThreadUsage] = useState(null);
   const [threadUsageLoading, setThreadUsageLoading] = useState(false);
   const [threadUsageError, setThreadUsageError] = useState('');
@@ -8269,6 +8277,34 @@ const collectedSignals = useMemo(() => {
   }
   return signals;
 }, [knowledgeSignals, messages, connectedDataSources, activeContextSourceIds]);
+
+const brainstormProjectSummary = useMemo(() => {
+  const baselineTitleSource =
+    (analysisResult?._baseline_scorecard && typeof analysisResult._baseline_scorecard === 'object'
+      ? analysisResult._baseline_scorecard
+      : null) ||
+    bundleBaselineScorecard ||
+    analysisResult ||
+    activeScorecard;
+  const title = deriveIdeaTitle({ result: baselineTitleSource, messages, fallback: '' });
+  const options = mergedScoreWorkspaceSnapshots.map((snapshot) => (
+    snapshot?.project_name || snapshot?.title || snapshot?.label || ''
+  ));
+  const openQuestions = collectedSignals
+    .filter((signal) => !signal.complete)
+    .map((signal) => signal.hint
+      ? `${signal.label}: ${signal.hint}`
+      : signal.label);
+
+  return { title, options, openQuestions };
+}, [
+  activeScorecard,
+  analysisResult,
+  bundleBaselineScorecard,
+  collectedSignals,
+  mergedScoreWorkspaceSnapshots,
+  messages,
+]);
 
 const renderCollectedSignals = () => {
   if (!sessionId) return null;
@@ -13299,6 +13335,10 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         {!sessionId && <div className="jas-titlebar-left" />}
 
         <div className="jas-titlebar-right">
+          <FavoriteAIBrainstorm
+            projectSummary={brainstormProjectSummary}
+            onAddToComposer={handleBrainstormUse}
+          />
           <GuidedDecisionButton onClick={() => setGuidedDecisionOpen(true)} />
           {showIntakeTopbarUtilities && (
             <button
