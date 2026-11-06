@@ -6756,6 +6756,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         _load_scenarios,
         _materialize_ai_wbs,
         _normalize_project_wbs,
+        _attach_decision_basis,
         _record_claude_operation,
         _resolve_user_model_selection,
         _resolve_thread_baseline,
@@ -7017,7 +7018,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             option_key,
             final_decision,
             decided_by_user_id=user.id,
-            source="manual",
+            source="conversation",
+            disposition={
+                "moving_forward": "pursue",
+                "declined": "not_pursue",
+                "deferred": "still_evaluating",
+            }[decision],
+            user_quote=original_quote,
+            capture_metadata={"deferred": True} if decision == "deferred" else {},
             option_name=option_name,
             rationale=rationale or None,
             kit_verdict=kit_verdict,
@@ -9018,7 +9026,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if deadline:
             from ..decision_lineage import schedule_backward
             materialized = schedule_backward(materialized, deadline, buffer_days=1)
-        normalized_wbs = _normalize_project_wbs({"project_wbs": materialized}, existing=None)
+        regeneration_base = _plan_guard if _force_new and isinstance(_plan_guard, dict) else None
+        normalized_wbs = _normalize_project_wbs(
+            {"project_wbs": materialized}, existing=regeneration_base,
+            change_source="regeneration" if regeneration_base else "generation",
+        )
         normalized_wbs["ai_generated"] = not starter_plan
         normalized_wbs["generation_status"] = "starter_plan" if starter_plan else "ai_generated"
         if starter_plan:
@@ -9039,6 +9051,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # this artifact to chat_history, so no separate registration needed).
         from .strategy import _stamp_wbs_identity
         _stamp_wbs_identity(normalized_wbs, scorecard, fallback_id=exec_scorecard_id)
+        _attach_decision_basis(normalized_wbs, scorecard, existing=regeneration_base)
         exec_scorecard_id = str(normalized_wbs.get("scorecard_id") or exec_scorecard_id or "").strip() or None
         try:
             _persist_generated_plan(
@@ -9054,6 +9067,12 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "The execution plan could not be saved. Nothing changed.",
                 code="persist_failed",
             )
+        completed_decision = record_execution_plan_decision(
+            user, thread_id, scorecard, decision_kit=decision_kit, plan_built=True,
+            basis_snapshot=normalized_wbs.get("decision_basis"),
+        )
+        recorded_decision["id"] = completed_decision.id
+        recorded_decision["final_decision"] = completed_decision.final_decision
         # Dependencies Jaspen authored in a GENERATED plan (spec §4.3). The
         # plan-editing routes deliberately do not call this: a dependency the
         # user typed into their own plan is theirs, not a Jaspen finding.
@@ -9136,7 +9155,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             return _tool_error("There's no execution plan to re-schedule yet.", code="no_plan")
 
         plan_guard = copy.deepcopy(resolved_wbs)
-        updated_wbs, shifted_days = _shift_wbs_dates(copy.deepcopy(resolved_wbs), new_start_date)
+        updated_wbs, shifted_days = _shift_wbs_dates(
+            copy.deepcopy(resolved_wbs), new_start_date, actor_user_id=user_id,
+        )
         try:
             _persist_generated_plan(
                 user_id, thread_id, active_scorecard_id, updated_wbs, plan_guard,
@@ -9289,7 +9310,11 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             confirmation = f"Removed task '{task_id}' from the WBS."
 
         plan_guard = copy.deepcopy(current_wbs)
-        normalized = _normalize_project_wbs({"project_wbs": {**current_wbs, "tasks": tasks}}, existing=current_wbs)
+        normalized = _normalize_project_wbs(
+            {"project_wbs": {**current_wbs, "tasks": tasks}}, existing=current_wbs,
+            change_source="ai_tool", actor_user_id=user_id,
+            commit_on_person_change=(tool_name == "update_wbs_task"),
+        )
         try:
             _persist_generated_plan(
                 user_id, thread_id, active_scorecard_id, normalized, plan_guard,

@@ -22,6 +22,8 @@ from ..decision_records import (
     current_state,
     current_option_decision,
     current_option_decisions,
+    decision_signals_for,
+    option_dispositions,
     option_decision_history,
     record_option_decision,
     supersede_record,
@@ -64,6 +66,8 @@ def _decision_view(record, user, option_key=None):
     payload['lessons_learned'] = (
         record.lessons_learned if isinstance(record.lessons_learned, list) else []
     )
+    payload['option_dispositions'] = option_dispositions(record)
+    payload['decision_signals'] = [row.to_dict() for row in decision_signals_for(record)]
     current_options = current_option_decisions(record)
     payload['option_decisions'] = [
         {
@@ -279,6 +283,8 @@ def get_record(record_id):
     full['current_state'] = current_state(record)
     row = canonical_row(user, record.thread_id, include_archived=True)
     full['can_edit'] = True if row is None else bool(can_write_session(row, user))
+    full['option_dispositions'] = option_dispositions(record, session=row)
+    full['decision_signals'] = [item.to_dict() for item in decision_signals_for(record)]
     return jsonify({'record': full})
 
 
@@ -353,6 +359,11 @@ def update_record(record_id):
                     data.get('final_decision'),
                     decided_by_user_id=user.id,
                     source='manual',
+                    disposition=(
+                        'not_pursue' if (kit_verdict or {}).get('verdict_key') == 'decline'
+                        else 'still_evaluating' if (kit_verdict or {}).get('verdict_key') == 'deferred'
+                        else 'pursue'
+                    ),
                     option_name=card.get('name'),
                     rationale=data.get('rationale') or override_reason,
                     kit_verdict=kit_verdict,

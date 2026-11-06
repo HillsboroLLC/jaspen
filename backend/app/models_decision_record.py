@@ -200,6 +200,12 @@ class OptionDecision(db.Model):
     final_decision = db.Column(db.Text, nullable=False)
     rationale = db.Column(db.Text, nullable=True)
     source = db.Column(db.String(32), nullable=False, default='manual', index=True)
+    disposition = db.Column(db.String(32), nullable=True, index=True)
+    user_quote = db.Column(db.Text, nullable=True)
+    basis_snapshot = db.Column(db.JSON, nullable=True)
+    capture_metadata = db.Column(
+        db.JSON, nullable=False, default=dict, server_default=db.text("'{}'"),
+    )
     kit_verdict = db.Column(db.JSON, nullable=True)
     override_info = db.Column(db.JSON, nullable=True)
     decided_by_user_id = db.Column(
@@ -231,6 +237,10 @@ class OptionDecision(db.Model):
             'final_decision': self.final_decision,
             'rationale': self.rationale,
             'source': self.source,
+            'disposition': self.disposition,
+            'user_quote': self.user_quote,
+            'basis_snapshot': self.basis_snapshot if isinstance(self.basis_snapshot, dict) else None,
+            'capture_metadata': self.capture_metadata if isinstance(self.capture_metadata, dict) else {},
             'kit_verdict': self.kit_verdict if isinstance(self.kit_verdict, dict) else None,
             'override_info': self.override_info if isinstance(self.override_info, dict) else None,
             'decided_by_user_id': self.decided_by_user_id,
@@ -242,4 +252,66 @@ class OptionDecision(db.Model):
             'decided_at': self.decided_at.isoformat() if self.decided_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class DecisionSignal(db.Model):
+    """Append-only customer-stated metadata about a decision or option."""
+
+    __tablename__ = 'decision_signals'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id = db.Column(
+        db.String(36), db.ForeignKey('organizations.id', ondelete='CASCADE'),
+        nullable=True, index=True,
+    )
+    attribution_user_id = db.Column(
+        db.String(36), db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True, index=True,
+    )
+    thread_id = db.Column(db.String(64), nullable=False, index=True)
+    decision_record_id = db.Column(
+        db.String(36), db.ForeignKey('decision_records.id', ondelete='CASCADE'),
+        nullable=False, index=True,
+    )
+    option_key = db.Column(db.String(160), nullable=True, index=True)
+    kind = db.Column(db.String(32), nullable=False, index=True)
+    content = db.Column(db.Text, nullable=False)
+    user_quote = db.Column(db.Text, nullable=True)
+    structured = db.Column(db.JSON, nullable=True)
+    source = db.Column(db.String(32), nullable=False, index=True)
+    actor_user_id = db.Column(
+        db.String(36), db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True, index=True,
+    )
+    occurred_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    supersedes_id = db.Column(
+        db.String(36), db.ForeignKey('decision_signals.id', ondelete='SET NULL'),
+        nullable=True, index=True,
+    )
+    retracted_at = db.Column(db.DateTime, nullable=True, index=True)
+    retracted_by = db.Column(
+        db.String(36), db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True,
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'organization_id': self.organization_id,
+            'attribution_user_id': self.attribution_user_id,
+            'thread_id': self.thread_id,
+            'decision_record_id': self.decision_record_id,
+            'option_key': self.option_key,
+            'kind': self.kind,
+            'content': self.content,
+            'user_quote': self.user_quote,
+            'structured': self.structured if isinstance(self.structured, dict) else {},
+            'source': self.source,
+            'actor_user_id': self.actor_user_id,
+            'occurred_at': self.occurred_at.isoformat() if self.occurred_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'supersedes_id': self.supersedes_id,
+            'retracted_at': self.retracted_at.isoformat() if self.retracted_at else None,
+            'retracted_by': self.retracted_by,
         }

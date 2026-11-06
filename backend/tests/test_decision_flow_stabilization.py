@@ -3077,7 +3077,7 @@ def test_execution_route_persists_ai_generated_plan(client, db, test_user, auth_
     assert OptionDecision.query.filter_by(decision_record_id=decision.id).count() == 1
     assert option_decision.option_key == 'scorecard:planner-card'
     assert option_decision.final_decision == 'Moving forward with Proposal — execution plan built.'
-    assert option_decision.source == 'build_execution_plan'
+    assert option_decision.source == 'plan_created'
 
 
 @pytest.mark.parametrize('has_existing_plan', [False, True])
@@ -3566,9 +3566,11 @@ def test_chat_execution_plan_confirms_records_and_does_not_reprompt_for_regenera
     assert record.final_decision is None
     from app.models_decision_record import OptionDecision
     option_decision = OptionDecision.query.filter_by(decision_record_id=record.id).one()
-    assert option_decision.final_decision == 'Moving forward with General expansion.'
+    assert option_decision.final_decision == (
+        'Moving forward with General expansion — execution plan built.'
+    )
     assert option_decision.option_key == 'option-general'
-    assert option_decision.source == 'build_execution_plan'
+    assert option_decision.source == 'plan_created'
 
     regenerated = agent._execute_mutation_tool(
         'generate_execution_plan', {'regenerate': True},
@@ -3613,7 +3615,7 @@ def test_chat_decision_tool_records_verified_non_override(app, db, test_user):
     decision = OptionDecision.query.filter_by(decision_record_id=record.id).one()
     assert decision.option_key == 'option-natural'
     assert decision.final_decision == 'Declined Natural expansion.'
-    assert decision.source == 'manual'
+    assert decision.source == 'conversation'
     assert decision.override_info is None
 
 

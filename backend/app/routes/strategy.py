@@ -6418,6 +6418,11 @@ def _normalize_wbs_task(raw_task):
         }
     if isinstance(raw_task.get('pm_sync_state'), dict):
         task['pm_sync_state'] = dict(raw_task['pm_sync_state'])
+    if isinstance(raw_task.get('history'), list):
+        task['history'] = [dict(item) for item in raw_task['history'] if isinstance(item, dict)]
+    task['commitment'] = (
+        dict(raw_task['commitment']) if isinstance(raw_task.get('commitment'), dict) else None
+    )
     if priority:
         task['priority'] = priority
     if timeline_days:
@@ -6442,7 +6447,10 @@ def _normalize_wbs_task(raw_task):
     return task
 
 
-def _normalize_project_wbs(payload, existing=None):
+def _normalize_project_wbs(
+    payload, existing=None, *, change_source=None, actor_user_id=None,
+    commit_on_person_change=None,
+):
     base = existing if isinstance(existing, dict) else {}
     now = datetime.utcnow().isoformat()
 
@@ -6471,6 +6479,12 @@ def _normalize_project_wbs(payload, existing=None):
         prior_normalized = _normalize_wbs_task(prior) if isinstance(prior, dict) else None
         if prior_normalized and prior_normalized.get('order') is None:
             prior_normalized['order'] = idx + 1
+        if change_source == 'regeneration' and prior_normalized:
+            # Regeneration may refresh Jaspen-authored content, never fields a
+            # person or connector already owns. Matching task ids are the only
+            # safe identity; no title-based guessing is allowed.
+            for protected in ('title', 'owner', 'owner_email', 'status', 'start_date', 'due_date'):
+                task[protected] = prior_normalized.get(protected)
         def _normalized_change_value(value):
             if value is None:
                 return None
@@ -6485,7 +6499,7 @@ def _normalize_project_wbs(payload, existing=None):
                 return {key: item for key, item in values.items() if item is not None} or None
             return value
 
-        ignored_change_metadata = {'updated_at', 'field_updated_at', 'pm_sync_state'}
+        ignored_change_metadata = {'updated_at', 'field_updated_at', 'pm_sync_state', 'history', 'commitment'}
         current_compare = {
             k: _normalized_change_value(v) for k, v in task.items()
             if k not in ignored_change_metadata
@@ -6503,6 +6517,16 @@ def _normalize_project_wbs(payload, existing=None):
             if not prior_normalized or _normalized_change_value(task.get(field)) != _normalized_change_value(prior_normalized.get(field)):
                 field_times[field] = now
         task['field_updated_at'] = field_times
+        from ..task_history import record_task_changes
+        source = change_source or ('person' if prior_normalized else 'generation')
+        should_commit = (
+            bool(commit_on_person_change)
+            if commit_on_person_change is not None else source == 'person'
+        )
+        record_task_changes(
+            task, prior or None, source=source, actor_user_id=actor_user_id,
+            at=now, commit_on_person_change=should_commit,
+        )
         tasks.append(task)
 
     # Ensure dependency ids refer to tasks in this WBS.
@@ -6512,11 +6536,12 @@ def _normalize_project_wbs(payload, existing=None):
 
     start_date = str(payload.get('start_date') or base.get('start_date') or '').strip() or None
 
-    return {
+    normalized_plan = {
         **{key: payload.get(key, base.get(key)) for key in (
             'ai_generated', 'ai_generated_at', 'ai_summary', 'generation_status',
             'generation_error', 'scorecard_id', 'scorecard_name', 'idea_name',
             'starter_plan_note',
+            'decision_basis', 'decision_basis_reason', 'decision_basis_history',
         ) if key in payload or key in base},
         'version': int(base.get('version') or payload.get('version') or 1),
         'name': str(payload.get('name') or base.get('name') or 'Execution WBS').strip(),
@@ -6528,6 +6553,82 @@ def _normalize_project_wbs(payload, existing=None):
         'created_at': base.get('created_at') or now,
         'updated_at': now,
     }
+    if base and 'decision_basis' not in base and 'decision_basis' not in payload:
+        normalized_plan['decision_basis'] = None
+        normalized_plan['decision_basis_reason'] = 'created_before_snapshot'
+    return normalized_plan
+
+
+def _decision_basis_snapshot(scorecard, *, captured_at=None):
+    """Copy the plan-time decision basis from the stored scorecard verbatim."""
+    card = scorecard if isinstance(scorecard, dict) else {}
+    profile = card.get('evidence_profile') if isinstance(card.get('evidence_profile'), dict) else {}
+    criteria = profile.get('criteria') if isinstance(profile.get('criteria'), list) else []
+    rubric = card.get('scoring_rubric') or card.get('rubric') or {}
+    rubric_items = rubric.get('criteria') if isinstance(rubric, dict) and isinstance(rubric.get('criteria'), list) else []
+    rubric_by_key = {
+        str(item.get('key') or item.get('id') or ''): item
+        for item in rubric_items if isinstance(item, dict)
+    }
+    unevidenced = []
+    for item in criteria:
+        if not isinstance(item, dict):
+            continue
+        if item.get('evidenced') is not False and str(item.get('confidence') or '').lower() != 'assumed':
+            continue
+        key = str(item.get('key') or item.get('id') or '').strip()
+        rubric_item = rubric_by_key.get(key, {})
+        unevidenced.append({
+            'key': key or None,
+            'label': item.get('label') or rubric_item.get('label') or key or None,
+            'weight': item.get('weight') if item.get('weight') is not None else rubric_item.get('weight'),
+            'group': item.get('group') or rubric_item.get('group'),
+            'resolution': item.get('resolution') or item.get('what_would_improve'),
+        })
+    recommendation = card.get('recommendation') if isinstance(card.get('recommendation'), dict) else {}
+    state = card.get('decision_state') if isinstance(card.get('decision_state'), dict) else {}
+    methodology = state.get('methodology') if isinstance(state.get('methodology'), dict) else {}
+    meta = card.get('meta') if isinstance(card.get('meta'), dict) else {}
+    return {
+        'captured_at': captured_at or datetime.utcnow().isoformat(),
+        'scorecard_id': str(card.get('id') or card.get('analysis_id') or '').strip() or None,
+        'option_key': str(card.get('option_key') or '').strip() or None,
+        'jaspen_score': card.get('jaspen_score'),
+        'score_category': card.get('score_category'),
+        'evidence_backed_pct': profile.get('evidence_backed_pct'),
+        'unevidenced_criteria': unevidenced,
+        'gates': [
+            {'key': gate.get('key'), 'label': gate.get('label') or gate.get('key'), 'status': gate.get('status')}
+            for gate in (card.get('gates') or []) if isinstance(gate, dict)
+        ],
+        'recommendation_verdict_key': recommendation.get('verdict_key'),
+        'decision_fingerprint': card.get('decision_fingerprint'),
+        'methodology_version': (
+            card.get('methodology_version') or methodology.get('version')
+            or meta.get('methodology_version')
+        ),
+    }
+
+
+def _attach_decision_basis(plan, scorecard, *, existing=None):
+    snapshot = _decision_basis_snapshot(scorecard)
+    existing = existing if isinstance(existing, dict) else None
+    if existing is None:
+        plan['decision_basis'] = snapshot
+        plan.pop('decision_basis_reason', None)
+        plan.setdefault('decision_basis_history', [])
+        return snapshot
+    plan['decision_basis'] = existing.get('decision_basis')
+    if 'decision_basis' not in existing:
+        plan['decision_basis'] = None
+        plan['decision_basis_reason'] = 'created_before_snapshot'
+    elif existing.get('decision_basis_reason'):
+        plan['decision_basis_reason'] = existing.get('decision_basis_reason')
+    history = list(existing.get('decision_basis_history') or [])
+    history.append(snapshot)
+    plan['decision_basis_history'] = history
+    plan['created_at'] = existing.get('created_at') or plan.get('created_at')
+    return snapshot
 
 
 def _wbs_anchor_date(project_wbs):
@@ -6548,7 +6649,7 @@ def _wbs_anchor_date(project_wbs):
     return min(starts) if starts else None
 
 
-def _shift_wbs_dates(project_wbs, new_start_date):
+def _shift_wbs_dates(project_wbs, new_start_date, *, actor_user_id=None):
     """Re-anchor an existing plan to new_start_date, shifting every task's
     start_date and due_date by the same delta. Manual per-task adjustments are
     preserved because the whole schedule slides by one constant offset.
@@ -6576,10 +6677,16 @@ def _shift_wbs_dates(project_wbs, new_start_date):
     for t in tasks:
         if not isinstance(t, dict):
             continue
+        prior = copy.deepcopy(t)
         for key in ('start_date', 'due_date'):
             parsed = _parse_wbs_start_date(t.get(key))
             if parsed is not None:
                 t[key] = (parsed + shift).date().isoformat()
+        from ..task_history import record_task_changes
+        record_task_changes(
+            t, prior, source='schedule_shift', actor_user_id=actor_user_id,
+            commit_on_person_change=True,
+        )
     project_wbs['start_date'] = new_anchor.date().isoformat()
     project_wbs['updated_at'] = datetime.utcnow().isoformat()
     return project_wbs, delta
@@ -8437,7 +8544,11 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
         if deadline:
             from ..decision_lineage import schedule_backward
             materialized = schedule_backward(materialized, deadline, buffer_days=1)
-        normalized_wbs = _normalize_project_wbs({'project_wbs': materialized}, existing=None)
+        regeneration_base = plan_guard if force_new and isinstance(plan_guard, dict) else None
+        normalized_wbs = _normalize_project_wbs(
+            {'project_wbs': materialized}, existing=regeneration_base,
+            change_source='regeneration' if regeneration_base else 'generation',
+        )
         normalized_wbs['ai_generated'] = not starter_plan
         normalized_wbs['generation_status'] = 'starter_plan' if starter_plan else 'ai_generated'
         if starter_plan:
@@ -8451,6 +8562,7 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
         # belongs to (header naming + Session Artifacts registration). Built from
         # the resolved scorecard, falling back to the explicit CTA scorecard_id.
         _stamp_wbs_identity(normalized_wbs, current_scorecard, fallback_id=scorecard_id)
+        _attach_decision_basis(normalized_wbs, current_scorecard, existing=regeneration_base)
         canonical_scorecard_id = str(normalized_wbs.get('scorecard_id') or scorecard_id or '').strip() or None
         if canonical_scorecard_id:
             scorecard_row = Scorecard.query.filter_by(
@@ -8516,6 +8628,7 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                 decision_record = record_execution_plan_decision(
                     user, thread_id, current_scorecard,
                     decision_kit=decision_kit, plan_built=True,
+                    basis_snapshot=normalized_wbs.get('decision_basis'),
                 )
                 recorded_decision = {
                     'id': decision_record.id,
@@ -8526,7 +8639,7 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                 }
                 decision_recorded_now = True
             elif (
-                recorded_decision.get('source') == 'build_execution_plan'
+                recorded_decision.get('source') in {'build_execution_plan', 'plan_created'}
                 and recorded_decision.get('final_decision') == f'Moving forward with {option_name}.'
             ):
                 # Complete a legacy preliminary build decision only after the
@@ -8535,6 +8648,7 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                 decision_record = record_execution_plan_decision(
                     user, thread_id, current_scorecard,
                     decision_kit=decision_kit, plan_built=True,
+                    basis_snapshot=normalized_wbs.get('decision_basis'),
                 )
                 recorded_decision['final_decision'] = decision_record.final_decision
                 recorded_decision['override_info'] = decision_record.override_info or {}
@@ -9512,7 +9626,10 @@ def upsert_thread_wbs(thread_id):
             or (incoming_wbs.get('updated_at') if isinstance(incoming_wbs, dict) else None)
         )
         _assert_object_basis(existing_wbs, expected_updated_at, session_id=thread_id)
-        normalized_wbs = _normalize_project_wbs(payload, existing=existing_wbs)
+        normalized_wbs = _normalize_project_wbs(
+            payload, existing=existing_wbs, change_source='person',
+            actor_user_id=user_id, commit_on_person_change=True,
+        )
 
         limits = get_wbs_limits_for_plan(plan_key)
         max_tasks = limits.get('max_tasks_per_wbs')
@@ -9635,7 +9752,9 @@ def reanchor_thread_wbs_start_date(thread_id):
         def _apply_start_date(current_td):
             current_wbs = _resolve_thread_wbs(current_td, scorecard_id)
             _assert_object_basis(current_wbs, expected_updated_at, session_id=thread_id)
-            updated, days = _shift_wbs_dates(current_wbs, new_start_date)
+            updated, days = _shift_wbs_dates(
+                current_wbs, new_start_date, actor_user_id=user_id,
+            )
             _store_thread_wbs(current_td, scorecard_id, updated)
             saved['wbs'] = updated
             saved['days'] = days
@@ -11423,7 +11542,7 @@ _EXECUTION_EDIT_ACTIONS = {
 }
 
 
-def _apply_execution_assistant_actions(project_wbs, actions):
+def _apply_execution_assistant_actions(project_wbs, actions, *, actor_user_id=None):
     """Validate and atomically apply the supported plan-edit action set."""
     updated = copy.deepcopy(project_wbs if isinstance(project_wbs, dict) else {'name': 'Execution Plan', 'tasks': []})
     tasks = list(updated.get('tasks') or [])
@@ -11470,7 +11589,11 @@ def _apply_execution_assistant_actions(project_wbs, actions):
             tasks[index] = {**tasks[index], 'depends_on': dependencies}
     updated['tasks'] = tasks
     updated['updated_at'] = datetime.utcnow().isoformat()
-    return _normalize_project_wbs({'project_wbs': updated}, existing=project_wbs)
+    return _normalize_project_wbs(
+        {'project_wbs': updated}, existing=project_wbs,
+        change_source='ai_tool', actor_user_id=actor_user_id,
+        commit_on_person_change=True,
+    )
 
 @strategy_bp.route('/threads/<thread_id>/execution-assistant', methods=['POST'])
 @jwt_required()
@@ -11636,7 +11759,9 @@ If no plan changes are needed, return "uiActions": [].
         updated_wbs = None
         if ui_actions:
             try:
-                updated_wbs = _apply_execution_assistant_actions(project_wbs, ui_actions)
+                updated_wbs = _apply_execution_assistant_actions(
+                    project_wbs, ui_actions, actor_user_id=user_id,
+                )
                 scorecard_id = str(updated_wbs.get('scorecard_id') or '').strip() or None
                 _persist_generated_plan(
                     user_id, thread_id, scorecard_id, updated_wbs,

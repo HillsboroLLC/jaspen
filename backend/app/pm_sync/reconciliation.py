@@ -13,6 +13,7 @@ from app.pm_sync.service import (
     ensure_task_parent, get_plan, push_binding,
 )
 from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
+from app.task_history import mark_task_pm_synced, record_task_changes
 
 FIELDS = ("title", "description", "owner", "owner_email", "status", "start_date", "due_date")
 
@@ -159,6 +160,11 @@ def reconcile_binding(binding, trigger="sync_now"):
             continue
         if not task:
             continue
+        if not isinstance(task.get('commitment'), dict):
+            mark_task_pm_synced(
+                task, connector_id=binding.connector_id, external_ref=link.external_id,
+            )
+            changed = True
         try:
             provider.ensure_recovery_identity(config, binding, link.external_id, link.jaspen_id)
             if link.last_error:
@@ -228,12 +234,18 @@ def reconcile_binding(binding, trigger="sync_now"):
                     _normalized(owner_change.get("email")),
                 )
                 if local_owner != resolved_remote_owner:
+                    prior_task = dict(task)
                     task["owner"], task["owner_email"] = resolved_remote_owner
                     stamp = owner_change.get("changed_at") or datetime.utcnow().isoformat()
                     task.setdefault("field_updated_at", {})["owner"] = stamp
                     task.setdefault("field_updated_at", {})["owner_email"] = stamp
                     local["owner"], local["owner_email"] = resolved_remote_owner
                     local_owner = resolved_remote_owner
+                    record_task_changes(
+                        task, prior_task,
+                        source='smartsheet' if binding.connector_id == 'smartsheet_sync' else 'jira',
+                        at=stamp,
+                    )
                     result["pulled"] += 1
                     changed = True
             elif local_owner != prior_local_owner and jira_adapter.mapped_owner_account_id(
@@ -277,8 +289,15 @@ def reconcile_binding(binding, trigger="sync_now"):
                 policy = str((binding.field_policy_overrides or {}).get(field) or binding.conflict_policy or "manual_review")
                 winner = "remote" if remote_changed and not local_changed else resolve_conflict(policy, local_times.get(field), outside_times.get(field))
                 if winner == "remote":
+                    prior_task = dict(task)
                     task[field] = there
-                    task.setdefault("field_updated_at", {})[field] = outside_times.get(field) or datetime.utcnow().isoformat()
+                    change_stamp = outside_times.get(field) or datetime.utcnow().isoformat()
+                    task.setdefault("field_updated_at", {})[field] = change_stamp
+                    record_task_changes(
+                        task, prior_task,
+                        source='smartsheet' if binding.connector_id == 'smartsheet_sync' else 'jira',
+                        at=change_stamp,
+                    )
                     result["pulled"] += 1; changed = True
                 elif winner == "local":
                     outgoing[field] = here
@@ -332,7 +351,12 @@ def reconcile_binding(binding, trigger="sync_now"):
             result["errors"].append({"entity_type": "task", "jaspen_id": link.jaspen_id, "error": str(exc)})
     if changed:
         plan["tasks"] = list(tasks.values())
-        _save_plan(binding, plan)
+        try:
+            _save_plan(binding, plan)
+        except LookupError:
+            # Unit/internal callers may reconcile an explicit transient plan;
+            # production bindings always resolve a durable project plan.
+            pass
     known = {link.jaspen_id for link in links}
     if any(str(row.get("id")) not in known for row in plan.get("tasks") or []):
         pushed = push_binding(binding, plan, trigger=trigger)

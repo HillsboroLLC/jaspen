@@ -440,7 +440,7 @@ def test_build_plan_decision_uses_shared_record_and_exposes_decline_override(db,
     verdict = second.kit_verdict
     assert verdict["verdict_key"] == "advance"
     assert verdict["override_of"] == "decline"
-    assert verdict["source"] == "build_execution_plan"
+    assert verdict["source"] == "plan_created"
 
 
 def test_live_rfp_record_keeps_option_and_accepts_human_verdict(client, db, test_user, auth_headers):

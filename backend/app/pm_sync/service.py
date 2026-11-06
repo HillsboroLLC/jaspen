@@ -5,7 +5,7 @@ from app import db
 from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync import jira_adapter
-from app.scenarios_store import load_scenarios_data
+from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
 from sqlalchemy.orm.attributes import flag_modified
 
 MODES = {"two_way", "push_only"}
@@ -35,6 +35,34 @@ def get_plan(user_id, thread_id, plan_key):
     if not resolved_key:
         raise ValueError("This execution plan needs a stable plan key before it can be sent.")
     return plan, resolved_key
+
+
+def _persist_task_commitments(binding, plan):
+    commitments = {
+        str(task.get('id')): dict(task.get('commitment'))
+        for task in (plan.get('tasks') or [])
+        if isinstance(task, dict) and task.get('id') and isinstance(task.get('commitment'), dict)
+    }
+    if not commitments:
+        return
+
+    def apply(current):
+        by_scorecard = current.get('wbs_by_scorecard') if isinstance(current.get('wbs_by_scorecard'), dict) else {}
+        target = by_scorecard.get(binding.plan_key) if binding.plan_key in by_scorecard else current.get('project_wbs')
+        if not isinstance(target, dict):
+            return current
+        for task in target.get('tasks') or []:
+            task_id = str(task.get('id') or '') if isinstance(task, dict) else ''
+            if task_id in commitments and not isinstance(task.get('commitment'), dict):
+                task['commitment'] = commitments[task_id]
+        if binding.plan_key in by_scorecard:
+            by_scorecard[binding.plan_key] = target
+            current['wbs_by_scorecard'] = by_scorecard
+        if str(current.get('active_execution_scorecard_id') or '') == binding.plan_key or not by_scorecard:
+            current['project_wbs'] = target
+        return current
+
+    save_project_scenarios_data(binding.user_id, binding.thread_id, updater=apply)
 
 
 def _clean_phase(value):
@@ -586,6 +614,26 @@ def push_binding(binding, plan=None, trigger="send", only_task_ids=None):
         binding.last_success_at = _now()
         binding.failure_count = 0
         binding.next_retry_at = None
+    from app.task_history import mark_task_pm_synced
+    active_task_links = {
+        link.jaspen_id: link.external_id
+        for link in PmSyncLink.query.filter_by(
+            binding_id=binding.id, entity_type='task', state='active',
+        ).all()
+        if link.external_id
+    }
+    for task in all_tasks:
+        task_id = str(task.get('id') or '')
+        if task_id in active_task_links:
+            mark_task_pm_synced(
+                task, connector_id=binding.connector_id,
+                external_ref=active_task_links[task_id],
+            )
+    try:
+        _persist_task_commitments(binding, plan)
+    except (LookupError, ValueError):
+        # Some internal/test callers provide an explicit transient plan.
+        pass
     _record_log(binding, trigger, result)
     db.session.commit()
     result["success"] = not result["errors"]
