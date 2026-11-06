@@ -267,7 +267,7 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
   const outcomes = Array.isArray(record.outcomes) ? record.outcomes : [];
   const lessons = Array.isArray(record.lessons_learned) ? record.lessons_learned : [];
   const hasOutcome = outcomes.length > 0;
-  const buildDecision = record.option_decision?.source === 'build_execution_plan';
+  const buildDecision = record.option_decision?.plan_decision === true;
   const decisionOverride = Boolean(record.option_decision?.override_info);
   const recordedOptionName = record.option_decision?.option_name || selectedAlternative || 'this option';
   const recordedLine = buildDecision

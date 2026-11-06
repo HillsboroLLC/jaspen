@@ -76,11 +76,10 @@ def upgrade():
             if disposition == 'still_evaluating':
                 metadata['deferred'] = True
             bind.execute(sa.text(
-                "UPDATE decision_option_decisions SET disposition=:disposition, source=:source, "
+                "UPDATE decision_option_decisions SET disposition=:disposition, "
                 "capture_metadata=:metadata WHERE id=:id"
             ), {
                 'id': row['id'], 'disposition': disposition,
-                'source': 'plan_created' if row['source'] == 'build_execution_plan' else row['source'],
                 'metadata': json.dumps(metadata),
             })
 

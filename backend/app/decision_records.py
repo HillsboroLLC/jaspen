@@ -33,15 +33,23 @@ DISPOSITION_STILL_EVALUATING = 'still_evaluating'
 DISPOSITIONS = frozenset({
     DISPOSITION_PURSUE, DISPOSITION_NOT_PURSUE, DISPOSITION_STILL_EVALUATING,
 })
-DISPOSITION_SOURCES = frozenset({
-    'conversation', 'choice', 'plan_created', 'plan_deleted', 'legacy_plan', 'manual',
-    'build_execution_plan',
+PLAN_DECISION_SOURCES = frozenset({
+    'build_execution_plan', 'plan_created', 'legacy_plan',
 })
+DISPOSITION_SOURCES = frozenset({
+    'conversation', 'choice', 'plan_deleted', 'manual',
+}) | PLAN_DECISION_SOURCES
 DECISION_SIGNAL_KINDS = frozenset({
     'rationale', 'tradeoff', 'assumption', 'concern', 'evidence_note',
     'commitment', 'success_measure', 'review_timing',
 })
 DECISION_SIGNAL_SOURCES = frozenset({'conversation', 'choice', 'system_event', 'connector'})
+
+
+def is_plan_decision_source(source):
+    """Treat historical and current plan-decision sources as one read alias."""
+    return str(source or '').strip().lower() in PLAN_DECISION_SOURCES
+
 
 # Fields in `record` that are DERIVED from thread storage and safe to refresh.
 # Human-owned fields (final_decision, outcomes, lessons_learned, consent) live
@@ -727,7 +735,6 @@ def record_option_decision(
     if not final_text:
         raise ValueError('final_decision is required')
     source = str(source or 'manual').strip().lower()
-    legacy_source = source
     if source not in DISPOSITION_SOURCES:
         raise ValueError('invalid decision source')
     if disposition is None:
@@ -743,7 +750,7 @@ def record_option_decision(
             # generic panels have no kit verdict, but the act itself is a
             # human choice. This is source semantics, never text parsing.
             disposition = DISPOSITION_PURSUE
-        if disposition is None and source in {'build_execution_plan', 'plan_created', 'legacy_plan'}:
+        if disposition is None and is_plan_decision_source(source):
             disposition = DISPOSITION_PURSUE
     if disposition not in DISPOSITIONS:
         raise ValueError('disposition is required and must use the canonical vocabulary')
@@ -761,7 +768,10 @@ def record_option_decision(
     # existing plan rebuild from manufacturing another decision or prompting.
     if prior is not None and (
         prior.final_decision == final_text
-        and prior.source in {source, legacy_source}
+        and (
+            prior.source == source
+            or (is_plan_decision_source(prior.source) and is_plan_decision_source(source))
+        )
         and prior.disposition == disposition
         and (prior.kit_verdict or None) == normalized_verdict
         and (prior.rationale or None) == normalized_rationale
@@ -902,7 +912,7 @@ def record_execution_plan_decision(
             'scorecard_id': scorecard_id,
             'recommendation_snapshot': recommendation,
             'conditions_accepted': [],
-            'source': 'plan_created',
+            'source': 'build_execution_plan',
             'override_of': (
                 'decline' if recommended_key == 'decline' else
                 'failed_required_check' if failed_checks else None
@@ -919,7 +929,7 @@ def record_execution_plan_decision(
     if (
         plan_built
         and prior is not None
-        and prior.source in {'build_execution_plan', 'plan_created'}
+        and is_plan_decision_source(prior.source)
         and prior.final_decision == f'Moving forward with {option_name}.'
     ):
         # This is completion metadata for the same human decision, not a new
@@ -1054,6 +1064,7 @@ def option_dispositions(record, *, session=None, scorecard_rows=None):
             'history': [{
                 'disposition': item.disposition,
                 'source': item.source,
+                'plan_decision': is_plan_decision_source(item.source),
                 'quote': item.user_quote,
                 'actor_user_id': item.decided_by_user_id,
                 'actor_name': item.decided_by_name,

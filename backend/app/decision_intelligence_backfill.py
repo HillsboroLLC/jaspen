@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from sqlalchemy import func
 from sqlalchemy.orm.attributes import flag_modified
 
 from . import db
@@ -12,6 +13,7 @@ from .decision_records import (
     _sync_option_decision_summary,
     _with_first_scored_times,
     execution_option_key,
+    is_plan_decision_source,
 )
 from .models import UserSession
 from .models_decision_record import DecisionRecord, OptionDecision
@@ -49,7 +51,7 @@ def _mapped_disposition(row):
     }.get(verdict.get('verdict_key'))
     if mapped:
         return mapped
-    if row.source in {'build_execution_plan', 'plan_created', 'legacy_plan'}:
+    if is_plan_decision_source(row.source):
         return DISPOSITION_PURSUE
     return _template_disposition(row)
 
@@ -68,8 +70,6 @@ def backfill_decision_intelligence(*, dry_run=False):
             counts['option_decisions_unmapped'] += 1
             continue
         row.disposition = disposition
-        if row.source == 'build_execution_plan':
-            row.source = 'plan_created'
         metadata = dict(row.capture_metadata or {})
         if disposition == DISPOSITION_STILL_EVALUATING:
             metadata['deferred'] = True
@@ -149,8 +149,45 @@ def backfill_decision_intelligence(*, dry_run=False):
         db.session.flush()
         _sync_option_decision_summary(record)
 
+    db.session.flush()
+    counts['report'] = _current_report()
     if dry_run:
         db.session.rollback()
     else:
         db.session.commit()
     return counts
+
+
+def _current_report():
+    dispositions_by_source = {}
+    for source, disposition, total in (
+        db.session.query(OptionDecision.source, OptionDecision.disposition, func.count(OptionDecision.id))
+        .group_by(OptionDecision.source, OptionDecision.disposition)
+        .order_by(OptionDecision.source, OptionDecision.disposition)
+        .all()
+    ):
+        source_counts = dispositions_by_source.setdefault(source, {})
+        source_counts[disposition or 'unmapped'] = int(total)
+
+    records_with_first_scored_at = 0
+    for record in DecisionRecord.query.all():
+        payload = record.record if isinstance(record.record, dict) else {}
+        cards = payload.get('scorecards') if isinstance(payload.get('scorecards'), list) else []
+        if any(isinstance(card, dict) and card.get('first_scored_at') for card in cards):
+            records_with_first_scored_at += 1
+
+    plans_marked = 0
+    for session in UserSession.query.all():
+        scenarios = session.scenarios_json if isinstance(session.scenarios_json, dict) else {}
+        plans = scenarios.get('wbs_by_scorecard') if isinstance(scenarios.get('wbs_by_scorecard'), dict) else {}
+        if not plans and isinstance(scenarios.get('project_wbs'), dict):
+            plans = {'legacy': scenarios['project_wbs']}
+        plans_marked += sum(
+            1 for plan in plans.values()
+            if isinstance(plan, dict) and plan.get('decision_basis_reason') == 'created_before_snapshot'
+        )
+    return {
+        'dispositions_by_source': dispositions_by_source,
+        'records_with_first_scored_at': records_with_first_scored_at,
+        'plans_marked_created_before_snapshot': plans_marked,
+    }

@@ -15,7 +15,11 @@ from app.decision_records import (
 )
 from app.models import Scorecard, UserSession
 from app.models_decision_record import DecisionSignal, OptionDecision
-from app.task_history import confirm_task_commitment, mark_task_pm_synced
+from app.task_history import (
+    commit_task_from_stated_date,
+    confirm_task_commitment,
+    mark_task_pm_synced,
+)
 from tests.test_option_decision_records import _portfolio_record
 from tests.test_session_org_ownership import team_setup  # noqa: F401
 
@@ -178,6 +182,10 @@ def test_task_history_commitments_and_reschedules_are_distinct(app):
     assert task['commitment'] is None
     assert {entry['source'] for entry in task['history']} == {'generation'}
 
+    uncommitted_shifted, _ = _shift_wbs_dates(generated, '2026-11-02', actor_user_id='person-1')
+    assert uncommitted_shifted['tasks'][0]['commitment'] is None
+    assert uncommitted_shifted['tasks'][0]['history'][-1]['source'] == 'schedule_shift'
+
     edited = _normalize_project_wbs(
         {'project_wbs': {'tasks': [{**task, 'due_date': '2026-11-12'}]}},
         existing=generated, change_source='person', actor_user_id='person-1',
@@ -201,14 +209,29 @@ def test_task_history_commitments_and_reschedules_are_distinct(app):
     assert confirmed['commitment']['basis'] == 'person_confirmed'
 
 
-def test_user_stated_lineage_creates_commitment(app):
+def test_generated_decision_lineage_never_creates_commitments(app):
     from app.routes.strategy import _normalize_project_wbs
     plan = _normalize_project_wbs({'project_wbs': {'tasks': [{
         'id': 't1', 'title': 'Submit', 'due_date': '2026-11-20',
         'lineage': [{'type': 'decision_commitment', 'ref': 'deadline-1', 'label': 'Submission date'}],
+    }, {
+        'id': 't2', 'title': 'Prepare', 'due_date': '2026-11-18',
+        'lineage': [{'type': 'decision_commitment', 'ref': 'decision-1', 'label': 'Proceed'}],
     }]}})
-    assert plan['tasks'][0]['commitment']['basis'] == 'user_stated'
-    assert plan['tasks'][0]['commitment']['ref'] == 'deadline-1'
+    assert all(task['commitment'] is None for task in plan['tasks'])
+
+
+def test_customer_stated_date_has_an_explicit_commitment_writer(app):
+    task = {'due_date': '2026-11-22', 'commitment': None}
+    commitment = commit_task_from_stated_date(
+        task, signal_id='signal-1', due_date='2026-11-20', at='2026-11-01T12:00:00',
+    )
+    assert commitment == {
+        'due_date': '2026-11-20',
+        'committed_at': '2026-11-01T12:00:00',
+        'basis': 'user_stated',
+        'ref': 'signal-1',
+    }
 
 
 def test_decision_signals_require_quotes_validate_and_deduplicate(db, team_setup):
@@ -243,7 +266,7 @@ def test_backfill_maps_verdicts_creates_legacy_plan_and_is_idempotent(db, team_s
     OptionDecision.query.delete()
     legacy = OptionDecision(
         decision_record_id=record.id, option_key='option-a', option_name='A',
-        final_decision='unmapped customer wording', source='manual',
+        final_decision='unmapped customer wording', source='build_execution_plan',
         kit_verdict={'verdict_key': 'decline'}, decided_at=datetime.utcnow(),
     )
     unmapped = OptionDecision(
@@ -268,4 +291,9 @@ def test_backfill_maps_verdicts_creates_legacy_plan_and_is_idempotent(db, team_s
     assert second['legacy_plan_decisions_created'] == 0
     assert second['legacy_plans_marked'] == 0
     assert second['option_decisions_unmapped'] == 1
+    assert legacy.source == 'build_execution_plan'
     assert OptionDecision.query.filter_by(source='legacy_plan', option_key='option-b').count() == 1
+    assert second['report']['dispositions_by_source']['legacy_plan']['pursue'] == 1
+    assert second['report']['dispositions_by_source']['build_execution_plan']['not_pursue'] == 1
+    assert second['report']['records_with_first_scored_at'] == 1
+    assert second['report']['plans_marked_created_before_snapshot'] == 1

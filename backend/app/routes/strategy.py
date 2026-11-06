@@ -6685,7 +6685,6 @@ def _shift_wbs_dates(project_wbs, new_start_date, *, actor_user_id=None):
         from ..task_history import record_task_changes
         record_task_changes(
             t, prior, source='schedule_shift', actor_user_id=actor_user_id,
-            commit_on_person_change=True,
         )
     project_wbs['start_date'] = new_anchor.date().isoformat()
     project_wbs['updated_at'] = datetime.utcnow().isoformat()
@@ -8623,8 +8622,8 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                     'decision_ledger: could not record generated plan for thread %s',
                     thread_id, exc_info=True,
                 )
+            from ..decision_records import is_plan_decision_source, record_execution_plan_decision
             if recorded_decision is None:
-                from ..decision_records import record_execution_plan_decision
                 decision_record = record_execution_plan_decision(
                     user, thread_id, current_scorecard,
                     decision_kit=decision_kit, plan_built=True,
@@ -8639,12 +8638,11 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                 }
                 decision_recorded_now = True
             elif (
-                recorded_decision.get('source') in {'build_execution_plan', 'plan_created'}
+                is_plan_decision_source(recorded_decision.get('source'))
                 and recorded_decision.get('final_decision') == f'Moving forward with {option_name}.'
             ):
                 # Complete a legacy preliminary build decision only after the
                 # plan has now been saved successfully.
-                from ..decision_records import record_execution_plan_decision
                 decision_record = record_execution_plan_decision(
                     user, thread_id, current_scorecard,
                     decision_kit=decision_kit, plan_built=True,

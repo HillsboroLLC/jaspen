@@ -229,6 +229,8 @@ class OptionDecision(db.Model):
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def to_dict(self):
+        from .decision_records import is_plan_decision_source
+
         return {
             'id': self.id,
             'decision_record_id': self.decision_record_id,
@@ -237,6 +239,7 @@ class OptionDecision(db.Model):
             'final_decision': self.final_decision,
             'rationale': self.rationale,
             'source': self.source,
+            'plan_decision': is_plan_decision_source(self.source),
             'disposition': self.disposition,
             'user_quote': self.user_quote,
             'basis_snapshot': self.basis_snapshot if isinstance(self.basis_snapshot, dict) else None,

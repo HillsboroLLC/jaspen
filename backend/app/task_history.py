@@ -42,6 +42,25 @@ def confirm_task_commitment(task, *, user_quote, actor_user_id=None, at=None):
     return commit_task(task, basis='person_confirmed', ref=quote, at=at)
 
 
+def commit_task_from_stated_date(task, *, signal_id, due_date, at=None):
+    """Commit a date that a verified customer decision signal established."""
+    signal_ref = str(signal_id or '').strip()
+    stated_due_date = _clean(due_date)
+    if not signal_ref:
+        raise ValueError('a decision signal id is required')
+    if not stated_due_date:
+        raise ValueError('a customer-stated due date is required')
+    if isinstance(task.get('commitment'), dict):
+        return task['commitment']
+    task['commitment'] = {
+        'due_date': stated_due_date,
+        'committed_at': _stamp(at),
+        'basis': 'user_stated',
+        'ref': signal_ref,
+    }
+    return task['commitment']
+
+
 def record_task_changes(
     task, prior=None, *, source, actor_user_id=None, at=None,
     commit_on_person_change=False,
@@ -79,11 +98,6 @@ def record_task_changes(
         commitment['rescheduled_to'] = _clean(task.get('due_date'))
         commitment['rescheduled_at'] = at
         task['commitment'] = commitment
-    if not task.get('commitment') and _clean(task.get('due_date')):
-        lineage = task.get('lineage') if isinstance(task.get('lineage'), list) else []
-        stated = next((item for item in lineage if isinstance(item, dict) and item.get('type') == 'decision_commitment'), None)
-        if stated:
-            commit_task(task, basis='user_stated', ref=stated.get('ref'), at=at)
     return task
 
 
