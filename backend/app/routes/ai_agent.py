@@ -1,7 +1,7 @@
 import contextvars
 from contextlib import contextmanager
 
-from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context, send_file, has_request_context
+from flask import Blueprint, request, jsonify, current_app, Response, stream_with_context, send_file, has_request_context, g
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from flask_mail import Message
 from datetime import datetime, timedelta
@@ -729,7 +729,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "Valid status values are: todo, in_progress, blocked, done. "
     "Valid priority values are: critical, high, medium, low. "
     "due_date must be an ISO date string (YYYY-MM-DD) or null. "
-    "After any mutation tool succeeds, confirm exactly what changed so the user knows what to look for in the Execution tab. The decision-capture tools (record_option_decision, record_decision_context, confirm_task_commitment, record_outcome, record_lesson) are the exception: they save in the background and are never announced. "
+    "After any mutation tool succeeds, confirm exactly what changed so the user knows what to look for in the Execution tab."
     "SCORECARDS: "
     "Scorecards accumulate inline in the conversation — chat, chat, scorecard, chat, scorecard, etc. The idea the user has OPEN in the workspace is editable in place (see EDITING THE OPEN SCORECARD above). "
     "When the user proposes a genuinely NEW idea or a variation they want to keep alongside the original, call generate_scorecard (no rescore_scorecard_id). "
@@ -740,18 +740,15 @@ _SYSTEM_PROMPT_PREFIX = (
     "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea must use update_workspace_presentation for presentation, patch_scorecard for content wording/title, or generate_scorecard(rescore_scorecard_id=<open id>) for changed facts — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. Cosmetic edits MUST NOT move the score. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
     "When the user asks to build an execution plan, call generate_execution_plan with planning_intent: committed when they are going ahead with that option and want its plan (this also records, silently, that they are pursuing it), exploratory when they want to preview, compare or assess a possible plan without deciding. Judge this from the conversation; ask only when you genuinely cannot tell and it matters. Each plan belongs to the scored option it was built from. "
-    "DECISION INTELLIGENCE — YOUR RESPONSIBILITY: keep an accurate, current picture of every scored option's disposition, the reasons behind it, and the dates, commitments and conditions around it. That record is what makes the customer's Insights and organizational memory more valuable over time. You are the one who captures it: nothing is saved unless you call the capture tools in this turn. The capture is quiet: the customer sees no receipts, and you never announce that something was saved, recorded or logged. Acknowledge the substance naturally when it fits, and keep helping with what they are actually trying to do. The DECISION STATE block lists what is already stored for this session, and it is the truth about what is saved: when your earlier messages in the conversation say otherwise, the DECISION STATE wins, and anything it does not show has not been saved. "
-    "Capture is part of answering: in every turn, before you reply, record what the latest message establishes, including changes of mind and any change in a condition's status. Record what the customer clearly establishes, as soon as they establish it, in their exact words: call record_option_decision with one entry per option they addressed (pursue, not_pursue, or still_evaluating), each with a short exact quote from their latest message. Several options can be pursued at once. Never infer that an option is not pursued because another was chosen, and never record anything the customer did not establish. "
-    "A customer choosing differently from Jaspen's recommendation is a clear decision, not ambiguity: record it as stated. Jaspen's recommendation is kept beside it automatically. When the choice carries a material risk, you may explain it once, naturally, in your own words; never make recording depend on it. When they pursue an option only if something happens first, record pursue with that in conditions. Recording a decision never authorizes an external action. "
-    "Clarify only when intent is genuinely ambiguous, incomplete or contradictory within what they said, or when knowing an option's disposition would clearly help and the moment is natural (after a comparison, before building a plan, or as they wrap up). A change of mind from an earlier turn is a new decision, not a contradiction. You decide whether to ask, when, the wording, and the choices. A choice block can help: each evaluated option on its own line with allow_multi true, plus answers meaning none of them and still evaluating, each marked exclusive. Every choice you offer must be something these tools can store. Never ask about anything the DECISION STATE already shows unless the situation has changed, and never ask the customer to confirm what they clearly said. "
-    "When the customer states a reason, trade-off, assumption, concern, evidence note, commitment with a date (something they or their team will do), deadline (a date someone else set, such as a bid due date), condition, what success looks like, or when results can be measured, record it with record_decision_context and an exact quote; normalize a stated date to ISO while the quote keeps their words. Keep a deadline distinct from a commitment. When the option a date or note belongs to is unclear, record it for the whole decision. When they say a condition was met, not met or waived, call record_decision_context with kind condition, that condition's condition_signal_id from DECISION STATE and the new structured.status; never assume a condition's status, and never describe a condition as met unless that call succeeded. When they confirm a plan task's date or owner, call confirm_task_commitment. When they report what happened, call record_outcome; use status too_early when results cannot be measured yet, and record when they can be as review_timing. Set objective_met only when they say whether the objective was met, with its own quote. When they state what they learned, call record_lesson. Never interrogate: one question at a time, helpful and never blocking. "
+    "DECISION INTELLIGENCE: Jaspen keeps an accurate, current picture of every scored option's disposition, the reasons behind it, and the dates, commitments and conditions around it. That record is what makes the customer's Insights and organizational memory more valuable over time. Jaspen captures it from the customer's own messages before you reply; you never call a tool to record it. The DECISION STATE block shows what is stored, and its this_turn entry shows what was saved from the latest message, what was already stored, and what could not be saved and why. The DECISION STATE is the truth about what is saved: when your earlier messages in the conversation say otherwise, it wins. Never say or imply that something was saved, recorded, logged or updated; acknowledge the substance naturally and keep helping with what the customer is trying to do. "
+    "A customer choosing differently from Jaspen's recommendation is a clear decision, not ambiguity. When the choice carries a material risk, you may explain it once, naturally, in your own words. Recording a decision never authorizes an external action. "
+    "When this_turn lists something unclear or not saved and it matters, ask about it in your own words, one brief question at a time. Clarify only when intent is genuinely ambiguous, incomplete or contradictory, or when knowing an option's disposition would clearly help and the moment is natural (after a comparison, before building a plan, or as they wrap up). A change of mind from an earlier turn is a new decision, not a contradiction. You decide whether to ask, when, the wording, and the choices. A choice block can help: each evaluated option on its own line with allow_multi true, plus answers meaning none of them and still evaluating, each marked exclusive. Every choice you offer must be something Jaspen can store, including a pursuit that depends on a condition. Never ask about anything the DECISION STATE already shows unless the situation has changed, never ask the customer to confirm what they clearly said, and never interrogate. "
     "When follow_up_facts show a review is due, implementation complete without an outcome, a plan that conflicts with a disposition, or a condition past its due date, you may raise it at a natural moment. A completed plan is implementation progress, not success. "
-    "If a result says an option reference matched several options or none, nothing was recorded for it; ask which they meant in your own words if it matters. Say something was recorded only when the tool result says so. "
     "When the user asks to start the plan on a specific date or shift the whole schedule (e.g. 'start this plan July 1', 'push the kickoff back two weeks'), call set_execution_start_date with the new start_date (YYYY-MM-DD) — it slides every task by the same delta and preserves manual per-task adjustments. "
     "Use your judgment about when to score. A confirmation, an acknowledgment, or a pure question about an existing scorecard never warrants a tool call. "
     "When a scoring result lists neutral_criteria, name those criteria in the same reply, say you used a neutral 45 because there is no information on them yet, explain neutral in one plain sentence for a newcomer, and offer to help fill the gaps one short question at a time. Keep this to one short, helpful paragraph in your own words. "
     "If you propose scoring before the user has asked for it, you may first offer the choice to fill the gaps or score now with clearly labeled neutral values. Once the user asks to score, score immediately; never add a confirmation or information-gathering gate. "
-    "POST-TOOL CONFIRMATION: After any tool call succeeds (other than the background decision-capture tools), your confirmation message must describe ONLY the action you just completed in this turn — derive it strictly from the tool result returned to you, not from the conversation history. Do not reference, repeat, or re-describe actions from previous turns. "
+    "POST-TOOL CONFIRMATION: After any tool call succeeds, your confirmation message must describe ONLY the action you just completed in this turn — derive it strictly from the tool result returned to you, not from the conversation history. Do not reference, repeat, or re-describe actions from previous turns. "
     "Refer to ideas by their actual name (not placeholders like 'Scenario A' or 'Original'). Keep the conversation natural — one exchange at a time. "
     "RANKING: If the user asks to rank, compare, or summarize all the ideas modeled in this conversation, "
     "do so directly using the scorecard data available. Present a clear ranked list with the idea name, score, "
@@ -3430,6 +3427,10 @@ def _failed_option_decision_action(executed_actions):
     """
     by_tool = {}
     for action in executed_actions or []:
+        # The turn capture step runs before the reply, and the reply is written
+        # knowing what it saved, so its failures never withhold the reply.
+        if isinstance(action, dict) and action.get("capture_pass"):
+            continue
         if isinstance(action, dict) and action.get("tool") in _GUARDED_CAPTURE_TOOLS:
             by_tool.setdefault(action["tool"], []).append(
                 action.get("result") if isinstance(action.get("result"), dict) else {}
@@ -4131,6 +4132,10 @@ def _decision_facts_prompt_suffix(user_id, thread_id):
         if user is None:
             return ""
         facts = decision_facts(user, thread_id)
+        turn = getattr(g, "turn_capture", None) if has_request_context() else None
+        if isinstance(turn, dict) and turn.get("thread_id") == str(thread_id) and turn.get("summary") is not None:
+            # What the capture step saved (or could not save) from this message.
+            facts = {**(facts or {}), "this_turn": turn["summary"]}
         if not facts:
             return ""
         return (
@@ -4697,12 +4702,13 @@ def _generate_routed_chat_reply(
     raise RuntimeError("No provider routes available")
 
 
-def _openai_tools_from_anthropic(enable_mutation_tools=False, user_id=None, plan_key="free"):
+def _openai_tools_from_anthropic(enable_mutation_tools=False, user_id=None, plan_key="free", include_capture_tools=True):
     tools = []
     for item in _anthropic_tool_definitions(
         enable_mutation_tools=enable_mutation_tools,
         user_id=user_id,
         plan_key=plan_key,
+        include_capture_tools=include_capture_tools,
     ):
         if not isinstance(item, dict):
             continue
@@ -5952,7 +5958,7 @@ def _execute_connector_query_tool(user_id, tool_input):
     return _tool_error(f"Connector {connector_type} not implemented for agent querying.", code="connector_not_supported")
 
 
-def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_key="free"):
+def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_key="free", include_capture_tools=True):
     tools = [
         {
             "name": "get_readiness_snapshot",
@@ -6854,6 +6860,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                 },
             },
         ])
+    if not include_capture_tools:
+        # The conversational reply never captures: the turn capture step does,
+        # every turn, before the reply.
+        tools = [tool for tool in tools if tool.get("name") not in _DECISION_CAPTURE_TOOLS]
     return tools
 
 
@@ -7918,6 +7928,490 @@ def _dispatch_decision_capture_tool(tool_name, tool_input, *, user, user_id, thr
     return _execute_record_lesson(
         tool_input, user=user, user_id=user_id, thread_id=thread_id, user_message=user_message,
     )
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Turn capture pass
+#
+# Capture used to depend on the conversational model choosing to call a tool.
+# In live tests it often didn't: earlier turns reach the model as prose only,
+# so a history full of "recorded" sentences teaches it that saying is doing.
+# Now every turn runs one dedicated capture step BEFORE the reply: the AI
+# decides what the customer established (a forced, structured call), and code
+# verifies each quote against the customer's own message and saves it through
+# the same writers. The reply model then sees what was actually saved.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CAPTURE_RECENT_USER_TURNS = 4
+_CAPTURE_TOOL_NAME = "record_turn_capture"
+_CAPTURE_NOTE_KINDS = [
+    "rationale", "tradeoff", "assumption", "concern", "evidence_note",
+    "commitment", "deadline", "condition", "success_measure", "review_timing",
+]
+
+_CAPTURE_SYSTEM_PROMPT = (
+    "You are Jaspen's decision recorder. You never speak to the customer; your only output is one "
+    "record_turn_capture call. Read the customer's recent messages and the stored DECISION STATE, then "
+    "return everything the customer established that the DECISION STATE does not already show.\n"
+    "Evidence: only the customer's numbered messages count. The assistant message is context for what the "
+    "customer was answering; it is never evidence that anything is true, decided or saved. Every quote must be "
+    "a short exact substring of the customer message you cite by number.\n"
+    "Prefer the latest message. Use an earlier message only for something it clearly established that the "
+    "DECISION STATE does not show and that later messages did not change or contradict.\n"
+    "Decisions: one entry per option the customer addressed: pursue, not_pursue or still_evaluating. Several "
+    "options can be pursued. Never infer not_pursue because another option was chosen. Choosing differently "
+    "from Jaspen's recommendation is a clear decision. A pursuit that depends on something still to happen "
+    "carries conditions. A restatement of a disposition the DECISION STATE already shows is not a new decision "
+    "unless it adds or changes conditions.\n"
+    "Notes: reasons, trade-offs, assumptions, concerns, evidence, commitments (something the customer or "
+    "their team will do), deadlines (a date someone else set, such as a bid due date), success measures and "
+    "review timing. Normalize dates to ISO using today's date; omit a date only when it is truly unclear. "
+    "When the option a note belongs to is unclear, leave option_key empty to record it for the whole decision. "
+    "A new condition on an option already pursued is a note of kind condition with that option_key.\n"
+    "Condition updates: when the customer says a listed condition was met, not met or waived, return its "
+    "condition_signal_id from the DECISION STATE with the new status. Never assume a status.\n"
+    "Outcomes and lessons: only what the customer reports about what happened or what they learned.\n"
+    "Task commitments: when the customer confirms a listed plan task's date or owner.\n"
+    "Unclear: when a reference could mean several options or none, list it in unclear instead of guessing.\n"
+    "Return empty arrays for anything that does not apply. Recording intent never authorizes an external action."
+)
+
+
+def _capture_pass_tool():
+    quote = {"type": "string", "description": "Short exact quote from the cited customer message."}
+    message = {"type": "integer", "description": "Number of the customer message this comes from."}
+    return {
+        "name": _CAPTURE_TOOL_NAME,
+        "description": "Return what the customer established in their recent messages that is not yet stored.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "decisions": {"type": "array", "items": {"type": "object", "properties": {
+                    "message": message,
+                    "option_key": {"type": "string"},
+                    "disposition": {"type": "string", "enum": ["pursue", "not_pursue", "still_evaluating"]},
+                    "quote": quote,
+                    "rationale_quote": {"type": "string"},
+                    "conditions": {"type": "array", "items": {"type": "object", "properties": {
+                        "content": {"type": "string"}, "quote": quote, "due_by": {"type": "string"},
+                    }, "required": ["content", "quote"]}},
+                }, "required": ["message", "option_key", "disposition", "quote"]}},
+                "notes": {"type": "array", "items": {"type": "object", "properties": {
+                    "message": message,
+                    "kind": {"type": "string", "enum": _CAPTURE_NOTE_KINDS},
+                    "option_key": {"type": "string"},
+                    "content": {"type": "string"},
+                    "quote": quote,
+                    "date": {"type": "string"}, "due_by": {"type": "string"}, "review_by": {"type": "string"},
+                    "set_by": {"type": "string"}, "owner": {"type": "string"},
+                    "measure": {"type": "string"}, "target": {"type": "string"}, "unit": {"type": "string"},
+                    "task_id": {"type": "string"},
+                }, "required": ["message", "kind", "content", "quote"]}},
+                "condition_updates": {"type": "array", "items": {"type": "object", "properties": {
+                    "message": message,
+                    "condition_signal_id": {"type": "string"},
+                    "status": {"type": "string", "enum": ["met", "not_met", "waived", "open"]},
+                    "quote": quote,
+                }, "required": ["message", "condition_signal_id", "status", "quote"]}},
+                "outcomes": {"type": "array", "items": {"type": "object", "properties": {
+                    "message": message,
+                    "option_key": {"type": "string"},
+                    "status": {"type": "string", "enum": ["achieved", "partially_achieved", "not_achieved", "too_early", "abandoned"]},
+                    "summary": {"type": "string"},
+                    "quote": quote,
+                    "observed": {"type": "string"}, "expected": {"type": "string"},
+                    "objective_met": {"type": "boolean"}, "objective_met_quote": {"type": "string"},
+                    "outcome_date": {"type": "string"},
+                }, "required": ["message", "status", "summary", "quote"]}},
+                "lessons": {"type": "array", "items": {"type": "object", "properties": {
+                    "message": message,
+                    "option_key": {"type": "string"},
+                    "lesson": {"type": "string"},
+                    "quote": quote,
+                    "outcome_id": {"type": "string"},
+                }, "required": ["message", "lesson", "quote"]}},
+                "task_commitments": {"type": "array", "items": {"type": "object", "properties": {
+                    "message": message,
+                    "task_id": {"type": "string"},
+                    "option_key": {"type": "string"},
+                    "quote": quote,
+                }, "required": ["message", "task_id", "quote"]}},
+                "unclear": {"type": "array", "items": {"type": "object", "properties": {
+                    "message": message,
+                    "reference": {"type": "string", "description": "The customer's words for the option."},
+                    "candidate_option_keys": {"type": "array", "items": {"type": "string"}},
+                }, "required": ["message", "reference"]}},
+            },
+            "required": ["decisions", "notes", "condition_updates", "outcomes", "lessons", "task_commitments", "unclear"],
+        },
+    }
+
+
+def _capture_recent_user_messages(stored_session, user_message):
+    history = stored_session.get("chat_history") if isinstance(stored_session, dict) else None
+    turns = [
+        turn for turn in (history or [])
+        if isinstance(turn, dict) and turn.get("role") == "user" and str(turn.get("content") or "").strip()
+    ]
+    latest_text = str(user_message or "").strip()
+    if latest_text and (not turns or str(turns[-1].get("content") or "").strip() != latest_text):
+        turns.append({"role": "user", "content": latest_text, "timestamp": _iso_now()})
+    recent = turns[-_CAPTURE_RECENT_USER_TURNS:]
+    return [
+        {"number": index + 1, "text": str(turn.get("content") or "").strip(),
+         "timestamp": str(turn.get("timestamp") or "").strip() or None,
+         "latest": index == len(recent) - 1}
+        for index, turn in enumerate(recent)
+    ]
+
+
+def _capture_last_assistant_text(stored_session):
+    history = stored_session.get("chat_history") if isinstance(stored_session, dict) else None
+    seen_user = False
+    for turn in reversed(history or []):
+        if not isinstance(turn, dict):
+            continue
+        if turn.get("role") == "user":
+            if seen_user:
+                break
+            seen_user = True
+            continue
+        if seen_user and turn.get("role") == "assistant" and str(turn.get("content") or "").strip():
+            return str(turn.get("content") or "").strip()[:2000]
+    return ""
+
+
+def _capture_pass_options(cards):
+    from ..decision_records import execution_option_key
+
+    options = {}
+    for card in cards or []:
+        key = execution_option_key(card)
+        if not key:
+            continue
+        recommendation = card.get("recommendation") if isinstance(card.get("recommendation"), dict) else {}
+        options[key] = {
+            "option_key": key,
+            "name": _option_display_name(card),
+            "jaspen_recommendation": recommendation.get("label") or None,
+        }
+    return list(options.values())
+
+
+def _capture_timestamp(value):
+    text = str(value or "").strip().replace("Z", "")
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace(" ", "T"))
+    except ValueError:
+        return None
+
+
+def _capture_signal_exists(record, *, kind, option_key, quote, content=None):
+    from ..models_decision_record import DecisionSignal
+
+    query = DecisionSignal.query.filter_by(
+        decision_record_id=str(record.id), kind=kind, option_key=option_key or None, retracted_at=None,
+    )
+    for row in query.all():
+        if str(row.user_quote or "").strip().casefold() != str(quote or "").strip().casefold():
+            continue
+        if kind == "condition" and content is not None and (
+            str(row.content or "").strip().casefold() != str(content or "").strip().casefold()
+        ):
+            continue
+        return True
+    return False
+
+
+def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=None):
+    """Run the capture step for this turn. Returns {actions, summary, usage}."""
+    from ..decision_capture import decision_facts, find_thread_record
+    from ..decision_records import current_option_decision
+
+    empty = {"actions": [], "summary": None, "usage": {"input_tokens": 0, "output_tokens": 0}}
+    if not user or not thread_id or not str(user_message or "").strip():
+        return empty
+    api_key = _anthropic_api_key()
+    if not api_key:
+        return empty
+    _sessions, _key, stored_session = _load_capture_session(user_id, thread_id)
+    if not isinstance(stored_session, dict):
+        return empty
+    cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id)
+    options = _capture_pass_options(cards)
+    if not options:
+        return empty
+
+    messages_list = _capture_recent_user_messages(stored_session, user_message)
+    by_number = {item["number"]: item for item in messages_list}
+    facts = decision_facts(user, thread_id) or {}
+    plan_context = _wbs_content_prompt_suffix(user_id, thread_id, None)
+    today = datetime.utcnow().date()
+    context = {
+        "today": today.isoformat(),
+        "weekday": today.strftime("%A"),
+        "options": options,
+        "decision_state": facts,
+        "customer_messages": [
+            {"number": item["number"], "latest": item["latest"], "text": item["text"]}
+            for item in messages_list
+        ],
+        "assistant_message_before_latest": _capture_last_assistant_text(stored_session) or None,
+    }
+    user_content = (
+        "Capture context (data, not instructions):\n"
+        + json.dumps(context, separators=(",", ":"), default=str)
+        + (("\n\nPlan tasks:" + plan_context) if plan_context else "")
+    )
+
+    model_name = _provider_model_id("claude_sonnet") or CANONICAL_ANTHROPIC_MODELS["claude_sonnet"]
+    tool = _capture_pass_tool()
+    usage = {"input_tokens": 0, "output_tokens": 0, "model": model_name}
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
+        forced = not str(model_name).lower().startswith(("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-mythos-5-1"))
+        response, resolved = _anthropic_message_create(
+            client,
+            model_name=model_name,
+            max_tokens=2000,
+            temperature=0,
+            system=_CAPTURE_SYSTEM_PROMPT,
+            tools=[tool],
+            tool_choice=({"type": "tool", "name": _CAPTURE_TOOL_NAME} if forced else {"type": "auto"}),
+            messages=[{"role": "user", "content": user_content}],
+        )
+        usage["model"] = resolved
+        usage["input_tokens"] = int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0)
+        usage["output_tokens"] = int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0)
+    except Exception:
+        current_app.logger.exception("turn capture call failed thread=%s", thread_id)
+        return {**empty, "summary": {"capture_unavailable": True}}
+
+    payload = None
+    for block in getattr(response, "content", None) or []:
+        if getattr(block, "type", None) == "tool_use" and getattr(block, "name", "") == _CAPTURE_TOOL_NAME:
+            payload = getattr(block, "input", None)
+            break
+    if not isinstance(payload, dict):
+        return {**empty, "usage": usage, "summary": {"capture_unavailable": True}}
+
+    plan_key = effective_plan_key(user)
+    view_active = str((_sanitize_view_context(view_context) or {}).get("active_scorecard_id") or "").strip() or None
+    known_keys = {item["option_key"] for item in options}
+    names = {item["option_key"]: item["name"] for item in options}
+    actions, saved, already, not_saved = [], [], [], []
+
+    def cited(item):
+        message = by_number.get(item.get("message")) if isinstance(item, dict) else None
+        if message is None:
+            return None
+        quote = str(item.get("quote") or "").strip()
+        if not verify_user_quote(quote, message["text"]):
+            return None
+        return message
+
+    def run(tool_name, tool_input, message):
+        result = _execute_decision_capture_tool(
+            tool_name, tool_input, user=user, user_id=user_id, thread_id=thread_id,
+            view_active_scorecard_id=view_active, user_message=message["text"], plan_key=plan_key,
+        )
+        actions.append({"tool": tool_name, "input": tool_input, "result": result, "capture_pass": True})
+        return result
+
+    record = find_thread_record(user, thread_id)
+
+    # Decisions, grouped by the message they come from.
+    grouped = {}
+    for item in payload.get("decisions") or []:
+        message = cited(item)
+        key = str((item or {}).get("option_key") or "").strip()
+        if message is None:
+            not_saved.append({"what": "decision", "reason": "quote_not_in_customer_message", "option_key": key or None})
+            continue
+        if key not in known_keys:
+            not_saved.append({"what": "decision", "reason": "option_not_found", "option_key": key or None})
+            continue
+        disposition = str(item.get("disposition") or "").strip()
+        conditions = [
+            {"content": str(c.get("content") or "").strip(), "user_quote": str(c.get("quote") or "").strip(),
+             **({"due_by": c.get("due_by")} if c.get("due_by") else {})}
+            for c in (item.get("conditions") or []) if isinstance(c, dict)
+        ]
+        current = current_option_decision(record, key) if record is not None else None
+        if current is not None and not message["latest"]:
+            stated_at = _capture_timestamp(message["timestamp"])
+            if stated_at is None or (current.decided_at and current.decided_at >= stated_at):
+                # A later decision already stands; an earlier message never overrides it.
+                already.append({"what": "decision", "option": names.get(key), "reason": "later_decision_stands"})
+                continue
+        if current is not None and current.disposition == disposition and all(
+            record is not None and _capture_signal_exists(
+                record, kind="condition", option_key=key,
+                quote=condition["user_quote"], content=condition["content"],
+            )
+            for condition in conditions
+        ):
+            # Same disposition, and any conditions are already stored.
+            already.append({"what": "decision", "option": names.get(key), "disposition": disposition})
+            continue
+        entry = {
+            "option_key": key, "disposition": disposition, "user_request_quote": str(item.get("quote") or "").strip(),
+        }
+        if item.get("rationale_quote"):
+            entry["rationale_quote"] = str(item.get("rationale_quote") or "").strip()
+        if conditions:
+            entry["conditions"] = conditions
+        grouped.setdefault(message["number"], (message, []))[1].append(entry)
+    for message, entries in grouped.values():
+        result = run("record_option_decision", {"decisions": entries}, message)
+        for decision in (result.get("decisions") or []) if isinstance(result, dict) else []:
+            if decision.get("status") == "recorded" and not decision.get("created") and not decision.get("condition_signal_ids"):
+                already.append({"what": "decision", "option": decision.get("option_name"),
+                                "disposition": decision.get("disposition")})
+            elif decision.get("status") == "recorded":
+                saved.append({"what": "decision", "option": decision.get("option_name"),
+                              "disposition": decision.get("disposition"),
+                              "conditions": len(decision.get("condition_signal_ids") or []),
+                              "against_recommendation": bool(decision.get("against_recommendation"))})
+            else:
+                not_saved.append({"what": "decision", "reason": decision.get("code"),
+                                  "option_names": decision.get("option_names") or None})
+        if isinstance(result, dict) and not result.get("ok") and not result.get("decisions"):
+            not_saved.append({"what": "decision", "reason": result.get("code")})
+
+    # Refresh after decisions so new conditions and pursuits are visible.
+    record = find_thread_record(user, thread_id)
+
+    for item in payload.get("notes") or []:
+        message = cited(item)
+        kind = str((item or {}).get("kind") or "").strip()
+        key = str((item or {}).get("option_key") or "").strip() or None
+        if message is None or (key and key not in known_keys):
+            not_saved.append({"what": kind or "note", "reason": "quote_not_in_customer_message" if message is None else "option_not_found"})
+            continue
+        if record is not None and _capture_signal_exists(
+            record, kind=kind, option_key=key, quote=item.get("quote"), content=item.get("content"),
+        ):
+            already.append({"what": kind, "option": names.get(key)})
+            continue
+        structured = {
+            field: item.get(field) for field in (
+                "date", "due_by", "review_by", "set_by", "owner", "measure", "target", "unit",
+            ) if item.get(field)
+        }
+        tool_input = {"kind": kind, "content": str(item.get("content") or "").strip(),
+                      "user_request_quote": str(item.get("quote") or "").strip()}
+        if key:
+            tool_input["option_key"] = key
+        if structured:
+            tool_input["structured"] = structured
+        if item.get("task_id"):
+            tool_input["task_id"] = str(item.get("task_id"))
+        result = run("record_decision_context", tool_input, message)
+        if result.get("ok"):
+            saved.append({"what": kind, "option": names.get(key), **({"date": structured.get("date")} if structured.get("date") else {})})
+        else:
+            not_saved.append({"what": kind, "option": names.get(key), "reason": result.get("code")})
+
+    current_conditions = {
+        condition["signal_id"]: condition
+        for option in (decision_facts(user, thread_id) or {}).get("options", [])
+        for condition in option.get("conditions") or []
+    }
+    for item in payload.get("condition_updates") or []:
+        message = cited(item)
+        signal_id = str((item or {}).get("condition_signal_id") or "").strip()
+        status = str((item or {}).get("status") or "").strip()
+        current = current_conditions.get(signal_id)
+        if message is None or current is None:
+            not_saved.append({"what": "condition_update", "reason": "quote_not_in_customer_message" if message is None else "condition_not_current"})
+            continue
+        if current.get("status") == status:
+            already.append({"what": "condition_update", "condition": current.get("content"), "status": status})
+            continue
+        result = run("record_decision_context", {
+            "kind": "condition", "condition_signal_id": signal_id, "structured": {"status": status},
+            "user_request_quote": str(item.get("quote") or "").strip(),
+        }, message)
+        if result.get("ok"):
+            saved.append({"what": "condition_update", "condition": current.get("content"), "status": status})
+        else:
+            not_saved.append({"what": "condition_update", "reason": result.get("code")})
+
+    for bucket, tool_name in (("outcomes", "record_outcome"), ("lessons", "record_lesson")):
+        for item in payload.get(bucket) or []:
+            message = cited(item)
+            key = str((item or {}).get("option_key") or "").strip() or None
+            if message is None or (key and key not in known_keys):
+                not_saved.append({"what": bucket[:-1], "reason": "quote_not_in_customer_message" if message is None else "option_not_found"})
+                continue
+            if _capture_entry_exists(record, key, bucket, item.get("quote")):
+                already.append({"what": bucket[:-1], "option": names.get(key)})
+                continue
+            tool_input = {k: v for k, v in item.items() if k not in {"message", "quote"} and v not in (None, "")}
+            tool_input["user_request_quote"] = str(item.get("quote") or "").strip()
+            result = run(tool_name, tool_input, message)
+            if result.get("ok"):
+                saved.append({"what": bucket[:-1], "option": names.get(key)})
+            else:
+                not_saved.append({"what": bucket[:-1], "reason": result.get("code")})
+
+    for item in payload.get("task_commitments") or []:
+        message = cited(item)
+        if message is None:
+            not_saved.append({"what": "task_commitment", "reason": "quote_not_in_customer_message"})
+            continue
+        tool_input = {"task_id": str(item.get("task_id") or ""), "user_request_quote": str(item.get("quote") or "").strip()}
+        if item.get("option_key"):
+            tool_input["option_key"] = str(item.get("option_key"))
+        result = run("confirm_task_commitment", tool_input, message)
+        if result.get("ok") and not result.get("already_committed"):
+            saved.append({"what": "task_commitment", "task": result.get("task_title")})
+        elif result.get("ok"):
+            already.append({"what": "task_commitment", "task": result.get("task_title")})
+        else:
+            not_saved.append({"what": "task_commitment", "reason": result.get("code")})
+
+    unclear = []
+    for item in payload.get("unclear") or []:
+        if not isinstance(item, dict):
+            continue
+        candidates = [names[key] for key in (item.get("candidate_option_keys") or []) if key in names]
+        unclear.append({"reference": str(item.get("reference") or "").strip()[:200],
+                        "option_names": candidates or [item["name"] for item in options]})
+
+    summary = {"saved": saved, "already_stored": already, "not_saved": not_saved, "unclear": unclear}
+    actions.append({
+        "tool": "turn_capture", "capture_pass": True, "input": {},
+        "result": {"ok": True, "saved_count": len(saved), "unclear": unclear},
+    })
+    return {"actions": actions, "summary": summary, "usage": usage}
+
+
+def _capture_entry_exists(record, option_key, bucket, quote):
+    from ..decision_records import current_option_decision
+
+    if record is None:
+        return False
+    wanted = str(quote or "").strip().casefold()
+    if not wanted:
+        return False
+    if option_key:
+        target = current_option_decision(record, option_key)
+        rows = [target] if target is not None else []
+    else:
+        rows = [record]
+    field = "outcomes" if bucket == "outcomes" else "lessons_learned"
+    for row in rows:
+        for entry in (getattr(row, field, None) or []):
+            if isinstance(entry, dict) and str(entry.get("user_quote") or "").strip().casefold() == wanted:
+                return True
+    return False
 
 
 def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None, user_message=""):
@@ -10515,6 +11009,7 @@ def _generate_assistant_reply_anthropic(
         enable_mutation_tools=can_mutate,
         user_id=user_id,
         plan_key=plan_key,
+        include_capture_tools=False,
     )
     total_input_tokens = 0
     total_output_tokens = 0
@@ -10755,6 +11250,7 @@ def _stream_assistant_reply_events_anthropic(
         enable_mutation_tools=can_mutate,
         user_id=user_id,
         plan_key=plan_key,
+        include_capture_tools=False,
     )
     total_input_tokens = 0
     total_output_tokens = 0
@@ -11034,6 +11530,7 @@ def _generate_assistant_reply_gemini(
         enable_mutation_tools=can_mutate,
         user_id=user_id,
         plan_key=plan_key,
+        include_capture_tools=False,
     )
     total_usage = {
         "provider": "gemini",
@@ -11242,6 +11739,7 @@ def _stream_assistant_reply_events_gemini(
         enable_mutation_tools=can_mutate,
         user_id=user_id,
         plan_key=plan_key,
+        include_capture_tools=False,
     )
     total_usage = {
         "provider": "gemini",
@@ -11702,7 +12200,118 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
     )
 
 
+
+def _begin_turn_capture(*, user, user_id, thread_id, user_message, view_context, disable_mutations):
+    """Run the capture step before the reply and publish its summary for the prompt."""
+    if disable_mutations or not thread_id or user is None:
+        return None
+    try:
+        capture = _run_turn_capture(
+            user=user, user_id=user_id, thread_id=thread_id,
+            user_message=user_message, view_context=view_context,
+        )
+    except Exception:  # noqa: BLE001 - capture never blocks the reply
+        db.session.rollback()
+        current_app.logger.exception("turn capture failed thread=%s", thread_id)
+        capture = {"actions": [], "summary": {"capture_unavailable": True}, "usage": {}}
+    try:
+        g.turn_capture = {"thread_id": str(thread_id), "summary": capture.get("summary")}
+    except RuntimeError:
+        pass
+    return capture
+
+
+def _end_turn_capture():
+    try:
+        g.pop("turn_capture", None)
+    except RuntimeError:
+        pass
+
+
+def _merge_capture_usage(usage, capture):
+    usage = dict(usage or {})
+    extra = (capture or {}).get("usage") or {}
+    added_in = int(extra.get("input_tokens") or 0)
+    added_out = int(extra.get("output_tokens") or 0)
+    if not (added_in or added_out):
+        return usage
+    usage["input_tokens"] = int(usage.get("input_tokens") or 0) + added_in
+    usage["output_tokens"] = int(usage.get("output_tokens") or 0) + added_out
+    usage["total_tokens"] = int(usage.get("total_tokens") or 0) + added_in + added_out
+    usage["capture"] = {"model": extra.get("model"), "input_tokens": added_in, "output_tokens": added_out}
+    return usage
+
+
 def _generate_assistant_reply(
+    user_message,
+    chat_history,
+    readiness,
+    model_selection,
+    context_budget=None,
+    session=None,
+    user=None,
+    user_id=None,
+    thread_id=None,
+    intake_context=None,
+    view_context=None,
+    attachments=None,
+    disable_mutations=False,
+):
+    capture = _begin_turn_capture(
+        user=user, user_id=user_id, thread_id=thread_id, user_message=user_message,
+        view_context=view_context, disable_mutations=disable_mutations,
+    )
+    try:
+        reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply_core(
+            user_message, chat_history, readiness, model_selection,
+            context_budget=context_budget, session=session, user=user, user_id=user_id,
+            thread_id=thread_id, intake_context=intake_context, view_context=view_context,
+            attachments=attachments, disable_mutations=disable_mutations,
+        )
+    finally:
+        _end_turn_capture()
+    if capture:
+        actions = list(capture.get("actions") or []) + list(actions or [])
+        usage = _merge_capture_usage(usage, capture)
+    return reply, usage, actions, mutations, undo_snapshot
+
+
+def _stream_assistant_reply_events(
+    user_message,
+    chat_history,
+    readiness,
+    model_selection,
+    *,
+    session=None,
+    user=None,
+    user_id=None,
+    thread_id=None,
+    intake_context=None,
+    view_context=None,
+    context_budget=None,
+    state=None,
+    attachments=None,
+    disable_mutations=False,
+):
+    capture = _begin_turn_capture(
+        user=user, user_id=user_id, thread_id=thread_id, user_message=user_message,
+        view_context=view_context, disable_mutations=disable_mutations,
+    )
+    try:
+        yield from _stream_assistant_reply_events_core(
+            user_message, chat_history, readiness, model_selection,
+            session=session, user=user, user_id=user_id, thread_id=thread_id,
+            intake_context=intake_context, view_context=view_context,
+            context_budget=context_budget, state=state, attachments=attachments,
+            disable_mutations=disable_mutations,
+        )
+    finally:
+        _end_turn_capture()
+        if capture and isinstance(state, dict):
+            state["actions"] = list(capture.get("actions") or []) + list(state.get("actions") or [])
+            state["usage"] = _merge_capture_usage(state.get("usage"), capture)
+
+def _generate_assistant_reply_core(
     user_message,
     chat_history,
     readiness,
@@ -11897,7 +12506,7 @@ def _generate_assistant_reply(
     ) from last_error
 
 
-def _stream_assistant_reply_events(
+def _stream_assistant_reply_events_core(
     user_message,
     chat_history,
     readiness,
@@ -12624,6 +13233,29 @@ def _artifact_entries_from_actions(actions, user_message=None, user_id=None, thr
         entry = _artifact_chat_entry({"type": "status", "data": {
             "tone": "info",
             "message": "Nothing saved yet for one option: it wasn't clear which.",
+            "actions": [{"label": name, "value": name} for name in unresolved_names],
+        }})
+        if entry:
+            artifact_entries.append(entry)
+    capture_unclear = []
+    capture_saved = 0
+    for action in actions or []:
+        if isinstance(action, dict) and action.get("tool") == "turn_capture":
+            result = action.get("result") if isinstance(action.get("result"), dict) else {}
+            capture_saved += int(result.get("saved_count") or 0)
+            for item in result.get("unclear") or []:
+                capture_unclear.extend(item.get("option_names") or [])
+    capture_unclear = list(dict.fromkeys(str(name).strip() for name in capture_unclear if str(name).strip()))
+    if capture_unclear and not unresolved_names:
+        # The capture step could not tell which option the customer meant. A
+        # fixed status states the truth; the session's own option names answer it.
+        entry = _artifact_chat_entry({"type": "status", "data": {
+            "tone": "info",
+            "message": (
+                "Nothing saved yet for one option: it wasn't clear which."
+                if capture_saved else "Nothing saved yet: the option wasn't clear."
+            ),
+            "actions": [{"label": name, "value": name} for name in capture_unclear],
         }})
         if entry:
             artifact_entries.append(entry)

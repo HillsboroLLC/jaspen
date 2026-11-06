@@ -615,8 +615,8 @@ def test_partial_multi_option_call_states_what_was_not_saved(app, db, test_user)
     assert 'receipts' not in types
     status = next(item['artifact']['data'] for item in entries if item['artifact']['type'] == 'status')
     assert status['message'] == "Nothing saved yet for one option: it wasn't clear which."
-    # The AI's reply stands and asks in its own words: no second set of buttons.
-    assert 'actions' not in status
+    # The option-name buttons are back so the customer can answer in one click.
+    assert [a['value'] for a in status['actions']] == ['Adams County Bid', 'Adams Rail Bid']
 
 
 def test_capture_only_turns_offer_no_undo(app):

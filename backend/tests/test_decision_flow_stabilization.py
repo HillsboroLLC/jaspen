@@ -3208,13 +3208,15 @@ def test_execution_plan_override_requires_acknowledgement_and_records_after_save
     assert replacement.override_info is None
     assert decision.superseded_at is not None
 
-    blocked_again = client.post(
+    # The customer's own recorded pursuit stands: Build plan no longer asks
+    # them to confirm again (Nov 6 decision), and Jaspen's recommendation is
+    # still kept beside the decision.
+    rebuilt_after_manual = client.post(
         f'/api/v1/strategy/threads/{tid}/ai-wbs', headers=auth_headers,
         json={'commit': True, 'force': True, 'scorecard_id': 'planner-card'},
     )
-    assert blocked_again.status_code == 409
-    assert blocked_again.get_json()['code'] == 'recorded_advancing_decision_required'
-    assert blocked_again.get_json()['override'] is True
+    assert rebuilt_after_manual.status_code == 200, rebuilt_after_manual.get_json()
+    assert rebuilt_after_manual.get_json().get('code') != 'recorded_advancing_decision_required'
 
 
 def test_execution_plan_skips_repair_after_50_seconds_used(
