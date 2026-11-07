@@ -3971,6 +3971,106 @@ def test_execution_assistant_persists_edits_before_returning_success(
     assert saved['tasks'][0]['title'] == 'Approved title'
 
 
+def test_plan_route_rejects_invalid_task_date_without_partial_save(
+    client, db, test_user, auth_headers
+):
+    strategy, _ = modules()
+    tid = 'invalid-task-date-plan-save'
+    seed_thread(test_user, tid)
+    original = {
+        'name': 'Launch plan',
+        'tasks': [{
+            'id': 'task-1', 'title': 'Keep this title', 'status': 'todo',
+            'due_date': 'legacy bad date',
+        }],
+    }
+    stored = strategy._load_scenarios(test_user.id)
+    stored[tid] = strategy._thread_entry()
+    stored[tid]['project_wbs'] = original
+    assert strategy._save_project_scenarios(test_user.id, stored, tid)
+
+    response = client.patch(
+        f'/api/v1/strategy/threads/{tid}/wbs',
+        headers=auth_headers,
+        json={'project_wbs': {**original, 'tasks': [
+            {**original['tasks'][0], 'title': 'Must not be saved'},
+            {
+                'id': 'task-new', 'title': 'Invalid new task',
+                'due_date': '2026-11-102026-11-13',
+            },
+        ]}},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        'code': 'invalid_task_date',
+        'error': "Task 'task-new' has an invalid due_date; expected YYYY-MM-DD.",
+        'field': 'due_date',
+        'task_id': 'task-new',
+    }
+    saved = strategy._load_scenarios(test_user.id)[tid]['project_wbs']
+    assert saved == original
+
+    unrelated = client.patch(
+        f'/api/v1/strategy/threads/{tid}/wbs',
+        headers=auth_headers,
+        json={'project_wbs': {**original, 'tasks': [{
+            **original['tasks'][0], 'title': 'Allowed unrelated edit',
+        }]}},
+    )
+    assert unrelated.status_code == 200, unrelated.get_json()
+    preserved = unrelated.get_json()['project_wbs']['tasks'][0]
+    assert preserved['title'] == 'Allowed unrelated edit'
+    assert preserved['due_date'] == 'legacy bad date'
+
+
+def test_execution_assistant_rejects_invalid_add_task_date_without_partial_save(
+    client, db, test_user, auth_headers, monkeypatch
+):
+    strategy, _ = modules()
+    tid = 'invalid-task-date-assistant-add'
+    seed_thread(test_user, tid)
+    original = {
+        'name': 'Launch plan',
+        'tasks': [{'id': 'task-1', 'title': 'Existing task', 'status': 'todo'}],
+    }
+    stored = strategy._load_scenarios(test_user.id)
+    stored[tid] = strategy._thread_entry()
+    stored[tid]['project_wbs'] = original
+    assert strategy._save_project_scenarios(test_user.id, stored, tid)
+    monkeypatch.setattr(
+        strategy,
+        'execute_customer_text_operation',
+        lambda *a, **k: (
+            json.dumps({
+                'reply': 'Added the task.',
+                'uiActions': [{
+                    'type': 'WBS_ADD_TASK',
+                    'payload': {
+                        'id': 'task-new', 'title': 'New task',
+                        'due_date': '2026-02-30',
+                    },
+                }],
+            }),
+            {'provider': 'test'},
+            {'charged_credits': 9, 'operation_id': 'op-invalid-date'},
+        ),
+    )
+    monkeypatch.setattr(strategy, 'reverse_customer_operation_charge', lambda *a, **k: 9)
+
+    response = client.post(
+        f'/api/v1/strategy/threads/{tid}/execution-assistant',
+        headers=auth_headers,
+        json={'instruction': 'Add the task.'},
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()['code'] == 'invalid_task_date'
+    assert response.get_json()['task_id'] == 'task-new'
+    assert response.get_json()['field'] == 'due_date'
+    assert strategy._load_scenarios(test_user.id)[tid]['project_wbs'] == original
+
+
 def test_execution_assistant_save_failure_reverses_charge_and_keeps_plan(
     client, db, test_user, auth_headers, monkeypatch
 ):

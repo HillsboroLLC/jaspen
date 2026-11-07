@@ -132,6 +132,10 @@ export function isRevisionConflict(error) {
   return Boolean(error) && (error.status === 409 || error?.data?.code === 'revision_conflict');
 }
 
+export function isInvalidTaskDate(error) {
+  return Boolean(error) && error?.data?.code === 'invalid_task_date';
+}
+
 export const REVISION_CONFLICT_MESSAGE =
   "This project has newer changes. Reload to get the latest version. Your changes weren't saved.";
 

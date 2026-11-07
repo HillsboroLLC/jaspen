@@ -6317,6 +6317,38 @@ def _materialize_ai_wbs(wbs_payload, start_date=None):
 ALLOWED_WBS_STATUSES = {'todo', 'in_progress', 'blocked', 'done'}
 
 
+class InvalidTaskDate(ValueError):
+    code = 'invalid_task_date'
+
+    def __init__(self, task_id, field):
+        self.task_id = str(task_id or '')
+        self.field = str(field or '')
+        super().__init__(f"Task '{self.task_id}' has an invalid {self.field}; expected YYYY-MM-DD.")
+
+    def to_response(self):
+        return {
+            'error': str(self),
+            'code': self.code,
+            'task_id': self.task_id,
+            'field': self.field,
+        }, 400
+
+
+def _strict_task_date(value, *, task_id, field, prior_value=None, has_prior=False):
+    """Return an empty or real YYYY-MM-DD task date, preserving unchanged legacy data."""
+    if has_prior and value == prior_value:
+        return prior_value
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if not isinstance(value, str) or value != value.strip() or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+        raise InvalidTaskDate(task_id, field)
+    try:
+        datetime.strptime(value, '%Y-%m-%d')
+    except ValueError as exc:
+        raise InvalidTaskDate(task_id, field) from exc
+    return value
+
+
 def _normalize_wbs_task(raw_task):
     if not isinstance(raw_task, dict):
         return None
@@ -6485,6 +6517,19 @@ def _normalize_project_wbs(
             # safe identity; no title-based guessing is allowed.
             for protected in ('title', 'owner', 'owner_email', 'status', 'start_date', 'due_date'):
                 task[protected] = prior_normalized.get(protected)
+        for date_field in ('start_date', 'due_date'):
+            incoming_date = (
+                (prior or {}).get(date_field)
+                if change_source == 'regeneration' and prior_normalized
+                else raw_task.get(date_field)
+            )
+            task[date_field] = _strict_task_date(
+                incoming_date,
+                task_id=task.get('id'),
+                field=date_field,
+                prior_value=(prior or {}).get(date_field),
+                has_prior=isinstance(prior, dict),
+            )
         def _normalized_change_value(value):
             if value is None:
                 return None
@@ -6534,7 +6579,8 @@ def _normalize_project_wbs(
     for task in tasks:
         task['depends_on'] = [dep for dep in task.get('depends_on', []) if dep in valid_ids]
 
-    start_date = str(payload.get('start_date') or base.get('start_date') or '').strip() or None
+    raw_start_date = payload.get('start_date') if 'start_date' in payload else base.get('start_date')
+    start_date = str(raw_start_date or '').strip() or None
 
     normalized_plan = {
         **{key: payload.get(key, base.get(key)) for key in (
@@ -8707,6 +8753,14 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
         body, status = e.to_response()
         body['session_id'] = e.session_id or thread_id
         return jsonify(body), status
+    except InvalidTaskDate as e:
+        if user is not None and int((ai_settlement or {}).get('charged_credits') or 0) > 0 and not plan_persisted:
+            reverse_customer_operation_charge(
+                user, ai_settlement, error_code=e.code,
+            )
+            ai_settlement = None
+        body, status = e.to_response()
+        return jsonify(body), status
     except Exception as e:
         if user is not None and int((ai_settlement or {}).get('charged_credits') or 0) > 0 and not plan_persisted:
             reverse_customer_operation_charge(
@@ -9711,6 +9765,9 @@ def upsert_thread_wbs(thread_id):
             'revision': new_revision,
         }), 200
     except SessionAccessError as e:
+        body, status = e.to_response()
+        return jsonify(body), status
+    except InvalidTaskDate as e:
         body, status = e.to_response()
         return jsonify(body), status
     except Exception as e:
@@ -11776,6 +11833,12 @@ If no plan changes are needed, return "uiActions": [].
                     user, assistant_settlement, error_code='plan_refinement_revision_conflict',
                 )
                 body, status = conflict.to_response()
+                return jsonify(body), status
+            except InvalidTaskDate as date_error:
+                reverse_customer_operation_charge(
+                    user, assistant_settlement, error_code=date_error.code,
+                )
+                body, status = date_error.to_response()
                 return jsonify(body), status
             except Exception:
                 reverse_customer_operation_charge(

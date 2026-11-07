@@ -26,6 +26,45 @@ it('keeps the task title readable when the execution sidebar narrows the list', 
   expect(row.style.gridTemplateColumns).toContain('minmax(300px, 1fr)');
 });
 
+it('edits task dates with an ISO date input and never saves duration text', () => {
+  const onUpdate = jest.fn();
+  render(<TaskRow
+    task={{
+      id: 'task-1', title: 'Prepare package', status: 'todo', timeline_days: 3,
+    }}
+    phaseName="Submission"
+    onUpdate={onUpdate}
+  />);
+
+  fireEvent.click(screen.getByText('3 days'));
+  const input = screen.getByLabelText('Task due date');
+  expect(input).toHaveAttribute('type', 'date');
+  expect(input).toHaveValue('');
+  fireEvent.blur(input);
+  expect(onUpdate).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByText('3 days'));
+  const reopened = screen.getByLabelText('Task due date');
+  fireEvent.change(reopened, { target: { value: '2026-11-13' } });
+  fireEvent.blur(reopened);
+  expect(onUpdate).toHaveBeenCalledWith({ due_date: '2026-11-13' });
+});
+
+it('allows an existing task date to be cleared', () => {
+  const onUpdate = jest.fn();
+  render(<TaskRow
+    task={{ id: 'task-1', title: 'Prepare package', status: 'todo', due_date: '2026-11-13' }}
+    phaseName="Submission"
+    onUpdate={onUpdate}
+  />);
+
+  fireEvent.click(screen.getByText('2026-11-13'));
+  const input = screen.getByLabelText('Task due date');
+  fireEvent.change(input, { target: { value: '' } });
+  fireEvent.blur(input);
+  expect(onUpdate).toHaveBeenCalledWith({ due_date: '' });
+});
+
 it('serializes consecutive canvas autosaves and advances their basis', async () => {
   jest.useFakeTimers();
   let releaseFirstSave;
@@ -146,4 +185,70 @@ it('shows the D4 message when a start-date change gets a real conflict', async (
   const error = await screen.findByText(REVISION_CONFLICT_MESSAGE);
   expect(error).toHaveAttribute('title', REVISION_CONFLICT_MESSAGE);
   expect(screen.queryByText('Save failed — will retry')).not.toBeInTheDocument();
+});
+
+it('allows the plan start date to be cleared without sending display text', async () => {
+  jest.useFakeTimers();
+  const initialPlan = {
+    scorecard_id: 'start-date-clear-card',
+    start_date: '2027-01-04',
+    updated_at: 'S1',
+    tasks: [{ id: 'task-1', title: 'Original', phase: 'Delivery', status: 'todo' }],
+  };
+  const fetchMock = jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(200, { bindings: [] }))
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { ...initialPlan, start_date: null, updated_at: 'S2' },
+    }));
+
+  render(
+    <JaspenExecutionCanvas
+      threadId="start-date-clear-thread"
+      scorecardId="start-date-clear-card"
+      wbs={initialPlan}
+    />,
+  );
+  fireEvent.change(document.querySelector('input[type="date"]'), { target: { value: '' } });
+  await act(async () => {
+    jest.advanceTimersByTime(600);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  const saved = JSON.parse(fetchMock.mock.calls[1][1].body);
+  expect(saved.project_wbs.start_date).toBeNull();
+});
+
+it('shows the minimal invalid task date save message', async () => {
+  jest.useFakeTimers();
+  jest.spyOn(console, 'error').mockImplementation(() => {});
+  const initialPlan = {
+    scorecard_id: 'invalid-date-card',
+    updated_at: 'I1',
+    tasks: [{ id: 'task-1', title: 'Original', phase: 'Delivery', status: 'todo' }],
+  };
+  jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(200, { bindings: [] }))
+    .mockImplementationOnce(() => json(400, {
+      code: 'invalid_task_date', task_id: 'task-1', field: 'due_date',
+      error: "Task 'task-1' has an invalid due_date; expected YYYY-MM-DD.",
+    }));
+
+  render(
+    <JaspenExecutionCanvas
+      threadId="invalid-date-thread"
+      scorecardId="invalid-date-card"
+      wbs={initialPlan}
+    />,
+  );
+  fireEvent.click(screen.getByText('Original'));
+  fireEvent.change(screen.getByDisplayValue('Original'), { target: { value: 'Changed' } });
+  fireEvent.blur(screen.getByDisplayValue('Changed'));
+  await act(async () => {
+    jest.advanceTimersByTime(600);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(await screen.findByText('Invalid task date')).toBeInTheDocument();
 });

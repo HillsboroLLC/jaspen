@@ -201,6 +201,60 @@ def test_task_history_commitments_and_reschedules_are_distinct(app):
     assert shifted_task['commitment']['rescheduled_to'] != '2026-11-12'
     assert shifted_task['history'][-1]['source'] == 'schedule_shift'
 
+
+def test_task_dates_are_strict_without_rewriting_legacy_values(app):
+    from app.routes.strategy import InvalidTaskDate, _normalize_project_wbs
+
+    original = {'name': 'Plan', 'tasks': [{
+        'id': 't1', 'title': 'Do it', 'status': 'todo',
+        'start_date': 'legacy start', 'due_date': '2026-11-102026-11-13',
+        'updated_at': '2026-11-01T10:00:00',
+    }]}
+
+    unchanged = _normalize_project_wbs(
+        {'project_wbs': {**original, 'tasks': [{**original['tasks'][0], 'title': 'Renamed'}]}},
+        existing=original, change_source='person', actor_user_id='person-1',
+        commit_on_person_change=True,
+    )
+    assert unchanged['tasks'][0]['start_date'] == 'legacy start'
+    assert unchanged['tasks'][0]['due_date'] == '2026-11-102026-11-13'
+    assert unchanged['tasks'][0]['title'] == 'Renamed'
+
+    for field, value in (
+        ('start_date', '2026-02-30'),
+        ('due_date', '2026-11-102026-11-13'),
+        ('due_date', ' 2026-11-13 '),
+    ):
+        with pytest.raises(InvalidTaskDate) as raised:
+            _normalize_project_wbs({'project_wbs': {'tasks': [{
+                'id': 'new-task', 'title': 'New task', field: value,
+            }]}})
+        assert raised.value.task_id == 'new-task'
+        assert raised.value.field == field
+
+    cleared = _normalize_project_wbs(
+        {'project_wbs': {
+            **original,
+            'start_date': '',
+            'tasks': [{**original['tasks'][0], 'start_date': '', 'due_date': None}],
+        }},
+        existing={**original, 'start_date': '2026-11-01'}, change_source='person', actor_user_id='person-1',
+        commit_on_person_change=True,
+    )
+    assert cleared['start_date'] is None
+    assert cleared['tasks'][0]['start_date'] is None
+    assert cleared['tasks'][0]['due_date'] is None
+
+    valid = _normalize_project_wbs(
+        {'project_wbs': {**original, 'tasks': [{**original['tasks'][0], 'due_date': '2026-11-13'}]}},
+        existing=original, change_source='person', actor_user_id='person-1',
+        commit_on_person_change=True,
+    )['tasks'][0]
+    assert valid['due_date'] == '2026-11-13'
+    assert valid['field_updated_at']['due_date']
+    due_history = [entry for entry in valid['history'] if entry['field'] == 'due_date']
+    assert due_history[-1]['to'] == '2026-11-13'
+
     synced = {'due_date': '2026-12-01'}
     mark_task_pm_synced(synced, connector_id='jira_sync', external_ref='JAS-1')
     assert synced['commitment']['basis'] == 'pm_sync'

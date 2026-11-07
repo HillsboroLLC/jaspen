@@ -15,6 +15,7 @@ import {
 import { Jaspen } from '../JaspenClient';
 import { ExecutionPanelSkeleton } from '../../../shared/components/SkeletonLoader';
 import './ExecutionPanel.css';
+import { toDateInputValue } from '../taskDates';
 
 const STATUS_ORDER = ['todo', 'in_progress', 'blocked', 'done'];
 const STATUS_CONFIG = {
@@ -544,7 +545,7 @@ export default function ExecutionPanel({
                             <span>Due date</span>
                             <input
                               type="date"
-                              value={dueDateValue ? String(dueDateValue).slice(0, 10) : ''}
+                              value={toDateInputValue(dueDateValue)}
                               disabled={!canEditFields}
                               onChange={(event) => {
                                 const nextValue = event.target.value || null;

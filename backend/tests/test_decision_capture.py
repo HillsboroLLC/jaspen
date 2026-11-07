@@ -1018,6 +1018,38 @@ def test_exploratory_plan_never_auto_syncs(app):
     }
 
 
+def test_ai_task_tool_returns_invalid_date_error_without_saving(app, db, test_user, monkeypatch):
+    strategy, agent = modules()
+    tid = 'capture-invalid-task-date'
+    _seed(db, test_user, tid, _cards())
+    _fake_plan_build(strategy, agent, monkeypatch)
+    built = agent._execute_mutation_tool(
+        'generate_execution_plan', {'scorecard_id': 'card-b', 'planning_intent': 'exploratory'},
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+    assert built['ok'] is True, built
+    task_id = built['project_wbs']['tasks'][0]['id']
+    before = _plan(test_user, tid, 'card-b')
+
+    result = agent._execute_mutation_tool(
+        'update_wbs_task', {
+            'task_id': task_id,
+            'field': 'due_date',
+            'new_value': '2026-11-102026-11-13',
+        },
+        user=test_user, user_id=test_user.id, thread_id=tid,
+    )
+
+    assert result == {
+        'ok': False,
+        'code': 'invalid_task_date',
+        'error': f"Task '{task_id}' has an invalid due_date; expected YYYY-MM-DD.",
+        'task_id': task_id,
+        'field': 'due_date',
+    }
+    assert _plan(test_user, tid, 'card-b') == before
+
+
 def test_two_conditions_from_one_quote_are_both_kept(app, db, test_user):
     from app.models_decision_record import DecisionSignal
 

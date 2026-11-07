@@ -33,7 +33,10 @@ import {
   faArrowRotateRight, faArrowRotateLeft, faCalendar,
 } from '@fortawesome/free-solid-svg-icons';
 
-import { Jaspen, isRevisionConflict, REVISION_CONFLICT_MESSAGE } from './JaspenClient';
+import {
+  Jaspen, isInvalidTaskDate, isRevisionConflict, REVISION_CONFLICT_MESSAGE,
+} from './JaspenClient';
+import { toDateInputValue } from './taskDates';
 import PmSyncPanel from './PmSyncPanel';
 import ExecutionPlanExportButton from './ExecutionPlanExportButton';
 
@@ -282,6 +285,57 @@ export function EditableText({ value, onCommit, multiline = false, style, placeh
   );
 }
 
+export function EditableDate({ value, displayValue, onCommit, style, label = 'Task due date' }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(toDateInputValue(value));
+  useEffect(() => { setDraft(toDateInputValue(value)); }, [value]);
+
+  const commit = () => {
+    setEditing(false);
+    const previous = toDateInputValue(value);
+    if (draft !== previous) onCommit?.(draft);
+  };
+
+  if (!editing) {
+    return (
+      <span
+        onClick={(event) => { event.stopPropagation(); setEditing(true); }}
+        title="Click to edit"
+        style={{
+          ...style,
+          cursor: 'pointer', borderRadius: 4, padding: '1px 4px', margin: '-1px -4px',
+          display: 'inline-block', minHeight: 18, transition: 'background 120ms',
+        }}
+        onMouseEnter={(event) => { event.currentTarget.style.background = COLOR.line2; }}
+        onMouseLeave={(event) => { event.currentTarget.style.background = 'transparent'; }}
+      >
+        {displayValue || value || <span style={{ color: COLOR.mute }}>—</span>}
+      </span>
+    );
+  }
+
+  return (
+    <input
+      autoFocus
+      type="date"
+      aria-label={label}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') { event.preventDefault(); commit(); }
+        if (event.key === 'Escape') { setDraft(toDateInputValue(value)); setEditing(false); }
+      }}
+      onClick={(event) => event.stopPropagation()}
+      style={{
+        ...style,
+        width: '100%', border: `1px solid ${COLOR.line}`, borderRadius: 6,
+        padding: '3px 6px', fontFamily: 'inherit',
+      }}
+    />
+  );
+}
+
 // ── View switcher (List / Board / Timeline) ────────────────────────────────
 
 export function ViewSwitcher({ value, onChange }) {
@@ -490,10 +544,10 @@ export function TaskRow({ task, onUpdate, onReorder, isFirst, isLast, phaseName 
 
       {/* Due / week */}
       <div style={{ fontSize: 12, color: COLOR.ink, fontFamily: 'JetBrains Mono, monospace', whiteSpace: 'nowrap' }}>
-        <EditableText
-          value={dueOrWeek || ''}
+        <EditableDate
+          value={task.due_date || ''}
+          displayValue={dueOrWeek || ''}
           onCommit={(v) => onUpdate?.({ due_date: v })}
-          placeholder="—"
           style={{ fontSize: 12, color: COLOR.ink, fontFamily: 'JetBrains Mono, monospace' }}
         />
       </div>
@@ -1112,6 +1166,7 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [saveConflict, setSaveConflict] = useState(false);
+  const [saveInvalidDate, setSaveInvalidDate] = useState(false);
   const saveTimer = useRef(null);
   const skipNextSave = useRef(true);
 
@@ -1137,10 +1192,12 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
         setSaving(true);
         setSaveError(null);
         setSaveConflict(false);
+        setSaveInvalidDate(false);
         await Jaspen.upsertThreadWbs(threadId, wbs, scorecardId);
       } catch (e) {
         console.error('[ExecutionCanvas] save failed:', e);
         const conflict = isRevisionConflict(e);
+        setSaveInvalidDate(isInvalidTaskDate(e));
         setSaveConflict(conflict);
         setSaveError(conflict ? REVISION_CONFLICT_MESSAGE : String(e?.message || e || 'Save failed'));
       } finally {
@@ -1214,14 +1271,19 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
   // slides by the same delta, preserving manual per-task tweaks). We swap in the
   // server-returned plan rather than recomputing locally.
   const [startDateSaving, setStartDateSaving] = useState(false);
-  const planStartDate = String(wbs?.start_date || '').slice(0, 10);
+  const planStartDate = toDateInputValue(wbs?.start_date);
   const handleStartDateChange = useCallback(async (newDate) => {
-    const d = String(newDate || '').slice(0, 10);
-    if (!d || d === planStartDate || !threadId) return;
+    const d = toDateInputValue(newDate);
+    if (d === planStartDate || !threadId) return;
+    if (!d) {
+      recordAndSet((prev) => ({ ...prev, start_date: null }));
+      return;
+    }
     try {
       setStartDateSaving(true);
       setSaveError(null);
       setSaveConflict(false);
+      setSaveInvalidDate(false);
       const resp = await Jaspen.setThreadWbsStartDate(
         threadId, d, scorecardId,
       );
@@ -1239,12 +1301,13 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
     } catch (e) {
       console.error('[ExecutionCanvas] start-date change failed:', e);
       const conflict = isRevisionConflict(e);
+      setSaveInvalidDate(isInvalidTaskDate(e));
       setSaveConflict(conflict);
       setSaveError(conflict ? REVISION_CONFLICT_MESSAGE : String(e?.message || e || 'Could not change start date'));
     } finally {
       setStartDateSaving(false);
     }
-  }, [threadId, scorecardId, planStartDate]);
+  }, [threadId, scorecardId, planStartDate, recordAndSet]);
 
   // Keyboard: Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z (or Ctrl+Y) = redo.
   useEffect(() => {
@@ -1562,7 +1625,9 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
               {saving && <span style={{ fontSize: 11.5, color: COLOR.mute }}>Saving…</span>}
               {!saving && saveError && (
                 <span style={{ fontSize: 11.5, color: '#dc2626' }} title={saveError}>
-                  {saveConflict ? REVISION_CONFLICT_MESSAGE : 'Save failed — will retry'}
+                  {saveConflict
+                    ? REVISION_CONFLICT_MESSAGE
+                    : saveInvalidDate ? 'Invalid task date' : 'Save failed — will retry'}
                 </span>
               )}
               {!saving && !saveError && (

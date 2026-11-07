@@ -8716,6 +8716,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         get_llm_client,
         _load_scenarios,
         _materialize_ai_wbs,
+        InvalidTaskDate,
         _normalize_project_wbs,
         _attach_decision_basis,
         _record_claude_operation,
@@ -10721,10 +10722,16 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             from ..decision_lineage import schedule_backward
             materialized = schedule_backward(materialized, deadline, buffer_days=1)
         regeneration_base = _plan_guard if _force_new and isinstance(_plan_guard, dict) else None
-        normalized_wbs = _normalize_project_wbs(
-            {"project_wbs": materialized}, existing=regeneration_base,
-            change_source="regeneration" if regeneration_base else "generation",
-        )
+        try:
+            normalized_wbs = _normalize_project_wbs(
+                {"project_wbs": materialized}, existing=regeneration_base,
+                change_source="regeneration" if regeneration_base else "generation",
+            )
+        except InvalidTaskDate as date_error:
+            _reverse_plan_charge(date_error.code)
+            failure = _tool_error(str(date_error), code=date_error.code)
+            failure.update({'task_id': date_error.task_id, 'field': date_error.field})
+            return failure
         normalized_wbs["ai_generated"] = not starter_plan
         normalized_wbs["generation_status"] = "starter_plan" if starter_plan else "ai_generated"
         if starter_plan:
@@ -11019,11 +11026,16 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             confirmation = f"Removed task '{task_id}' from the WBS."
 
         plan_guard = copy.deepcopy(current_wbs)
-        normalized = _normalize_project_wbs(
-            {"project_wbs": {**current_wbs, "tasks": tasks}}, existing=current_wbs,
-            change_source="ai_tool", actor_user_id=user_id,
-            commit_on_person_change=(tool_name == "update_wbs_task"),
-        )
+        try:
+            normalized = _normalize_project_wbs(
+                {"project_wbs": {**current_wbs, "tasks": tasks}}, existing=current_wbs,
+                change_source="ai_tool", actor_user_id=user_id,
+                commit_on_person_change=(tool_name == "update_wbs_task"),
+            )
+        except InvalidTaskDate as date_error:
+            failure = _tool_error(str(date_error), code=date_error.code)
+            failure.update({'task_id': date_error.task_id, 'field': date_error.field})
+            return failure
         try:
             _persist_generated_plan(
                 user_id, thread_id, active_scorecard_id, normalized, plan_guard,
