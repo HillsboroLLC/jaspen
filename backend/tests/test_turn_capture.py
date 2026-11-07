@@ -535,3 +535,27 @@ def test_one_condition_is_stored_once_and_never_as_a_reason(app, db, test_user, 
     assert DecisionSignal.query.filter_by(kind='condition').count() == 1
     assert DecisionSignal.query.filter_by(kind='rationale').count() == 0
     assert DecisionSignal.query.filter_by(kind='commitment').one().structured == {'date': '2026-11-13'}
+
+
+def test_condition_met_is_never_also_an_outcome(app, db, test_user, capture_model):
+    from app.models_decision_record import DecisionSignal, OptionDecision
+
+    _, agent = modules()
+    tid = 'turn-capture-condition-not-outcome'
+    _seed(db, test_user, tid, _cards())
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'Pursue Cherry Creek',
+         'conditions': [{'content': 'Bonding', 'user_quote': 'if bonding comes through'}]},
+    ]}, 'Pursue Cherry Creek if bonding comes through.')
+    condition = DecisionSignal.query.filter_by(kind='condition').one()
+    message = 'The surety came through on the bonding.'
+    _set_history(test_user, tid, _history(message))
+    capture_model['payloads'].append(_empty(
+        condition_updates=[{'message': 1, 'condition_signal_id': str(condition.id), 'status': 'met',
+                            'quote': 'The surety came through'}],
+        outcomes=[{'message': 1, 'option_key': 'option-c', 'status': 'achieved', 'summary': 'Bonding secured',
+                   'quote': 'The surety came through on the bonding'}],
+    ))
+    _run(agent, app, test_user, tid, message)
+    assert all(not (row.outcomes or []) for row in OptionDecision.query.all())
+    assert DecisionSignal.query.filter_by(kind='condition').count() == 2

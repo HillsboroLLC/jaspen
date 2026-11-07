@@ -7971,7 +7971,8 @@ _CAPTURE_SYSTEM_PROMPT = (
     "A new condition on an option already pursued is a note of kind condition with that option_key.\n"
     "Condition updates: when the customer says a listed condition was met, not met or waived, return its "
     "condition_signal_id from the DECISION STATE with the new status. Never assume a status.\n"
-    "Outcomes and lessons: only what the customer reports about what happened or what they learned.\n"
+    "Outcomes and lessons: only results of carrying out a pursued option (the bid was won or lost, results were measured) and what the customer learned. A condition being met, a step completed, or news before the option is carried out is never an outcome.\n"
+    "Only statements about the decision count: replies to the assistant's offers or questions (yes, not now, hold off) are never notes.\n"
     "Task commitments: when the customer confirms a listed plan task's date or owner.\n"
     "Unclear: when a reference could mean several options or none, list it in unclear instead of guessing.\n"
     "Return empty arrays for anything that does not apply. Recording intent never authorizes an external action."
@@ -8409,10 +8410,17 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         else:
             not_saved.append({"what": "condition_update", "reason": result.get("code")})
 
+    condition_quotes = [
+        str(item.get("quote") or "") for item in payload.get("condition_updates") or [] if isinstance(item, dict)
+    ]
     for bucket, tool_name in (("outcomes", "record_outcome"), ("lessons", "record_lesson")):
         for item in payload.get(bucket) or []:
             message = cited(item)
             key = str((item or {}).get("option_key") or "").strip() or None
+            if bucket == "outcomes" and any(_capture_quotes_overlap(item.get("quote"), quote) for quote in condition_quotes):
+                # A condition being met is not an outcome of the decision.
+                not_saved.append({"what": "outcome", "reason": "condition_update_not_outcome"})
+                continue
             if message is None or (key and key not in known_keys):
                 not_saved.append({"what": bucket[:-1], "reason": "quote_not_in_customer_message" if message is None else "option_not_found"})
                 continue
