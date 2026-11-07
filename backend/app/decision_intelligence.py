@@ -7,6 +7,7 @@ from app.decision_records import can_read_record, current_decision_signals, opti
 from app.models import OrganizationMember, Scorecard, User, UserSession
 from app.models_challenge_event import ChallengeEvent
 from app.models_decision_record import DecisionRecord, DecisionSignal, OptionDecision
+from app.decision_kits import get_decision_kit
 from app.decision_kits.rfp_bid import KIT as RFP_KIT
 
 
@@ -165,7 +166,7 @@ def _attention(option, today):
     triggers = []
     gates = [gate for gate in (option["card"].get("gates") or []) if isinstance(gate, dict)]
     due = _stated_deadline(option, today)
-    deadline_window = RFP_KIT["attention_deadline_window_days"] if str(option["decision_kind"]).startswith("rfp") else None
+    deadline_window = RFP_KIT["attention_deadline_window_days"] if str(option["decision_kind_key"]).startswith("rfp") else None
     if due and deadline_window and option["state"] in {"open", "pursued"} and 0 <= (due.date() - today.date()).days <= deadline_window:
         open_gates = [gate for gate in gates if str(gate.get("status") or "unknown").lower() not in PASS]
         if open_gates:
@@ -292,9 +293,13 @@ def build_insights_v3(user, scope_context, filters=None):
             snapshot = verdict.get("recommendation_snapshot") if isinstance(verdict.get("recommendation_snapshot"), dict) else {}
             score = (basis or {}).get("jaspen_score") if basis else card.get("jaspen_score")
             evidence = (basis or {}).get("evidence_backed_pct") if basis else _evidence_pct(card)
+            kind_key = str(record.decision_type or (record.record or {}).get("decision_kit") or "general")
             item = {
                 "id": f"{record.id}:{state['option_key']}", "record_id": str(record.id), "thread_id": str(record.thread_id),
-                "decision_title": record.title, "decision_kind": str(record.decision_type or (record.record or {}).get("decision_kit") or "General decision"),
+                "decision_title": record.title,
+                "decision_kind_key": kind_key,
+                # The kit's own display name, never its internal key.
+                "decision_kind": (get_decision_kit(kind_key) or {}).get("label") or ("General decision" if kind_key in {"", "general"} else kind_key.replace("_", " ").capitalize()),
                 "owner": {"id": str(record.user_id or "") or None, "name": names.get(str(record.user_id), "Former member")},
                 "option_key": state["option_key"], "option_name": state.get("option_name") or card.get("name") or "Option",
                 "state": state["state"], "state_source": state["state_source"], "state_since": state["state_since"], "still_evaluating": state["still_evaluating"],
@@ -414,7 +419,7 @@ def build_insights_v3(user, scope_context, filters=None):
     excluded_custom_gaps = 0
     for item in options:
         for gap in item["gaps"]:
-            key = gap["key"] if str(item["decision_kind"]).startswith("rfp") else gap.get("group")
+            key = gap["key"] if str(item["decision_kind_key"]).startswith("rfp") else gap.get("group")
             if not key:
                 excluded_custom_gaps += 1
                 continue
