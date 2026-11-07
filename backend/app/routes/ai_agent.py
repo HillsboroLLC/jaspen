@@ -7991,13 +7991,17 @@ def _capture_pass_tool():
                 "decisions": {"type": "array", "items": {"type": "object", "properties": {
                     "message": message,
                     "option_key": {"type": "string"},
+                    "also_could_mean": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": "Every other option_key the customer's words could also refer to. Empty only when the words single out this option.",
+                    },
                     "disposition": {"type": "string", "enum": ["pursue", "not_pursue", "still_evaluating"]},
                     "quote": quote,
                     "rationale_quote": {"type": "string", "description": "Only the words giving the customer's reason for THIS option; omit when they gave none for it."},
                     "conditions": {"type": "array", "items": {"type": "object", "properties": {
                         "content": {"type": "string"}, "quote": quote, "due_by": {"type": "string", "description": "YYYY-MM-DD"},
                     }, "required": ["content", "quote"]}},
-                }, "required": ["message", "option_key", "disposition", "quote"]}},
+                }, "required": ["message", "option_key", "also_could_mean", "disposition", "quote"]}},
                 "notes": {"type": "array", "items": {"type": "object", "properties": {
                     "message": message,
                     "kind": {"type": "string", "enum": _CAPTURE_NOTE_KINDS},
@@ -8257,6 +8261,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
 
     # Decisions: for each option only the latest message counts.
     chosen = {}
+    unclear_from_decisions = []
     for item in payload.get("decisions") or []:
         message = cited(item)
         key = str((item or {}).get("option_key") or "").strip()
@@ -8265,6 +8270,16 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
             continue
         if key not in known_keys:
             not_saved.append({"what": "decision", "reason": "option_not_found", "option_key": key or None})
+            continue
+        others = [other for other in (item.get("also_could_mean") or []) if other in known_keys and other != key]
+        if others:
+            # The customer's words fit more than one option: nothing is saved.
+            if message["latest"]:
+                unclear_from_decisions.append({
+                    "reference": str(item.get("quote") or "").strip()[:200],
+                    "option_names": [names[k] for k in [key, *others]],
+                })
+            not_saved.append({"what": "decision", "reason": "option_unclear"})
             continue
         if key not in chosen or message["number"] > chosen[key][0]["number"]:
             chosen[key] = (message, item)
@@ -8457,7 +8472,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
 
     # Unclear references: only from the latest message, in the customer's own
     # words, and only with real candidates.
-    unclear = []
+    unclear = list(unclear_from_decisions)
     for item in payload.get("unclear") or []:
         if not isinstance(item, dict) or item.get("message") != latest_number:
             continue

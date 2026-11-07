@@ -559,3 +559,23 @@ def test_condition_met_is_never_also_an_outcome(app, db, test_user, capture_mode
     _run(agent, app, test_user, tid, message)
     assert all(not (row.outcomes or []) for row in OptionDecision.query.all())
     assert DecisionSignal.query.filter_by(kind='condition').count() == 2
+
+
+def test_decision_whose_words_fit_several_options_is_not_saved(app, db, test_user, capture_model):
+    from app.models_decision_record import OptionDecision
+
+    _, agent = modules()
+    tid = 'turn-capture-also-means'
+    _seed(db, test_user, tid, _cards())
+    message = "Let's go with the bid in the county."
+    _set_history(test_user, tid, _history(message))
+    capture_model['payloads'].append(_empty(decisions=[
+        {'message': 1, 'option_key': 'option-a', 'also_could_mean': ['option-c'], 'disposition': 'pursue',
+         'quote': "go with the bid in the county"},
+    ]))
+    capture = _run(agent, app, test_user, tid, message)
+    assert OptionDecision.query.count() == 0
+    assert capture['summary']['unclear'][0]['option_names'] == ['Adams County Bid', 'Cherry Creek Bid']
+    status = next(e['artifact']['data'] for e in agent._artifact_entries_from_actions(capture['actions'], user_message=message)
+                  if e['artifact']['type'] == 'status')
+    assert [a['value'] for a in status['actions']] == ['Adams County Bid', 'Cherry Creek Bid']
