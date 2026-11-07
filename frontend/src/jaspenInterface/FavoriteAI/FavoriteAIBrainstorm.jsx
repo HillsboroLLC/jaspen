@@ -285,7 +285,7 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
                     <span>Include this project's summary</span>
                   </label>
                   <p className="favorite-ai-privacy">
-                    Off by default. Only the project title, options, and open questions shown in Jaspen are added when you turn this on.
+                    Off by default. Only the project title, options, information Jaspen still needs, and decision questions shown in Jaspen are added when you turn this on.
                   </p>
                   <label className="favorite-ai-preview-label" htmlFor="favorite-ai-prompt-preview">
                     Prompt to copy

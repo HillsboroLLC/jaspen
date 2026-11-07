@@ -35,11 +35,35 @@ const cleanItems = (items) => Array.from(new Set(
     .filter(Boolean)
 ));
 
+export function buildFavoriteAIProjectSummary({ projectHeaderTitle, scorecards, collectedSignals } = {}) {
+  const snapshots = Array.isArray(scorecards) ? scorecards : [];
+  const options = snapshots.map((snapshot) => (
+    snapshot?.project_name || snapshot?.title || snapshot?.label || ''
+  ));
+  const informationNeeded = (Array.isArray(collectedSignals) ? collectedSignals : [])
+    .filter((signal) => !signal.complete)
+    .map((signal) => signal.hint
+      ? `${signal.label}: ${signal.hint}`
+      : signal.label);
+  const decisionQuestions = snapshots.flatMap((snapshot) => {
+    const optionName = snapshot?.project_name || snapshot?.title || snapshot?.label || '';
+    return (Array.isArray(snapshot?.gates) ? snapshot.gates : [])
+      .filter((gate) => String(gate?.status || 'unknown').trim().toLowerCase() === 'unknown')
+      .map((gate) => {
+        const check = gate?.label || gate?.key || '';
+        return options.length > 1 && optionName && check ? `${optionName}: ${check}` : check;
+      });
+  });
+
+  return { title: projectHeaderTitle, options, informationNeeded, decisionQuestions };
+}
+
 export function normalizeProjectSummary(summary = {}) {
   return {
     title: String(summary.title || '').trim(),
     options: cleanItems(summary.options),
-    openQuestions: cleanItems(summary.openQuestions),
+    informationNeeded: cleanItems(summary.informationNeeded),
+    decisionQuestions: cleanItems(summary.decisionQuestions),
   };
 }
 
@@ -51,8 +75,11 @@ export function formatProjectSummary(summary) {
   if (normalized.options.length > 0) {
     sections.push(`Options:\n${normalized.options.map((option) => `- ${option}`).join('\n')}`);
   }
-  if (normalized.openQuestions.length > 0) {
-    sections.push(`Open questions:\n${normalized.openQuestions.map((question) => `- ${question}`).join('\n')}`);
+  if (normalized.informationNeeded.length > 0) {
+    sections.push(`Information Jaspen still needs:\n${normalized.informationNeeded.map((item) => `- ${item}`).join('\n')}`);
+  }
+  if (normalized.decisionQuestions.length > 0) {
+    sections.push(`Decision questions:\n${normalized.decisionQuestions.map((question) => `- ${question}`).join('\n')}`);
   }
 
   return sections.join('\n');

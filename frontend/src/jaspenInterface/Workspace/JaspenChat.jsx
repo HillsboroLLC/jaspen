@@ -32,7 +32,7 @@ import {
   GuidedDecisionModal,
   Walkthrough,
 } from '../GuidedDecision';
-import { appendComposerDraft, FavoriteAIBrainstorm } from '../FavoriteAI';
+import { appendComposerDraft, buildFavoriteAIProjectSummary, FavoriteAIBrainstorm } from '../FavoriteAI';
 import ExecutionPlanExportButton from './ExecutionPlanExportButton';
 import PmSyncPanel from './PmSyncPanel';
 import ConnectorContextChip from './ConnectorContextChip';
@@ -8279,32 +8279,21 @@ const collectedSignals = useMemo(() => {
   return signals;
 }, [knowledgeSignals, messages, connectedDataSources, activeContextSourceIds]);
 
-const brainstormProjectSummary = useMemo(() => {
-  const baselineTitleSource =
-    (analysisResult?._baseline_scorecard && typeof analysisResult._baseline_scorecard === 'object'
-      ? analysisResult._baseline_scorecard
-      : null) ||
-    bundleBaselineScorecard ||
-    analysisResult ||
-    activeScorecard;
-  const title = deriveIdeaTitle({ result: baselineTitleSource, messages, fallback: '' });
-  const options = mergedScoreWorkspaceSnapshots.map((snapshot) => (
-    snapshot?.project_name || snapshot?.title || snapshot?.label || ''
-  ));
-  const openQuestions = collectedSignals
-    .filter((signal) => !signal.complete)
-    .map((signal) => signal.hint
-      ? `${signal.label}: ${signal.hint}`
-      : signal.label);
+const projectHeaderTitle = useMemo(
+  () => deriveIdeaTitle({ messages, fallback: '' }),
+  [messages]
+);
 
-  return { title, options, openQuestions };
+const brainstormProjectSummary = useMemo(() => {
+  return buildFavoriteAIProjectSummary({
+    projectHeaderTitle,
+    scorecards: mergedScoreWorkspaceSnapshots,
+    collectedSignals,
+  });
 }, [
-  activeScorecard,
-  analysisResult,
-  bundleBaselineScorecard,
   collectedSignals,
   mergedScoreWorkspaceSnapshots,
-  messages,
+  projectHeaderTitle,
 ]);
 
 const renderCollectedSignals = () => {
@@ -13329,7 +13318,7 @@ const handleSnapshotDelete = useCallback(async (snapshotId, label) => {
         {sessionId && (
           <div className="jas-titlebar-left" style={{ flex: 1, minWidth: 0 }}>
             <span className="jas-project-title">
-              {deriveIdeaTitle({ messages, fallback: '' })}
+              {projectHeaderTitle}
             </span>
           </div>
         )}
