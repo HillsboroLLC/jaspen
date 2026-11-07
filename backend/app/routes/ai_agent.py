@@ -7998,7 +7998,7 @@ _CAPTURE_SYSTEM_PROMPT = (
     "Condition updates: when the customer says a listed condition was met, not met or waived, return its "
     "condition_signal_id from the DECISION STATE with the new status. Never assume a status.\n"
     "Outcomes and lessons: only results of carrying out a pursued option (the bid was won or lost, results were measured) and what the customer learned. A condition being met, a step completed, or news before the option is carried out is never an outcome.\n"
-    "Only statements about the decision count: replies to the assistant's offers or questions (yes, not now, hold off) are never notes.\n"
+    "Only statements about the decision count: replies to the assistant's offers or questions (yes, not now, hold off) and requests for Jaspen to do something (build a plan, compare, score) are never notes, and a commitment is something the customer or their team will do.\n"
     "Task commitments: when the customer confirms a listed plan task's date or owner.\n"
     "Unclear: when the customer's words could fit more than one option, or none, list it in unclear instead of guessing. Never resolve a reference by elimination, by which option is already decided, or by which was discussed most recently.\n"
     "Return empty arrays for anything that does not apply. Recording intent never authorizes an external action."
