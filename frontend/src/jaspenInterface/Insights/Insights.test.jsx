@@ -52,12 +52,16 @@ beforeEach(() => { window.localStorage.clear(); global.fetch = jest.fn().mockRes
 afterEach(() => { jest.restoreAllMocks(); jest.useRealTimers(); });
 
 it('renders the v3 activity, effectiveness, reconciliation, and grouped register', async () => {
-  render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
+  const { container } = render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
   await screen.findByText('Updated live · last refresh just now');
   expect(screen.getByRole('heading', { name: 'Summary' })).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Activity' })).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Effectiveness' })).toBeVisible();
   expect(screen.getByText('Pursued 1 · Not pursued 1 · Open 1 · Archived 1 = 4 scored')).toBeVisible();
+  expect(container.querySelector('.di3-kpi-indicator.is-pursued')).toBeInTheDocument();
+  expect(container.querySelector('.di3-kpi-indicator.is-not-pursued')).toBeInTheDocument();
+  expect(container.querySelector('.di3-kpi-indicator.is-open')).toBeInTheDocument();
+  expect(container.querySelector('.di3-kpi-indicator.is-archived')).toBeInTheDocument();
   expect(screen.getByText(/Choose a vendor · Vendor selection/)).toBeVisible();
   expect(screen.getAllByText('Vendor A').length).toBeGreaterThan(0);
 });
