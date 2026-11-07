@@ -49,6 +49,7 @@ _STRUCTURED_OPERATIONS = frozenset({
     "decision_impact_narrative",
     "connector_idea_generation",
     "portfolio_analysis",
+    "decision_capture",
 })
 
 _ROUTINE_OPERATIONS = frozenset({

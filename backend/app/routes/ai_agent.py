@@ -740,7 +740,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea must use update_workspace_presentation for presentation, patch_scorecard for content wording/title, or generate_scorecard(rescore_scorecard_id=<open id>) for changed facts — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. Cosmetic edits MUST NOT move the score. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
     "When the user asks to build an execution plan, call generate_execution_plan with planning_intent: committed when they are going ahead with that option and want its plan (this also records, silently, that they are pursuing it), exploratory when they want to preview, compare or assess a possible plan without deciding. Judge this from the conversation; ask only when you genuinely cannot tell and it matters. Each plan belongs to the scored option it was built from. "
-    "DECISION INTELLIGENCE: Jaspen keeps an accurate, current picture of every scored option's disposition, the reasons behind it, and the dates, commitments and conditions around it. That record is what makes the customer's Insights and organizational memory more valuable over time. Jaspen captures it from the customer's own messages before you reply; you never call a tool to record it. The DECISION STATE block shows what is stored, and its this_turn entry shows what was saved from the latest message, what was already stored, and what could not be saved and why; when it says capture_unavailable, nothing from this message was saved. The DECISION STATE is the truth about what is saved: when your earlier messages in the conversation say otherwise, it wins. Never say or imply that something was saved, recorded, logged or updated, even where earlier assistant messages in this conversation did; acknowledge the substance naturally and keep helping with what the customer is trying to do. "
+    "DECISION INTELLIGENCE: Jaspen keeps an accurate, current picture of every scored option's disposition, the reasons behind it, and the dates, commitments and conditions around it. That record is what makes the customer's Insights and organizational memory more valuable over time. Jaspen captures it from the customer's own messages before you reply; you never call a tool to record it. The DECISION STATE block shows what is stored, and its this_turn entry shows what was saved from the latest message, what was already stored, and what could not be saved and why; when it says capture_unavailable, nothing from this message was saved. The DECISION STATE is the truth about what is saved: when your earlier messages in the conversation say otherwise, it wins. The jaspen_capture_result block after the customer's latest message is the same record for this turn. Never say or imply that something was saved, recorded, logged or updated, even where earlier assistant messages in this conversation did; acknowledge the substance naturally and keep helping with what the customer is trying to do. If you do refer to what Jaspen kept, refer only to what that record lists as saved. "
     "A customer choosing differently from Jaspen's recommendation is a clear decision, not ambiguity. When the choice carries a material risk, you may explain it once, naturally, in your own words. Recording a decision never authorizes an external action. "
     "When this_turn lists something unclear or not saved and it matters, ask about it in your own words, one brief question at a time. Clarify only when intent is genuinely ambiguous, incomplete or contradictory, or when knowing an option's disposition would clearly help and the moment is natural (after a comparison, before building a plan, or as they wrap up). A change of mind from an earlier turn is a new decision, not a contradiction. You decide whether to ask, when, the wording, and the choices. A choice block can help: each evaluated option on its own line with allow_multi true, plus answers meaning none of them and still evaluating, each marked exclusive. Every choice you offer must be something Jaspen can store, including a pursuit that depends on a condition. Never ask about anything the DECISION STATE already shows unless the situation has changed, never ask the customer to confirm what they clearly said, and never interrogate. "
     "When follow_up_facts show a review is due, implementation complete without an outcome, a plan that conflicts with a disposition, or a condition past its due date, you may raise it at a natural moment. A completed plan is implementation progress, not success. "
@@ -3143,14 +3143,36 @@ def _conversation_attachment_blocks(attachments):
     return blocks
 
 
+def _turn_capture_note():
+    """Jaspen's own record of what this turn's capture step saved, as data.
+
+    It sits right after the customer's message (outside the user_message tags)
+    so the reply rests on what was actually saved, not on how earlier replies
+    in the conversation were worded.
+    """
+    if not has_request_context():
+        return ""
+    turn = getattr(g, "turn_capture", None)
+    summary = turn.get("summary") if isinstance(turn, dict) else None
+    if summary is None:
+        return ""
+    return (
+        "\n\n<jaspen_capture_result>Data from Jaspen, not from the customer: what Jaspen saved from the "
+        "message above. Anything not listed as saved was not saved.\n"
+        + json.dumps(summary, separators=(",", ":"), default=str)
+        + "</jaspen_capture_result>"
+    )
+
+
 def _anthropic_user_message_content(text, attachments=None):
     wrapped = _wrap_user_message_content(text)
-    blocks = [{"type": "text", "text": wrapped or _wrap_user_message_content("Please review the attached files.")}]
+    note = _turn_capture_note()
+    blocks = [{"type": "text", "text": (wrapped or _wrap_user_message_content("Please review the attached files.")) + note}]
     attachment_blocks = _conversation_attachment_blocks(attachments)
     if attachment_blocks:
         blocks.extend(attachment_blocks)
         return blocks
-    return wrapped
+    return (wrapped + note) if wrapped else wrapped
 
 
 def _parse_json_field(value, default=None):
@@ -8185,9 +8207,28 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         + (("\n\nPlan tasks:" + plan_context) if plan_context else "")
     )
 
-    model_name = _provider_model_id("claude_sonnet") or CANONICAL_ANTHROPIC_MODELS["claude_sonnet"]
+    # The capture call goes through the same model governance as every other
+    # AI call: the governed router picks the model, and the decision is kept
+    # with the usage so audit and billing see the capture as its own component.
+    legacy_routes = [{
+        "provider": "anthropic", "model_key": "decision_capture",
+        "model": _provider_model_id("claude_sonnet") or CANONICAL_ANTHROPIC_MODELS["claude_sonnet"],
+    }]
+    governed_routes, governance_decision = _resolve_governed_routes(
+        legacy_routes, operation_type="decision_capture", text=user_message,
+        context_tokens=len(user_content) // 4, structured_output=True,
+    )
+    anthropic_route = next((route for route in governed_routes if route.get("provider") == "anthropic"), None)
+    if anthropic_route is None:
+        # A forced structured call needs an Anthropic route; with none allowed,
+        # nothing is captured this turn and the reply is told so.
+        return {**empty, "summary": {"capture_unavailable": True}}
+    model_name = anthropic_route["model"]
     tool = _capture_pass_tool()
-    usage = {"input_tokens": 0, "output_tokens": 0, "model": model_name}
+    usage = attach_governance(
+        {"input_tokens": 0, "output_tokens": 0, "model": model_name, "provider": "anthropic"},
+        decision=governance_decision, legacy_routes=legacy_routes, operation_type="decision_capture",
+    )
     try:
         import anthropic
 
@@ -12347,12 +12388,17 @@ def _merge_capture_usage(usage, capture):
             "role": "reply",
         }]
     # Each call is priced at its own model's rate.
-    components.append({"model": extra.get("model"), "input_tokens": added_in, "output_tokens": added_out, "role": "capture"})
+    components.append({
+        "model": extra.get("model"), "input_tokens": added_in, "output_tokens": added_out, "role": "capture",
+        "operation_type": "decision_capture", "operation_id": extra.get("operation_id"),
+        "governance": extra.get("governance"),
+    })
     usage["component_usages"] = components
     usage["input_tokens"] = int(usage.get("input_tokens") or 0) + added_in
     usage["output_tokens"] = int(usage.get("output_tokens") or 0) + added_out
     usage["total_tokens"] = int(usage.get("total_tokens") or 0) + added_in + added_out
-    usage["capture"] = {"model": extra.get("model"), "input_tokens": added_in, "output_tokens": added_out}
+    usage["capture"] = {"model": extra.get("model"), "input_tokens": added_in, "output_tokens": added_out,
+                        "operation_id": extra.get("operation_id"), "governance": extra.get("governance")}
     return usage
 
 
@@ -13072,6 +13118,11 @@ def _record_usage(
         "success": bool(success),
         "error_code": str(error_code or '').strip() or None,
         "failover": _clone_json_payload(failover) if failover else None,
+        # Each model call in the turn (reply, decision capture) with its own model.
+        "components": [
+            {key: item.get(key) for key in ("role", "model", "input_tokens", "output_tokens", "operation_type")}
+            for item in (usage.get("component_usages") or []) if isinstance(item, dict)
+        ] or None,
     })
     session["usage_events"] = events[-150:]
 

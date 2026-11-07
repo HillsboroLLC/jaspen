@@ -304,7 +304,8 @@ def test_capture_usage_is_added_to_the_turn(app):
         {'input_tokens': 100, 'output_tokens': 10, 'total_tokens': 110},
         {'usage': {'input_tokens': 50, 'output_tokens': 5, 'model': 'claude-sonnet-5'}},
     )
-    assert merged['total_tokens'] == 165 and merged['capture'] == {
+    assert merged['total_tokens'] == 165
+    assert {k: merged['capture'][k] for k in ('model', 'input_tokens', 'output_tokens')} == {
         'model': 'claude-sonnet-5', 'input_tokens': 50, 'output_tokens': 5,
     }
 
@@ -501,7 +502,7 @@ def test_billing_prices_each_call_at_its_own_model(app):
         {'model': 'claude-haiku-4-5', 'input_tokens': 100, 'output_tokens': 10, 'total_tokens': 110},
         {'usage': {'input_tokens': 50, 'output_tokens': 5, 'model': 'claude-sonnet-5'}},
     )
-    assert merged['component_usages'] == [
+    assert [{k: c[k] for k in ('model', 'input_tokens', 'output_tokens', 'role')} for c in merged['component_usages']] == [
         {'model': 'claude-haiku-4-5', 'input_tokens': 100, 'output_tokens': 10, 'role': 'reply'},
         {'model': 'claude-sonnet-5', 'input_tokens': 50, 'output_tokens': 5, 'role': 'capture'},
     ]
@@ -579,3 +580,68 @@ def test_decision_whose_words_fit_several_options_is_not_saved(app, db, test_use
     status = next(e['artifact']['data'] for e in agent._artifact_entries_from_actions(capture['actions'], user_message=message)
                   if e['artifact']['type'] == 'status')
     assert [a['value'] for a in status['actions']] == ['Adams County Bid', 'Cherry Creek Bid']
+
+
+# ── Pre-production: governance, acknowledgments ────────────────────────────
+
+
+def test_capture_model_comes_from_governed_routing(app, db, test_user, capture_model, monkeypatch):
+    _, agent = modules()
+    tid = 'turn-capture-governed'
+    _seed(db, test_user, tid, _cards())
+    _set_history(test_user, tid, _history('Pursue Boulder.'))
+    seen = {}
+
+    def governed(legacy_routes, *, operation_type, **kwargs):
+        seen['operation_type'] = operation_type
+        seen['structured'] = kwargs.get('structured_output')
+        return [{'provider': 'anthropic', 'model': 'claude-governed-test'}], {'route_class': 'structured', 'selected_model': 'claude-governed-test'}
+
+    monkeypatch.setattr(agent, '_resolve_governed_routes', governed)
+    capture = _run(agent, app, test_user, tid, 'Pursue Boulder.')
+    assert seen == {'operation_type': 'decision_capture', 'structured': True}
+    assert capture_model['requests'][0]['model'] == 'claude-governed-test'
+    assert capture['usage']['operation_type'] == 'decision_capture'
+    assert capture['usage']['governance']['selected_model'] == 'claude-governed-test'
+    merged = agent._merge_capture_usage({'model': 'claude-sonnet-5', 'input_tokens': 10, 'output_tokens': 1, 'total_tokens': 11}, capture)
+    component = merged['component_usages'][-1]
+    assert component['role'] == 'capture' and component['operation_type'] == 'decision_capture'
+    assert component['governance']['selected_model'] == 'claude-governed-test'
+
+
+def test_no_allowed_anthropic_route_means_nothing_captured(app, db, test_user, capture_model, monkeypatch):
+    _, agent = modules()
+    tid = 'turn-capture-no-route'
+    _seed(db, test_user, tid, _cards())
+    _set_history(test_user, tid, _history('Pursue Boulder.'))
+    monkeypatch.setattr(agent, '_resolve_governed_routes', lambda *a, **k: ([{'provider': 'gemini', 'model': 'g'}], {}))
+    capture = _run(agent, app, test_user, tid, 'Pursue Boulder.')
+    assert capture['summary'] == {'capture_unavailable': True} and capture_model['requests'] == []
+
+
+def test_capture_record_sits_beside_the_latest_message(app):
+    from flask import g
+
+    _, agent = modules()
+    with app.test_request_context():
+        assert agent._anthropic_user_message_content('Pursue Boulder.') == agent._wrap_user_message_content('Pursue Boulder.')
+        g.turn_capture = {'thread_id': 't', 'summary': {'saved': [{'what': 'decision', 'option': 'Boulder'}],
+                                                      'already_stored': [], 'not_saved': [], 'unclear': []}}
+        content = agent._anthropic_user_message_content('Pursue Boulder.')
+    assert content.startswith(agent._wrap_user_message_content('Pursue Boulder.'))
+    assert '<jaspen_capture_result>' in content and '"option":"Boulder"' in content
+    # The record sits outside the customer's tags, so it can't be mistaken for their words.
+    assert content.index('</user_message>') < content.index('<jaspen_capture_result>')
+
+
+def test_usage_event_lists_each_model_call(app):
+    _, agent = modules()
+    session = {'session_id': 't'}
+    usage = agent._merge_capture_usage(
+        {'provider': 'anthropic', 'model': 'claude-haiku-4-5', 'input_tokens': 100, 'output_tokens': 10, 'total_tokens': 110},
+        {'usage': {'input_tokens': 50, 'output_tokens': 5, 'model': 'claude-sonnet-5'}},
+    )
+    with app.test_request_context():
+        agent._record_usage(session, usage, 3, operation_type='conversation')
+    event = session['usage_events'][-1]
+    assert [(c['role'], c['model']) for c in event['components']] == [('reply', 'claude-haiku-4-5'), ('capture', 'claude-sonnet-5')]

@@ -6,6 +6,7 @@
 // ============================================================================
 
 import { refreshScorecardMessages, selectCurrentScorecard, scorecardId, weightedRubricCriteria } from './currentScorecards';
+import { planChangedByMutation } from './planRefresh';
 import { decisionKitForConversationStart, isRfpDecision, RFP_DECISION_INTENT } from './decisionTypeSelection';
 import { streamFailurePresentation } from './messageFormatting';
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useReducer, useCallback } from 'react';
@@ -3972,7 +3973,7 @@ const applyMutationRefreshes = async (payload, fallbackThreadId = null) => {
     if (tool === 'generate_scorecard' || tool === 'generate_tradeoff_comparison') {
       scenarioChanged = true;
     }
-    if (['update_wbs_task', 'add_wbs_task', 'add_wbs_dependency', 'remove_wbs_task', 'generate_execution_plan'].includes(tool)) {
+    if (planChangedByMutation(mutation)) {
       wbsChanged = true;
     }
     if (tool === 'rename_thread') {
