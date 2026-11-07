@@ -7966,7 +7966,7 @@ _CAPTURE_SYSTEM_PROMPT = (
     "unless it adds or changes conditions.\n"
     "Notes: reasons, trade-offs, assumptions, concerns, evidence, commitments (something the customer or "
     "their team will do), deadlines (a date someone else set, such as a bid due date), success measures and "
-    "review timing. Write every date as YYYY-MM-DD, resolved from the customer's words using today's date and weekday (Dec 12 means the next Dec 12; by Friday means the coming Friday, or today when today is Friday and they mean today); omit a date only when it is truly unclear. A reason belongs only to the option it explains. "
+    "review timing. Write every date as YYYY-MM-DD, resolved from the customer's words using today's date and weekday (Dec 12 means the next Dec 12; by Friday means the coming Friday, or today when today is Friday and they mean today); omit a date only when it is truly unclear. A reason belongs only to the option it explains, and a condition is never also a reason; record each statement once. "
     "When the option a note belongs to is unclear, leave option_key empty to record it for the whole decision. "
     "A new condition on an option already pursued is a note of kind condition with that option_key.\n"
     "Condition updates: when the customer says a listed condition was met, not met or waived, return its "
@@ -8132,13 +8132,10 @@ def _capture_signal_exists(record, *, kind, option_key, quote, content=None):
         decision_record_id=str(record.id), kind=kind, option_key=option_key or None, retracted_at=None,
     )
     for row in query.all():
-        if not _capture_quotes_overlap(row.user_quote, quote):
-            continue
-        if kind == "condition" and content is not None and str(row.content or "").strip().casefold() != str(content or "").strip().casefold() and not _capture_quotes_overlap(row.content, content):
-            # Two different conditions can come from one sentence.
-            if str(row.user_quote or "").strip().casefold() == str(quote or "").strip().casefold():
-                continue
-        return True
+        # The same or an overlapping quote is the same statement, however the
+        # content was worded (the capture step may restate it differently).
+        if _capture_quotes_overlap(row.user_quote, quote):
+            return True
     return False
 
 
@@ -8279,6 +8276,8 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
             for c in (item.get("conditions") or []) if isinstance(c, dict)
         ]
         rationale_quote = str(item.get("rationale_quote") or "").strip()
+        if rationale_quote and any(_capture_quotes_overlap(rationale_quote, c["user_quote"]) for c in conditions):
+            rationale_quote = ""  # a condition is not also a reason
         current = current_option_decision(record, key) if record is not None else None
         if current is not None and newer_change_exists(message, current.decided_at):
             already.append({"what": "decision", "option": names.get(key), "reason": "later_decision_stands"})
@@ -8355,6 +8354,13 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
                 "date", "due_by", "review_by", "set_by", "owner", "measure", "target", "unit",
             ) if item.get(field)
         }
+        if kind in {"commitment", "deadline"} and not structured.get("date") and structured.get("due_by"):
+            structured["date"] = structured.pop("due_by")
+        if kind == "rationale" and record is not None and _capture_signal_exists(
+            record, kind="condition", option_key=key, quote=item.get("quote"),
+        ):
+            # A condition is not also a reason.
+            continue
         tool_input = {"kind": kind, "content": str(item.get("content") or "").strip(),
                       "user_request_quote": str(item.get("quote") or "").strip()}
         if key:
