@@ -260,7 +260,17 @@ def build_insights_v3(user, scope_context, filters=None):
 
     today = datetime.now(timezone.utc).replace(tzinfo=None)
     options = []
+    decision_outcomes = []
+    decision_lessons = []
     for record in records:
+        decision_outcomes.extend(
+            {"record_id": str(record.id), "decision_title": record.title, **entry}
+            for entry in (record.outcomes or []) if isinstance(entry, dict)
+        )
+        decision_lessons.extend(
+            {"record_id": str(record.id), "decision_title": record.title, **entry}
+            for entry in (record.lessons_learned or []) if isinstance(entry, dict)
+        )
         session = session_by_thread.get(str(record.thread_id))
         record_decisions = [row for values in decisions_by_option.values() for row in values if str(row.decision_record_id) == str(record.id)]
         record_signals = [row for values in signals_by_option.values() for row in values if str(row.decision_record_id) == str(record.id)]
@@ -440,16 +450,29 @@ def build_insights_v3(user, scope_context, filters=None):
             and ("too_early" in _statuses(item) or any(_dt(value) and _dt(value).date() >= today.date() for value in item["success_review_by"]))
             for item in pursued
         ),
+        "outcomes_recorded": len(decision_outcomes) + sum(len(item["outcomes"]) for item in pursued),
         "measured": sum(any(status in MEASURED for status in _statuses(item)) for item in pursued),
         "measured_by_status": {status: sum(status in _statuses(item) for item in pursued) for status in sorted(MEASURED)},
         "met_expectation": sum(any(outcome.get("objective_met") is True for outcome in item["outcomes"]) for item in pursued),
-        "lessons": sum(len(item["lessons"]) for item in pursued),
+        "lessons": len(decision_lessons) + sum(len(item["lessons"]) for item in pursued),
         "latest_lesson": max(
             ({"option_id": item["id"], "option_name": item["option_name"], "recorded_at": lesson.get("recorded_at"), "lesson": lesson.get("lesson") or lesson.get("summary")}
              for item in pursued for lesson in item["lessons"]),
             key=lambda entry: str(entry.get("recorded_at") or ""), default=None,
         ),
     }
+    latest_decision_lesson = max(decision_lessons, key=lambda entry: str(entry.get("recorded_at") or ""), default=None)
+    if latest_decision_lesson and (
+        outcome_stages["latest_lesson"] is None
+        or str(latest_decision_lesson.get("recorded_at") or "")
+        > str(outcome_stages["latest_lesson"].get("recorded_at") or "")
+    ):
+        outcome_stages["latest_lesson"] = {
+            "option_id": None,
+            "option_name": latest_decision_lesson["decision_title"],
+            "recorded_at": latest_decision_lesson.get("recorded_at"),
+            "lesson": latest_decision_lesson.get("lesson") or latest_decision_lesson.get("summary"),
+        }
     summary = []
     if activity["needs_attention"]: summary.append({"kind": "exception", "option_id": activity["needs_attention"][0]["id"], "count": len(activity["needs_attention"]), "trigger_kind": activity["needs_attention"][0]["triggers"][0]["kind"]})
     assumed = [item for item in pursued if item["evidence_backed_pct"] is not None and item["evidence_backed_pct"] < 50]

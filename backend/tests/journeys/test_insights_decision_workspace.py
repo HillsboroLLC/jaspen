@@ -19,6 +19,7 @@ def test_recorded_choice_and_lesson_appear_in_customer_insights(client, db, test
             "first_scored_at": "2026-11-05T10:00:00", "jaspen_score": 82,
             "score_category": "Strong", "evidence_profile": {"evidence_backed_pct": 60},
         }]},
+        outcomes=[{"summary": "The pilot reached its launch target.", "status": "achieved", "recorded_at": "2026-11-05T13:00:00"}],
         lessons_learned=[{"lesson": "Pilot evidence changed the rollout sequence.", "recorded_at": "2026-11-05T12:00:00"}],
     )
     db.session.add(record)
@@ -37,3 +38,7 @@ def test_recorded_choice_and_lesson_appear_in_customer_insights(client, db, test
     assert payload["activity"]["pursued"]["value"] == 1
     assert payload["register"]["rows"][0]["option_name"] == "Phased pilot"
     assert payload["register"]["rows"][0]["history"][0]["source"] == "manual"
+    outcomes = payload["effectiveness"]["outcomes"]
+    assert outcomes["outcomes_recorded"] == 1
+    assert outcomes["lessons"] == 1
+    assert outcomes["latest_lesson"]["lesson"] == "Pilot evidence changed the rollout sequence."

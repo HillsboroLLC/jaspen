@@ -40,7 +40,7 @@ const BASE = {
     gap_follow_through: { identified: 1, task_created: 1, task_completed: 0, resolved: 0, result: 0 },
     evidence_at_commitment: metric(null, { unavailable_reason: 'insufficient_months', points: [{ month: '2026-10', evidence_backed_pct: 60, n: 1 }] }),
     recurring_gaps: [{ kind: 'Vendor selection', key: 'security', label: 'Security', decisions_affected: 1, decisions_total: 1, resolved_later: 0 }],
-    outcomes: { pursued: 1, success_measure_captured: 0, implementation_complete: 0, awaiting_measurement: 0, measured: 0, met_expectation: 0, lessons: 0 },
+    outcomes: { pursued: 1, success_measure_captured: 0, implementation_complete: 0, awaiting_measurement: 0, outcomes_recorded: 0, measured: 0, met_expectation: 0, lessons: 0 },
   },
   register: { rows: [ROW], total: 1, page: 1, per_page: 25, pages: 1 },
   facets: { states: ['pursued', 'not_pursued', 'open', 'archived'], kinds: ['Vendor selection'], members: [] },
@@ -162,11 +162,12 @@ it('composes trigger labels from stored facts and shows condition and recommenda
 
 it('renders outcome stages as numbers and the latest lesson', async () => {
   const outcomes = { pursued: 2, success_measure_captured: 1, implementation_complete: 1, awaiting_measurement: 1, measured: 1,
-    measured_by_status: { achieved: 1 }, met_expectation: 1, lessons: 1,
+    outcomes_recorded: 2, measured_by_status: { achieved: 1 }, met_expectation: 1, lessons: 1,
     latest_lesson: { option_id: ROW.id, option_name: 'Vendor A', lesson: 'Start security review earlier', recorded_at: '2026-10-09' } };
   global.fetch.mockResolvedValue(response({ ...BASE, effectiveness: { ...BASE.effectiveness, outcomes } }));
   render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
   expect(await screen.findByText('Awaiting measurement')).toBeVisible();
+  expect(screen.getByText('Outcomes recorded')).toBeVisible();
   expect(screen.getByText(/Latest lesson \(Vendor A\): Start security review earlier/)).toBeVisible();
   expect(document.body.textContent).not.toMatch(/NaN/);
 });
