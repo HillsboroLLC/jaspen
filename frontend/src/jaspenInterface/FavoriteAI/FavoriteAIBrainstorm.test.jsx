@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import FavoriteAIBrainstorm from './FavoriteAIBrainstorm';
 import { appendComposerDraft, BRAINSTORM_PROMPT, buildCopiedPrompt } from './favoriteAI';
@@ -41,6 +41,12 @@ describe('FavoriteAIBrainstorm', () => {
 
   test('shows the integration note and an editable comprehensive prompt', async () => {
     const user = userEvent.setup();
+    const scheduledFrames = [];
+    const frameSpy = jest.spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        scheduledFrames.push(callback);
+        return scheduledFrames.length;
+      });
     render(<FavoriteAIBrainstorm projectSummary={summary} onAddToComposer={jest.fn()} />);
     await user.click(screen.getByRole('button', { name: 'Brainstorm with ChatGPT' }));
     expect(screen.getByText('Exploring a more connected experience')).toBeInTheDocument();
@@ -51,8 +57,11 @@ describe('FavoriteAIBrainstorm', () => {
     expect(BRAINSTORM_PROMPT).toMatch(/objectives, criteria, priorities, constraints, assumptions/);
     expect(BRAINSTORM_PROMPT).toMatch(/verified from a named source, estimates/);
     await user.clear(prompt);
+    act(() => scheduledFrames.splice(0).forEach((callback) => callback()));
+    expect(prompt).toHaveFocus();
     await user.type(prompt, 'My tailored prompt');
     expect(prompt).toHaveValue('My tailored prompt');
+    frameSpy.mockRestore();
   });
 
   test('keeps project context off by default and copies exactly the edited visible prompt', async () => {

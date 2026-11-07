@@ -90,7 +90,11 @@ export default function FavoriteAIBrainstorm({ projectSummary, onAddToComposer }
     document.addEventListener('keydown', onKeyDown);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    requestAnimationFrame(() => closeButtonRef.current?.focus());
+    requestAnimationFrame(() => {
+      if (!modalRef.current?.contains(document.activeElement)) {
+        closeButtonRef.current?.focus();
+      }
+    });
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       document.body.style.overflow = previousOverflow;
