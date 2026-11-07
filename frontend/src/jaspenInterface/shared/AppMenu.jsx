@@ -553,9 +553,10 @@ export default function AppMenu() {
             <span className="jas-ud-item-badge is-soon">Coming soon</span>
           </button>
 
-          <button className={menuItemClass('/insights')} onClick={() => { close(); navigate('/insights'); }}>
+          <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
             <FontAwesomeIcon icon={faChartLine} />
             <span className="jas-ud-item-label">Insights</span>
+            <span className="jas-ud-item-badge is-soon">Coming soon</span>
           </button>
 
           <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">

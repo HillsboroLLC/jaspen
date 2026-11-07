@@ -5645,9 +5645,10 @@ useEffect(() => {
             <span className="jas-ud-item-label">Scores</span>
             <span className="jas-ud-item-badge is-soon">Coming soon</span>
           </button>
-          <button className="jas-ud-item" onClick={() => { onClose?.(); navigate('/insights'); }}>
+          <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
             <FontAwesomeIcon icon={faChartLine} />
             <span className="jas-ud-item-label">Insights</span>
+            <span className="jas-ud-item-badge is-soon">Coming soon</span>
           </button>
           <button className="jas-ud-item is-coming-soon" disabled aria-disabled="true" title="Coming soon">
             <FontAwesomeIcon icon={faDownload} />
