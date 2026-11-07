@@ -84,6 +84,10 @@ def postgres_schema_url():
 
 
 def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "postgres: requires the local PostgreSQL test database configured by TEST_DATABASE_URL",
+    )
     test_database_url = os.environ.get("TEST_DATABASE_URL")
     if test_database_url:
         _validated_test_database_url(test_database_url)
