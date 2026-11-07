@@ -8271,12 +8271,13 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
             or bool(failed_check_labels)
         )
         if (
-            # A customer who already recorded pursuing this option has decided;
-            # Jaspen's recommendation stays beside that decision, and the plan
-            # builds without asking again. The check remains only for a first
-            # Build plan click with no decision on record.
+            # A pursuit the customer already recorded against Jaspen's
+            # recommendation carries that override, so the plan builds without
+            # asking again. Asking remains only when no recorded decision covers
+            # the current recommendation (a first click, or a pursuit Jaspen
+            # agreed with before the option was rescored).
             commit and override_required
-            and recorded_decision is None
+            and not bool((recorded_decision or {}).get('override_info'))
             and not bool(record_request.get('acknowledged'))
         ):
             return jsonify({

@@ -342,3 +342,166 @@ def test_conversation_route_runs_capture_before_the_reply(client, db, test_user,
     assert seen['rows_before_reply'] == 1 and '"this_turn"' in seen['suffix']
     assert not [i for i in payload.get('artifact_messages') or [] if i['artifact']['type'] in {'receipts', 'confirm'}]
     assert OptionDecision.query.one().option_key == 'option-b'
+
+
+# ── Review fixes ───────────────────────────────────────────────────────────
+
+
+def test_latest_message_wins_within_one_capture(app, db, test_user, capture_model):
+    from app.models_decision_record import OptionDecision
+
+    _, agent = modules()
+    tid = 'turn-capture-order'
+    _seed(db, test_user, tid, _cards())
+    first, latest = "We're pursuing Boulder.", 'Actually drop Boulder.'
+    _set_history(test_user, tid, _history(first, latest, assistant='Okay.'))
+    capture_model['payloads'].append(_empty(decisions=[
+        {'message': 2, 'option_key': 'option-b', 'disposition': 'not_pursue', 'quote': 'drop Boulder'},
+        {'message': 1, 'option_key': 'option-b', 'disposition': 'pursue', 'quote': 'pursuing Boulder'},
+    ]))
+    _run(agent, app, test_user, tid, latest)
+    assert [(r.disposition, r.superseded_at is None) for r in OptionDecision.query.all()] == [('not_pursue', True)]
+
+
+def test_earlier_condition_update_never_overturns_a_later_status(app, db, test_user, capture_model):
+    from app.models_decision_record import DecisionSignal
+
+    _, agent = modules()
+    tid = 'turn-capture-condition-stale'
+    _seed(db, test_user, tid, _cards())
+    start = datetime.utcnow() - timedelta(hours=1)
+    msgs = ['Pursue Cherry Creek if bonding comes through.', 'Bonding came through.', 'Bonding fell through after all.']
+    _set_history(test_user, tid, _history(*msgs, assistant='Noted.', start=start))
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'Pursue Cherry Creek',
+         'conditions': [{'content': 'Bonding', 'user_quote': 'if bonding comes through'}]},
+    ]}, msgs[0])
+    open_row = DecisionSignal.query.filter_by(kind='condition').one()
+    _call(agent, test_user, tid, 'record_decision_context', {
+        'kind': 'condition', 'condition_signal_id': str(open_row.id), 'structured': {'status': 'not_met'},
+        'user_request_quote': 'Bonding fell through',
+    }, msgs[2])
+    current = DecisionSignal.query.filter_by(kind='condition', supersedes_id=str(open_row.id)).one()
+    capture_model['payloads'].append(_empty(condition_updates=[
+        {'message': 2, 'condition_signal_id': str(current.id), 'status': 'met', 'quote': 'Bonding came through'},
+    ]))
+    capture = _run(agent, app, test_user, tid, 'What now?')
+    statuses = [r.structured['status'] for r in DecisionSignal.query.filter_by(kind='condition').order_by(DecisionSignal.created_at)]
+    assert statuses == ['open', 'not_met']
+    assert capture['summary']['already_stored'][0]['reason'] == 'later_status_stands'
+
+
+def test_reworded_quote_from_the_same_statement_is_not_a_duplicate(app, db, test_user, capture_model):
+    from app.models_decision_record import DecisionSignal
+
+    _, agent = modules()
+    tid = 'turn-capture-reworded'
+    _seed(db, test_user, tid, _cards())
+    message = 'We worry the crew is stretched thin this winter.'
+    _set_history(test_user, tid, _history(message))
+    capture_model['payloads'].extend([
+        _empty(notes=[{'message': 1, 'kind': 'concern', 'content': 'Crew capacity', 'quote': 'crew is stretched thin'}]),
+        _empty(notes=[{'message': 1, 'kind': 'concern', 'content': 'Crew stretched thin in winter',
+                       'quote': 'the crew is stretched thin this winter'}]),
+    ])
+    _run(agent, app, test_user, tid, message)
+    _run(agent, app, test_user, tid, message)
+    assert DecisionSignal.query.filter_by(kind='concern').count() == 1
+
+
+def test_outcome_is_not_duplicated_after_a_new_decision_row(app, db, test_user, capture_model):
+    from app.models_decision_record import OptionDecision
+
+    _, agent = modules()
+    tid = 'turn-capture-outcome-dupe'
+    _seed(db, test_user, tid, _cards())
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-a', 'disposition': 'pursue', 'user_request_quote': 'Pursue Adams'},
+    ]}, 'Pursue Adams.')
+    message = 'We won Adams and margin came in at 18 percent against 20 expected.'
+    _set_history(test_user, tid, _history(message))
+    outcome = {'message': 1, 'option_key': 'option-a', 'status': 'partially_achieved', 'summary': 'Won, margin below plan',
+               'quote': 'We won Adams', 'observed': '18 percent', 'expected': '20'}
+    capture_model['payloads'].append(_empty(outcomes=[outcome]))
+    _run(agent, app, test_user, tid, message)
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-a', 'disposition': 'still_evaluating', 'user_request_quote': 'reconsidering Adams'},
+    ]}, 'We are reconsidering Adams.')
+    capture_model['payloads'].append(_empty(outcomes=[{**outcome, 'quote': 'won Adams and margin came in at 18 percent'}]))
+    _run(agent, app, test_user, tid, message)
+    entries = [e for row in OptionDecision.query.all() for e in (row.outcomes or [])]
+    assert len(entries) == 1
+    assert (entries[0].get('observed_result'), entries[0].get('expected_result')) == ('18 percent', '20')
+
+
+def test_aware_timestamp_never_disables_capture(app, db, test_user, capture_model):
+    from app.models_decision_record import OptionDecision
+
+    _, agent = modules()
+    tid = 'turn-capture-aware'
+    _seed(db, test_user, tid, _cards())
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-a', 'disposition': 'pursue', 'user_request_quote': 'Pursue Adams'},
+    ]}, 'Pursue Adams.')
+    history = [
+        {'role': 'user', 'content': 'Drop Adams.', 'timestamp': '2026-01-01T10:00:00+00:00'},
+        {'role': 'user', 'content': 'And pursue Boulder.', 'timestamp': datetime.utcnow().isoformat()},
+    ]
+    _set_history(test_user, tid, history)
+    capture_model['payloads'].append(_empty(decisions=[
+        {'message': 1, 'option_key': 'option-a', 'disposition': 'not_pursue', 'quote': 'Drop Adams'},
+        {'message': 2, 'option_key': 'option-b', 'disposition': 'pursue', 'quote': 'pursue Boulder'},
+    ]))
+    _run(agent, app, test_user, tid, 'And pursue Boulder.')
+    current = {r.option_key: r.disposition for r in OptionDecision.query.filter_by(superseded_at=None)}
+    assert current == {'option-a': 'pursue', 'option-b': 'pursue'}
+
+
+def test_new_reason_on_unchanged_decision_is_saved_without_a_new_decision_row(app, db, test_user, capture_model):
+    from app.models_decision_record import DecisionSignal, OptionDecision
+
+    _, agent = modules()
+    tid = 'turn-capture-new-reason'
+    _seed(db, test_user, tid, _cards())
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-b', 'disposition': 'pursue', 'user_request_quote': 'Pursue Boulder'},
+    ]}, 'Pursue Boulder.')
+    message = 'Still pursuing Boulder because the client renewed. Only if the permit clears.'
+    _set_history(test_user, tid, _history(message))
+    capture_model['payloads'].append(_empty(decisions=[
+        {'message': 1, 'option_key': 'option-b', 'disposition': 'pursue', 'quote': 'Still pursuing Boulder',
+         'rationale_quote': 'because the client renewed',
+         'conditions': [{'content': 'Permit clears', 'quote': 'Only if the permit clears'}]},
+    ]))
+    capture = _run(agent, app, test_user, tid, message)
+    assert OptionDecision.query.count() == 1
+    assert DecisionSignal.query.filter_by(kind='rationale').one().user_quote == 'because the client renewed'
+    assert DecisionSignal.query.filter_by(kind='condition').one().structured['status'] == 'open'
+    assert {item['what'] for item in capture['summary']['saved']} == {'rationale', 'condition'}
+
+
+def test_unclear_needs_the_latest_message_and_real_candidates(app, db, test_user, capture_model):
+    _, agent = modules()
+    tid = 'turn-capture-unclear-rules'
+    _seed(db, test_user, tid, _cards())
+    _set_history(test_user, tid, _history('Go with the Adams one.', 'Adams County, sorry.', assistant='Which one?'))
+    capture_model['payloads'].append(_empty(unclear=[
+        {'message': 1, 'reference': 'the Adams one', 'candidate_option_keys': ['option-a', 'option-b']},
+        {'message': 2, 'reference': 'Adams County', 'candidate_option_keys': []},
+    ]))
+    capture = _run(agent, app, test_user, tid, 'Adams County, sorry.')
+    assert capture['summary']['unclear'] == []
+    assert not [e for e in agent._artifact_entries_from_actions(capture['actions'], user_message='x')
+                if e['artifact']['type'] == 'status']
+
+
+def test_billing_prices_each_call_at_its_own_model(app):
+    _, agent = modules()
+    merged = agent._merge_capture_usage(
+        {'model': 'claude-haiku-4-5', 'input_tokens': 100, 'output_tokens': 10, 'total_tokens': 110},
+        {'usage': {'input_tokens': 50, 'output_tokens': 5, 'model': 'claude-sonnet-5'}},
+    )
+    assert merged['component_usages'] == [
+        {'model': 'claude-haiku-4-5', 'input_tokens': 100, 'output_tokens': 10, 'role': 'reply'},
+        {'model': 'claude-sonnet-5', 'input_tokens': 50, 'output_tokens': 5, 'role': 'capture'},
+    ]
