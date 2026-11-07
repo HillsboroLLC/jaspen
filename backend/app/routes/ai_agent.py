@@ -3156,9 +3156,12 @@ def _turn_capture_note():
     summary = turn.get("summary") if isinstance(turn, dict) else None
     if summary is None:
         return ""
+    if summary.get("capture_unavailable") or not summary.get("saved"):
+        headline = "Nothing from the message above was saved."
+    else:
+        headline = "What Jaspen saved from the message above; anything not listed as saved was not saved."
     return (
-        "\n\n<jaspen_capture_result>Data from Jaspen, not from the customer: what Jaspen saved from the "
-        "message above. Anything not listed as saved was not saved.\n"
+        "\n\n<jaspen_capture_result>Data from Jaspen, not from the customer. " + headline + "\n"
         # Angle brackets are escaped so no stored text can close or forge the block.
         + json.dumps(summary, separators=(",", ":"), default=str).replace("<", "\\u003c").replace(">", "\\u003e")
         + "</jaspen_capture_result>"
@@ -8264,6 +8267,18 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
             break
     if not isinstance(payload, dict):
         return {**empty, "usage": usage, "summary": {"capture_unavailable": True}}
+    # The model's output is untrusted shape: each bucket must be a list of
+    # objects. A bucket sent as JSON text is parsed; anything else is dropped.
+    cleaned = {}
+    for bucket in ("decisions", "notes", "condition_updates", "outcomes", "lessons", "task_commitments", "unclear"):
+        value = payload.get(bucket)
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                value = []
+        cleaned[bucket] = [item for item in (value if isinstance(value, list) else []) if isinstance(item, dict)]
+    payload = cleaned
 
     plan_key = effective_plan_key(user)
     view_active = str((_sanitize_view_context(view_context) or {}).get("active_scorecard_id") or "").strip() or None

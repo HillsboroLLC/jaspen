@@ -708,3 +708,25 @@ def test_task_commitment_with_a_stated_date_commits_that_date(app, db, test_user
     assert capture['summary']['saved'] == [{'what': 'task_commitment', 'task': 't1', 'date': '2026-11-20'}]
     plan_actions = [a for a in capture['actions'] if a['tool'] == 'record_decision_context']
     assert plan_actions[0]['result']['task_commitment']['status'] == 'recorded'
+
+
+def test_malformed_capture_output_never_crashes_and_is_reported(app, db, test_user, capture_model):
+    from flask import g
+    from app.models_decision_record import OptionDecision
+
+    _, agent = modules()
+    tid = 'turn-capture-malformed'
+    _seed(db, test_user, tid, _cards())
+    message = "Let's go with Boulder."
+    _set_history(test_user, tid, _history(message))
+    capture_model['payloads'].append(_empty(
+        decisions=['option-b'],
+        notes='[{"message": 1, "kind": "rationale", "content": "x", "quote": "go with Boulder"}]',
+    ))
+    capture = _run(agent, app, test_user, tid, message)
+    assert OptionDecision.query.count() == 0
+    assert capture['summary']['saved'][0]['what'] == 'rationale'
+    with app.test_request_context():
+        g.turn_capture = {'thread_id': tid, 'summary': {'capture_unavailable': True}}
+        content = agent._anthropic_user_message_content(message)
+    assert 'Nothing from the message above was saved.' in content
