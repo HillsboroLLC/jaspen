@@ -104,7 +104,7 @@ def test_gap_stages_remain_separate_and_plan_completion_is_not_success(client, d
 
 def test_review_due_and_stated_outcomes_are_separate_stages(client, db, app):
     owner = _user(db, "outcomes@example.com", "Owner"); org = _organization(db, owner)
-    record = _record(db, org, owner, "outcomes", [_card("alpha", first=datetime.utcnow().isoformat())]); _decision(db, record, "alpha", "pursue", outcomes=[{"status": "measured", "objective_met": True}], lessons=[{"lesson": "Start earlier"}])
+    record = _record(db, org, owner, "outcomes", [_card("alpha", first=datetime.utcnow().isoformat())]); _decision(db, record, "alpha", "pursue", outcomes=[{"status": "achieved", "objective_met": True}], lessons=[{"lesson": "Start earlier"}])
     db.session.add(DecisionSignal(organization_id=org.id, attribution_user_id=owner.id, actor_user_id=owner.id, thread_id="outcomes", decision_record_id=record.id, option_key="alpha", kind="success_measure", content="Reach target", source="manual", structured={"review_by": "2000-01-01"})); db.session.commit()
     payload = _get(client, app, owner)
     assert not any(trigger["kind"] == "outcome_review_due" for trigger in payload["register"]["rows"][0]["triggers"])
@@ -132,3 +132,114 @@ def test_missing_metrics_are_null_with_a_reason(client, db, app):
     assert payload["activity"]["average_time_to_plan_hours"]["unavailable_reason"] == "no_plans"
     assert payload["effectiveness"]["evidence_at_commitment"]["value"] is None
     assert payload["effectiveness"]["evidence_at_commitment"]["unavailable_reason"] == "insufficient_months"
+
+
+# ── Completion of phase 2 (Claude) ─────────────────────────────────────────
+
+
+def _signal(db, org, owner, record, key, kind, content, structured=None, at=None, supersedes=None):
+    row = DecisionSignal(organization_id=org.id, attribution_user_id=owner.id, actor_user_id=owner.id, thread_id=record.thread_id,
+                         decision_record_id=record.id, option_key=key, kind=kind, content=content, source="conversation",
+                         user_quote=content, structured=structured or {}, occurred_at=at or datetime.utcnow(), supersedes_id=supersedes)
+    db.session.add(row); db.session.flush(); return row
+
+
+def test_conditions_and_against_recommendation_are_markers_not_new_states(client, db, app):
+    owner = _user(db, "cond@example.com", "Owner"); org = _organization(db, owner)
+    record = _record(db, org, owner, "cond", [_card("alpha"), _card("beta")], kit="rfp_bid")
+    row = _decision(db, record, "alpha", "pursue")
+    row.override_info = {"override_of": "decline", "failed_check_labels": []}
+    row.kit_verdict = {"verdict_key": "advance_with_conditions", "recommendation_snapshot": {"verdict_key": "decline", "label": "No-Bid"}}
+    _decision(db, record, "beta", "not_pursue")
+    first = _signal(db, org, owner, record, "alpha", "condition", "Bonding secured", {"status": "open", "due_by": "2000-01-01"})
+    _signal(db, org, owner, record, "beta", "condition", "Price drops", {"status": "open", "due_by": "2000-01-01"})
+    db.session.commit()
+    payload = _get(client, app, owner)
+    rows = {row["option_key"]: row for row in payload["register"]["rows"]}
+    assert rows["alpha"]["state"] == "pursued"
+    assert rows["alpha"]["conditions"][0]["status"] == "open"
+    assert rows["alpha"]["against_recommendation"]["jaspen_recommendation"] == "No-Bid"
+    # A not-pursued option's conditions no longer apply.
+    assert rows["beta"]["conditions"] == [] and rows["beta"]["against_recommendation"] is None
+    past_due = [t for t in rows["alpha"]["triggers"] if t["kind"] == "condition_past_due"]
+    assert past_due and past_due[0]["evidence"]["signal_id"] == str(first.id)
+    assert not [t for t in rows["beta"]["triggers"] if t["kind"] == "condition_past_due"]
+    activity = payload["activity"]
+    assert set(k for k in ("pursued", "not_pursued", "open", "archived")) <= set(activity) and activity["reconciles"] is True
+
+    met = _signal(db, org, owner, record, "alpha", "condition", "Bonding secured", {"status": "met", "due_by": "2000-01-01"}, supersedes=str(first.id))
+    db.session.commit()
+    rows = {row["option_key"]: row for row in _get(client, app, owner)["register"]["rows"]}
+    assert [c["status"] for c in rows["alpha"]["conditions"]] == ["met"]
+    assert not [t for t in rows["alpha"]["triggers"] if t["kind"] == "condition_past_due"]
+    assert met.id
+
+
+def test_triggers_carry_facts_only_never_backend_prose(client, db, app):
+    owner = _user(db, "prose@example.com", "Owner"); org = _organization(db, owner)
+    soon = (datetime.utcnow() + timedelta(days=5)).date().isoformat()
+    record = _record(db, org, owner, "prose", [_card("alpha", gates=[{"key": "surety", "label": "Surety", "status": "unknown"}])], kit="rfp_bid")
+    _decision(db, record, "alpha", "pursue")
+    _signal(db, org, owner, record, None, "deadline", "Bid due", {"date": soon})
+    db.session.commit()
+    row = _get(client, app, owner)["register"]["rows"][0]
+    trigger = next(t for t in row["triggers"] if t["kind"] == "decision_milestone_at_risk")
+    assert trigger["evidence"]["deadline"] == soon and trigger["evidence"]["window_days"] == 14
+    assert all("condition" not in t for t in row["triggers"])
+
+
+def test_outcomes_on_earlier_decision_versions_still_count(client, db, app):
+    owner = _user(db, "versions@example.com", "Owner"); org = _organization(db, owner)
+    record = _record(db, org, owner, "versions", [_card("alpha")])
+    _decision(db, record, "alpha", "pursue", at=datetime(2026, 10, 1), outcomes=[{"status": "achieved", "objective_met": True}],
+              lessons=[{"lesson": "Start earlier", "recorded_at": "2026-10-05T00:00:00"}])
+    _decision(db, record, "alpha", "pursue", at=datetime(2026, 10, 9))
+    db.session.commit()
+    outcomes = _get(client, app, owner)["effectiveness"]["outcomes"]
+    assert outcomes["measured"] == 1 and outcomes["measured_by_status"]["achieved"] == 1
+    assert outcomes["lessons"] == 1 and outcomes["latest_lesson"]["lesson"] == "Start earlier"
+
+
+def test_too_early_and_future_review_are_awaiting_measurement(client, db, app):
+    owner = _user(db, "awaiting@example.com", "Owner"); org = _organization(db, owner)
+    record = _record(db, org, owner, "awaiting", [_card("alpha"), _card("beta")])
+    _decision(db, record, "alpha", "pursue", outcomes=[{"status": "too_early"}])
+    _decision(db, record, "beta", "pursue")
+    future = (datetime.utcnow() + timedelta(days=30)).date().isoformat()
+    _signal(db, org, owner, record, "beta", "success_measure", "Reach 20 leads", {"review_by": future})
+    db.session.commit()
+    outcomes = _get(client, app, owner)["effectiveness"]["outcomes"]
+    assert outcomes["awaiting_measurement"] == 2 and outcomes["measured"] == 0
+
+
+def test_gap_resolved_by_ledger_event_and_before_plan_series(client, db, app):
+    from app.models_challenge_event import ChallengeEvent
+
+    owner = _user(db, "ledger@example.com", "Owner"); org = _organization(db, owner)
+    basis = {"captured_at": "2026-10-03T00:00:00", "evidence_backed_pct": 40, "unevidenced_criteria": [{"key": "margin", "label": "Margin"}]}
+    record = _record(db, org, owner, "ledger", [_card("alpha")])
+    _decision(db, record, "alpha", "pursue")
+    _session(db, owner, org, "ledger", {"card-alpha": {"created_at": "2026-10-03T12:00:00", "decision_basis": basis, "tasks": []}})
+    db.session.add(ChallengeEvent(user_id=owner.id, thread_id="ledger", epoch=1, seq=1, occurred_at=datetime(2026, 10, 2), type="assumption_resolved",
+                                  target_kind="criterion", target_id="margin", origin="test", dedupe_key="ledger-margin"))
+    db.session.commit()
+    payload = _get(client, app, owner)
+    gap = payload["register"]["rows"][0]["gaps"][0]
+    assert gap["resolved"] is True and gap["task_completed"] is False
+    point = payload["effectiveness"]["evidence_at_commitment"]["points"][0]
+    assert point["gaps_identified"] == 1 and point["gaps_resolved_before_plan_pct"] == 100.0
+
+
+def test_summary_ranks_exception_then_pattern_with_at_most_three(client, db, app):
+    owner = _user(db, "summary@example.com", "Owner"); org = _organization(db, owner)
+    for index in range(3):
+        record = _record(db, org, owner, f"sum-{index}", [_card(f"opt-{index}", evidence=30, gates=[{"key": "surety", "label": "Surety", "status": "fail"}])], kit="rfp_bid")
+        _decision(db, record, f"opt-{index}", "pursue")
+        _session(db, owner, org, f"sum-{index}", {f"card-opt-{index}": {"created_at": "2026-10-03T12:00:00", "tasks": [],
+                 "decision_basis": {"captured_at": f"2026-0{7 + index}-01T00:00:00", "evidence_backed_pct": 30 + index * 10, "gates": [{"key": "surety", "label": "Surety", "status": "fail"}]}}})
+    db.session.commit()
+    summary = _get(client, app, owner)["summary"]
+    assert len(summary) <= 3
+    assert [finding["kind"] for finding in summary][0] == "exception"
+    kinds = [finding["kind"] for finding in summary]
+    assert kinds == sorted(kinds, key=["exception", "pattern", "follow_through", "improvement"].index)

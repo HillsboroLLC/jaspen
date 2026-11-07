@@ -3,8 +3,9 @@
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from app.decision_records import can_read_record, option_dispositions
+from app.decision_records import can_read_record, current_decision_signals, option_dispositions
 from app.models import OrganizationMember, Scorecard, User, UserSession
+from app.models_challenge_event import ChallengeEvent
 from app.models_decision_record import DecisionRecord, DecisionSignal, OptionDecision
 from app.decision_kits.rfp_bid import KIT as RFP_KIT
 
@@ -12,6 +13,8 @@ from app.decision_kits.rfp_bid import KIT as RFP_KIT
 DONE = frozenset({"done", "complete", "completed"})
 PASS = frozenset({"pass", "passed"})
 FAIL = frozenset({"fail", "failed"})
+# Outcome statuses that mean results were measured (too_early means not yet).
+MEASURED = frozenset({"achieved", "partially_achieved", "not_achieved", "abandoned"})
 
 
 def _iso(value):
@@ -92,7 +95,7 @@ def _gap_key(item):
     return str(item.get("key") or item.get("criterion_key") or item.get("id") or "").strip()
 
 
-def _option_gaps(card, basis, tasks):
+def _option_gaps(card, basis, tasks, resolved_events=None):
     basis = basis if isinstance(basis, dict) else {}
     gaps = []
     for item in basis.get("unevidenced_criteria") or []:
@@ -121,7 +124,9 @@ def _option_gaps(card, basis, tasks):
         gap["task_completed"] = any(str(task.get("status") or "").lower() in DONE for task in refs)
         if gap["kind"] == "criterion":
             current = current_criteria.get(gap["key"], {})
-            gap["resolved"] = bool(current.get("evidenced") is True)
+            event_at = (resolved_events or {}).get(gap["key"])
+            gap["resolved"] = bool(current.get("evidenced") is True or event_at)
+            gap["resolved_at"] = _iso(event_at) if event_at else None
         else:
             current = current_gates.get(gap["key"], {})
             gap["resolved"] = str(current.get("status") or "").lower() in PASS
@@ -140,37 +145,74 @@ def _deadline(card):
     return None
 
 
+def _stated_deadline(option, today):
+    """The nearest upcoming deadline: a stored kit fact or a deadline the customer stated."""
+    dates = []
+    fact = _dt(_deadline(option["card"]))
+    if fact:
+        dates.append(fact)
+    for signal in option["signals"]:
+        if signal.kind == "deadline":
+            value = _dt((signal.structured or {}).get("date") if isinstance(signal.structured, dict) else None)
+            if value:
+                dates.append(value)
+    upcoming = sorted(value for value in dates if value.date() >= today.date())
+    return upcoming[0] if upcoming else None
+
+
 def _attention(option, today):
+    """Explainable exceptions only. Each trigger is facts: the UI composes its label."""
     triggers = []
     gates = [gate for gate in (option["card"].get("gates") or []) if isinstance(gate, dict)]
-    due = _dt(_deadline(option["card"]))
+    due = _stated_deadline(option, today)
     deadline_window = RFP_KIT["attention_deadline_window_days"] if str(option["decision_kind"]).startswith("rfp") else None
     if due and deadline_window and option["state"] in {"open", "pursued"} and 0 <= (due.date() - today.date()).days <= deadline_window:
         open_gates = [gate for gate in gates if str(gate.get("status") or "unknown").lower() not in PASS]
         if open_gates:
-            triggers.append({"kind": "decision_milestone_at_risk", "condition": "A stated submission deadline is within 14 days and a required check is not confirmed.", "evidence": {"deadline": due.date().isoformat(), "required_checks": [{"key": g.get("key"), "label": g.get("label") or g.get("key"), "status": g.get("status") or "unknown"} for g in open_gates]}, "next_step_ref": {"type": "gate", "id": open_gates[0].get("key")}, "available": True})
+            triggers.append({"kind": "decision_milestone_at_risk", "evidence": {"deadline": due.date().isoformat(), "window_days": deadline_window, "required_checks": [{"key": g.get("key"), "label": g.get("label") or g.get("key"), "status": g.get("status") or "unknown"} for g in open_gates]}, "next_step_ref": {"type": "gate", "id": open_gates[0].get("key")}, "available": True})
     failed = [gate for gate in gates if str(gate.get("status") or "").lower() in FAIL]
     addressed = {gap["key"] for gap in option["gaps"] if gap["task_created"]}
     for gate in failed:
         if option["state"] == "pursued" and str(gate.get("key") or "") not in addressed:
-            triggers.append({"kind": "failed_required_check_without_task", "condition": "This option is being pursued despite a failed required check with no plan task addressing it.", "evidence": {"gate_key": gate.get("key"), "gate_label": gate.get("label") or gate.get("key"), "status": "failed"}, "next_step_ref": {"type": "gate", "id": gate.get("key")}, "available": True})
+            triggers.append({"kind": "failed_required_check_without_task", "evidence": {"gate_key": gate.get("key"), "gate_label": gate.get("label") or gate.get("key"), "status": "failed"}, "next_step_ref": {"type": "gate", "id": gate.get("key")}, "available": True})
     overdue = {}
     for task in option["tasks"]:
         commitment = task.get("commitment") if isinstance(task.get("commitment"), dict) else None
         due_at = _dt((commitment or {}).get("rescheduled_to") or (commitment or {}).get("due_date"))
         if commitment and due_at and due_at.date() < today.date() and str(task.get("status") or "").lower() not in DONE:
             overdue[str(task.get("id"))] = task
-            triggers.append({"kind": "committed_task_overdue", "condition": "A committed task is past its committed date and is not complete.", "evidence": {"task_id": task.get("id"), "task_name": task.get("name") or task.get("title"), "committed_due_date": (commitment or {}).get("due_date"), "current_due_date": (commitment or {}).get("rescheduled_to") or (commitment or {}).get("due_date")}, "next_step_ref": {"type": "task", "id": task.get("id")}, "available": True})
+            triggers.append({"kind": "committed_task_overdue", "evidence": {"task_id": task.get("id"), "task_name": task.get("name") or task.get("title"), "committed_due_date": (commitment or {}).get("due_date"), "current_due_date": (commitment or {}).get("rescheduled_to") or (commitment or {}).get("due_date")}, "next_step_ref": {"type": "task", "id": task.get("id")}, "available": True})
     for task in option["tasks"]:
         deps = task.get("depends_on") or []
         if any(str(dep) in overdue for dep in deps) and str(task.get("status") or "").lower() not in DONE:
-            triggers.append({"kind": "blocked_by_overdue_commitment", "condition": "This task is blocked by an overdue committed predecessor.", "evidence": {"task_id": task.get("id"), "task_name": task.get("name") or task.get("title"), "predecessor_ids": [dep for dep in deps if str(dep) in overdue]}, "next_step_ref": {"type": "task", "id": task.get("id")}, "available": True})
+            triggers.append({"kind": "blocked_by_overdue_commitment", "evidence": {"task_id": task.get("id"), "task_name": task.get("name") or task.get("title"), "predecessor_ids": [dep for dep in deps if str(dep) in overdue]}, "next_step_ref": {"type": "task", "id": task.get("id")}, "available": True})
     for signal in option["signals"]:
         structured = signal.structured if isinstance(signal.structured, dict) else {}
         review = _dt(structured.get("review_by"))
         if signal.kind == "success_measure" and review and review.date() < today.date() and not option["outcomes"]:
-            triggers.append({"kind": "outcome_review_due", "condition": "The expected review date has passed and no outcome is recorded.", "evidence": {"signal_id": signal.id, "review_by": review.date().isoformat()}, "next_step_ref": {"type": "signal", "id": signal.id}, "available": True})
+            triggers.append({"kind": "outcome_review_due", "evidence": {"signal_id": signal.id, "review_by": review.date().isoformat(), "measure": signal.content}, "next_step_ref": {"type": "signal", "id": signal.id}, "available": True})
+    for condition in option["conditions"]:
+        due_by = _dt(condition.get("due_by"))
+        if option["state"] == "pursued" and condition["status"] == "open" and due_by and due_by.date() < today.date():
+            triggers.append({"kind": "condition_past_due", "evidence": {"signal_id": condition["signal_id"], "condition": condition["content"], "due_by": due_by.date().isoformat()}, "next_step_ref": {"type": "signal", "id": condition["signal_id"]}, "available": True})
     return triggers
+
+
+def _conditions(signals):
+    """Current conditions (latest status of each) for one option."""
+    rows = []
+    for signal in current_decision_signals(signals):
+        if signal.kind != "condition":
+            continue
+        structured = signal.structured if isinstance(signal.structured, dict) else {}
+        rows.append({
+            "signal_id": str(signal.id),
+            "content": signal.content,
+            "status": str(structured.get("status") or "open"),
+            "due_by": structured.get("due_by"),
+            "since": _iso(signal.occurred_at),
+        })
+    return rows
 
 
 def build_insights_v3(user, scope_context, filters=None):
@@ -202,6 +244,15 @@ def build_insights_v3(user, scope_context, filters=None):
     decisions_by_option = defaultdict(list)
     for row in decisions:
         decisions_by_option[(str(row.decision_record_id), str(row.option_key))].append(row)
+    resolved_events = defaultdict(dict)
+    if thread_ids:
+        for event in ChallengeEvent.query.filter(
+            ChallengeEvent.thread_id.in_(thread_ids), ChallengeEvent.type == "assumption_resolved",
+        ).all():
+            if event.target_id:
+                known = resolved_events[str(event.thread_id)].get(str(event.target_id))
+                if known is None or (event.occurred_at and event.occurred_at < known):
+                    resolved_events[str(event.thread_id)][str(event.target_id)] = event.occurred_at
     user_ids = {str(record.user_id) for record in records if record.user_id}
     people = User.query.filter(User.id.in_(user_ids)).all() if user_ids else []
     names = {str(person.id): str(person.name or person.email or "Unknown") for person in people}
@@ -228,10 +279,17 @@ def build_insights_v3(user, scope_context, filters=None):
             tasks = _tasks(plan)
             decision_rows = sorted(decisions_by_option[(str(record.id), state["option_key"])], key=lambda row: row.decided_at or datetime.min)
             current_decision = decision_rows[-1] if decision_rows else None
-            option_signals = signals_by_option[(str(record.id), state["option_key"])] + signals_by_option[(str(record.id), "")]
-            outcome_entries = list(current_decision.outcomes or []) if current_decision else []
-            lesson_entries = list(current_decision.lessons_learned or []) if current_decision else []
-            gaps = _option_gaps(card, basis, tasks)
+            own_signals = signals_by_option[(str(record.id), state["option_key"])]
+            option_signals = own_signals + signals_by_option[(str(record.id), "")]
+            # Outcomes and lessons live on whichever version of the decision
+            # they were recorded against; every version counts.
+            outcome_entries = [entry for row in decision_rows for entry in (row.outcomes or []) if isinstance(entry, dict)]
+            lesson_entries = [entry for row in decision_rows for entry in (row.lessons_learned or []) if isinstance(entry, dict)]
+            gaps = _option_gaps(card, basis, tasks, resolved_events.get(str(record.thread_id)))
+            conditions = _conditions(own_signals) if state["state"] == "pursued" else []
+            override = current_decision.override_info if current_decision is not None and isinstance(current_decision.override_info, dict) else None
+            verdict = current_decision.kit_verdict if current_decision is not None and isinstance(current_decision.kit_verdict, dict) else {}
+            snapshot = verdict.get("recommendation_snapshot") if isinstance(verdict.get("recommendation_snapshot"), dict) else {}
             score = (basis or {}).get("jaspen_score") if basis else card.get("jaspen_score")
             evidence = (basis or {}).get("evidence_backed_pct") if basis else _evidence_pct(card)
             item = {
@@ -246,6 +304,15 @@ def build_insights_v3(user, scope_context, filters=None):
                 "plan": {"created_at": plan.get("created_at"), "tasks_total": len(tasks), "tasks_completed": sum(str(task.get("status") or "").lower() in DONE for task in tasks), "scorecard_id": (basis or {}).get("scorecard_id")} if plan else None,
                 "card": card, "tasks": tasks, "has_success_measure": any(signal.kind == "success_measure" for signal in option_signals),
                 "outcomes": outcome_entries, "lessons": lesson_entries,
+                "conditions": conditions,
+                "against_recommendation": (
+                    {"override_of": override.get("override_of"), "jaspen_recommendation": snapshot.get("label") or (card.get("recommendation") or {}).get("label"),
+                     "failed_check_labels": list(override.get("failed_check_labels") or [])}
+                    if override and state["state"] == "pursued" else None
+                ),
+                "success_review_by": sorted(
+                    value for value in (_iso(_dt((signal.structured or {}).get("review_by"))) for signal in own_signals if signal.kind == "success_measure" and isinstance(signal.structured, dict)) if value
+                ),
             }
             item["signals"] = option_signals
             item["triggers"] = _attention(item, today)
@@ -326,24 +393,74 @@ def build_insights_v3(user, scope_context, filters=None):
         if item["state"] == "pursued" and item["decision_basis"] and item["evidence_backed_pct"] is not None:
             captured = str(item["decision_basis"].get("captured_at") or "")[:7]
             if captured: month_values[captured].append(item["evidence_backed_pct"])
-    evidence_trend = [{"month": month, "evidence_backed_pct": round(sum(values) / len(values), 1), "n": len(values)} for month, values in sorted(month_values.items())]
+    resolved_before = defaultdict(lambda: [0, 0])
+    for item in options:
+        if item["state"] == "pursued" and item["decision_basis"]:
+            captured = str(item["decision_basis"].get("captured_at") or "")[:7]
+            plan_at = _dt((item["plan"] or {}).get("created_at"))
+            for gap in item["gaps"]:
+                if captured:
+                    resolved_before[captured][1] += 1
+                    resolved_at = _dt(gap.get("resolved_at"))
+                    if resolved_at and plan_at and resolved_at < plan_at:
+                        resolved_before[captured][0] += 1
+    evidence_trend = [
+        {"month": month, "evidence_backed_pct": round(sum(values) / len(values), 1), "n": len(values),
+         "gaps_resolved_before_plan_pct": (round(100 * resolved_before[month][0] / resolved_before[month][1], 1) if resolved_before[month][1] else None),
+         "gaps_identified": resolved_before[month][1]}
+        for month, values in sorted(month_values.items())
+    ]
     recurring = defaultdict(lambda: {"decisions": set(), "resolved": 0, "label": "", "resolution": None})
+    excluded_custom_gaps = 0
     for item in options:
         for gap in item["gaps"]:
             key = gap["key"] if str(item["decision_kind"]).startswith("rfp") else gap.get("group")
-            if not key: continue
+            if not key:
+                excluded_custom_gaps += 1
+                continue
             entry = recurring[(item["decision_kind"], key)]; entry["decisions"].add(item["record_id"]); entry["resolved"] += int(gap["resolved"]); entry["label"] = gap["label"]; entry["resolution"] = gap.get("resolution") or entry["resolution"]
     decisions_by_kind = defaultdict(set)
     for item in options:
         decisions_by_kind[item["decision_kind"]].add(item["record_id"])
     recurring_rows = [{"kind": kind, "key": key, "label": value["label"], "decisions_affected": len(value["decisions"]), "decisions_total": len(decisions_by_kind[kind]), "resolved_later": value["resolved"], "next_step_on_record": value["resolution"]} for (kind, key), value in recurring.items()]
     pursued = [item for item in options if item["state"] == "pursued"]
-    outcome_stages = {"pursued": len(pursued), "success_measure_captured": sum(item["has_success_measure"] for item in pursued), "implementation_complete": sum(bool(item["plan"] and item["plan"]["tasks_total"] and item["plan"]["tasks_total"] == item["plan"]["tasks_completed"]) for item in pursued), "awaiting_measurement": sum(any(str(outcome.get("status")) == "too_early" for outcome in item["outcomes"] if isinstance(outcome, dict)) for item in pursued), "measured": sum(any(str(outcome.get("status") or "").lower() in {"measured", "complete", "completed"} for outcome in item["outcomes"] if isinstance(outcome, dict)) for item in pursued), "met_expectation": sum(any(outcome.get("objective_met") is True for outcome in item["outcomes"] if isinstance(outcome, dict)) for item in pursued), "lessons": sum(len(item["lessons"]) for item in pursued)}
+    def _statuses(item):
+        return [str(outcome.get("status") or "").lower() for outcome in item["outcomes"]]
+    outcome_stages = {
+        "pursued": len(pursued),
+        "success_measure_captured": sum(item["has_success_measure"] for item in pursued),
+        "implementation_complete": sum(bool(item["plan"] and item["plan"]["tasks_total"] and item["plan"]["tasks_total"] == item["plan"]["tasks_completed"]) for item in pursued),
+        "awaiting_measurement": sum(
+            not any(status in MEASURED for status in _statuses(item))
+            and ("too_early" in _statuses(item) or any(_dt(value) and _dt(value).date() >= today.date() for value in item["success_review_by"]))
+            for item in pursued
+        ),
+        "measured": sum(any(status in MEASURED for status in _statuses(item)) for item in pursued),
+        "measured_by_status": {status: sum(status in _statuses(item) for item in pursued) for status in sorted(MEASURED)},
+        "met_expectation": sum(any(outcome.get("objective_met") is True for outcome in item["outcomes"]) for item in pursued),
+        "lessons": sum(len(item["lessons"]) for item in pursued),
+        "latest_lesson": max(
+            ({"option_id": item["id"], "option_name": item["option_name"], "recorded_at": lesson.get("recorded_at"), "lesson": lesson.get("lesson") or lesson.get("summary")}
+             for item in pursued for lesson in item["lessons"]),
+            key=lambda entry: str(entry.get("recorded_at") or ""), default=None,
+        ),
+    }
     summary = []
     if activity["needs_attention"]: summary.append({"kind": "exception", "option_id": activity["needs_attention"][0]["id"], "count": len(activity["needs_attention"]), "trigger_kind": activity["needs_attention"][0]["triggers"][0]["kind"]})
     assumed = [item for item in pursued if item["evidence_backed_pct"] is not None and item["evidence_backed_pct"] < 50]
     if assumed: summary.append({"kind": "pattern", "pattern": "mostly_assumed_pursuits", "count": len(assumed), "total": len(pursued)})
+    top_recurring = max(recurring_rows, key=lambda row: row["decisions_affected"], default=None)
+    if top_recurring and top_recurring["decisions_affected"] >= 2:
+        summary.append({"kind": "pattern", "pattern": "recurring_gap", "gap_key": top_recurring["key"], "label": top_recurring["label"],
+                        "decision_kind": top_recurring["kind"], "decisions_affected": top_recurring["decisions_affected"],
+                        "decisions_total": top_recurring["decisions_total"]})
     if gaps: summary.append({"kind": "follow_through", "identified": len(gaps), "tasks_completed": stages["task_completed"], "resolved": stages["resolved"]})
+    if len(evidence_trend) >= 2 and evidence_trend[-1]["evidence_backed_pct"] != evidence_trend[0]["evidence_backed_pct"]:
+        summary.append({"kind": "improvement", "metric": "evidence_at_commitment", "from_month": evidence_trend[0]["month"],
+                        "from_pct": evidence_trend[0]["evidence_backed_pct"], "to_month": evidence_trend[-1]["month"],
+                        "to_pct": evidence_trend[-1]["evidence_backed_pct"]})
+    rank = {"exception": 0, "pattern": 1, "follow_through": 2, "improvement": 3}
+    summary = sorted(summary, key=lambda finding: rank.get(finding["kind"], 9))[:3]
 
     active_members = OrganizationMember.query.filter_by(organization_id=org.id, status="active").all()
     member_ids = [str(row.user_id) for row in active_members if row.user_id]
@@ -358,7 +475,7 @@ def build_insights_v3(user, scope_context, filters=None):
         "schema_version": 3, "organization": {"id": org.id, "name": org.name}, "scope": scope_context["scope"], "requested_scope": scope_context["requested_scope"],
         "can_manage": scope_context["can_manage"], "can_view_organization": scope_context["can_view_organization"], "show_scope_control": bool(scope_context.get("show_scope_control", scope_context["can_view_organization"])),
         "summary": summary, "activity": activity,
-        "effectiveness": {"acting_on": band_rows, "gap_follow_through": stages, "evidence_at_commitment": _metric(evidence_trend if len(evidence_trend) >= 2 else None, numerator=len(evidence_trend), denominator=2, coverage=len(evidence_trend), unavailable_reason=None if len(evidence_trend) >= 2 else "insufficient_months", points=evidence_trend), "recurring_gaps": recurring_rows, "outcomes": outcome_stages},
+        "effectiveness": {"acting_on": band_rows, "gap_follow_through": stages, "evidence_at_commitment": _metric(evidence_trend if len(evidence_trend) >= 2 else None, numerator=len(evidence_trend), denominator=2, coverage=len(evidence_trend), unavailable_reason=None if len(evidence_trend) >= 2 else "insufficient_months", points=evidence_trend), "recurring_gaps": recurring_rows, "recurring_gaps_excluded": excluded_custom_gaps, "outcomes": outcome_stages},
         "register": {"rows": page_rows, "total": total, "page": page, "per_page": per_page, "pages": max(1, (total + per_page - 1) // per_page)},
         "facets": {"states": ["pursued", "not_pursued", "open", "archived"], "kinds": sorted({item["decision_kind"] for item in options}), "members": [{"id": str(person.id), "name": str(person.name or person.email)} for person in members]},
     }

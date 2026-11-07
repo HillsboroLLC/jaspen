@@ -17,7 +17,7 @@ const ROW = {
   history: [{ disposition: 'pursue', source: 'conversation', quote: 'Use Vendor A', time: '2026-10-02T12:00:00' }],
   gaps: [{ key: 'security', label: 'Security', task_created: true, task_completed: false, resolved: false }],
   required_checks: [{ key: 'security', label: 'Security approval', status: 'failed' }],
-  triggers: [{ kind: 'failed_required_check_without_task', condition: 'Stored trigger', evidence: {}, next_step_ref: { type: 'gate', id: 'security' }, available: true }],
+  triggers: [{ kind: 'failed_required_check_without_task', evidence: { gate_key: 'security', gate_label: 'Security approval', status: 'failed' }, next_step_ref: { type: 'gate', id: 'security' }, available: true }],
   plan: { tasks_total: 3, tasks_completed: 1 }, outcomes: [], lessons: [],
 };
 
@@ -79,7 +79,7 @@ it('shows and uses the organization scope control only when the server permits i
 
 it('sends KPI, select, and search filters to the server and renders removable chips', async () => {
   render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
-  await userEvent.click(await screen.findByRole('button', { name: /Pursued/ }));
+  await userEvent.click(await screen.findByRole('button', { name: /^1\s*Pursued/ }));
   await waitFor(() => expect(global.fetch).toHaveBeenLastCalledWith(expect.stringContaining('state=pursued'), expect.any(Object)));
   expect(screen.getByRole('button', { name: 'Remove filter Pursued' })).toBeVisible();
   await userEvent.selectOptions(screen.getByLabelText('Kind of decision'), 'Vendor selection');
@@ -129,4 +129,44 @@ it('refreshes after 60 seconds while preserving filters and the expanded row', a
   expect(global.fetch).toHaveBeenCalledTimes(initialCalls + 2);
   expect(screen.getByLabelText('Search options and decisions')).toHaveValue('Vendor');
   expect(container.querySelector('.di3-row')).toHaveAttribute('aria-expanded', 'true');
+});
+
+
+it('composes trigger labels from stored facts and shows condition and recommendation markers', async () => {
+  const row = {
+    ...ROW,
+    conditions: [{ signal_id: 's1', content: 'Bonding secured', status: 'open', due_by: '2026-12-01' }],
+    against_recommendation: { override_of: 'decline', jaspen_recommendation: 'No-Bid', failed_check_labels: [] },
+    triggers: [{ kind: 'condition_past_due', evidence: { signal_id: 's1', condition: 'Bonding secured', due_by: '2026-12-01' }, next_step_ref: { type: 'signal', id: 's1' }, available: true }],
+  };
+  global.fetch.mockResolvedValue(response({ ...BASE, activity: { ...BASE.activity, needs_attention: [row] }, register: { ...BASE.register, rows: [row] } }));
+  render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
+  expect(await screen.findByText(/Condition past due: The condition “Bonding secured” was due Dec 1, 2026 and is still open\./)).toBeVisible();
+  expect(screen.getByText('Conditional · 1 open')).toBeVisible();
+  expect(screen.getByText('Against Jaspen’s No-Bid')).toBeVisible();
+  await userEvent.click(screen.getByText('Conditional · 1 open').closest('tr'));
+  expect(screen.getByRole('heading', { name: 'Conditions and recommendation' })).toBeVisible();
+  expect(screen.getByText(/Jaspen recommended No-Bid; the decision to pursue is yours/)).toBeVisible();
+});
+
+it('renders outcome stages as numbers and the latest lesson', async () => {
+  const outcomes = { pursued: 2, success_measure_captured: 1, implementation_complete: 1, awaiting_measurement: 1, measured: 1,
+    measured_by_status: { achieved: 1 }, met_expectation: 1, lessons: 1,
+    latest_lesson: { option_id: ROW.id, option_name: 'Vendor A', lesson: 'Start security review earlier', recorded_at: '2026-10-09' } };
+  global.fetch.mockResolvedValue(response({ ...BASE, effectiveness: { ...BASE.effectiveness, outcomes } }));
+  render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
+  expect(await screen.findByText('Awaiting measurement')).toBeVisible();
+  expect(screen.getByText(/Latest lesson \(Vendor A\): Start security review earlier/)).toBeVisible();
+  expect(document.body.textContent).not.toMatch(/NaN/);
+});
+
+it('ranks recurring gap and improvement findings with deterministic wording', async () => {
+  const summary = [
+    { kind: 'pattern', pattern: 'recurring_gap', gap_key: 'security', label: 'Security', decision_kind: 'Vendor selection', decisions_affected: 2, decisions_total: 3 },
+    { kind: 'improvement', metric: 'evidence_at_commitment', from_month: '2026-08', from_pct: 40, to_month: '2026-10', to_pct: 60 },
+  ];
+  global.fetch.mockResolvedValue(response({ ...BASE, summary }));
+  render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
+  expect(await screen.findByText(/was a gap in 2 of 3 Vendor selection decisions/)).toBeVisible();
+  expect(screen.getByText(/Evidence at commitment moved from/)).toBeVisible();
 });
