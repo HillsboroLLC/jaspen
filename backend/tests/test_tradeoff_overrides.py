@@ -11,8 +11,17 @@ def strategy(app):
 
 
 def _seed(strategy, user_id, thread_id):
+    from app import db
+    from app.models import User
     from app.routes.sessions import save_user_sessions
 
+    db.session.add(User(
+        id=user_id,
+        email=f"{user_id}@example.com",
+        name="Tradeoff test user",
+        password_hash="test-password-hash",
+    ))
+    db.session.commit()
     save_user_sessions(user_id, {thread_id: {
         "session_id": thread_id,
         "name": "Returns decision",

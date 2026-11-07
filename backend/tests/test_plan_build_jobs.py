@@ -216,7 +216,13 @@ def test_override_still_needs_confirmation_before_a_job_starts(client, db, test_
 
 
 def test_status_of_another_users_job_is_not_found(client, db, test_user, auth_headers):
+    from app.models import User
     from app.models_plan_jobs import PlanBuildJob
+    db.session.add(User(
+        id='someone-else', email='someone-else@example.com', name='Someone Else',
+        password_hash='test-password-hash',
+    ))
+    db.session.commit()
     job = PlanBuildJob(user_id='someone-else', thread_id='t', request_json={})
     db.session.add(job)
     db.session.commit()

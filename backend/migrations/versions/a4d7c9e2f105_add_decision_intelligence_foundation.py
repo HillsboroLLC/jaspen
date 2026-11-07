@@ -37,7 +37,7 @@ def _when(value, fallback=None):
             return datetime.fromisoformat(value.replace('Z', '+00:00')).replace(tzinfo=None)
         except ValueError:
             pass
-    return fallback or datetime.utcnow()
+    return _when(fallback) if fallback is not None else datetime.utcnow()
 
 
 def upgrade():
