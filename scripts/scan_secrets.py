@@ -31,6 +31,22 @@ SENSITIVE_FILE_NAMES = re.compile(
 )
 SENSITIVE_FILE_SUFFIXES = {".key", ".pem", ".p12", ".pfx", ".jks", ".keystore"}
 
+# Reviewed history false positives. Each entry exempts exactly one finding:
+# the full commit id, the file, the line number in that commit, and the rule.
+# A commit id fixes the content, so an entry can never cover a different line,
+# a later edit, or a new commit. Current tracked files are never exempted.
+# Add an entry only after a person has verified the value is not a credential.
+REVIEWED_HISTORY_FALSE_POSITIVES = frozenset({
+    # Reviewed by Claude, approved by Lydia, Nov 7, 2026. The ci.yml values were
+    # the throwaway password ("postgres") of CI's temporary database container;
+    # the test lines are made-up example URLs. Removed by 0b902e91 and 0d2fc3d0.
+    ("7fbb4e90359678b6781eed0eb9222b8e120f945c", ".github/workflows/ci.yml", 80, "hardcoded-secret-assignment"),
+    ("7fbb4e90359678b6781eed0eb9222b8e120f945c", ".github/workflows/ci.yml", 92, "credentialed-url"),
+    ("7fbb4e90359678b6781eed0eb9222b8e120f945c", ".github/workflows/ci.yml", 92, "hardcoded-secret-assignment"),
+    ("7fbb4e90359678b6781eed0eb9222b8e120f945c", "backend/tests/test_test_database_config.py", 8, "credentialed-url"),
+    ("7fbb4e90359678b6781eed0eb9222b8e120f945c", "backend/tests/test_test_database_config.py", 22, "credentialed-url"),
+})
+
 
 @dataclass(frozen=True, order=True)
 class Finding:
@@ -184,7 +200,8 @@ def scan_tracked_tree(repo_root: Path = REPO_ROOT) -> list[Finding]:
     return sorted(set(findings))
 
 
-def _scan_patch(commit_label: str, patch: str) -> list[Finding]:
+def _scan_patch(commit_label: str, patch: str, exempt=frozenset(), exempted=None) -> list[Finding]:
+    """Scan added lines; ``exempt`` holds (path, line, rule) reviewed for this commit."""
     findings: list[Finding] = []
     path = "unknown"
     new_line = 0
@@ -198,16 +215,24 @@ def _scan_patch(commit_label: str, patch: str) -> list[Finding]:
             continue
         if line.startswith("+") and not line.startswith("+++"):
             new_line += 1
-            findings.extend(
-                Finding(f"{commit_label}:{item.path}", new_line, item.rule)
-                for item in scan_text(path, line[1:])
-            )
+            for item in scan_text(path, line[1:]):
+                finding = Finding(f"{commit_label}:{item.path}", new_line, item.rule)
+                if (item.path, new_line, item.rule) in exempt:
+                    if exempted is not None:
+                        exempted.append(finding)
+                    continue
+                findings.append(finding)
         elif not line.startswith("-"):
             new_line += 1
     return findings
 
 
-def scan_history_range(revision_range: str, repo_root: Path = REPO_ROOT) -> list[Finding]:
+def scan_history_range(
+    revision_range: str,
+    repo_root: Path = REPO_ROOT,
+    reviewed=REVIEWED_HISTORY_FALSE_POSITIVES,
+    exempted=None,
+) -> list[Finding]:
     if not re.fullmatch(r"[0-9a-fA-F^~.]+", revision_range):
         raise ValueError("History range must contain only Git revision characters")
     commits = subprocess.run(
@@ -227,7 +252,11 @@ def scan_history_range(revision_range: str, repo_root: Path = REPO_ROOT) -> list
             text=True,
             errors="replace",
         ).stdout
-        findings.extend(_scan_patch(commit[:12], patch))
+        exempt = frozenset(
+            (path, line, rule) for reviewed_commit, path, line, rule in reviewed
+            if reviewed_commit == commit
+        )
+        findings.extend(_scan_patch(commit[:12], patch, exempt, exempted))
     return sorted(set(findings))
 
 
@@ -236,15 +265,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--history-range", help="also scan every added line in this Git revision range")
     args = parser.parse_args(argv)
 
+    exempted: list[Finding] = []
     try:
         findings = scan_tracked_tree()
         if args.history_range:
-            findings.extend(scan_history_range(args.history_range))
+            findings.extend(scan_history_range(args.history_range, exempted=exempted))
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         print(f"Secret scan could not run ({type(exc).__name__}); no credential data was printed.", file=sys.stderr)
         return 2
 
     findings = sorted(set(findings))
+    for finding in sorted(set(exempted)):
+        # Location-only, like every finding: reviewed history stays visible.
+        print(f"Reviewed history exemption: {finding.safe_summary()}")
     if findings:
         print("Secret scan failed. Findings are location-only; matched values are suppressed.", file=sys.stderr)
         for finding in findings:
