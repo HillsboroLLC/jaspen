@@ -729,7 +729,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "Valid status values are: todo, in_progress, blocked, done. "
     "Valid priority values are: critical, high, medium, low. "
     "due_date must be an ISO date string (YYYY-MM-DD) or null. "
-    "After any mutation tool succeeds, confirm exactly what changed so the user knows what to look for in the Execution tab."
+    "After any mutation tool succeeds, confirm exactly what changed so the user knows what to look for in the Execution tab. "
     "SCORECARDS: "
     "Scorecards accumulate inline in the conversation — chat, chat, scorecard, chat, scorecard, etc. The idea the user has OPEN in the workspace is editable in place (see EDITING THE OPEN SCORECARD above). "
     "When the user proposes a genuinely NEW idea or a variation they want to keep alongside the original, call generate_scorecard (no rescore_scorecard_id). "
@@ -740,7 +740,7 @@ _SYSTEM_PROMPT_PREFIX = (
     "CRITICAL — never spawn a duplicate on an edit: editing the OPEN idea must use update_workspace_presentation for presentation, patch_scorecard for content wording/title, or generate_scorecard(rescore_scorecard_id=<open id>) for changed facts — NEVER generate_scorecard without rescore_scorecard_id, which creates a second card. Cosmetic edits MUST NOT move the score. "
     "When the user asks to compare or rank ideas, call generate_tradeoff_comparison. "
     "When the user asks to build an execution plan, call generate_execution_plan with planning_intent: committed when they are going ahead with that option and want its plan (this also records, silently, that they are pursuing it), exploratory when they want to preview, compare or assess a possible plan without deciding. Judge this from the conversation; ask only when you genuinely cannot tell and it matters. Each plan belongs to the scored option it was built from. "
-    "DECISION INTELLIGENCE: Jaspen keeps an accurate, current picture of every scored option's disposition, the reasons behind it, and the dates, commitments and conditions around it. That record is what makes the customer's Insights and organizational memory more valuable over time. Jaspen captures it from the customer's own messages before you reply; you never call a tool to record it. The DECISION STATE block shows what is stored, and its this_turn entry shows what was saved from the latest message, what was already stored, and what could not be saved and why. The DECISION STATE is the truth about what is saved: when your earlier messages in the conversation say otherwise, it wins. Never say or imply that something was saved, recorded, logged or updated; acknowledge the substance naturally and keep helping with what the customer is trying to do. "
+    "DECISION INTELLIGENCE: Jaspen keeps an accurate, current picture of every scored option's disposition, the reasons behind it, and the dates, commitments and conditions around it. That record is what makes the customer's Insights and organizational memory more valuable over time. Jaspen captures it from the customer's own messages before you reply; you never call a tool to record it. The DECISION STATE block shows what is stored, and its this_turn entry shows what was saved from the latest message, what was already stored, and what could not be saved and why; when it says capture_unavailable, nothing from this message was saved. The DECISION STATE is the truth about what is saved: when your earlier messages in the conversation say otherwise, it wins. Never say or imply that something was saved, recorded, logged or updated; acknowledge the substance naturally and keep helping with what the customer is trying to do. "
     "A customer choosing differently from Jaspen's recommendation is a clear decision, not ambiguity. When the choice carries a material risk, you may explain it once, naturally, in your own words. Recording a decision never authorizes an external action. "
     "When this_turn lists something unclear or not saved and it matters, ask about it in your own words, one brief question at a time. Clarify only when intent is genuinely ambiguous, incomplete or contradictory, or when knowing an option's disposition would clearly help and the moment is natural (after a comparison, before building a plan, or as they wrap up). A change of mind from an earlier turn is a new decision, not a contradiction. You decide whether to ask, when, the wording, and the choices. A choice block can help: each evaluated option on its own line with allow_multi true, plus answers meaning none of them and still evaluating, each marked exclusive. Every choice you offer must be something Jaspen can store, including a pursuit that depends on a condition. Never ask about anything the DECISION STATE already shows unless the situation has changed, never ask the customer to confirm what they clearly said, and never interrogate. "
     "When follow_up_facts show a review is due, implementation complete without an outcome, a plan that conflicts with a disposition, or a condition past its due date, you may raise it at a natural moment. A completed plan is implementation progress, not success. "
@@ -8100,28 +8100,42 @@ def _capture_pass_options(cards):
 
 
 def _capture_timestamp(value):
-    text = str(value or "").strip().replace("Z", "")
+    """Parse a stored timestamp as naive UTC (aware values are converted)."""
+    text = str(value or "").strip()
     if not text:
         return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
     try:
-        return datetime.fromisoformat(text.replace(" ", "T"))
+        parsed = datetime.fromisoformat(text.replace(" ", "T"))
     except ValueError:
         return None
+    if parsed.tzinfo is not None:
+        from datetime import timezone
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _capture_quotes_overlap(left, right):
+    a = " ".join(str(left or "").casefold().split())
+    b = " ".join(str(right or "").casefold().split())
+    return bool(a and b and (a in b or b in a))
 
 
 def _capture_signal_exists(record, *, kind, option_key, quote, content=None):
+    """A live record of this kind and option already holds this statement."""
     from ..models_decision_record import DecisionSignal
 
     query = DecisionSignal.query.filter_by(
         decision_record_id=str(record.id), kind=kind, option_key=option_key or None, retracted_at=None,
     )
     for row in query.all():
-        if str(row.user_quote or "").strip().casefold() != str(quote or "").strip().casefold():
+        if not _capture_quotes_overlap(row.user_quote, quote):
             continue
-        if kind == "condition" and content is not None and (
-            str(row.content or "").strip().casefold() != str(content or "").strip().casefold()
-        ):
-            continue
+        if kind == "condition" and content is not None and str(row.content or "").strip().casefold() != str(content or "").strip().casefold() and not _capture_quotes_overlap(row.content, content):
+            # Two different conditions can come from one sentence.
+            if str(row.user_quote or "").strip().casefold() == str(quote or "").strip().casefold():
+                continue
         return True
     return False
 
@@ -8224,9 +8238,25 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         return result
 
     record = find_thread_record(user, thread_id)
+    latest_number = max(by_number) if by_number else None
 
-    # Decisions, grouped by the message they come from.
-    grouped = {}
+    def newer_change_exists(message, changed_at):
+        """An earlier message never overturns something changed after it."""
+        if message["latest"]:
+            return False
+        stated_at = _capture_timestamp(message["timestamp"])
+        return stated_at is None or (changed_at is not None and changed_at >= stated_at)
+
+    def note(kind, key, content, quote, message, structured=None):
+        tool_input = {"kind": kind, "content": content, "user_request_quote": quote}
+        if key:
+            tool_input["option_key"] = key
+        if structured:
+            tool_input["structured"] = structured
+        return run("record_decision_context", tool_input, message)
+
+    # Decisions: for each option only the latest message counts.
+    chosen = {}
     for item in payload.get("decisions") or []:
         message = cited(item)
         key = str((item or {}).get("option_key") or "").strip()
@@ -8236,34 +8266,53 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         if key not in known_keys:
             not_saved.append({"what": "decision", "reason": "option_not_found", "option_key": key or None})
             continue
+        if key not in chosen or message["number"] > chosen[key][0]["number"]:
+            chosen[key] = (message, item)
+    grouped = {}
+    for key, (message, item) in chosen.items():
         disposition = str(item.get("disposition") or "").strip()
         conditions = [
             {"content": str(c.get("content") or "").strip(), "user_quote": str(c.get("quote") or "").strip(),
              **({"due_by": c.get("due_by")} if c.get("due_by") else {})}
             for c in (item.get("conditions") or []) if isinstance(c, dict)
         ]
+        rationale_quote = str(item.get("rationale_quote") or "").strip()
         current = current_option_decision(record, key) if record is not None else None
-        if current is not None and not message["latest"]:
-            stated_at = _capture_timestamp(message["timestamp"])
-            if stated_at is None or (current.decided_at and current.decided_at >= stated_at):
-                # A later decision already stands; an earlier message never overrides it.
-                already.append({"what": "decision", "option": names.get(key), "reason": "later_decision_stands"})
-                continue
-        if current is not None and current.disposition == disposition and all(
-            record is not None and _capture_signal_exists(
-                record, kind="condition", option_key=key,
-                quote=condition["user_quote"], content=condition["content"],
-            )
-            for condition in conditions
-        ):
-            # Same disposition, and any conditions are already stored.
-            already.append({"what": "decision", "option": names.get(key), "disposition": disposition})
+        if current is not None and newer_change_exists(message, current.decided_at):
+            already.append({"what": "decision", "option": names.get(key), "reason": "later_decision_stands"})
             continue
-        entry = {
-            "option_key": key, "disposition": disposition, "user_request_quote": str(item.get("quote") or "").strip(),
-        }
-        if item.get("rationale_quote"):
-            entry["rationale_quote"] = str(item.get("rationale_quote") or "").strip()
+        if current is not None and current.disposition == disposition:
+            # Same decision restated: never a new decision row. Anything new
+            # it adds (a reason, a condition) is stored on its own.
+            added = False
+            if rationale_quote and verify_user_quote(rationale_quote, message["text"]) and not _capture_signal_exists(
+                record, kind="rationale", option_key=key, quote=rationale_quote,
+            ):
+                result = note("rationale", key, rationale_quote, rationale_quote, message)
+                if result.get("ok"):
+                    saved.append({"what": "rationale", "option": names.get(key)})
+                    added = True
+            for condition in conditions:
+                if not condition["content"] or not verify_user_quote(condition["user_quote"], message["text"]):
+                    continue
+                if _capture_signal_exists(record, kind="condition", option_key=key,
+                                          quote=condition["user_quote"], content=condition["content"]):
+                    continue
+                if disposition != "pursue":
+                    continue
+                structured = {"status": "open", **({"due_by": condition["due_by"]} if condition.get("due_by") else {})}
+                result = note("condition", key, condition["content"], condition["user_quote"], message, structured)
+                if result.get("ok"):
+                    saved.append({"what": "condition", "option": names.get(key)})
+                    added = True
+                else:
+                    not_saved.append({"what": "condition", "option": names.get(key), "reason": result.get("code")})
+            if not added:
+                already.append({"what": "decision", "option": names.get(key), "disposition": disposition})
+            continue
+        entry = {"option_key": key, "disposition": disposition, "user_request_quote": str(item.get("quote") or "").strip()}
+        if rationale_quote:
+            entry["rationale_quote"] = rationale_quote
         if conditions:
             entry["conditions"] = conditions
         grouped.setdefault(message["number"], (message, []))[1].append(entry)
@@ -8323,13 +8372,22 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         for option in (decision_facts(user, thread_id) or {}).get("options", [])
         for condition in option.get("conditions") or []
     }
+    # Condition updates: for each condition only the latest message counts,
+    # and an earlier message never overturns a status set after it.
+    latest_update = {}
     for item in payload.get("condition_updates") or []:
         message = cited(item)
         signal_id = str((item or {}).get("condition_signal_id") or "").strip()
-        status = str((item or {}).get("status") or "").strip()
-        current = current_conditions.get(signal_id)
-        if message is None or current is None:
+        if message is None or signal_id not in current_conditions:
             not_saved.append({"what": "condition_update", "reason": "quote_not_in_customer_message" if message is None else "condition_not_current"})
+            continue
+        if signal_id not in latest_update or message["number"] > latest_update[signal_id][0]["number"]:
+            latest_update[signal_id] = (message, item)
+    for signal_id, (message, item) in latest_update.items():
+        current = current_conditions[signal_id]
+        status = str(item.get("status") or "").strip()
+        if newer_change_exists(message, _capture_timestamp(current.get("since"))):
+            already.append({"what": "condition_update", "condition": current.get("content"), "reason": "later_status_stands"})
             continue
         if current.get("status") == status:
             already.append({"what": "condition_update", "condition": current.get("content"), "status": status})
@@ -8350,10 +8408,14 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
             if message is None or (key and key not in known_keys):
                 not_saved.append({"what": bucket[:-1], "reason": "quote_not_in_customer_message" if message is None else "option_not_found"})
                 continue
-            if _capture_entry_exists(record, key, bucket, item.get("quote")):
+            if _capture_entry_exists(record, key, bucket, item.get("quote"), message["text"]):
                 already.append({"what": bucket[:-1], "option": names.get(key)})
                 continue
-            tool_input = {k: v for k, v in item.items() if k not in {"message", "quote"} and v not in (None, "")}
+            tool_input = {k: v for k, v in item.items() if k not in {"message", "quote", "observed", "expected"} and v not in (None, "")}
+            if item.get("observed"):
+                tool_input["observed_result"] = item["observed"]
+            if item.get("expected"):
+                tool_input["expected_result"] = item["expected"]
             tool_input["user_request_quote"] = str(item.get("quote") or "").strip()
             result = run(tool_name, tool_input, message)
             if result.get("ok"):
@@ -8377,13 +8439,21 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         else:
             not_saved.append({"what": "task_commitment", "reason": result.get("code")})
 
+    # Unclear references: only from the latest message, in the customer's own
+    # words, and only with real candidates.
     unclear = []
     for item in payload.get("unclear") or []:
-        if not isinstance(item, dict):
+        if not isinstance(item, dict) or item.get("message") != latest_number:
+            continue
+        reference = str(item.get("reference") or "").strip()
+        if not verify_user_quote(reference, by_number[latest_number]["text"]):
             continue
         candidates = [names[key] for key in (item.get("candidate_option_keys") or []) if key in names]
-        unclear.append({"reference": str(item.get("reference") or "").strip()[:200],
-                        "option_names": candidates or [item["name"] for item in options]})
+        if len(candidates) < 2:
+            continue
+        if any(entry.get("what") == "decision" and entry.get("option") in candidates for entry in saved):
+            continue
+        unclear.append({"reference": reference[:200], "option_names": candidates})
 
     summary = {"saved": saved, "already_stored": already, "not_saved": not_saved, "unclear": unclear}
     actions.append({
@@ -8393,23 +8463,25 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
     return {"actions": actions, "summary": summary, "usage": usage}
 
 
-def _capture_entry_exists(record, option_key, bucket, quote):
-    from ..decision_records import current_option_decision
+def _capture_entry_exists(record, option_key, bucket, quote, message_text=""):
+    """An outcome or lesson from this statement exists on any version of the option.
 
-    if record is None:
-        return False
-    wanted = str(quote or "").strip().casefold()
-    if not wanted:
+    One message rarely reports two outcomes, so an entry quoted from the same
+    message counts as the same one even when the quote was cut differently.
+    """
+    from ..models_decision_record import OptionDecision
+
+    if record is None or not str(quote or "").strip():
         return False
     if option_key:
-        target = current_option_decision(record, option_key)
-        rows = [target] if target is not None else []
+        rows = OptionDecision.query.filter_by(decision_record_id=str(record.id), option_key=option_key).all()
     else:
         rows = [record]
     field = "outcomes" if bucket == "outcomes" else "lessons_learned"
     for row in rows:
         for entry in (getattr(row, field, None) or []):
-            if isinstance(entry, dict) and str(entry.get("user_quote") or "").strip().casefold() == wanted:
+            stored = entry.get("user_quote") if isinstance(entry, dict) else None
+            if stored and (_capture_quotes_overlap(stored, quote) or (message_text and verify_user_quote(stored, message_text))):
                 return True
     return False
 
@@ -12235,6 +12307,17 @@ def _merge_capture_usage(usage, capture):
     added_out = int(extra.get("output_tokens") or 0)
     if not (added_in or added_out):
         return usage
+    components = [item for item in (usage.get("component_usages") or []) if isinstance(item, dict)]
+    if not components:
+        components = [{
+            "model": usage.get("model") or usage.get("anthropic_model"),
+            "input_tokens": int(usage.get("input_tokens") or 0),
+            "output_tokens": int(usage.get("output_tokens") or 0),
+            "role": "reply",
+        }]
+    # Each call is priced at its own model's rate.
+    components.append({"model": extra.get("model"), "input_tokens": added_in, "output_tokens": added_out, "role": "capture"})
+    usage["component_usages"] = components
     usage["input_tokens"] = int(usage.get("input_tokens") or 0) + added_in
     usage["output_tokens"] = int(usage.get("output_tokens") or 0) + added_out
     usage["total_tokens"] = int(usage.get("total_tokens") or 0) + added_in + added_out
@@ -13228,8 +13311,8 @@ def _artifact_entries_from_actions(actions, user_message=None, user_id=None, thr
     unresolved_names = list(dict.fromkeys(str(name).strip() for name in unresolved_names if str(name).strip()))
     if unresolved_names:
         # Some options in the call were saved; one reference resolved to none
-        # or several. The AI's reply stands and can ask in its own words, so
-        # this only states the truth, with no second set of answer buttons.
+        # or several. A fixed status states the truth, with the session's own
+        # option names as answers.
         entry = _artifact_chat_entry({"type": "status", "data": {
             "tone": "info",
             "message": "Nothing saved yet for one option: it wasn't clear which.",
