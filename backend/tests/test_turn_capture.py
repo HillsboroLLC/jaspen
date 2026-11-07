@@ -505,3 +505,33 @@ def test_billing_prices_each_call_at_its_own_model(app):
         {'model': 'claude-haiku-4-5', 'input_tokens': 100, 'output_tokens': 10, 'role': 'reply'},
         {'model': 'claude-sonnet-5', 'input_tokens': 50, 'output_tokens': 5, 'role': 'capture'},
     ]
+
+
+def test_one_condition_is_stored_once_and_never_as_a_reason(app, db, test_user, capture_model):
+    from app.models_decision_record import DecisionSignal
+
+    _, agent = modules()
+    tid = 'turn-capture-condition-once'
+    _seed(db, test_user, tid, _cards())
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-c', 'disposition': 'pursue', 'user_request_quote': 'Pursue Cherry Creek'},
+    ]}, 'Pursue Cherry Creek.')
+    message = 'Cherry Creek only if we can line up bonding by Dec 1. Surety letter for Adams by Friday.'
+    quote = 'Cherry Creek only if we can line up bonding by Dec 1'
+    _set_history(test_user, tid, _history(message))
+    capture_model['payloads'].append(_empty(
+        decisions=[{'message': 1, 'option_key': 'option-c', 'disposition': 'pursue', 'quote': quote,
+                    'rationale_quote': quote,
+                    'conditions': [{'content': 'Bonding lined up', 'quote': quote, 'due_by': '2026-12-01'}]}],
+        notes=[
+            {'message': 1, 'kind': 'condition', 'option_key': 'option-c', 'content': 'Pursuit conditional on bonding',
+             'quote': quote, 'due_by': '2026-12-01'},
+            {'message': 1, 'kind': 'rationale', 'option_key': 'option-c', 'content': quote, 'quote': quote},
+            {'message': 1, 'kind': 'commitment', 'option_key': 'option-a', 'content': 'Surety letter',
+             'quote': 'Surety letter for Adams by Friday', 'due_by': '2026-11-13'},
+        ],
+    ))
+    _run(agent, app, test_user, tid, message)
+    assert DecisionSignal.query.filter_by(kind='condition').count() == 1
+    assert DecisionSignal.query.filter_by(kind='rationale').count() == 0
+    assert DecisionSignal.query.filter_by(kind='commitment').one().structured == {'date': '2026-11-13'}
