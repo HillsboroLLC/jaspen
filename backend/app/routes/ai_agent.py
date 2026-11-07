@@ -4171,9 +4171,8 @@ def _scorecard_content_prompt_suffix(session, view_context, *, user_id=None, thr
 
 
 def _wbs_content_prompt_suffix(user_id, thread_id, active_scorecard_id=None):
-    """Inject the current execution plan (WBS) tasks so the chat agent can see
-    exactly what is on the user's screen — task titles, IDs, phase, status,
-    priority, and owner.
+    """Inject every option-scoped execution plan so chat can address the plan
+    the customer names, even when another option is open in the view.
 
     This closes a real grounding gap: the agent's WBS mutation tools read the
     WBS from the scenarios store, but the chat *prompt context* is built from
@@ -4182,60 +4181,121 @@ def _wbs_content_prompt_suffix(user_id, thread_id, active_scorecard_id=None):
     user for a task ID it should already know.
     """
     try:
-        from .strategy import _load_scenarios, _resolve_thread_wbs
+        from ..decision_records import execution_option_key
+        from .sessions import load_user_sessions
+        from .strategy import _load_scenarios
+
         all_data = _load_scenarios(user_id)
+        sessions = load_user_sessions(user_id) or {}
     except Exception:
         return ""
     td = all_data.get(thread_id) if isinstance(all_data, dict) else None
-    # Resolve the plan for the idea the user is actually viewing so the agent
-    # sees THIS idea's tasks, not another idea's. Fall back to the active id the
-    # canvas last recorded, then to the thread-level plan.
-    resolve_id = (
+    if not isinstance(td, dict):
+        return ""
+    _session_key, session = _resolve_user_session(sessions, thread_id)
+    cards = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+    open_scorecard_id = (
         str(active_scorecard_id or "").strip()
-        or (str(td.get("active_execution_scorecard_id") or "").strip() if isinstance(td, dict) else "")
+        or str(td.get("active_execution_scorecard_id") or "").strip()
         or None
     )
-    project_wbs = _resolve_thread_wbs(td, resolve_id) if isinstance(td, dict) else None
-    if not isinstance(project_wbs, dict):
-        return ""
-    tasks = project_wbs.get("tasks") if isinstance(project_wbs.get("tasks"), list) else []
-    if not tasks:
-        return ""
 
-    compact = []
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-        compact.append({
-            "id": str(task.get("id") or "").strip(),
-            "title": str(task.get("title") or "").strip(),
-            "phase": str(task.get("phase") or "").strip() or None,
-            "status": str(task.get("status") or "todo").strip(),
-            "priority": str(task.get("priority") or "").strip() or None,
-            "owner": str(task.get("owner") or task.get("suggested_role") or "").strip() or None,
-            "due_date": str(task.get("due_date") or "").strip() or None,
-            "committed": isinstance(task.get("commitment"), dict),
-        })
-    if not compact:
-        return ""
-
-    plan_name = str(project_wbs.get("name") or "Execution WBS").strip() or "Execution WBS"
-    plan_start = str(project_wbs.get("start_date") or "").strip()
-    start_note = (
-        f"The plan currently starts on {plan_start}. "
-        "To start it on a different date or shift the whole schedule, call set_execution_start_date. "
-        if plan_start else
-        "To set or change the project start date (shifting the whole schedule), call set_execution_start_date. "
+    ordered_cards = sorted(
+        (card for card in cards if isinstance(card, dict)),
+        key=lambda card: 0 if str(card.get("id") or card.get("analysis_id") or "").strip() == open_scorecard_id else 1,
     )
+    plans = []
+    seen_scorecard_ids = set()
+    for card in ordered_cards:
+        scorecard_id = str(card.get("id") or card.get("analysis_id") or "").strip()
+        option_key = execution_option_key(card)
+        if not scorecard_id or not option_key or scorecard_id in seen_scorecard_ids:
+            continue
+        resolved_id, project_wbs = _resolve_option_plan(
+            user_id, thread_id, cards, option_key, open_scorecard_id,
+            thread_data=td,
+        )
+        if resolved_id != scorecard_id or not isinstance(project_wbs, dict):
+            continue
+        tasks = project_wbs.get("tasks") if isinstance(project_wbs.get("tasks"), list) else []
+        if not tasks:
+            continue
+        seen_scorecard_ids.add(scorecard_id)
+        is_open = scorecard_id == open_scorecard_id
+        compact_tasks = []
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            compact_task = {
+                "id": str(task.get("id") or "").strip(),
+                "title": str(task.get("title") or "").strip(),
+                "phase": str(task.get("phase") or "").strip() or None,
+                "owner": str(task.get("owner") or task.get("suggested_role") or "").strip() or None,
+                "due_date": str(task.get("due_date") or "").strip() or None,
+                "committed": isinstance(task.get("commitment"), dict),
+            }
+            if is_open:
+                compact_task.update({
+                    "status": str(task.get("status") or "todo").strip(),
+                    "priority": str(task.get("priority") or "").strip() or None,
+                })
+            compact_tasks.append(compact_task)
+        if not compact_tasks:
+            continue
+        plans.append({
+            "option_name": _option_display_name(card) or scorecard_id,
+            "option_key": option_key,
+            "scorecard_id": scorecard_id,
+            "open_in_view": is_open,
+            "plan_name": str(project_wbs.get("name") or "Execution WBS").strip() or "Execution WBS",
+            "start_date": str(project_wbs.get("start_date") or "").strip() or None,
+            "tasks": compact_tasks,
+        })
+    if not plans:
+        # Threads from before per-option plans keep one thread-level plan. Show
+        # it exactly as before, as the open plan; the tools reach it without an
+        # option_key through the same open-plan lookup.
+        from .strategy import _resolve_thread_wbs
+        legacy = _resolve_thread_wbs(td, open_scorecard_id)
+        legacy_tasks = legacy.get("tasks") if isinstance(legacy, dict) and isinstance(legacy.get("tasks"), list) else []
+        compact_tasks = [
+            {
+                "id": str(task.get("id") or "").strip(),
+                "title": str(task.get("title") or "").strip(),
+                "phase": str(task.get("phase") or "").strip() or None,
+                "owner": str(task.get("owner") or task.get("suggested_role") or "").strip() or None,
+                "due_date": str(task.get("due_date") or "").strip() or None,
+                "committed": isinstance(task.get("commitment"), dict),
+                "status": str(task.get("status") or "todo").strip(),
+                "priority": str(task.get("priority") or "").strip() or None,
+            }
+            for task in legacy_tasks if isinstance(task, dict)
+        ]
+        if not compact_tasks:
+            return ""
+        open_card = next((
+            card for card in cards
+            if isinstance(card, dict) and str(card.get("id") or card.get("analysis_id") or "").strip() == open_scorecard_id
+        ), None)
+        plans.append({
+            "option_name": (_option_display_name(open_card) if open_card else None) or str(legacy.get("name") or "Execution WBS"),
+            "option_key": None,
+            "scorecard_id": open_scorecard_id,
+            "open_in_view": True,
+            "plan_name": str(legacy.get("name") or "Execution WBS").strip() or "Execution WBS",
+            "start_date": str(legacy.get("start_date") or "").strip() or None,
+            "tasks": compact_tasks,
+        })
+
     return (
-        "\n\n[CURRENT EXECUTION PLAN (WBS) — these are the live tasks on the user's execution plan canvas, "
-        f"plan name '{plan_name}'. This is the AUTHORITATIVE task list. "
-        + start_note +
+        "\n\n[EXECUTION PLANS BY OPTION — these are the authoritative live task lists for options in this thread. "
+        "Each plan is isolated under its labeled option_name and option_key; never move or mix tasks between plans. "
+        "The open plan, when one exists, is first and includes full task detail; other plans are compact. "
         "When the user references a task by name (e.g. 'Stakeholder Analysis'), match it to its id here and act on it directly — "
         "do NOT ask the user for a task ID you can already see below. "
-        "To change a task call update_wbs_task; to add one call add_wbs_task (set its phase to an existing phase name when the user names one); "
-        "to remove one call remove_wbs_task. Phase names above are the real phases — reuse them verbatim.]\n"
-        + json.dumps(compact, indent=2)
+        "Pass that plan's option_key to update_wbs_task, add_wbs_task, remove_wbs_task, or set_execution_start_date. "
+        "Set an added task's phase to an existing phase name when the user names one; phase names below are the real phases — reuse them verbatim.]\n"
+        + json.dumps(plans, indent=2)
     )
 
 
@@ -6628,10 +6688,14 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
             },
             {
                 "name": "update_wbs_task",
-                "description": "Update one editable field on a WBS task for the active thread.",
+                "description": "Update one editable field on a WBS task. Pass option_key for a specific option's plan; omit it for the open plan.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
+                        "option_key": {
+                            "type": "string",
+                            "description": "Option key from the execution-plan context; omit for the open plan.",
+                        },
                         "task_id": {"type": "string"},
                         "field": {
                             "type": "string",
@@ -6655,10 +6719,14 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
             },
             {
                 "name": "add_wbs_task",
-                "description": "Add a new WBS task in a phase for the active thread.",
+                "description": "Add a new WBS task in a phase. Pass option_key for a specific option's plan; omit it for the open plan.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
+                        "option_key": {
+                            "type": "string",
+                            "description": "Option key from the execution-plan context; omit for the open plan.",
+                        },
                         "phase_name": {"type": "string"},
                         "title": {"type": "string"},
                         "description": {"type": "string"},
@@ -6671,10 +6739,14 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
             },
             {
                 "name": "remove_wbs_task",
-                "description": "Remove a WBS task by id for the active thread.",
+                "description": "Remove a WBS task by id. Pass option_key for a specific option's plan; omit it for the open plan.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
+                        "option_key": {
+                            "type": "string",
+                            "description": "Option key from the execution-plan context; omit for the open plan.",
+                        },
                         "task_id": {"type": "string"},
                     },
                     "required": ["task_id"],
@@ -6952,7 +7024,8 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
             {
                 "name": "set_execution_start_date",
                 "description": (
-                    "Set or change the project start date for the active execution plan. "
+                    "Set or change the project start date for an execution plan. Pass option_key for a specific "
+                    "option's plan; omit it for the open plan. "
                     "Shifts every task's start and due date by the same delta so manual "
                     "per-task adjustments are preserved (the whole schedule slides). Use when "
                     "the user says things like 'start this plan on July 1' or 'push the kickoff "
@@ -6961,6 +7034,10 @@ def _anthropic_tool_definitions(enable_mutation_tools=False, user_id=None, plan_
                 "input_schema": {
                     "type": "object",
                     "properties": {
+                        "option_key": {
+                            "type": "string",
+                            "description": "Option key from the execution-plan context; omit for the open plan.",
+                        },
                         "start_date": {
                             "type": "string",
                             "description": "The new project start date in YYYY-MM-DD format.",
@@ -7628,13 +7705,21 @@ def _capture_record_and_option(tool_input, *, user, user_id, thread_id):
     return record, scorecard, stored_session, resolved_key, None
 
 
-def _option_plan_for_capture(user_id, thread_id, cards, option_key, active_scorecard_id):
-    """(scorecard_id, plan) for an option's plan, or the open plan."""
+def _resolve_option_plan(
+    user_id, thread_id, cards, option_key, active_scorecard_id, *, thread_data=None,
+):
+    """Return ``(scorecard_id, plan)`` for an explicit option or the open plan.
+
+    An explicit option never falls back to a different plan. This resolver is
+    shared by decision capture, prompt context, and the main chat plan tools.
+    """
     from ..decision_records import execution_option_key
     from .strategy import _load_scenarios, _resolve_thread_wbs
 
-    all_data = _load_scenarios(user_id)
-    td = all_data.get(thread_id) if isinstance(all_data, dict) else None
+    td = thread_data
+    if td is None:
+        all_data = _load_scenarios(user_id)
+        td = all_data.get(thread_id) if isinstance(all_data, dict) else None
     if not isinstance(td, dict):
         return None, None
     by_card = td.get("wbs_by_scorecard") if isinstance(td.get("wbs_by_scorecard"), dict) else {}
@@ -7650,6 +7735,29 @@ def _option_plan_for_capture(user_id, thread_id, cards, option_key, active_score
         or None
     )
     return scorecard_id, _resolve_thread_wbs(td, scorecard_id)
+
+
+def _resolve_explicit_option_plan(user_id, thread_id, td, option_key):
+    """Resolve a chat tool's explicit option key without cross-option fallback."""
+    from ..decision_records import execution_option_key
+
+    sessions = load_user_sessions(user_id) or {}
+    _session_key, session = _resolve_user_session(sessions, thread_id)
+    cards = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+    if not any(execution_option_key(card) == option_key for card in cards):
+        return None, None, _tool_error(
+            "That option is not part of this session. Nothing changed.",
+            code="option_not_found",
+        )
+    scorecard_id, plan = _resolve_option_plan(
+        user_id, thread_id, cards, option_key, None, thread_data=td,
+    )
+    if not isinstance(plan, dict):
+        return None, None, _tool_error(
+            "There is no execution plan for that option. Nothing changed.",
+            code="no_plan",
+        )
+    return scorecard_id, plan, None
 
 
 def _commit_plan_task(user_id, thread_id, scorecard_id, plan, task_id, apply):
@@ -7831,7 +7939,7 @@ def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, vi
             sessions = load_user_sessions(user_id) or {}
             _key, live = _resolve_user_session(sessions, thread_id)
             cards = _collect_session_scorecards(live, user_id=user_id, thread_id=thread_id)
-            scorecard_id, plan = _option_plan_for_capture(
+            scorecard_id, plan = _resolve_option_plan(
                 user_id, thread_id, cards, option_key, view_active_scorecard_id,
             )
             if not isinstance(plan, dict):
@@ -7885,7 +7993,7 @@ def _execute_confirm_task_commitment(tool_input, *, user, user_id, thread_id, vi
     option_key = str(tool_input.get("option_key") or "").strip() or None
     if option_key and not any(execution_option_key(card) == option_key for card in cards):
         return _tool_error("That option is not part of this session. Nothing was recorded.", code="decision_option_required")
-    scorecard_id, plan = _option_plan_for_capture(user_id, thread_id, cards, option_key, view_active_scorecard_id)
+    scorecard_id, plan = _resolve_option_plan(user_id, thread_id, cards, option_key, view_active_scorecard_id)
     if not isinstance(plan, dict):
         return _tool_error("There is no execution plan for that option. Nothing was recorded.", code="no_plan")
     outcome, error = _commit_plan_task(
@@ -8636,7 +8744,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         stated_at = _capture_timestamp(message.get("timestamp"))
         if stated_at is None:
             return True
-        _scorecard_id, plan = _option_plan_for_capture(
+        _scorecard_id, plan = _resolve_option_plan(
             user_id, thread_id, cards, str(item.get("option_key") or "").strip() or None, view_active,
         )
         if not isinstance(plan, dict):
@@ -10949,13 +11057,22 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not isinstance(td, dict):
             return _tool_error("No execution plan found for this thread yet.", code="no_plan")
 
-        active_scorecard_id = (
+        fallback_scorecard_id = (
             view_active_scorecard_id
             or str(tool_input.get("scorecard_id") or "").strip()
             or str(td.get("active_execution_scorecard_id") or "").strip()
             or None
         )
-        resolved_wbs = _resolve_thread_wbs(td, active_scorecard_id)
+        option_key = str(tool_input.get("option_key") or "").strip()
+        if option_key:
+            active_scorecard_id, resolved_wbs, target_error = _resolve_explicit_option_plan(
+                user_id, thread_id, td, option_key,
+            )
+            if target_error:
+                return target_error
+        else:
+            active_scorecard_id = fallback_scorecard_id
+            resolved_wbs = _resolve_thread_wbs(td, active_scorecard_id)
         if not isinstance(resolved_wbs, dict) or not (resolved_wbs.get("tasks") or []):
             return _tool_error("There's no execution plan to re-schedule yet.", code="no_plan")
 
@@ -11014,13 +11131,22 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # Edit the plan for whichever idea is currently open (the canvas records
         # this on load); the tool itself gets no view context. Fall back to the
         # thread-level plan only when no idea is active.
-        active_scorecard_id = (
+        fallback_scorecard_id = (
             view_active_scorecard_id
             or str(tool_input.get("scorecard_id") or "").strip()
             or str(td.get("active_execution_scorecard_id") or "").strip()
             or None
         )
-        resolved_wbs = _resolve_thread_wbs(td, active_scorecard_id)
+        option_key = str(tool_input.get("option_key") or "").strip()
+        if option_key:
+            active_scorecard_id, resolved_wbs, target_error = _resolve_explicit_option_plan(
+                user_id, thread_id, td, option_key,
+            )
+            if target_error:
+                return target_error
+        else:
+            active_scorecard_id = fallback_scorecard_id
+            resolved_wbs = _resolve_thread_wbs(td, active_scorecard_id)
         current_wbs = resolved_wbs if isinstance(resolved_wbs, dict) else {"name": "Execution WBS", "tasks": []}
         tasks = list(current_wbs.get("tasks") if isinstance(current_wbs.get("tasks"), list) else [])
 
