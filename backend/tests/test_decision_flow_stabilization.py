@@ -4143,3 +4143,97 @@ def test_failed_decision_save_card_never_shows_tool_instructions(app):
     assert card['tone'] == 'error'
     assert card['message'] == "This decision wasn't saved. Your message is saved."
     assert card['retry_message'] == "We're going with the agency."
+
+
+def _failed_plan_update_action():
+    return {
+        'tool': 'update_wbs_task',
+        'input': {'task_id': 'missing-task', 'field': 'due_date', 'new_value': '2026-11-24'},
+        'result': {'ok': False, 'code': 'task_not_found', 'error': 'Task not found.'},
+    }
+
+
+def _patch_plan_claim_turn_billing(agent, monkeypatch):
+    monkeypatch.setattr(agent, '_reserve_preflight_credits', lambda *a, **k: {'ok': True, 'reserved': 2000})
+    monkeypatch.setattr(agent, '_charge_for_usage', lambda *a, **k: 2000)
+    monkeypatch.setattr(agent, '_settle_reserved_credits', lambda *a, **k: {
+        'ok': True, 'charged': 2000, 'remaining': 298000,
+    })
+    monkeypatch.setattr(agent, '_persist_credit_deduction', lambda *a, **k: None)
+
+
+def test_failed_plan_update_replaces_nonstreaming_false_claim_and_keeps_normal_charge(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    _, agent = modules()
+    tid = 'failed-plan-claim-nonstream'
+    seed_thread(test_user, tid)
+    _patch_plan_claim_turn_billing(agent, monkeypatch)
+    action = _failed_plan_update_action()
+    monkeypatch.setattr(agent, '_generate_assistant_reply', lambda *a, **k: (
+        'Moving its due date to Nov 24.',
+        {'provider': 'test', 'model': 'test', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2},
+        [action],
+        [{'tool': 'update_wbs_task', 'success': False, 'code': 'task_not_found'}],
+        None,
+    ))
+
+    response = client.post('/api/v1/ai-agent/conversation/continue', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': 'Move the bond deadline to Nov 24.',
+    })
+
+    assert response.status_code == 200, response.get_json()
+    payload = response.get_json()
+    assert payload['reply'] == ''
+    assert payload['credits']['charged'] == 2
+    card = next(
+        item['artifact']['data'] for item in payload['artifact_messages']
+        if item['artifact']['type'] == 'status'
+    )
+    assert "wasn't saved: the task wasn't found" in card['message']
+    stored = agent.load_user_sessions(test_user.id)[tid]['chat_history']
+    assert not any('Moving its due date' in str(item.get('content') or '') for item in stored)
+
+
+def test_failed_plan_update_replaces_streamed_delta_in_done_state(
+    client, db, test_user, auth_headers, monkeypatch,
+):
+    _, agent = modules()
+    tid = 'failed-plan-claim-stream'
+    seed_thread(test_user, tid)
+    _patch_plan_claim_turn_billing(agent, monkeypatch)
+    action = _failed_plan_update_action()
+
+    def stream_turn(*args, **kwargs):
+        kwargs['state'].update({
+            'reply': 'Moving its due date to Nov 24.',
+            'usage': {'provider': 'test', 'model': 'test', 'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2},
+            'actions': [action],
+            'mutations': [{'tool': 'update_wbs_task', 'success': False, 'code': 'task_not_found'}],
+            'undo_snapshot': None,
+        })
+        yield {'type': 'delta', 'text': 'Moving its due date to Nov 24.'}
+
+    monkeypatch.setattr(agent, '_stream_assistant_reply_events', stream_turn)
+    response = client.post('/api/v1/ai-agent/conversation/continue?stream=true', headers=auth_headers, json={
+        'thread_id': tid,
+        'message': 'Move the bond deadline to Nov 24.',
+    })
+
+    assert response.status_code == 200
+    events = [
+        json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines()
+        if line.startswith('data: ')
+    ]
+    assert events[0] == {'type': 'delta', 'text': 'Moving its due date to Nov 24.'}
+    done = events[-1]
+    assert done['type'] == 'done'
+    assert done['reply'] == ''
+    assert done['credits']['charged'] == 2
+    assert any(
+        item['artifact']['type'] == 'status' and "wasn't saved: the task wasn't found" in item['artifact']['data']['message']
+        for item in done['artifact_messages']
+    )
+    stored = agent.load_user_sessions(test_user.id)[tid]['chat_history']
+    assert not any('Moving its due date' in str(item.get('content') or '') for item in stored)

@@ -622,6 +622,12 @@ _DECISION_CAPTURE_TOOLS = {
 # saved. Background notes (record_decision_context) are exempt: a note that
 # didn't save never replaces the AI's reply; the AI sees the result.
 _GUARDED_CAPTURE_TOOLS = _DECISION_CAPTURE_TOOLS - {"record_decision_context"}
+_GUARDED_PLAN_EDIT_TOOLS = _MUTATION_TOOLS & {
+    "update_wbs_task",
+    "add_wbs_task",
+    "remove_wbs_task",
+    "set_execution_start_date",
+}
 # Legacy chat-tool decision values, mapped to the canonical dispositions.
 _LEGACY_DECISION_DISPOSITIONS = {
     "moving_forward": "pursue",
@@ -3451,12 +3457,14 @@ def _apply_scoring_failure_state(reply, usage, executed_actions):
 
 
 def _failed_option_decision_action(executed_actions):
-    """The capture save that failed this turn, unless that tool also succeeded.
+    """The guarded save that still failed at the end of this turn.
 
-    Covers every decision-capture tool: when nothing was saved, the turn's prose
-    may still claim it was, so the caller withholds it and shows the truth.
+    Decision capture keeps its approved per-tool behavior. Plan edits are tracked
+    by task and field (or by the plan action), so a later success clears only the
+    failed change it actually superseded.
     """
     by_tool = {}
+    unresolved_plan_edits = {}
     for action in executed_actions or []:
         # The turn capture step runs before the reply, and the reply is written
         # knowing what it saved, so its failures never withhold the reply.
@@ -3466,6 +3474,44 @@ def _failed_option_decision_action(executed_actions):
             by_tool.setdefault(action["tool"], []).append(
                 action.get("result") if isinstance(action.get("result"), dict) else {}
             )
+        if not isinstance(action, dict) or action.get("tool") not in _GUARDED_PLAN_EDIT_TOOLS:
+            continue
+        tool = action["tool"]
+        tool_input = action.get("input") if isinstance(action.get("input"), dict) else {}
+        if tool == "update_wbs_task":
+            target = (tool, str(tool_input.get("task_id") or ""), str(tool_input.get("field") or ""))
+        elif tool == "remove_wbs_task":
+            target = (tool, str(tool_input.get("task_id") or ""))
+        elif tool == "add_wbs_task":
+            target = (
+                tool,
+                str(tool_input.get("phase_name") or ""),
+                str(tool_input.get("title") or ""),
+            )
+        else:
+            target = (tool,)
+        result = action.get("result") if isinstance(action.get("result"), dict) else {}
+        if result.get("ok"):
+            unresolved_plan_edits.pop(target, None)
+            if tool == "update_wbs_task":
+                # The AI often retries a change it first sent to a wrong task id.
+                # Once the same change lands on a real task, that earlier
+                # task_not_found attempt is no longer an unsaved change.
+                landed = (str(tool_input.get("field") or ""), json.dumps(tool_input.get("new_value"), sort_keys=True, default=str))
+                for key, failed in list(unresolved_plan_edits.items()):
+                    failed_input = failed.get("_plan_edit_input") or {}
+                    if (
+                        key[0] == "update_wbs_task"
+                        and failed.get("code") == "task_not_found"
+                        and (str(failed_input.get("field") or ""), json.dumps(failed_input.get("new_value"), sort_keys=True, default=str)) == landed
+                    ):
+                        unresolved_plan_edits.pop(key, None)
+        else:
+            unresolved_plan_edits[target] = {
+                **result,
+                "tool": tool,
+                "_plan_edit_input": tool_input,
+            }
     for tool, results in by_tool.items():
         if any(result.get("ok") for result in results):
             continue
@@ -3473,16 +3519,59 @@ def _failed_option_decision_action(executed_actions):
             if not result.get("ok"):
                 result.setdefault("tool", tool)
                 return result
+    if unresolved_plan_edits:
+        return next(iter(unresolved_plan_edits.values()))
     return None
 
 
 def _apply_option_decision_failure_state(reply, executed_actions):
-    # A failed decision save is shown as a status card with Retry. The turn's
-    # prose is withheld, because it may claim the decision was recorded.
+    # A failed guarded save is shown as a truthful status card. The turn's
+    # prose is withheld, because it may claim the change was recorded.
     failure = _failed_option_decision_action(executed_actions)
     if failure:
         return "", failure
     return reply, None
+
+
+def _plan_edit_failure_status(failure, user_message):
+    """Describe a failed plan save without exposing tool mechanics."""
+    tool = str(failure.get("tool") or "")
+    tool_input = failure.get("_plan_edit_input") if isinstance(failure.get("_plan_edit_input"), dict) else {}
+    field = str(tool_input.get("field") or failure.get("field") or "").replace("_", " ").strip()
+    if tool == "update_wbs_task":
+        change = f"The {field} change for that task" if field else "The task change"
+    elif tool == "add_wbs_task":
+        change = "The new task"
+    elif tool == "remove_wbs_task":
+        change = "The task removal"
+    elif tool == "set_execution_start_date":
+        change = "The plan start-date change"
+    else:
+        change = "The plan change"
+
+    code = str(failure.get("code") or "")
+    if code == "task_not_found":
+        reason = "the task wasn't found."
+    elif code in {"invalid_task_date", "invalid_start_date"}:
+        reason = "the date wasn't valid."
+    elif code == "revision_conflict" or "conflict" in code:
+        reason = "the plan changed before this update could be saved."
+    elif code == "tool_not_allowed":
+        reason = "this plan change isn't allowed."
+    elif code == "no_plan":
+        reason = "there isn't an execution plan to update."
+    elif code.startswith("invalid_"):
+        reason = "the requested value wasn't valid."
+    else:
+        reason = "the save didn't finish."
+
+    status = {
+        "tone": "error",
+        "message": f"{change} wasn't saved: {reason} Your message is saved.",
+    }
+    if code == "revision_conflict" or "conflict" in code or code == "persist_failed":
+        status["retry_message"] = str(user_message or "").strip() or None
+    return status
 
 
 def _successful_scoring_action(executed_actions):
@@ -13571,7 +13660,9 @@ def _artifact_entries_from_actions(actions, user_message=None, user_id=None, thr
         option_names = [
             str(name).strip() for name in (decision_failure.get("option_names") or []) if str(name).strip()
         ]
-        if decision_failure.get("code") == "option_decision_required":
+        if decision_failure.get("tool") in _GUARDED_PLAN_EDIT_TOOLS:
+            status = _plan_edit_failure_status(decision_failure, user_message)
+        elif decision_failure.get("code") == "option_decision_required":
             status = {
                 "tone": "info",
                 "message": "Nothing saved yet: no decision is recorded for that option.",
