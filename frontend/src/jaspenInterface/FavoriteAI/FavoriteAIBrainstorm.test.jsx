@@ -2,12 +2,18 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import FavoriteAIBrainstorm from './FavoriteAIBrainstorm';
-import { appendComposerDraft, BRAINSTORM_PROMPT, buildCopiedPrompt } from './favoriteAI';
+import {
+  appendComposerDraft,
+  BRAINSTORM_PROMPT,
+  buildCopiedPrompt,
+  buildFavoriteAIProjectSummary,
+} from './favoriteAI';
 
 const summary = {
   title: 'Choose a launch market',
   options: ['Chicago', 'Austin'],
-  openQuestions: ['Demand evidence: Which market has stronger qualified demand?'],
+  informationNeeded: ['Demand evidence: Which market has stronger qualified demand?'],
+  decisionQuestions: ['Chicago: Confirm regulatory approval'],
 };
 
 function setClipboard(writeText) {
@@ -82,6 +88,55 @@ describe('FavoriteAIBrainstorm', () => {
     expect(writeText).toHaveBeenCalledWith(expected);
     expect(openSpy).toHaveBeenCalledWith('https://chatgpt.com/', '_blank');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  test('uses the project header title and honestly labels each included list', () => {
+    const projectSummary = buildFavoriteAIProjectSummary({
+      projectHeaderTitle: "SMOKE TEST 5: We're a construction firm",
+      scorecards: [
+        {
+          project_name: 'Denver Water pump station',
+          gates: [{ label: 'Confirm bonding capacity', status: 'unknown' }],
+        },
+        { project_name: 'Adams County road resurfacing' },
+        { project_name: 'CDOT bridge rehab' },
+      ],
+      collectedSignals: [{
+        label: 'Jira data',
+        hint: 'Connect Jira to confirm delivery dependencies',
+        complete: false,
+      }],
+    });
+    const projectText = buildCopiedPrompt(projectSummary, true);
+
+    expect(projectText).toContain("Title: SMOKE TEST 5: We're a construction firm");
+    expect(projectText).not.toContain('Title: Denver Water pump station');
+    expect(projectText).toContain('Information Jaspen still needs:\n- Jira data: Connect Jira to confirm delivery dependencies');
+    expect(projectText).toContain('Required checks not yet confirmed:\n- Denver Water pump station: Confirm bonding capacity');
+    expect(projectText).not.toContain('Open questions:');
+  });
+
+  test('leaves empty project summary sections out', () => {
+    const projectText = buildCopiedPrompt({
+      title: '',
+      options: ['Denver Water pump station'],
+      informationNeeded: [],
+      decisionQuestions: [],
+    }, true);
+
+    expect(projectText).not.toContain('Title:');
+    expect(projectText).toContain('Options:\n- Denver Water pump station');
+    expect(projectText).not.toContain('Information Jaspen still needs:');
+    expect(projectText).not.toContain('Required checks not yet confirmed:');
+  });
+
+  test('the summary promise names exactly the sections that can be added', async () => {
+    const user = userEvent.setup();
+    render(<FavoriteAIBrainstorm projectSummary={summary} onAddToComposer={jest.fn()} />);
+    await user.click(screen.getByRole('button', { name: 'Brainstorm with ChatGPT' }));
+    expect(screen.getByText(
+      'Off by default. Only the project title, options, information Jaspen still needs, and required checks not yet confirmed shown in Jaspen are added when you turn this on.'
+    )).toBeInTheDocument();
   });
 
   test.each([
