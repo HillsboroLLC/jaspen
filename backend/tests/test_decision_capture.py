@@ -608,6 +608,70 @@ def test_failed_capture_withholds_prose_and_shows_truthful_status(app):
     assert agent._apply_option_decision_failure_state('Saved.', ok_then_fail) == ('Saved.', None)
 
 
+def test_failed_plan_edits_withhold_prose_until_same_target_succeeds(app):
+    _, agent = modules()
+    failed_due_date = {
+        'tool': 'update_wbs_task',
+        'input': {'task_id': 'task-bond', 'field': 'due_date', 'new_value': '2026-11-24'},
+        'result': {'ok': False, 'code': 'task_not_found', 'error': 'Task not found.'},
+    }
+
+    reply, failure = agent._apply_option_decision_failure_state(
+        'Moving its due date to Nov 24.', [failed_due_date],
+    )
+    assert reply == ''
+    assert failure['tool'] == 'update_wbs_task'
+    card = agent._artifact_entries_from_actions(
+        [failed_due_date], user_message='Move the bond deadline to Nov 24.',
+    )[0]['artifact']['data']
+    assert card == {
+        'tone': 'error',
+        'message': "The due date change for that task wasn't saved: the task wasn't found. Your message is saved.",
+    }
+
+    succeeded_due_date = {
+        **failed_due_date,
+        'result': {'ok': True, 'confirmation': "Updated task 'Bond letter' (due_date)."},
+    }
+    assert agent._apply_option_decision_failure_state(
+        'Moved the deadline.', [failed_due_date, succeeded_due_date],
+    ) == ('Moved the deadline.', None)
+
+    unrelated_success = {
+        'tool': 'update_wbs_task',
+        'input': {'task_id': 'task-permit', 'field': 'owner', 'new_value': 'Priya'},
+        'result': {'ok': True, 'confirmation': "Updated task 'Permit' (owner)."},
+    }
+    actions = [failed_due_date, unrelated_success]
+    assert agent._apply_option_decision_failure_state('Both are updated.', actions)[0] == ''
+    entries = agent._artifact_entries_from_actions(actions, user_message='Update both tasks.')
+    receipts = next(item['artifact']['data'] for item in entries if item['artifact']['type'] == 'receipts')
+    assert receipts['items'] == ["Updated task 'Permit' (owner)."]
+    assert any(item['artifact']['type'] == 'status' for item in entries)
+
+
+def test_plan_edit_failure_cards_distinguish_invalid_date_and_conflict(app):
+    _, agent = modules()
+    invalid = {'tool': 'update_wbs_task', 'input': {
+        'task_id': 'task-bond', 'field': 'due_date', 'new_value': 'Nov 24',
+    }, 'result': {'ok': False, 'code': 'invalid_task_date', 'error': 'invalid'}}
+    conflict = {'tool': 'set_execution_start_date', 'input': {
+        'start_date': '2026-11-24',
+    }, 'result': {'ok': False, 'code': 'revision_conflict', 'error': 'conflict'}}
+
+    invalid_card = agent._artifact_entries_from_actions(
+        [invalid], user_message='Move the deadline.',
+    )[0]['artifact']['data']
+    assert "the date wasn't valid" in invalid_card['message']
+    assert 'retry_message' not in invalid_card
+
+    conflict_card = agent._artifact_entries_from_actions(
+        [conflict], user_message='Move the plan start.',
+    )[0]['artifact']['data']
+    assert 'the plan changed before this update could be saved' in conflict_card['message']
+    assert conflict_card['retry_message'] == 'Move the plan start.'
+
+
 def test_partial_multi_option_call_states_what_was_not_saved(app, db, test_user):
     _, agent = modules()
     tid = 'capture-partial'
@@ -1189,3 +1253,43 @@ def test_named_option_decides_which_plan_is_built(app, db, test_user, monkeypatc
         user=test_user, user_id=test_user.id, thread_id=tid,
     )
     assert missing['ok'] is False and missing['code'] == 'decision_option_required'
+
+
+def test_wrong_task_id_then_same_change_on_real_task_keeps_the_reply(app):
+    _, agent = modules()
+    wrong_id = {
+        'tool': 'update_wbs_task',
+        'input': {'task_id': 'task-guess', 'field': 'due_date', 'new_value': '2026-11-24'},
+        'result': {'ok': False, 'code': 'task_not_found', 'error': 'Task not found.'},
+    }
+    landed = {
+        'tool': 'update_wbs_task',
+        'input': {'task_id': 'task-bond', 'field': 'due_date', 'new_value': '2026-11-24'},
+        'result': {'ok': True, 'confirmation': "Updated task 'Bond letter' (due_date)."},
+    }
+    assert agent._apply_option_decision_failure_state(
+        'Moved the bond letter to Nov 24.', [wrong_id, landed],
+    ) == ('Moved the bond letter to Nov 24.', None)
+
+    # A different value landing elsewhere doesn't excuse the failed change.
+    other_value = {**landed, 'input': {**landed['input'], 'new_value': '2026-11-30'}}
+    assert agent._apply_option_decision_failure_state(
+        'Moved it.', [wrong_id, other_value],
+    )[0] == ''
+
+
+def test_a_real_failure_on_one_task_is_not_cleared_by_another_tasks_success(app):
+    _, agent = modules()
+    invalid_on_a = {
+        'tool': 'update_wbs_task',
+        'input': {'task_id': 'task-a', 'field': 'due_date', 'new_value': 'Nov 24'},
+        'result': {'ok': False, 'code': 'invalid_task_date', 'error': 'invalid'},
+    }
+    saved_on_b = {
+        'tool': 'update_wbs_task',
+        'input': {'task_id': 'task-b', 'field': 'due_date', 'new_value': 'Nov 24'},
+        'result': {'ok': True, 'confirmation': "Updated task 'B' (due_date)."},
+    }
+    reply, failure = agent._apply_option_decision_failure_state('Both moved.', [invalid_on_a, saved_on_b])
+    assert reply == ''
+    assert failure['code'] == 'invalid_task_date'
