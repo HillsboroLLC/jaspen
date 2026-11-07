@@ -295,3 +295,44 @@ it('keeps a canvas edit visible after a temporary network failure', async () => 
   expect(screen.getByText('Unsaved edit')).toBeInTheDocument();
   expect(screen.getByText('Save failed — will retry')).toBeInTheDocument();
 });
+
+it('still saves the next edit when a rejected start-date change cannot reload the latest plan', async () => {
+  jest.spyOn(console, 'error').mockImplementation(() => {});
+  const initialPlan = {
+    scorecard_id: 'reload-fail-card',
+    start_date: '2027-01-04',
+    updated_at: 'R1',
+    tasks: [{ id: 'task-1', title: 'Original', phase: 'Delivery', status: 'todo' }],
+  };
+  let startDateAttempts = 0;
+  const fetchMock = jest.spyOn(global, 'fetch').mockImplementation((url, init = {}) => {
+    const method = String(init.method || 'GET').toUpperCase();
+    if (String(url).includes('bindings')) return json(200, { bindings: [] });
+    if (method === 'GET') return Promise.reject(new TypeError('Failed to fetch'));
+    if (String(init.body || '').includes('2027-01-11') && startDateAttempts === 0) {
+      startDateAttempts += 1;
+      return json(409, { code: 'revision_conflict', error: REVISION_CONFLICT_MESSAGE });
+    }
+    return json(200, { project_wbs: { ...initialPlan, updated_at: 'R2' } });
+  });
+
+  render(<JaspenExecutionCanvas threadId="reload-fail-thread" scorecardId="reload-fail-card" wbs={initialPlan} />);
+  fireEvent.change(document.querySelector('input[type="date"]'), { target: { value: '2027-01-11' } });
+  await screen.findByText(
+    "This project has newer changes. Your change wasn't saved, and the latest saved version couldn't be loaded.",
+    {}, { timeout: 12000 },
+  );
+
+  jest.useFakeTimers();
+  fireEvent.click(screen.getByText('Original'));
+  fireEvent.change(screen.getByDisplayValue('Original'), { target: { value: 'Edited after rejection' } });
+  fireEvent.blur(screen.getByDisplayValue('Edited after rejection'));
+  await act(async () => {
+    jest.advanceTimersByTime(600);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  const saved = fetchMock.mock.calls.some(([, init]) => String(init?.body || '').includes('Edited after rejection'));
+  expect(saved).toBe(true);
+}, 20000); // the failed reload uses the client's 1s/2s/4s GET retries

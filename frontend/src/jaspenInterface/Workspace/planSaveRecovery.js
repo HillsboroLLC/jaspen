@@ -9,7 +9,10 @@ import {
 export function isRejectedPlanSave(error) {
   if (isRevisionConflict(error) || isInvalidTaskDate(error)) return true;
   const status = Number(error?.status);
-  return Number.isFinite(status) && status >= 400 && status < 500 && status !== 408 && status !== 429;
+  // 401 is an expired sign-in, 408 a timeout, 429 rate limiting: all temporary,
+  // so the customer's edit is kept for Retry instead of being rolled back.
+  return Number.isFinite(status) && status >= 400 && status < 500
+    && status !== 401 && status !== 408 && status !== 429;
 }
 
 export function rejectedPlanSaveMessage(error, latestShown = true) {
@@ -19,7 +22,7 @@ export function rejectedPlanSaveMessage(error, latestShown = true) {
       : "This project has newer changes. Your change wasn't saved, and the latest saved version couldn't be loaded.";
   }
   if (isInvalidTaskDate(error)) return "That task date is invalid. Your change wasn't saved.";
-  if (error?.status === 401 || error?.status === 403) {
+  if (error?.status === 403) {
     return "You don't have permission to change this plan. Your change wasn't saved.";
   }
   const reason = String(error?.message || error?.data?.error || 'That change was rejected')

@@ -30,3 +30,15 @@ it('waits for already-issued plan writes before loading the latest saved plan', 
   });
   expect(getPlan).toHaveBeenCalledTimes(1);
 });
+
+it('treats an expired sign-in as temporary and a refused permission as a rejection', () => {
+  const { isRejectedPlanSave, rejectedPlanSaveMessage } = jest.requireActual('./planSaveRecovery');
+  expect(isRejectedPlanSave({ status: 401 })).toBe(false);
+  expect(isRejectedPlanSave({ status: 408 })).toBe(false);
+  expect(isRejectedPlanSave({ status: 429 })).toBe(false);
+  expect(isRejectedPlanSave({ status: 503 })).toBe(false);
+  expect(isRejectedPlanSave({ status: 403 })).toBe(true);
+  expect(rejectedPlanSaveMessage({ status: 403 })).toBe(
+    "You don't have permission to change this plan. Your change wasn't saved.",
+  );
+});

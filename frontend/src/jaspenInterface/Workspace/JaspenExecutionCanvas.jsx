@@ -1184,9 +1184,27 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
     undoStack.current = [];
     redoStack.current = [];
     setHistVer((v) => v + 1);
-    skipNextSave.current = true;
-    setWbs(savedPlan);
+    // Arm the skip only when the plan on screen actually changes; an armed skip
+    // with no re-render would swallow the customer's next real edit.
+    if (savedPlan !== wbsRef.current) {
+      skipNextSave.current = true;
+      wbsRef.current = savedPlan;
+      setWbs(savedPlan);
+    }
   }, []);
+
+  // After a rejection, show the server's latest saved plan, unless the customer
+  // has edited again in the meantime: never overwrite newer work silently. That
+  // edit saves next and is accepted, or rejected with its own message.
+  const showLatestUnlessEditedSince = useCallback((latest, shownAtRejection) => {
+    if (!latest) return false;
+    if (wbsRef.current !== shownAtRejection) {
+      lastSavedWbsRef.current = latest;
+      return false;
+    }
+    showSavedPlan(latest);
+    return true;
+  }, [showSavedPlan]);
 
   // Sync if the wbs prop or bundle changes (e.g. fresh load).
   // wbsProp wins because /threads/:tid/wbs is the authoritative source.
@@ -1219,11 +1237,11 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
         if (isRejectedPlanSave(e)) {
           setSaveRejected(true);
           showSavedPlan(lastSavedWbsRef.current);
+          const shownAtRejection = wbsRef.current;
           let latestShown = false;
           try {
             const latest = await loadLatestSavedPlan(threadId, scorecardId || wbs?.scorecard_id || null);
-            showSavedPlan(latest);
-            latestShown = Boolean(latest);
+            latestShown = showLatestUnlessEditedSince(latest, shownAtRejection);
           } catch (refreshError) {
             console.error('[ExecutionCanvas] rejected-save refresh failed:', refreshError);
           }
@@ -1236,7 +1254,7 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
       }
     }, 600);
     return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
-  }, [wbs, threadId, scorecardId, loadLatestSavedPlan, showSavedPlan, trackPlanWrite]);
+  }, [wbs, threadId, scorecardId, loadLatestSavedPlan, showSavedPlan, showLatestUnlessEditedSince, trackPlanWrite]);
 
   // ── Undo / redo ──────────────────────────────────────────────────────────
   // Keep a ref mirror of the live WBS so mutation helpers can read the current
@@ -1325,11 +1343,11 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
       if (isRejectedPlanSave(e)) {
         setSaveRejected(true);
         showSavedPlan(lastSavedWbsRef.current);
+        const shownAtRejection = wbsRef.current;
         let latestShown = false;
         try {
           const latest = await loadLatestSavedPlan(threadId, scorecardId || wbsRef.current?.scorecard_id || null);
-          showSavedPlan(latest);
-          latestShown = Boolean(latest);
+          latestShown = showLatestUnlessEditedSince(latest, shownAtRejection);
         } catch (refreshError) {
           console.error('[ExecutionCanvas] rejected start-date refresh failed:', refreshError);
         }
@@ -1340,7 +1358,7 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
     } finally {
       setStartDateSaving(false);
     }
-  }, [threadId, scorecardId, planStartDate, loadLatestSavedPlan, showSavedPlan, trackPlanWrite]);
+  }, [threadId, scorecardId, planStartDate, loadLatestSavedPlan, showSavedPlan, showLatestUnlessEditedSince, trackPlanWrite]);
 
   // Keyboard: Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z (or Ctrl+Y) = redo.
   useEffect(() => {
