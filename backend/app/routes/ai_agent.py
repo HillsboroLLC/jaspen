@@ -7966,7 +7966,7 @@ _CAPTURE_SYSTEM_PROMPT = (
     "unless it adds or changes conditions.\n"
     "Notes: reasons, trade-offs, assumptions, concerns, evidence, commitments (something the customer or "
     "their team will do), deadlines (a date someone else set, such as a bid due date), success measures and "
-    "review timing. Normalize dates to ISO using today's date; omit a date only when it is truly unclear. "
+    "review timing. Write every date as YYYY-MM-DD, resolved from the customer's words using today's date and weekday (Dec 12 means the next Dec 12; by Friday means the coming Friday, or today when today is Friday and they mean today); omit a date only when it is truly unclear. A reason belongs only to the option it explains. "
     "When the option a note belongs to is unclear, leave option_key empty to record it for the whole decision. "
     "A new condition on an option already pursued is a note of kind condition with that option_key.\n"
     "Condition updates: when the customer says a listed condition was met, not met or waived, return its "
@@ -7992,9 +7992,9 @@ def _capture_pass_tool():
                     "option_key": {"type": "string"},
                     "disposition": {"type": "string", "enum": ["pursue", "not_pursue", "still_evaluating"]},
                     "quote": quote,
-                    "rationale_quote": {"type": "string"},
+                    "rationale_quote": {"type": "string", "description": "Only the words giving the customer's reason for THIS option; omit when they gave none for it."},
                     "conditions": {"type": "array", "items": {"type": "object", "properties": {
-                        "content": {"type": "string"}, "quote": quote, "due_by": {"type": "string"},
+                        "content": {"type": "string"}, "quote": quote, "due_by": {"type": "string", "description": "YYYY-MM-DD"},
                     }, "required": ["content", "quote"]}},
                 }, "required": ["message", "option_key", "disposition", "quote"]}},
                 "notes": {"type": "array", "items": {"type": "object", "properties": {
@@ -8003,7 +8003,9 @@ def _capture_pass_tool():
                     "option_key": {"type": "string"},
                     "content": {"type": "string"},
                     "quote": quote,
-                    "date": {"type": "string"}, "due_by": {"type": "string"}, "review_by": {"type": "string"},
+                    "date": {"type": "string", "description": "YYYY-MM-DD, resolved from the customer's words using today's date"},
+                    "due_by": {"type": "string", "description": "YYYY-MM-DD"},
+                    "review_by": {"type": "string", "description": "YYYY-MM-DD"},
                     "set_by": {"type": "string"}, "owner": {"type": "string"},
                     "measure": {"type": "string"}, "target": {"type": "string"}, "unit": {"type": "string"},
                     "task_id": {"type": "string"},
