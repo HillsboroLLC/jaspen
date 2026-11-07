@@ -3560,6 +3560,8 @@ def _plan_edit_failure_status(failure, user_message):
         reason = "this plan change isn't allowed."
     elif code == "no_plan":
         reason = "there isn't an execution plan to update."
+    elif code == "option_not_found":
+        reason = "that option isn't part of this project."
     elif code.startswith("invalid_"):
         reason = "the requested value wasn't valid."
     else:

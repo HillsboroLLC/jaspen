@@ -1293,3 +1293,14 @@ def test_a_real_failure_on_one_task_is_not_cleared_by_another_tasks_success(app)
     reply, failure = agent._apply_option_decision_failure_state('Both moved.', [invalid_on_a, saved_on_b])
     assert reply == ''
     assert failure['code'] == 'invalid_task_date'
+
+
+def test_unknown_option_plan_failure_names_its_reason(app):
+    _, agent = modules()
+    failed = {
+        'tool': 'update_wbs_task',
+        'input': {'option_key': 'option-gone', 'task_id': 't1', 'field': 'due_date', 'new_value': '2026-11-24'},
+        'result': {'ok': False, 'code': 'option_not_found', 'error': 'That option is not part of this session.'},
+    }
+    card = agent._artifact_entries_from_actions([failed], user_message='Move it.')[0]['artifact']['data']
+    assert card['message'] == "The due date change for that task wasn't saved: that option isn't part of this project. Your message is saved."
