@@ -3,7 +3,12 @@
 from flask import current_app
 
 from app.admin_policy import is_global_admin
-from app.orgs import can_manage_org, normalize_org_role, resolve_active_org_for_user
+from app.orgs import (
+    can_manage_org,
+    normalize_org_role,
+    plan_allows_collaboration,
+    resolve_active_org_for_user,
+)
 from app.models import OrganizationMember
 
 
@@ -23,7 +28,11 @@ def resolve_customer_scope(user, requested_scope="organization"):
     active_member_count = OrganizationMember.query.filter_by(
         organization_id=organization.id, status="active"
     ).count()
-    can_view_organization = bool(can_manage_org(role) and active_member_count > 1)
+    can_view_organization = bool(
+        plan_allows_collaboration(organization.plan_key)
+        and (can_manage_org(role) or global_admin)
+    )
+    show_scope_control = bool(can_view_organization and active_member_count > 1)
     requested = "mine" if str(requested_scope or "").strip().lower() == "mine" else "organization"
     effective = "organization" if requested == "organization" and can_view_organization else "mine"
     return {
@@ -32,6 +41,7 @@ def resolve_customer_scope(user, requested_scope="organization"):
         "role": role,
         "can_manage": manager,
         "can_view_organization": can_view_organization,
+        "show_scope_control": show_scope_control,
         "active_member_count": active_member_count,
         "is_global_admin": bool(global_admin),
         "requested_scope": requested,

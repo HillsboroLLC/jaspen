@@ -15,7 +15,7 @@ from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_ope
 
 from app import db
 from app.models import User, UserDataset
-from app.decision_intelligence import build_decision_overview
+from app.decision_intelligence import build_insights_v3
 from app.organization_scope import resolve_customer_scope
 
 insights_bp = Blueprint('insights', __name__)
@@ -34,7 +34,18 @@ def decision_overview():
     scope_context = resolve_customer_scope(user, request.args.get('scope'))
     if not scope_context:
         return jsonify({'error': 'No active organization'}), 404
-    return jsonify(build_decision_overview(user, scope_context)), 200
+    filters = {
+        'days': request.args.get('days'),
+        'state': request.args.get('state'),
+        'kind': request.args.get('kind'),
+        'member': request.args.get('member'),
+        'search': request.args.get('search'),
+        'attention': request.args.get('attention') == 'true',
+        'gap': request.args.get('gap'),
+        'page': request.args.get('page', 1, type=int),
+        'per_page': request.args.get('per_page', 25, type=int),
+    }
+    return jsonify(build_insights_v3(user, scope_context, filters)), 200
 
 
 def _pagination_params():
