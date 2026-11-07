@@ -101,6 +101,7 @@ export default function DecisionIntelligenceV3({ navigate }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [refreshError, setRefreshError] = useState(false);
   const [updated, setUpdated] = useState(null);
   const generation = useRef(0);
   const hasLoaded = useRef(false);
@@ -127,9 +128,12 @@ export default function DecisionIntelligenceV3({ navigate }) {
         const response = await fetch(`${API_BASE}/api/v1/insights/overview?${query}`, { headers: buildAuthHeaders({}, 'GET'), credentials: 'include', signal: controller.signal });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.error || 'Unable to load Insights.');
-        if (active && generation.current === current) { setData(payload); setError(''); setUpdated(Date.now()); hasLoaded.current = true; if (payload.scope !== scope) setScope(payload.scope); }
+        if (active && generation.current === current) { setData(payload); setError(''); setRefreshError(false); setUpdated(Date.now()); hasLoaded.current = true; if (payload.scope !== scope) setScope(payload.scope); }
       } catch (reason) {
-        if (active && reason?.name !== 'AbortError' && initial) setError(reason.message || 'Unable to load Insights.');
+        if (active && reason?.name !== 'AbortError') {
+          if (initial) setError(reason.message || 'Unable to load Insights.');
+          else setRefreshError(true);
+        }
       } finally { if (active && initial) setLoading(false); }
     };
     const refresh = () => { if (document.visibilityState === 'visible') load(false); };
@@ -156,7 +160,7 @@ export default function DecisionIntelligenceV3({ navigate }) {
   const evidencePoints = safe(effect.evidence_at_commitment?.points);
 
   return <section className="di3" aria-labelledby="di3-title">
-    <header className="di3-head"><div><h2 id="di3-title">{data?.scope === 'organization' ? 'Organization decision work' : 'Your decision work'}</h2><small>{updated ? 'Updated live · last refresh just now' : ''}</small></div>{data?.show_scope_control && <div className="di3-segment" role="group" aria-label="Insights scope"><button type="button" aria-pressed={scope === 'mine'} onClick={() => setScope('mine')}>My activity</button><button type="button" aria-pressed={scope === 'organization'} onClick={() => setScope('organization')}>Organization</button></div>}</header>
+    <header className="di3-head"><div><h2 id="di3-title">{data?.scope === 'organization' ? 'Organization decision work' : 'Your decision work'}</h2><small role={refreshError ? 'alert' : undefined}>{refreshError ? 'Unable to load Insights.' : updated ? 'Updated live · last refresh just now' : ''}</small></div>{data?.show_scope_control && <div className="di3-segment" role="group" aria-label="Insights scope"><button type="button" aria-pressed={scope === 'mine'} onClick={() => setScope('mine')}>My activity</button><button type="button" aria-pressed={scope === 'organization'} onClick={() => setScope('organization')}>Organization</button></div>}</header>
 
     <div className="di3-filters" role="search"><select aria-label="First scored" value={filters.days} onChange={(event) => setFilter('days', event.target.value)}><option value="">All time</option><option value="30">First scored in the last 30 days</option><option value="14">First scored in the last 14 days</option></select><select aria-label="State" value={filters.state} onChange={(event) => setFilter('state', event.target.value)}><option value="">Any state</option>{Object.entries(STATES).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><select aria-label="Kind of decision" value={filters.kind} onChange={(event) => setFilter('kind', event.target.value)}><option value="">All kinds</option>{safe(data?.facets?.kinds).map((kind) => <option key={kind}>{kind}</option>)}</select>{data?.show_scope_control && scope === 'organization' && <select aria-label="Member" value={filters.member} onChange={(event) => setFilter('member', event.target.value)}><option value="">All members</option>{safe(data?.facets?.members).map((member) => <option value={member.id} key={member.id}>{member.name}</option>)}</select>}<input aria-label="Search options and decisions" type="search" placeholder="Search options and decisions" value={filters.search} onChange={(event) => setFilter('search', event.target.value)} /></div>
     {chips.length > 0 && <div className="di3-chips">{chips.map((chip) => <button type="button" key={chip.key} onClick={() => setFilter(chip.key, chip.key === 'attention' ? false : '')} aria-label={`Remove filter ${chip.label}`}>{chip.label} ×</button>)}<button type="button" className="is-link" onClick={clear}>Clear filters</button></div>}

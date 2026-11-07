@@ -131,6 +131,17 @@ it('refreshes after 60 seconds while preserving filters and the expanded row', a
   expect(container.querySelector('.di3-row')).toHaveAttribute('aria-expanded', 'true');
 });
 
+it('does not claim a background refresh succeeded when it failed', async () => {
+  global.fetch
+    .mockResolvedValueOnce(response({ ...BASE, scope: 'organization' }))
+    .mockRejectedValueOnce(new Error('network unavailable'));
+  render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
+  await screen.findByText('Updated live · last refresh just now');
+  fireEvent.focus(window);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load Insights.');
+  expect(screen.queryByText('Updated live · last refresh just now')).not.toBeInTheDocument();
+});
+
 
 it('composes trigger labels from stored facts and shows condition and recommendation markers', async () => {
   const row = {
