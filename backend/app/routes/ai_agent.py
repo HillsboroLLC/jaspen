@@ -2730,6 +2730,8 @@ def _mutation_result_summary(tool_name, result_payload):
             )
             if result_payload.get(key) is not None
         })
+        if isinstance(result_payload.get("task_commitment"), dict):
+            summary["task_commitment"] = result_payload["task_commitment"]
     elif tool_name == "set_execution_start_date":
         summary.update({
             "start_date": result_payload.get("start_date"),
@@ -3739,6 +3741,9 @@ def _apply_charge_ownership_to_turn_usage(usage, mutations):
     successful = [
         item for item in (mutations or [])
         if isinstance(item, dict) and item.get('success') and item.get('tool')
+        # Capture-pass writes reach the client only to refresh its views; they
+        # never change who owns the turn's charge.
+        and not item.get('capture_pass')
     ]
     outer_owned = [item for item in successful if str(item.get('tool')) not in _INDEPENDENT_AI_CHARGE_TOOLS]
     usage['charge_owner'] = 'conversation'
@@ -7570,9 +7575,17 @@ def _commit_plan_task(user_id, thread_id, scorecard_id, plan, task_id, apply):
     ), None)
     if task is None:
         return None, _tool_error("No task with that id is in this plan. Nothing was recorded.", code="task_not_found")
-    if isinstance(task.get("commitment"), dict):
-        return {"already_committed": True, "commitment": task["commitment"], "task": task}, None
+    before = copy.deepcopy(task)
     commitment = apply(task)
+    if task == before:
+        return {
+            "already_committed": True, "commitment": commitment, "task": task,
+            "plan": plan, "changed_fields": [],
+        }, None
+    changed_fields = [
+        field for field in ("due_date", "start_date", "status", "owner", "owner_email", "title")
+        if before.get(field) != task.get(field)
+    ]
     try:
         _persist_generated_plan(user_id, thread_id, scorecard_id, updated, plan_guard)
     except RevisionConflict as conflict:
@@ -7580,7 +7593,10 @@ def _commit_plan_task(user_id, thread_id, scorecard_id, plan, task_id, apply):
     except Exception:
         current_app.logger.exception("task commitment persist failed")
         return None, _tool_error("The commitment could not be saved. Nothing was recorded.", code="persist_failed")
-    return {"already_committed": False, "commitment": commitment, "task": task}, None
+    return {
+        "already_committed": False, "commitment": commitment, "task": task,
+        "plan": updated, "changed_fields": changed_fields,
+    }, None
 
 
 def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key):
@@ -7734,12 +7750,19 @@ def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, vi
             else:
                 outcome, error = _commit_plan_task(
                     user_id, thread_id, scorecard_id, plan, task_id,
-                    lambda task: commit_task_from_stated_date(task, signal_id=str(signal.id), due_date=stated),
+                    lambda task: commit_task_from_stated_date(
+                        task, signal_id=str(signal.id), due_date=stated,
+                        actor_user_id=user.id, at=tool_input.get("_source_message_at"),
+                    ),
                 )
                 if error:
                     payload["task_commitment"] = {"status": "not_recorded", "code": error.get("code")}
                 else:
                     task = outcome["task"]
+                    sync_status = (
+                        _trigger_post_mutation_sync(user_id, thread_id, outcome["plan"])
+                        if "due_date" in outcome["changed_fields"] else None
+                    )
                     payload["task_commitment"] = {
                         "status": "already_committed" if outcome["already_committed"] else "recorded",
                         "task_id": task_id,
@@ -7747,6 +7770,8 @@ def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, vi
                         "task_due_date": task.get("due_date"),
                         "task_due_date_differs": bool(task.get("due_date") and task.get("due_date") != stated),
                     }
+                    if sync_status is not None:
+                        payload["task_commitment"]["sync_status"] = sync_status
     return _tool_success(payload)
 
 
@@ -8002,7 +8027,7 @@ _CAPTURE_SYSTEM_PROMPT = (
     "condition_signal_id from the DECISION STATE with the new status. Never assume a status.\n"
     "Outcomes and lessons: only results of carrying out a pursued option (the bid was won or lost, results were measured) and what the customer learned. A condition being met, a step completed, or news before the option is carried out is never an outcome.\n"
     "Only statements about the decision count: replies to the assistant's offers or questions (yes, not now, hold off) and requests for Jaspen to do something (build a plan, compare, score) are never notes, and a commitment is something the customer or their team will do.\n"
-    "Task commitments: when the customer commits to a listed plan task or confirms its date or owner; include the date they stated, if any.\n"
+    "Task commitments: when the customer commits to a listed plan task, confirms its date or owner, or changes a previously committed task date. Always use that listed task's id and include the newest date the customer stated, if any.\n"
     "Unclear: when the customer's words could fit more than one option, or none, list it in unclear instead of guessing. Never resolve a reference by elimination, by which option is already decided, or by which was discussed most recently.\n"
     "Return empty arrays for anything that does not apply. Recording intent never authorizes an external action."
 )
@@ -8071,7 +8096,7 @@ def _capture_pass_tool():
                     "message": message,
                     "task_id": {"type": "string"},
                     "option_key": {"type": "string"},
-                    "date": {"type": "string", "description": "YYYY-MM-DD the customer committed to, when they stated one; omit when they confirmed the task's existing date."},
+                    "date": {"type": "string", "description": "YYYY-MM-DD the customer committed to or changed this task to; omit only when they confirmed the task's existing date."},
                     "owner": {"type": "string", "description": "Who committed, when stated."},
                     "quote": quote,
                 }, "required": ["message", "task_id", "quote"]}},
@@ -8180,7 +8205,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
     from ..decision_capture import decision_facts, find_thread_record
     from ..decision_records import current_option_decision
 
-    empty = {"actions": [], "summary": None, "usage": {"input_tokens": 0, "output_tokens": 0}}
+    empty = {"actions": [], "mutations": [], "summary": None, "usage": {"input_tokens": 0, "output_tokens": 0}}
     if not user or not thread_id or not str(user_message or "").strip():
         return empty
     api_key = _anthropic_api_key()
@@ -8516,18 +8541,61 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
             else:
                 not_saved.append({"what": bucket[:-1], "reason": result.get("code")})
 
-    for item in payload.get("task_commitments") or []:
+    def later_task_date_change_exists(item, message):
+        if message.get("latest"):
+            return False
+        stated_at = _capture_timestamp(message.get("timestamp"))
+        if stated_at is None:
+            return True
+        _scorecard_id, plan = _option_plan_for_capture(
+            user_id, thread_id, cards, str(item.get("option_key") or "").strip() or None, view_active,
+        )
+        if not isinstance(plan, dict):
+            return False
+        task_id = str(item.get("task_id") or "").strip()
+        task = next((
+            task for task in (plan.get("tasks") or [])
+            if isinstance(task, dict) and str(task.get("id") or "") == task_id
+        ), None)
+        if task is None:
+            return False
+        changed_at = []
+        for entry in task.get("history") or []:
+            if not isinstance(entry, dict) or entry.get("field") != "due_date":
+                continue
+            if entry.get("source") in {"generation", "regeneration"}:
+                continue
+            parsed = _capture_timestamp(entry.get("at"))
+            if parsed is not None:
+                changed_at.append(parsed)
+        commitment = task.get("commitment") if isinstance(task.get("commitment"), dict) else {}
+        for field in ("committed_at", "rescheduled_at"):
+            parsed = _capture_timestamp(commitment.get(field))
+            if parsed is not None:
+                changed_at.append(parsed)
+        return any(changed >= stated_at for changed in changed_at)
+
+    task_commitments = sorted(
+        payload.get("task_commitments") or [],
+        key=lambda item: item.get("message") if isinstance(item.get("message"), int) else 0,
+    )
+    for item in task_commitments:
         message = cited(item)
         if message is None:
             not_saved.append({"what": "task_commitment", "reason": "quote_not_in_customer_message"})
             continue
+        if later_task_date_change_exists(item, message):
+            already.append({"what": "task_commitment", "task": item.get("task_id"), "reason": "later_task_date_stands"})
+            continue
         if item.get("date"):
-            # A date the customer stated is the commitment itself, never a
-            # reschedule of whatever date the plan happened to show.
+            # A stated date becomes the task's current due date. If that task
+            # was already committed, the canonical task writer preserves the
+            # original commitment and records this as its reschedule.
             structured = {"date": item.get("date"), **({"owner": item["owner"]} if item.get("owner") else {})}
             tool_input = {"kind": "commitment", "content": f"Commitment for task {item.get('task_id')}",
                           "user_request_quote": str(item.get("quote") or "").strip(),
-                          "task_id": str(item.get("task_id") or ""), "structured": structured}
+                          "task_id": str(item.get("task_id") or ""), "structured": structured,
+                          "_source_message_at": message.get("timestamp")}
             if item.get("option_key"):
                 tool_input["option_key"] = str(item.get("option_key"))
             result = run("record_decision_context", tool_input, message)
@@ -8571,7 +8639,21 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         "tool": "turn_capture", "capture_pass": True, "input": {},
         "result": {"ok": True, "saved_count": len(saved), "unclear": unclear},
     })
-    return {"actions": actions, "summary": summary, "usage": usage}
+    mutations = []
+    for action in actions:
+        result = action.get("result") if isinstance(action.get("result"), dict) else {}
+        commitment = result.get("task_commitment") if isinstance(result.get("task_commitment"), dict) else {}
+        if action.get("tool") != "record_decision_context" or commitment.get("status") != "recorded":
+            continue
+        mutations.append({
+            "tool": "record_decision_context",
+            "capture_pass": True,
+            "success": True,
+            "result_summary": _mutation_result_summary("record_decision_context", result),
+            "error": None,
+            "code": None,
+        })
+    return {"actions": actions, "mutations": mutations, "summary": summary, "usage": usage}
 
 
 def _capture_entry_exists(record, option_key, bucket, quote, message_text=""):
@@ -8646,6 +8728,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
     )
 
     if tool_name in _DECISION_CAPTURE_TOOLS:
+        if isinstance(tool_input, dict) and "_source_message_at" in tool_input:
+            # Only the capture pass may date a change to its source message.
+            tool_input = {k: v for k, v in tool_input.items() if k != "_source_message_at"}
         return _execute_decision_capture_tool(
             tool_name, tool_input, user=user, user_id=user_id, thread_id=thread_id,
             view_active_scorecard_id=view_active_scorecard_id, user_message=user_message,
@@ -12475,6 +12560,7 @@ def _generate_assistant_reply(
         _end_turn_capture()
     if capture:
         actions = list(capture.get("actions") or []) + list(actions or [])
+        mutations = list(capture.get("mutations") or []) + list(mutations or [])
         usage = _merge_capture_usage(usage, capture)
     return reply, usage, actions, mutations, undo_snapshot
 
@@ -12512,6 +12598,7 @@ def _stream_assistant_reply_events(
         _end_turn_capture()
         if capture and isinstance(state, dict):
             state["actions"] = list(capture.get("actions") or []) + list(state.get("actions") or [])
+            state["mutations"] = list(capture.get("mutations") or []) + list(state.get("mutations") or [])
             state["usage"] = _merge_capture_usage(state.get("usage"), capture)
 
 def _generate_assistant_reply_core(

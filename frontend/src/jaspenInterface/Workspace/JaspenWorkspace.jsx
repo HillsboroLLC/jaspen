@@ -38,6 +38,7 @@ import ShareButton from '../Sharing/ShareButton';
 import OnePagerReport from '../Sharing/OnePagerReport';
 import { ExecutionPlanBuildFailure, useExecutionPlanBuild } from './useExecutionPlanBuild';
 import PmSyncPanel from './PmSyncPanel';
+import { planChangedByMutation } from './planRefresh';
 
 // Custom scorecard blocks live on a true 12-col grid: drag the handle to move,
 // drag the corner to resize to ANY size (not 4 fixed widths). WidthProvider makes
@@ -1588,7 +1589,11 @@ export default function JaspenWorkspace() {
         // Execution view: re-pull the open idea's WBS if a task tool ran.
         if (isExecution) {
           const wbsTouched = muts.some(
-            (m) => m && m.success && /wbs|execution|task/i.test(String(m.tool || ''))
+            (m) => m && m.success && (
+              /wbs|execution|task/i.test(String(m.tool || ''))
+              // A task date the capture step saved changes the plan too.
+              || planChangedByMutation(m)
+            )
           );
           if (wbsTouched) {
             try {

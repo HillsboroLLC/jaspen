@@ -44,22 +44,40 @@ def confirm_task_commitment(task, *, user_quote, actor_user_id=None, at=None):
     return commit_task(task, basis='person_confirmed', ref=quote, at=at, actor_user_id=actor_user_id)
 
 
-def commit_task_from_stated_date(task, *, signal_id, due_date, at=None):
-    """Commit a date that a verified customer decision signal established."""
+def commit_task_from_stated_date(task, *, signal_id, due_date, actor_user_id=None, at=None):
+    """Make a verified customer-stated date the task's current committed date."""
     signal_ref = str(signal_id or '').strip()
     stated_due_date = _clean(due_date)
     if not signal_ref:
         raise ValueError('a decision signal id is required')
     if not stated_due_date:
         raise ValueError('a customer-stated due date is required')
-    if isinstance(task.get('commitment'), dict):
-        return task['commitment']
-    task['commitment'] = {
-        'due_date': stated_due_date,
-        'committed_at': _stamp(at),
-        'basis': 'user_stated',
-        'ref': signal_ref,
-    }
+    at = _stamp(at)
+    prior = dict(task)
+    had_commitment = isinstance(prior.get('commitment'), dict)
+    task['due_date'] = stated_due_date
+    if _clean(prior.get('due_date')) != stated_due_date:
+        # This writer persists the task directly, so it stamps the change the
+        # same way the plan editor does; PM reconciliation reads these times.
+        task['updated_at'] = at
+        task['field_updated_at'] = {
+            **(prior.get('field_updated_at') if isinstance(prior.get('field_updated_at'), dict) else {}),
+            'due_date': at,
+        }
+    record_task_changes(
+        task, prior, source='person', actor_user_id=actor_user_id, at=at,
+    )
+    if not had_commitment:
+        task['commitment'] = {
+            'due_date': stated_due_date,
+            'committed_at': at,
+            'basis': 'user_stated',
+            'ref': signal_ref,
+        }
+    elif _clean(prior.get('due_date')) != stated_due_date:
+        commitment = dict(task['commitment'])
+        commitment['rescheduled_ref'] = signal_ref
+        task['commitment'] = commitment
     return task['commitment']
 
 

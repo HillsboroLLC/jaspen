@@ -702,12 +702,126 @@ def test_task_commitment_with_a_stated_date_commits_that_date(app, db, test_user
     ]))
     capture = _run(agent, app, test_user, tid, message)
     task = _plan(test_user, tid, 'card-b')['tasks'][0]
+    assert task['due_date'] == '2026-11-20'
     assert task['commitment']['due_date'] == '2026-11-20'
     assert task['commitment']['basis'] == 'user_stated'
     assert not task['commitment'].get('rescheduled_to')
     assert capture['summary']['saved'] == [{'what': 'task_commitment', 'task': 't1', 'date': '2026-11-20'}]
     plan_actions = [a for a in capture['actions'] if a['tool'] == 'record_decision_context']
     assert plan_actions[0]['result']['task_commitment']['status'] == 'recorded'
+    assert capture['mutations'][0]['result_summary']['task_commitment']['task_due_date'] == '2026-11-20'
+
+
+def test_customer_change_to_committed_deadline_updates_the_same_task(app, db, test_user, capture_model):
+    from tests.test_decision_capture import _plan, _store_plan
+
+    _, agent = modules()
+    tid = 'turn-capture-task-reschedule'
+    _seed(db, test_user, tid, _cards())
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-b', 'disposition': 'pursue', 'user_request_quote': 'Pursue Boulder'},
+    ]}, 'Pursue Boulder.')
+    _store_plan(test_user, tid, 'card-b', [
+        {'id': 't1', 'title': 'Bond letter', 'due_date': '2026-11-09', 'status': 'todo'},
+    ])
+
+    first = 'The bond letter is due Nov 20.'
+    _set_history(test_user, tid, _history(first))
+    capture_model['payloads'].append(_empty(task_commitments=[
+        {'message': 1, 'task_id': 't1', 'option_key': 'option-b', 'date': '2026-11-20',
+         'quote': 'due Nov 20'},
+    ]))
+    _run(agent, app, test_user, tid, first)
+
+    changed = 'Move the bond letter deadline to Nov 25.'
+    _set_history(test_user, tid, _history(first, changed, assistant='Understood.'))
+    capture_model['payloads'].append(_empty(task_commitments=[
+        {'message': 2, 'task_id': 't1', 'option_key': 'option-b', 'date': '2026-11-25',
+         'quote': 'deadline to Nov 25'},
+    ]))
+    capture = _run(agent, app, test_user, tid, changed)
+
+    task = _plan(test_user, tid, 'card-b')['tasks'][0]
+    assert task['due_date'] == '2026-11-25'
+    assert task['commitment']['due_date'] == '2026-11-20'
+    assert task['commitment']['rescheduled_to'] == '2026-11-25'
+    action = next(item for item in capture['actions'] if item['tool'] == 'record_decision_context')
+    assert task['commitment']['rescheduled_ref'] == action['result']['signal_id']
+    assert task['history'][-1]['from'] == '2026-11-20'
+    assert task['history'][-1]['to'] == '2026-11-25'
+    assert capture['summary']['saved'] == [
+        {'what': 'task_commitment', 'task': 't1', 'date': '2026-11-25'},
+    ]
+    assert capture['mutations'][0]['result_summary']['task_commitment']['status'] == 'recorded'
+
+
+def test_recovered_older_deadline_never_overwrites_a_later_task_change(app, db, test_user, capture_model):
+    from tests.test_decision_capture import _plan, _store_plan
+
+    _, agent = modules()
+    tid = 'turn-capture-task-later-date-wins'
+    _seed(db, test_user, tid, _cards())
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-b', 'disposition': 'pursue', 'user_request_quote': 'Pursue Boulder'},
+    ]}, 'Pursue Boulder.')
+    _store_plan(test_user, tid, 'card-b', [
+        {'id': 't1', 'title': 'Bond letter', 'due_date': '2026-11-09', 'status': 'todo'},
+    ])
+    earlier = 'The bond letter is due Nov 20.'
+    later = 'Actually move the bond letter deadline to Nov 25.'
+    _set_history(test_user, tid, _history(earlier, later, assistant='Understood.'))
+    capture_model['payloads'].append(_empty(task_commitments=[
+        {'message': 2, 'task_id': 't1', 'option_key': 'option-b', 'date': '2026-11-25',
+         'quote': 'deadline to Nov 25'},
+    ]))
+    _run(agent, app, test_user, tid, later)
+
+    latest = 'What is next?'
+    _set_history(test_user, tid, _history(earlier, later, latest, assistant='Understood.'))
+    capture_model['payloads'].append(_empty(task_commitments=[
+        {'message': 1, 'task_id': 't1', 'option_key': 'option-b', 'date': '2026-11-20',
+         'quote': 'due Nov 20'},
+    ]))
+    capture = _run(agent, app, test_user, tid, latest)
+
+    task = _plan(test_user, tid, 'card-b')['tasks'][0]
+    assert task['due_date'] == '2026-11-25'
+    assert capture['summary']['saved'] == []
+    assert capture['summary']['already_stored'] == [
+        {'what': 'task_commitment', 'task': 't1', 'reason': 'later_task_date_stands'},
+    ]
+    assert capture['mutations'] == []
+
+
+def test_capture_plan_mutations_reach_regular_and_streaming_clients(app, monkeypatch):
+    _, agent = modules()
+    mutation = {
+        'tool': 'record_decision_context', 'success': True,
+        'result_summary': {'task_commitment': {'status': 'recorded'}},
+        'error': None, 'code': None,
+    }
+    capture = {'actions': [], 'mutations': [mutation], 'summary': {}, 'usage': {}}
+    monkeypatch.setattr(agent, '_begin_turn_capture', lambda **_kwargs: capture)
+    monkeypatch.setattr(agent, '_end_turn_capture', lambda: None)
+    monkeypatch.setattr(
+        agent, '_generate_assistant_reply_core',
+        lambda *_args, **_kwargs: ('ok', {}, [], [], None),
+    )
+    result = agent._generate_assistant_reply(
+        'Move it', [], {}, {}, user=object(), user_id='u1', thread_id='t1',
+    )
+    assert result[3] == [mutation]
+
+    state = {'actions': [], 'mutations': [], 'usage': {}}
+
+    def stream_core(*_args, **_kwargs):
+        yield {'type': 'done'}
+
+    monkeypatch.setattr(agent, '_stream_assistant_reply_events_core', stream_core)
+    assert list(agent._stream_assistant_reply_events(
+        'Move it', [], {}, {}, user=object(), user_id='u1', thread_id='t1', state=state,
+    )) == [{'type': 'done'}]
+    assert state['mutations'] == [mutation]
 
 
 def test_malformed_capture_output_never_crashes_and_is_reported(app, db, test_user, capture_model):
@@ -730,3 +844,41 @@ def test_malformed_capture_output_never_crashes_and_is_reported(app, db, test_us
         g.turn_capture = {'thread_id': tid, 'summary': {'capture_unavailable': True}}
         content = agent._anthropic_user_message_content(message)
     assert 'Nothing from the message above was saved.' in content
+
+
+def test_capture_mutations_never_change_who_owns_the_charge():
+    _, agent = modules()
+    degraded = {'degraded': True, 'error_code': 'narration_failed'}
+    capture_only = [{'tool': 'record_decision_context', 'capture_pass': True, 'success': True}]
+    usage = agent._apply_charge_ownership_to_turn_usage(degraded, capture_only)
+    assert not usage.get('billable_action_completed')
+    outer = capture_only + [{'tool': 'update_wbs_task', 'success': True}]
+    usage = agent._apply_charge_ownership_to_turn_usage(degraded, outer)
+    assert usage['billable_action_completed'] is True
+    assert usage['completed_action_ids'] == ['update_wbs_task:1']
+
+
+def test_chat_tool_input_cannot_backdate_a_task_change(app, db, test_user):
+    from tests.test_decision_capture import _plan, _store_plan
+
+    _, agent = modules()
+    tid = 'turn-capture-no-backdate'
+    _seed(db, test_user, tid, _cards())
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-b', 'disposition': 'pursue', 'user_request_quote': 'Pursue Boulder'},
+    ]}, 'Pursue Boulder.')
+    _store_plan(test_user, tid, 'card-b', [
+        {'id': 't1', 'title': 'Bond letter', 'due_date': '2026-11-09', 'status': 'todo'},
+    ])
+    message = 'The bond letter is due Nov 20.'
+    with app.test_request_context():
+        result = _call(agent, test_user, tid, 'record_decision_context', {
+            'kind': 'commitment', 'content': 'Bond letter by Nov 20', 'option_key': 'option-b',
+            'user_request_quote': 'due Nov 20', 'task_id': 't1',
+            'structured': {'date': '2026-11-20'}, '_source_message_at': '2001-01-01T00:00:00',
+        }, message)
+    assert result['task_commitment']['status'] == 'recorded'
+    task = _plan(test_user, tid, 'card-b')['tasks'][0]
+    assert task['due_date'] == '2026-11-20'
+    assert not task['history'][-1]['at'].startswith('2001')
+    assert not task['field_updated_at']['due_date'].startswith('2001')

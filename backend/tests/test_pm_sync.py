@@ -1304,3 +1304,53 @@ def test_connected_jira_is_not_saved_without_credential_encryption(client, auth_
     assert "CONNECTOR_ENCRYPTION_KEY" in response.get_data(as_text=True)
     assert "secret" not in response.get_data(as_text=True)
     save.assert_not_called()
+
+
+def test_customer_stated_reschedule_pushes_due_date_and_wins_by_its_stamp(test_user):
+    from app.task_history import commit_task_from_stated_date
+
+    base = {"title": "Bond letter", "description": None, "owner": None, "owner_email": None,
+            "status": "todo", "start_date": None, "due_date": "2026-11-20"}
+    binding, _ = _linked_binding(test_user, base)
+    plan = {"tasks": [{**base, "id": "task-a",
+        "field_updated_at": {"title": "2026-10-01T09:00:00", "due_date": "2026-10-01T09:00:00"},
+        "updated_at": "2026-10-01T09:00:00"}]}
+    commit_task_from_stated_date(
+        plan["tasks"][0], signal_id="signal-1", due_date="2026-11-25", at="2026-10-12T10:00:00",
+    )
+    # Other fields keep their own times; only the changed date is restamped.
+    assert plan["tasks"][0]["field_updated_at"] == {
+        "title": "2026-10-01T09:00:00", "due_date": "2026-10-12T10:00:00",
+    }
+    provider = _Provider({"deleted": False, "values": dict(base), "changed_at": {},
+                          "version": "2026-10-12T09:00:00"})
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=provider), patch(
+        "app.pm_sync.reconciliation._save_plan"):
+        result = reconcile_binding(binding)
+    assert result["pushed"] == 1
+    assert provider.updates == [("JST-1", {"due_date": "2026-11-25"})]
+
+
+@pytest.mark.parametrize("jira_changed_at, expected", [
+    ("2026-10-12T09:00:00", "2026-11-25"),  # Jira edit came first: the customer's change stands
+    ("2026-10-12T11:00:00", "2026-11-30"),  # Jira edit came later: it stands
+])
+def test_customer_stated_reschedule_and_jira_edit_resolve_by_latest(test_user, jira_changed_at, expected):
+    from app.task_history import commit_task_from_stated_date
+
+    base = {"title": "Bond letter", "description": None, "owner": None, "owner_email": None,
+            "status": "todo", "start_date": None, "due_date": "2026-11-20"}
+    binding, _ = _linked_binding(test_user, base, policy="latest_wins")
+    plan = {"tasks": [{**base, "id": "task-a", "updated_at": "2026-10-01T09:00:00"}]}
+    commit_task_from_stated_date(
+        plan["tasks"][0], signal_id="signal-1", due_date="2026-11-25", at="2026-10-12T10:00:00",
+    )
+    provider = _Provider({"deleted": False, "values": {**base, "due_date": "2026-11-30"},
+                          "changed_at": {"due_date": jira_changed_at}, "version": jira_changed_at})
+    with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
+        "app.pm_sync.reconciliation.get_provider", return_value=provider), patch(
+        "app.pm_sync.reconciliation._save_plan"):
+        reconcile_binding(binding)
+    assert plan["tasks"][0]["due_date"] == expected
+    assert provider.updates == ([("JST-1", {"due_date": "2026-11-25"})] if expected == "2026-11-25" else [])

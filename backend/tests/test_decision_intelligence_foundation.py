@@ -232,6 +232,52 @@ def test_customer_stated_date_has_an_explicit_commitment_writer(app):
         'basis': 'user_stated',
         'ref': 'signal-1',
     }
+    assert task['due_date'] == '2026-11-20'
+    assert task['history'][-1] == {
+        'field': 'due_date', 'from': '2026-11-22', 'to': '2026-11-20',
+        'at': '2026-11-01T12:00:00', 'actor_user_id': None, 'source': 'person',
+    }
+    assert task['field_updated_at']['due_date'] == '2026-11-01T12:00:00'
+    assert 'rescheduled_to' not in task['commitment']
+
+    changed = commit_task_from_stated_date(
+        task, signal_id='signal-2', due_date='2026-11-25', at='2026-11-02T12:00:00',
+    )
+    assert task['due_date'] == '2026-11-25'
+    assert changed['due_date'] == '2026-11-20'
+    assert changed['rescheduled_to'] == '2026-11-25'
+    assert changed['rescheduled_at'] == '2026-11-02T12:00:00'
+    assert changed['rescheduled_ref'] == 'signal-2'
+    assert task['history'][-1]['from'] == '2026-11-20'
+    assert task['history'][-1]['to'] == '2026-11-25'
+    unchanged = {
+        **task,
+        'history': [dict(item) for item in task['history']],
+        'commitment': dict(task['commitment']),
+        'field_updated_at': dict(task['field_updated_at']),
+    }
+    commit_task_from_stated_date(
+        task, signal_id='signal-3', due_date='2026-11-25', at='2026-11-03T12:00:00',
+    )
+    assert task == unchanged
+
+
+def test_shared_task_history_writer_leaves_caller_field_times_alone(app):
+    from app.task_history import record_task_changes
+
+    # The plan editor and PM pull stamp field times themselves (description
+    # included); the shared history writer must never overwrite them.
+    prior = {'id': 't1', 'due_date': '2026-11-01', 'description': 'Old',
+             'field_updated_at': {'description': '2026-10-01T00:00:00'}}
+    task = {'id': 't1', 'due_date': '2026-11-05', 'description': 'New',
+            'field_updated_at': {'description': '2026-11-02T00:00:00', 'due_date': '2026-11-02T00:00:00'},
+            'updated_at': '2026-11-02T00:00:00'}
+    record_task_changes(task, prior, source='person', at='2026-11-02T00:00:00')
+    assert task['field_updated_at'] == {
+        'description': '2026-11-02T00:00:00', 'due_date': '2026-11-02T00:00:00',
+    }
+    assert task['updated_at'] == '2026-11-02T00:00:00'
+    assert task['history'][-1]['to'] == '2026-11-05'
 
 
 def test_decision_signals_require_quotes_validate_and_deduplicate(db, team_setup):

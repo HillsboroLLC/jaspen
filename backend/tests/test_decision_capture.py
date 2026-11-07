@@ -274,11 +274,16 @@ def test_legacy_single_form_still_maps_to_dispositions(app, db, test_user):
     assert 'confirmation' not in result and 'receipts' not in result
 
 
-def test_context_signals_commitment_review_and_retraction(app, db, test_user):
+def test_context_signals_commitment_review_and_retraction(app, db, test_user, monkeypatch):
     from app.decision_capture import decision_facts
     from app.models_decision_record import DecisionSignal
 
     _, agent = modules()
+    sync_calls = []
+    monkeypatch.setattr(
+        agent, '_trigger_post_mutation_sync',
+        lambda user_id, thread_id, plan: sync_calls.append((user_id, thread_id, plan)) or {'status': 'synced'},
+    )
     tid = 'capture-context'
     _seed(db, test_user, tid, _cards())
     _store_plan(test_user, tid, 'card-a', [
@@ -293,12 +298,18 @@ def test_context_signals_commitment_review_and_retraction(app, db, test_user):
     }, message)
     assert result['ok'] is True, result
     assert result['task_commitment']['status'] == 'recorded'
-    assert result['task_commitment']['task_due_date_differs'] is True
+    assert result['task_commitment']['task_due_date_differs'] is False
     task = next(item for item in _plan(test_user, tid, 'card-a')['tasks'] if item['id'] == 't1')
     assert task['commitment']['basis'] == 'user_stated'
     assert task['commitment']['due_date'] == '2026-11-20'
     assert task['commitment']['ref'] == result['signal_id']
-    assert task['due_date'] == '2026-11-18'
+    assert task['due_date'] == '2026-11-20'
+    assert task['history'][-1]['source'] == 'person'
+    assert task['history'][-1]['field'] == 'due_date'
+    assert task['history'][-1]['from'] == '2026-11-18'
+    assert task['history'][-1]['to'] == '2026-11-20'
+    assert result['task_commitment']['sync_status'] == {'status': 'synced'}
+    assert sync_calls[0][2]['tasks'][0]['due_date'] == '2026-11-20'
     _assert_no_customer_wording(result)
 
     past = (date.today() - timedelta(days=3)).isoformat()
