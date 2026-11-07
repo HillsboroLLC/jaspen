@@ -33,8 +33,10 @@ describe('FavoriteAIBrainstorm', () => {
       expect(button.querySelector('.favorite-ai-logo-brand')).toBeInTheDocument();
       expect(button).not.toHaveAttribute('style');
     }
-    expect(screen.getByRole('button', { name: 'Brainstorm with Gemini' })).toContainHTML('linearGradient');
-    expect(screen.getByRole('button', { name: 'Brainstorm with Copilot' })).toContainHTML('linearGradient');
+    for (const name of ['ChatGPT', 'Claude', 'Gemini', 'Copilot']) {
+      const button = screen.getByRole('button', { name: `Brainstorm with ${name}` });
+      expect(button.innerHTML).not.toMatch(/Gradient|url\(#/);
+    }
     expect(screen.getByRole('button', { name: 'Brainstorm with your favorite AI tool' }))
       .toHaveClass('favorite-ai-collapsed-icon');
   });
