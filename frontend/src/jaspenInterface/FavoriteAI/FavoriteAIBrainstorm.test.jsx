@@ -112,7 +112,7 @@ describe('FavoriteAIBrainstorm', () => {
     expect(projectText).toContain("Title: SMOKE TEST 5: We're a construction firm");
     expect(projectText).not.toContain('Title: Denver Water pump station');
     expect(projectText).toContain('Information Jaspen still needs:\n- Jira data: Connect Jira to confirm delivery dependencies');
-    expect(projectText).toContain('Decision questions:\n- Denver Water pump station: Confirm bonding capacity');
+    expect(projectText).toContain('Required checks not yet confirmed:\n- Denver Water pump station: Confirm bonding capacity');
     expect(projectText).not.toContain('Open questions:');
   });
 
@@ -127,7 +127,7 @@ describe('FavoriteAIBrainstorm', () => {
     expect(projectText).not.toContain('Title:');
     expect(projectText).toContain('Options:\n- Denver Water pump station');
     expect(projectText).not.toContain('Information Jaspen still needs:');
-    expect(projectText).not.toContain('Decision questions:');
+    expect(projectText).not.toContain('Required checks not yet confirmed:');
   });
 
   test('the summary promise names exactly the sections that can be added', async () => {
@@ -135,7 +135,7 @@ describe('FavoriteAIBrainstorm', () => {
     render(<FavoriteAIBrainstorm projectSummary={summary} onAddToComposer={jest.fn()} />);
     await user.click(screen.getByRole('button', { name: 'Brainstorm with ChatGPT' }));
     expect(screen.getByText(
-      'Off by default. Only the project title, options, information Jaspen still needs, and decision questions shown in Jaspen are added when you turn this on.'
+      'Off by default. Only the project title, options, information Jaspen still needs, and required checks not yet confirmed shown in Jaspen are added when you turn this on.'
     )).toBeInTheDocument();
   });
 

@@ -79,7 +79,7 @@ export function formatProjectSummary(summary) {
     sections.push(`Information Jaspen still needs:\n${normalized.informationNeeded.map((item) => `- ${item}`).join('\n')}`);
   }
   if (normalized.decisionQuestions.length > 0) {
-    sections.push(`Decision questions:\n${normalized.decisionQuestions.map((question) => `- ${question}`).join('\n')}`);
+    sections.push(`Required checks not yet confirmed:\n${normalized.decisionQuestions.map((question) => `- ${question}`).join('\n')}`);
   }
 
   return sections.join('\n');
