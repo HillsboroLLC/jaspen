@@ -187,7 +187,7 @@ it('shows the D4 message when a start-date change gets a real conflict', async (
   expect(screen.queryByText('Save failed — will retry')).not.toBeInTheDocument();
 });
 
-it('allows the plan start date to be cleared without sending display text', async () => {
+it('never clears the plan start date from an empty picker', async () => {
   jest.useFakeTimers();
   const initialPlan = {
     scorecard_id: 'start-date-clear-card',
@@ -196,10 +196,7 @@ it('allows the plan start date to be cleared without sending display text', asyn
     tasks: [{ id: 'task-1', title: 'Original', phase: 'Delivery', status: 'todo' }],
   };
   const fetchMock = jest.spyOn(global, 'fetch')
-    .mockImplementationOnce(() => json(200, { bindings: [] }))
-    .mockImplementationOnce(() => json(200, {
-      project_wbs: { ...initialPlan, start_date: null, updated_at: 'S2' },
-    }));
+    .mockImplementation(() => json(200, { bindings: [] }));
 
   render(
     <JaspenExecutionCanvas
@@ -215,8 +212,9 @@ it('allows the plan start date to be cleared without sending display text', asyn
     await Promise.resolve();
   });
 
-  const saved = JSON.parse(fetchMock.mock.calls[1][1].body);
-  expect(saved.project_wbs.start_date).toBeNull();
+  const writes = fetchMock.mock.calls.filter(([, init]) => init && init.method && init.method !== 'GET');
+  expect(writes).toHaveLength(0);
+  expect(document.querySelector('input[type="date"]').value).toBe('2027-01-04');
 });
 
 it('shows the minimal invalid task date save message', async () => {

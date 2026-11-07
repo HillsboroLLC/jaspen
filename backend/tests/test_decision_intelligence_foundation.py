@@ -241,7 +241,8 @@ def test_task_dates_are_strict_without_rewriting_legacy_values(app):
         existing={**original, 'start_date': '2026-11-01'}, change_source='person', actor_user_id='person-1',
         commit_on_person_change=True,
     )
-    assert cleared['start_date'] is None
+    # Task dates can be cleared; the plan start is kept (it anchors the schedule).
+    assert cleared['start_date'] == '2026-11-01'
     assert cleared['tasks'][0]['start_date'] is None
     assert cleared['tasks'][0]['due_date'] is None
 

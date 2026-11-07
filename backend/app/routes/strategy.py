@@ -6579,8 +6579,7 @@ def _normalize_project_wbs(
     for task in tasks:
         task['depends_on'] = [dep for dep in task.get('depends_on', []) if dep in valid_ids]
 
-    raw_start_date = payload.get('start_date') if 'start_date' in payload else base.get('start_date')
-    start_date = str(raw_start_date or '').strip() or None
+    start_date = str(payload.get('start_date') or base.get('start_date') or '').strip() or None
 
     normalized_plan = {
         **{key: payload.get(key, base.get(key)) for key in (

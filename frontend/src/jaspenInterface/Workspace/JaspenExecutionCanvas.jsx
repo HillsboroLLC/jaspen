@@ -1274,11 +1274,8 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
   const planStartDate = toDateInputValue(wbs?.start_date);
   const handleStartDateChange = useCallback(async (newDate) => {
     const d = toDateInputValue(newDate);
-    if (d === planStartDate || !threadId) return;
-    if (!d) {
-      recordAndSet((prev) => ({ ...prev, start_date: null }));
-      return;
-    }
+    // An empty picker never clears the plan start: it anchors the schedule.
+    if (!d || d === planStartDate || !threadId) return;
     try {
       setStartDateSaving(true);
       setSaveError(null);
@@ -1307,7 +1304,7 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
     } finally {
       setStartDateSaving(false);
     }
-  }, [threadId, scorecardId, planStartDate, recordAndSet]);
+  }, [threadId, scorecardId, planStartDate]);
 
   // Keyboard: Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z (or Ctrl+Y) = redo.
   useEffect(() => {
