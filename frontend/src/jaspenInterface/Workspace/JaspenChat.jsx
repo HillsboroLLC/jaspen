@@ -61,6 +61,9 @@ import {
   isRevisionConflict,
   REVISION_CONFLICT_MESSAGE,
 } from './JaspenClient';
+import {
+  isRejectedPlanSave, rejectedPlanSaveMessage, usePlanWriteRecovery,
+} from './planSaveRecovery';
 import { ExecutionPlanBuildFailure, useExecutionPlanBuild } from './useExecutionPlanBuild';
 import EmailResultsButton from './EmailResultsButton';
 import ShareButton from '../Sharing/ShareButton';
@@ -140,11 +143,11 @@ const DISCOVERY_DATA_CONTEXTS = [
 ];
 
 export function classifyInlineWbsSaveFailure(error, failMessage) {
-  if (isRevisionConflict(error)) {
+  if (isRejectedPlanSave(error)) {
     return {
-      message: REVISION_CONFLICT_MESSAGE,
+      message: rejectedPlanSaveMessage(error),
       retryable: false,
-      state: 'conflict',
+      state: isRevisionConflict(error) ? 'conflict' : 'rejected',
     };
   }
   return {
@@ -154,7 +157,7 @@ export function classifyInlineWbsSaveFailure(error, failMessage) {
   };
 }
 
-export function InlineWbsSaveStatus({ state, onRetry, onUndo }) {
+export function InlineWbsSaveStatus({ state, message, onRetry, onUndo }) {
   if (state === 'saving') {
     return (
       <span style={{ fontSize: 12, color: EXEC_COLOR.ink, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
@@ -165,13 +168,13 @@ export function InlineWbsSaveStatus({ state, onRetry, onUndo }) {
   if (state === 'saved') {
     return <span style={{ fontSize: 12, color: EXEC_COLOR.greenInk, fontWeight: 600 }}>Saved ✓</span>;
   }
-  if (state === 'conflict') {
-    return <span style={{ color: '#dc2626', fontSize: 12, fontWeight: 600 }}>{REVISION_CONFLICT_MESSAGE}</span>;
+  if (state === 'conflict' || state === 'rejected') {
+    return <span style={{ color: '#dc2626', fontSize: 12, fontWeight: 600 }}>{message || REVISION_CONFLICT_MESSAGE}</span>;
   }
   if (state !== 'error') return null;
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-      <span style={{ color: '#dc2626', fontWeight: 600 }}>Save failed</span>
+      <span style={{ color: '#dc2626', fontWeight: 600 }}>Not saved</span>
       <button
         type="button"
         onClick={onRetry}
@@ -190,6 +193,13 @@ export function InlineWbsSaveStatus({ state, onRetry, onUndo }) {
       >Undo change</button>
     </span>
   );
+}
+
+export async function showLatestAfterRejectedInlineSave({ fallback, loadLatest, showPlan }) {
+  if (fallback) showPlan(fallback);
+  const latest = await loadLatest();
+  if (latest) showPlan(latest);
+  return latest;
 }
 
 const isBaselineLikeLabel = (value) => {
@@ -1853,9 +1863,11 @@ const [savedScenarios, setSavedScenarios] = useState([]);
   // Inline execution-plan save status: idle | saving | saved | error | conflict.
   // Surfaced in the WBS header so optimistic edits aren't silently lost.
   const [wbsSaveState, setWbsSaveState] = useState('idle');
+  const [wbsSaveMessage, setWbsSaveMessage] = useState('');
   const lastGoodWbsRef = useRef(null);      // last snapshot confirmed saved to server
   const pendingWbsSaveRef = useRef(null);   // { sid, next, prev, failMessage } for a failed save
   const wbsSavedTimerRef = useRef(null);    // debounce reset of the "Saved ✓" pill
+  const { trackPlanWrite, loadLatestSavedPlan } = usePlanWriteRecovery();
   const [bundleLoading, setBundleLoading] = useState(false);
   const [wbsLoading, setWbsLoading] = useState(false);
   const [exportBusyType, setExportBusyType] = useState(null);
@@ -2415,6 +2427,7 @@ const refreshThreadWbs = useCallback(async (tid) => {
       ? response.project_wbs
       : null;
     setThreadWbs(nextWbs);
+    lastGoodWbsRef.current = nextWbs;
     return nextWbs;
   } catch (e) {
     showToast(e?.message || 'We could not refresh the execution plan right now.', 'error', {
@@ -2600,10 +2613,11 @@ const renderInlineExecutionView = () => {
   // snapshot so a failed save can be rolled back (offered via the header).
   const saveWbsOptimistic = (sid, next, prev, failMessage) => {
     setWbsSaveState('saving');
+    setWbsSaveMessage('');
     if (wbsSavedTimerRef.current) { clearTimeout(wbsSavedTimerRef.current); wbsSavedTimerRef.current = null; }
     const attempt = () => {
       setWbsSaveState('saving');
-      return Jaspen.upsertThreadWbs(sid, next)
+      return trackPlanWrite(Jaspen.upsertThreadWbs(sid, next))
         .then((response) => {
           const saved = response?.project_wbs || next;
           setThreadWbs(saved);
@@ -2615,12 +2629,30 @@ const renderInlineExecutionView = () => {
             setWbsSaveState((s) => (s === 'saved' ? 'idle' : s));
           }, 2200);
         })
-        .catch((e) => {
+        .catch(async (e) => {
           console.error('[exec-inline] save failed:', e);
           const failure = classifyInlineWbsSaveFailure(e, failMessage);
           pendingWbsSaveRef.current = failure.retryable
             ? { sid, next, prev, failMessage }
             : null;
+          if (!failure.retryable) {
+            let latestShown = false;
+            try {
+              const latest = await showLatestAfterRejectedInlineSave({
+                fallback: lastGoodWbsRef.current,
+                loadLatest: () => loadLatestSavedPlan(sid, next?.scorecard_id || null),
+                showPlan: setThreadWbs,
+              });
+              if (latest) {
+                lastGoodWbsRef.current = latest;
+                latestShown = true;
+              }
+            } catch (refreshError) {
+              console.error('[exec-inline] rejected-save refresh failed:', refreshError);
+            }
+            failure.message = rejectedPlanSaveMessage(e, latestShown);
+          }
+          setWbsSaveMessage(failure.message);
           setWbsSaveState(failure.state);
           if (failure.retryable) {
             showToast(failure.message, 'error', {
@@ -2834,6 +2866,7 @@ const renderInlineExecutionView = () => {
               {/* Inline save status — keeps optimistic WBS edits from failing silently */}
               <InlineWbsSaveStatus
                 state={wbsSaveState}
+                message={wbsSaveMessage}
                 onRetry={retryWbsSave}
                 onUndo={undoWbsSave}
               />
@@ -9127,9 +9160,9 @@ const handleExecutionTaskUpdate = useCallback(async (taskId, patch = {}) => {
   const idx = tasks.findIndex((task) => String(task?.id || '') === String(taskId || ''));
   if (idx < 0) throw new Error('Task not found.');
   tasks[idx] = { ...tasks[idx], ...nextPatch };
-  await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+  await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks }));
   await refreshThreadWbs(tid);
-}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId]);
+}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId, trackPlanWrite]);
 
 const handleExecutionTaskAdd = useCallback(async (payload = {}) => {
   const tid = String(currentSessionId || sessionId || '').trim();
@@ -9151,9 +9184,9 @@ const handleExecutionTaskAdd = useCallback(async (payload = {}) => {
     depends_on: Array.isArray(payload?.depends_on) ? payload.depends_on : [],
   };
   tasks.push(task);
-  await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+  await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks }));
   await refreshThreadWbs(tid);
-}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId]);
+}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId, trackPlanWrite]);
 
 const handleExecutionTaskRemove = useCallback(async (taskId) => {
   const tid = String(currentSessionId || sessionId || '').trim();
@@ -9169,9 +9202,9 @@ const handleExecutionTaskRemove = useCallback(async (taskId) => {
       ? task.depends_on.filter((depId) => String(depId || '') !== removeId)
       : [],
   }));
-  await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks: normalized });
+  await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks: normalized }));
   await refreshThreadWbs(tid);
-}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId]);
+}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId, trackPlanWrite]);
 
 const handleExecutionDependencyAdd = useCallback(async (taskId, dependsOnId) => {
   const tid = String(currentSessionId || sessionId || '').trim();
@@ -9186,9 +9219,9 @@ const handleExecutionDependencyAdd = useCallback(async (taskId, dependsOnId) => 
   const deps = Array.isArray(tasks[idx]?.depends_on) ? [...tasks[idx].depends_on] : [];
   if (!deps.includes(depId)) deps.push(depId);
   tasks[idx] = { ...tasks[idx], depends_on: deps };
-  await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+  await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks }));
   await refreshThreadWbs(tid);
-}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId]);
+}, [currentSessionId, refreshThreadWbs, resolveThreadWbsState, sessionId, trackPlanWrite]);
 
 const openExecutionAssistant = useCallback(() => {
   setAiDrawerOpen(true);
@@ -10107,7 +10140,7 @@ const handleSaveStarter = async () => {
           depends_on: Array.isArray(payload?.depends_on) ? payload.depends_on : [],
         });
 
-        await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+        await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks }));
         showToast('Task added to WBS', 'success');
       } catch (e) {
         console.error('[WBS_ADD_TASK] failed', e);
@@ -10162,7 +10195,7 @@ const handleSaveStarter = async () => {
           ...(payload?.suggested_role != null ? { suggested_role: String(payload.suggested_role) } : {}),
         };
 
-        await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+        await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks }));
         showToast('WBS task updated', 'success');
       } catch (e) {
         console.error('[WBS_UPDATE_TASK] failed', e);
@@ -10206,7 +10239,7 @@ const handleSaveStarter = async () => {
         if (!deps.includes(dependsOn) && dependsOn !== taskId) deps.push(dependsOn);
         tasks[idx] = { ...tasks[idx], depends_on: deps };
 
-        await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+        await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks }));
         showToast('WBS dependency added', 'success');
       } catch (e) {
         console.error('[WBS_ADD_DEPENDENCY] failed', e);
@@ -10254,7 +10287,7 @@ const handleSaveStarter = async () => {
             : [],
         }));
 
-        await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+        await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks }));
         showToast('Task removed from WBS', 'success');
       } catch (e) {
         console.error('[WBS_REMOVE_TASK] failed', e);

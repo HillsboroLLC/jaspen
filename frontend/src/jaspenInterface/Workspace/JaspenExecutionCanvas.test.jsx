@@ -130,10 +130,17 @@ it('shows the D4 message when a canvas autosave gets a real conflict', async () 
     updated_at: 'D1',
     tasks: [{ id: 'task-1', title: 'Original', phase: 'Delivery', status: 'todo' }],
   };
-  jest.spyOn(global, 'fetch')
+  const fetchMock = jest.spyOn(global, 'fetch')
     .mockImplementationOnce(() => json(200, { bindings: [] }))
     .mockImplementationOnce(() => json(409, {
       code: 'revision_conflict', error: REVISION_CONFLICT_MESSAGE,
+    }))
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: {
+        ...initialPlan,
+        updated_at: 'D2',
+        tasks: [{ ...initialPlan.tasks[0], title: 'Saved in the other tab' }],
+      },
     }));
 
   render(
@@ -154,6 +161,10 @@ it('shows the D4 message when a canvas autosave gets a real conflict', async () 
 
   const error = await screen.findByText(REVISION_CONFLICT_MESSAGE);
   expect(error).toHaveAttribute('title', REVISION_CONFLICT_MESSAGE);
+  expect(screen.getByText('Saved in the other tab')).toBeInTheDocument();
+  expect(screen.queryByText('Conflicting edit')).not.toBeInTheDocument();
+  expect(screen.getByTitle('Undo (⌘Z)')).toBeDisabled();
+  expect(fetchMock.mock.calls.filter(([, init]) => Boolean(init?.body))).toHaveLength(1);
   expect(screen.queryByText('Save failed — will retry')).not.toBeInTheDocument();
 });
 
@@ -169,6 +180,9 @@ it('shows the D4 message when a start-date change gets a real conflict', async (
     .mockImplementationOnce(() => json(200, { bindings: [] }))
     .mockImplementationOnce(() => json(409, {
       code: 'revision_conflict', error: REVISION_CONFLICT_MESSAGE,
+    }))
+    .mockImplementationOnce(() => json(200, {
+      project_wbs: { ...initialPlan, start_date: '2027-01-18', updated_at: 'S2' },
     }));
 
   render(
@@ -184,6 +198,7 @@ it('shows the D4 message when a start-date change gets a real conflict', async (
 
   const error = await screen.findByText(REVISION_CONFLICT_MESSAGE);
   expect(error).toHaveAttribute('title', REVISION_CONFLICT_MESSAGE);
+  expect(document.querySelector('input[type="date"]')).toHaveValue('2027-01-18');
   expect(screen.queryByText('Save failed — will retry')).not.toBeInTheDocument();
 });
 
@@ -230,7 +245,8 @@ it('shows the minimal invalid task date save message', async () => {
     .mockImplementationOnce(() => json(400, {
       code: 'invalid_task_date', task_id: 'task-1', field: 'due_date',
       error: "Task 'task-1' has an invalid due_date; expected YYYY-MM-DD.",
-    }));
+    }))
+    .mockImplementationOnce(() => json(200, { project_wbs: initialPlan }));
 
   render(
     <JaspenExecutionCanvas
@@ -248,5 +264,34 @@ it('shows the minimal invalid task date save message', async () => {
     await Promise.resolve();
   });
 
-  expect(await screen.findByText('Invalid task date')).toBeInTheDocument();
+  expect(await screen.findByText("That task date is invalid. Your change wasn't saved.")).toBeInTheDocument();
+  expect(screen.getByText('Original')).toBeInTheDocument();
+  expect(screen.queryByText('Changed')).not.toBeInTheDocument();
+  expect(screen.getByTitle('Undo (⌘Z)')).toBeDisabled();
+});
+
+it('keeps a canvas edit visible after a temporary network failure', async () => {
+  jest.useFakeTimers();
+  jest.spyOn(console, 'error').mockImplementation(() => {});
+  const initialPlan = {
+    scorecard_id: 'network-card',
+    updated_at: 'N1',
+    tasks: [{ id: 'task-1', title: 'Original', phase: 'Delivery', status: 'todo' }],
+  };
+  jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => json(200, { bindings: [] }))
+    .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+  render(<JaspenExecutionCanvas threadId="network-thread" scorecardId="network-card" wbs={initialPlan} />);
+  fireEvent.click(screen.getByText('Original'));
+  fireEvent.change(screen.getByDisplayValue('Original'), { target: { value: 'Unsaved edit' } });
+  fireEvent.blur(screen.getByDisplayValue('Unsaved edit'));
+  await act(async () => {
+    jest.advanceTimersByTime(600);
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(screen.getByText('Unsaved edit')).toBeInTheDocument();
+  expect(screen.getByText('Save failed — will retry')).toBeInTheDocument();
 });

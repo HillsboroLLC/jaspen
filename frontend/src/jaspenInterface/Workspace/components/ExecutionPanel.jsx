@@ -16,6 +16,7 @@ import { Jaspen } from '../JaspenClient';
 import { ExecutionPanelSkeleton } from '../../../shared/components/SkeletonLoader';
 import './ExecutionPanel.css';
 import { toDateInputValue } from '../taskDates';
+import { isRejectedPlanSave, rejectedPlanSaveMessage } from '../planSaveRecovery';
 
 const STATUS_ORDER = ['todo', 'in_progress', 'blocked', 'done'];
 const STATUS_CONFIG = {
@@ -151,6 +152,7 @@ export default function ExecutionPanel({
   wbs,
   authFetch,
   onRefresh,
+  onRejectedSave,
   onUpdateTask,
   onAddTask,
   onRemoveTask,
@@ -310,9 +312,29 @@ export default function ExecutionPanel({
       clearDraftField(taskId, field);
       setPanelMessage('');
     } catch (error) {
-      setPanelMessage(error?.message || 'Unable to update task.');
+      if (isRejectedPlanSave(error)) {
+        clearDraftField(taskId, field);
+        const latest = await onRejectedSave?.().catch(() => null);
+        setPanelMessage(rejectedPlanSaveMessage(error, Boolean(latest)));
+      } else {
+        setPanelMessage(error?.message || 'Unable to update task.');
+      }
     }
-  }, [canEditFields, canEditStructure, clearDraftField, onUpdateTask]);
+  }, [canEditFields, canEditStructure, clearDraftField, onRejectedSave, onUpdateTask]);
+
+  const addDependency = useCallback(async (taskId, dependsOnId) => {
+    try {
+      await onAddDependency?.(taskId, dependsOnId);
+      setPanelMessage('');
+    } catch (error) {
+      if (isRejectedPlanSave(error)) {
+        const latest = await onRejectedSave?.().catch(() => null);
+        setPanelMessage(rejectedPlanSaveMessage(error, Boolean(latest)));
+      } else {
+        setPanelMessage(error?.message || 'Unable to add dependency.');
+      }
+    }
+  }, [onAddDependency, onRejectedSave]);
 
   const submitNewTask = useCallback(async (phase) => {
     const title = String(newTaskTitle || '').trim();
@@ -327,9 +349,16 @@ export default function ExecutionPanel({
       setPanelMessage('');
       await onRefresh?.();
     } catch (error) {
-      setPanelMessage(error?.message || 'Unable to add task.');
+      if (isRejectedPlanSave(error)) {
+        setNewTaskTitle('');
+        setAddingPhase(null);
+        const latest = await onRejectedSave?.().catch(() => null);
+        setPanelMessage(rejectedPlanSaveMessage(error, Boolean(latest)));
+      } else {
+        setPanelMessage(error?.message || 'Unable to add task.');
+      }
     }
-  }, [newTaskTitle, onAddTask, onRefresh]);
+  }, [newTaskTitle, onAddTask, onRefresh, onRejectedSave]);
 
   const removeTask = useCallback(async (taskId) => {
     try {
@@ -337,9 +366,14 @@ export default function ExecutionPanel({
       setPanelMessage('');
       await onRefresh?.();
     } catch (error) {
-      setPanelMessage(error?.message || 'Unable to remove task.');
+      if (isRejectedPlanSave(error)) {
+        const latest = await onRejectedSave?.().catch(() => null);
+        setPanelMessage(rejectedPlanSaveMessage(error, Boolean(latest)));
+      } else {
+        setPanelMessage(error?.message || 'Unable to remove task.');
+      }
     }
-  }, [onRefresh, onRemoveTask]);
+  }, [onRefresh, onRejectedSave, onRemoveTask]);
 
   const runManualSync = useCallback(async (connectorId) => {
     if (!threadId) return;
@@ -578,7 +612,7 @@ export default function ExecutionPanel({
                               onChange={(event) => {
                                 const dependsOnId = event.target.value;
                                 if (!dependsOnId) return;
-                                onAddDependency?.(task.id, dependsOnId);
+                                void addDependency(task.id, dependsOnId);
                                 event.target.value = '';
                               }}
                             >

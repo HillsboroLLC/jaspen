@@ -33,10 +33,11 @@ import {
   faArrowRotateRight, faArrowRotateLeft, faCalendar,
 } from '@fortawesome/free-solid-svg-icons';
 
-import {
-  Jaspen, isInvalidTaskDate, isRevisionConflict, REVISION_CONFLICT_MESSAGE,
-} from './JaspenClient';
+import { Jaspen } from './JaspenClient';
 import { toDateInputValue } from './taskDates';
+import {
+  isRejectedPlanSave, rejectedPlanSaveMessage, usePlanWriteRecovery,
+} from './planSaveRecovery';
 import PmSyncPanel from './PmSyncPanel';
 import ExecutionPlanExportButton from './ExecutionPlanExportButton';
 
@@ -1165,18 +1166,37 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
   const [view, setView] = useState('list');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
-  const [saveConflict, setSaveConflict] = useState(false);
-  const [saveInvalidDate, setSaveInvalidDate] = useState(false);
+  const [saveRejected, setSaveRejected] = useState(false);
   const saveTimer = useRef(null);
   const skipNextSave = useRef(true);
+  const wbsRef = useRef(wbs);
+  const lastSavedWbsRef = useRef(initialWbs);
+  const undoStack = useRef([]);
+  const redoStack = useRef([]);
+  const [, setHistVer] = useState(0);
+  const { trackPlanWrite, loadLatestSavedPlan } = usePlanWriteRecovery();
+
+  useEffect(() => { wbsRef.current = wbs; }, [wbs]);
+
+  const showSavedPlan = useCallback((savedPlan) => {
+    if (!savedPlan || !Array.isArray(savedPlan.tasks)) return;
+    lastSavedWbsRef.current = savedPlan;
+    undoStack.current = [];
+    redoStack.current = [];
+    setHistVer((v) => v + 1);
+    skipNextSave.current = true;
+    setWbs(savedPlan);
+  }, []);
 
   // Sync if the wbs prop or bundle changes (e.g. fresh load).
   // wbsProp wins because /threads/:tid/wbs is the authoritative source.
   useEffect(() => {
     if (wbsProp && Array.isArray(wbsProp.tasks)) {
+      lastSavedWbsRef.current = wbsProp;
       skipNextSave.current = true;
       setWbs(wbsProp);
     } else if (bundle?.project_wbs) {
+      lastSavedWbsRef.current = bundle.project_wbs;
       skipNextSave.current = true;
       setWbs(bundle.project_wbs);
     }
@@ -1191,31 +1211,36 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
       try {
         setSaving(true);
         setSaveError(null);
-        setSaveConflict(false);
-        setSaveInvalidDate(false);
-        await Jaspen.upsertThreadWbs(threadId, wbs, scorecardId);
+        setSaveRejected(false);
+        const response = await trackPlanWrite(Jaspen.upsertThreadWbs(threadId, wbs, scorecardId));
+        lastSavedWbsRef.current = response?.project_wbs || wbs;
       } catch (e) {
         console.error('[ExecutionCanvas] save failed:', e);
-        const conflict = isRevisionConflict(e);
-        setSaveInvalidDate(isInvalidTaskDate(e));
-        setSaveConflict(conflict);
-        setSaveError(conflict ? REVISION_CONFLICT_MESSAGE : String(e?.message || e || 'Save failed'));
+        if (isRejectedPlanSave(e)) {
+          setSaveRejected(true);
+          showSavedPlan(lastSavedWbsRef.current);
+          let latestShown = false;
+          try {
+            const latest = await loadLatestSavedPlan(threadId, scorecardId || wbs?.scorecard_id || null);
+            showSavedPlan(latest);
+            latestShown = Boolean(latest);
+          } catch (refreshError) {
+            console.error('[ExecutionCanvas] rejected-save refresh failed:', refreshError);
+          }
+          setSaveError(rejectedPlanSaveMessage(e, latestShown));
+        } else {
+          setSaveError(String(e?.message || e || 'Save failed'));
+        }
       } finally {
         setSaving(false);
       }
     }, 600);
     return () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); };
-  }, [wbs, threadId, scorecardId]);
+  }, [wbs, threadId, scorecardId, loadLatestSavedPlan, showSavedPlan, trackPlanWrite]);
 
   // ── Undo / redo ──────────────────────────────────────────────────────────
   // Keep a ref mirror of the live WBS so mutation helpers can read the current
   // value synchronously (no stale closures) and snapshot it before changing.
-  const wbsRef = useRef(wbs);
-  useEffect(() => { wbsRef.current = wbs; }, [wbs]);
-  const undoStack = useRef([]);
-  const redoStack = useRef([]);
-  const [, setHistVer] = useState(0); // bump to re-render undo/redo button states
-
   // Reset history whenever a fresh WBS is loaded from the server.
   useEffect(() => {
     undoStack.current = [];
@@ -1279,11 +1304,10 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
     try {
       setStartDateSaving(true);
       setSaveError(null);
-      setSaveConflict(false);
-      setSaveInvalidDate(false);
-      const resp = await Jaspen.setThreadWbsStartDate(
+      setSaveRejected(false);
+      const resp = await trackPlanWrite(Jaspen.setThreadWbsStartDate(
         threadId, d, scorecardId,
-      );
+      ));
       const next = resp?.project_wbs;
       if (next && Array.isArray(next.tasks)) {
         // Record for undo, then swap in the re-anchored plan. Skip the debounced
@@ -1293,18 +1317,30 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
         redoStack.current = [];
         setHistVer((v) => v + 1);
         skipNextSave.current = true;
+        lastSavedWbsRef.current = next;
         setWbs(next);
       }
     } catch (e) {
       console.error('[ExecutionCanvas] start-date change failed:', e);
-      const conflict = isRevisionConflict(e);
-      setSaveInvalidDate(isInvalidTaskDate(e));
-      setSaveConflict(conflict);
-      setSaveError(conflict ? REVISION_CONFLICT_MESSAGE : String(e?.message || e || 'Could not change start date'));
+      if (isRejectedPlanSave(e)) {
+        setSaveRejected(true);
+        showSavedPlan(lastSavedWbsRef.current);
+        let latestShown = false;
+        try {
+          const latest = await loadLatestSavedPlan(threadId, scorecardId || wbsRef.current?.scorecard_id || null);
+          showSavedPlan(latest);
+          latestShown = Boolean(latest);
+        } catch (refreshError) {
+          console.error('[ExecutionCanvas] rejected start-date refresh failed:', refreshError);
+        }
+        setSaveError(rejectedPlanSaveMessage(e, latestShown));
+      } else {
+        setSaveError(String(e?.message || e || 'Could not change start date'));
+      }
     } finally {
       setStartDateSaving(false);
     }
-  }, [threadId, scorecardId, planStartDate]);
+  }, [threadId, scorecardId, planStartDate, loadLatestSavedPlan, showSavedPlan, trackPlanWrite]);
 
   // Keyboard: Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z (or Ctrl+Y) = redo.
   useEffect(() => {
@@ -1622,9 +1658,7 @@ export default function JaspenExecutionCanvas({ threadId, scorecardId = null, bu
               {saving && <span style={{ fontSize: 11.5, color: COLOR.mute }}>Saving…</span>}
               {!saving && saveError && (
                 <span style={{ fontSize: 11.5, color: '#dc2626' }} title={saveError}>
-                  {saveConflict
-                    ? REVISION_CONFLICT_MESSAGE
-                    : saveInvalidDate ? 'Invalid task date' : 'Save failed — will retry'}
+                  {saveRejected ? saveError : 'Save failed — will retry'}
                 </span>
               )}
               {!saving && !saveError && (

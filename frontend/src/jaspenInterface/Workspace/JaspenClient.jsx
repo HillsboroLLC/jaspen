@@ -137,7 +137,7 @@ export function isInvalidTaskDate(error) {
 }
 
 export const REVISION_CONFLICT_MESSAGE =
-  "This project has newer changes. Reload to get the latest version. Your changes weren't saved.";
+  "This project had newer changes. The latest saved version is shown. Your change wasn't saved.";
 
 /** Record whatever revision a server payload carries, wherever it sits. */
 function captureRevision(threadId, payload) {

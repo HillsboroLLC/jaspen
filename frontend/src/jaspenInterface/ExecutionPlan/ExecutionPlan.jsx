@@ -5,6 +5,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheck, faCopy, faRotate, faSpinner, faThumbsDown, faThumbsUp, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons';
 import AppMenu from '../shared/AppMenu';
 import { Jaspen } from '../Workspace/JaspenClient';
+import { usePlanWriteRecovery } from '../Workspace/planSaveRecovery';
 import { ExecutionPlanBuildFailure, useExecutionPlanBuild } from '../Workspace/useExecutionPlanBuild';
 import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import ExecutionPlanExportButton from '../Workspace/ExecutionPlanExportButton';
@@ -132,6 +133,7 @@ export default function ExecutionPlan() {
   const [copiedMessageKey, setCopiedMessageKey] = useState(null);
   const [feedbackByMessageKey, setFeedbackByMessageKey] = useState({});
   const [planBusy, setPlanBusy] = useState(false);
+  const { trackPlanWrite, loadLatestSavedPlan } = usePlanWriteRecovery();
   const assistantMessagesEndRef = useRef(null);
   const copyResetTimeoutRef = useRef(null);
 
@@ -290,6 +292,14 @@ export default function ExecutionPlan() {
     return { currentWbs, tasks };
   }, []);
 
+  const recoverRejectedPlanSave = useCallback(async () => {
+    const tid = String(threadId || '').trim();
+    if (!tid) return null;
+    const saved = await loadLatestSavedPlan(tid);
+    setThreadWbs(saved);
+    return saved;
+  }, [loadLatestSavedPlan, threadId]);
+
   const handleExecutionTaskUpdate = useCallback(async (taskId, patch = {}) => {
     const tid = String(threadId || '').trim();
     if (!tid) throw new Error('No active thread.');
@@ -297,9 +307,9 @@ export default function ExecutionPlan() {
     const idx = tasks.findIndex((task) => String(task?.id || '') === String(taskId || ''));
     if (idx < 0) throw new Error('Task not found.');
     tasks[idx] = { ...tasks[idx], ...(patch && typeof patch === 'object' ? patch : {}) };
-    await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+    await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks }));
     await refreshThreadWbs(tid);
-  }, [refreshThreadWbs, resolveThreadWbsState, threadId]);
+  }, [refreshThreadWbs, resolveThreadWbsState, threadId, trackPlanWrite]);
 
   const handleExecutionTaskAdd = useCallback(async (payload = {}) => {
     const tid = String(threadId || '').trim();
@@ -321,9 +331,9 @@ export default function ExecutionPlan() {
       depends_on: Array.isArray(payload?.depends_on) ? payload.depends_on : [],
     };
     tasks.push(task);
-    await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+    await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks }));
     await refreshThreadWbs(tid);
-  }, [refreshThreadWbs, resolveThreadWbsState, threadId]);
+  }, [refreshThreadWbs, resolveThreadWbsState, threadId, trackPlanWrite]);
 
   const handleExecutionTaskRemove = useCallback(async (taskId) => {
     const tid = String(threadId || '').trim();
@@ -339,9 +349,9 @@ export default function ExecutionPlan() {
         ? task.depends_on.filter((depId) => String(depId || '') !== removeId)
         : [],
     }));
-    await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks: normalized });
+    await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks: normalized }));
     await refreshThreadWbs(tid);
-  }, [refreshThreadWbs, resolveThreadWbsState, threadId]);
+  }, [refreshThreadWbs, resolveThreadWbsState, threadId, trackPlanWrite]);
 
   const handleExecutionDependencyAdd = useCallback(async (taskId, dependsOnId) => {
     const tid = String(threadId || '').trim();
@@ -355,9 +365,9 @@ export default function ExecutionPlan() {
     const deps = Array.isArray(tasks[idx]?.depends_on) ? [...tasks[idx].depends_on] : [];
     if (!deps.includes(depId)) deps.push(depId);
     tasks[idx] = { ...tasks[idx], depends_on: deps };
-    await Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks });
+    await trackPlanWrite(Jaspen.upsertThreadWbs(tid, { ...currentWbs, tasks }));
     await refreshThreadWbs(tid);
-  }, [refreshThreadWbs, resolveThreadWbsState, threadId]);
+  }, [refreshThreadWbs, resolveThreadWbsState, threadId, trackPlanWrite]);
 
   const applyUiAction = useCallback(async (action) => {
     if (!action || !action.type) return false;
@@ -658,6 +668,7 @@ export default function ExecutionPlan() {
             wbs={threadWbs}
             authFetch={authFetch}
             onRefresh={() => Promise.all([refreshThreadWbs(threadId), loadThreadBundle(threadId)])}
+            onRejectedSave={recoverRejectedPlanSave}
             onUpdateTask={handleExecutionTaskUpdate}
             onAddTask={handleExecutionTaskAdd}
             onRemoveTask={handleExecutionTaskRemove}
