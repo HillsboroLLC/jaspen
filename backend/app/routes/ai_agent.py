@@ -7999,7 +7999,7 @@ _CAPTURE_SYSTEM_PROMPT = (
     "condition_signal_id from the DECISION STATE with the new status. Never assume a status.\n"
     "Outcomes and lessons: only results of carrying out a pursued option (the bid was won or lost, results were measured) and what the customer learned. A condition being met, a step completed, or news before the option is carried out is never an outcome.\n"
     "Only statements about the decision count: replies to the assistant's offers or questions (yes, not now, hold off) and requests for Jaspen to do something (build a plan, compare, score) are never notes, and a commitment is something the customer or their team will do.\n"
-    "Task commitments: when the customer confirms a listed plan task's date or owner.\n"
+    "Task commitments: when the customer commits to a listed plan task or confirms its date or owner; include the date they stated, if any.\n"
     "Unclear: when the customer's words could fit more than one option, or none, list it in unclear instead of guessing. Never resolve a reference by elimination, by which option is already decided, or by which was discussed most recently.\n"
     "Return empty arrays for anything that does not apply. Recording intent never authorizes an external action."
 )
@@ -8068,6 +8068,8 @@ def _capture_pass_tool():
                     "message": message,
                     "task_id": {"type": "string"},
                     "option_key": {"type": "string"},
+                    "date": {"type": "string", "description": "YYYY-MM-DD the customer committed to, when they stated one; omit when they confirmed the task's existing date."},
+                    "owner": {"type": "string", "description": "Who committed, when stated."},
                     "quote": quote,
                 }, "required": ["message", "task_id", "quote"]}},
                 "unclear": {"type": "array", "items": {"type": "object", "properties": {
@@ -8503,6 +8505,24 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         message = cited(item)
         if message is None:
             not_saved.append({"what": "task_commitment", "reason": "quote_not_in_customer_message"})
+            continue
+        if item.get("date"):
+            # A date the customer stated is the commitment itself, never a
+            # reschedule of whatever date the plan happened to show.
+            structured = {"date": item.get("date"), **({"owner": item["owner"]} if item.get("owner") else {})}
+            tool_input = {"kind": "commitment", "content": f"Commitment for task {item.get('task_id')}",
+                          "user_request_quote": str(item.get("quote") or "").strip(),
+                          "task_id": str(item.get("task_id") or ""), "structured": structured}
+            if item.get("option_key"):
+                tool_input["option_key"] = str(item.get("option_key"))
+            result = run("record_decision_context", tool_input, message)
+            commitment = (result.get("task_commitment") or {}) if result.get("ok") else {}
+            if commitment.get("status") == "recorded":
+                saved.append({"what": "task_commitment", "task": item.get("task_id"), "date": structured["date"]})
+            elif commitment.get("status") == "already_committed":
+                already.append({"what": "task_commitment", "task": item.get("task_id")})
+            else:
+                not_saved.append({"what": "task_commitment", "reason": commitment.get("code") or result.get("code")})
             continue
         tool_input = {"task_id": str(item.get("task_id") or ""), "user_request_quote": str(item.get("quote") or "").strip()}
         if item.get("option_key"):

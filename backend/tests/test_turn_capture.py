@@ -682,3 +682,29 @@ def test_audit_records_the_capture_as_its_own_governed_component(app, db, test_u
         assert by_role['capture'].metadata_json['governance']['router_mode'] == 'shadow'
         assert by_role['capture'].metadata_json['component_operation_id'] == 'op-capture'
         assert by_role['reply'].customer_billable is True and by_role['capture'].customer_billable is False
+
+
+def test_task_commitment_with_a_stated_date_commits_that_date(app, db, test_user, capture_model):
+    from tests.test_decision_capture import _plan, _store_plan
+
+    _, agent = modules()
+    tid = 'turn-capture-task-date'
+    _seed(db, test_user, tid, _cards())
+    _call(agent, test_user, tid, 'record_option_decision', {'decisions': [
+        {'option_key': 'option-b', 'disposition': 'pursue', 'user_request_quote': 'Pursue Boulder'},
+    ]}, 'Pursue Boulder.')
+    _store_plan(test_user, tid, 'card-b', [{'id': 't1', 'title': 'Bond letter', 'due_date': '2026-11-09', 'status': 'todo'}])
+    message = 'Priya owns the bond letter and will have it done by Nov 20.'
+    _set_history(test_user, tid, _history(message))
+    capture_model['payloads'].append(_empty(task_commitments=[
+        {'message': 1, 'task_id': 't1', 'option_key': 'option-b', 'date': '2026-11-20', 'owner': 'Priya',
+         'quote': 'will have it done by Nov 20'},
+    ]))
+    capture = _run(agent, app, test_user, tid, message)
+    task = _plan(test_user, tid, 'card-b')['tasks'][0]
+    assert task['commitment']['due_date'] == '2026-11-20'
+    assert task['commitment']['basis'] == 'user_stated'
+    assert not task['commitment'].get('rescheduled_to')
+    assert capture['summary']['saved'] == [{'what': 'task_commitment', 'task': 't1', 'date': '2026-11-20'}]
+    plan_actions = [a for a in capture['actions'] if a['tool'] == 'record_decision_context']
+    assert plan_actions[0]['result']['task_commitment']['status'] == 'recorded'
