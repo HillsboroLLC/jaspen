@@ -1,8 +1,11 @@
 import os
 import importlib
+import uuid
 
 import pytest
 from flask_jwt_extended import create_access_token
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from werkzeug.security import generate_password_hash
 
 from app import connector_store
@@ -44,6 +47,76 @@ from app.models import (
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 
 
+_ALLOWED_TEST_DATABASE_HOSTS = {"localhost", "127.0.0.1", "postgres"}
+
+
+def _validated_test_database_url(value):
+    """Return a safe Postgres test URL or fail before the app can connect."""
+    try:
+        url = make_url(value)
+    except Exception as exc:
+        raise pytest.UsageError("TEST_DATABASE_URL is not a valid database URL") from exc
+    if not url.drivername.startswith("postgresql"):
+        raise pytest.UsageError("TEST_DATABASE_URL must use PostgreSQL")
+    if url.host not in _ALLOWED_TEST_DATABASE_HOSTS:
+        raise pytest.UsageError(
+            "TEST_DATABASE_URL host must be localhost, 127.0.0.1, or postgres"
+        )
+    if "test" not in str(url.database or "").lower():
+        raise pytest.UsageError("TEST_DATABASE_URL database name must contain 'test'")
+    return url
+
+
+def _postgres_schema_url(base_url, schema):
+    query = dict(base_url.query)
+    query["options"] = f"-csearch_path={schema}"
+    return base_url.set(query=query)
+
+
+@pytest.fixture
+def validate_test_database_url():
+    return _validated_test_database_url
+
+
+@pytest.fixture
+def postgres_schema_url():
+    return _postgres_schema_url
+
+
+def pytest_configure(config):
+    test_database_url = os.environ.get("TEST_DATABASE_URL")
+    if test_database_url:
+        _validated_test_database_url(test_database_url)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Keep deliberately SQLite-specific coverage out of the Postgres job."""
+    if not os.environ.get("TEST_DATABASE_URL"):
+        return
+    sqlite_only_files = {
+        "tests/test_fresh_dev_baseline.py": (
+            "exercises the SQLite-only fresh local database initializer"
+        ),
+        "tests/test_migrations_alembic.py": (
+            "exercises historical migration branches against handcrafted SQLite schemas"
+        ),
+    }
+    sqlite_only_tests = {
+        "tests/test_org_access_gate.py::test_migration_backfills_existing_links_without_changing_them": (
+            "binds a migration to a handcrafted SQLite database"
+        ),
+    }
+    for item in items:
+        reason = sqlite_only_tests.get(item.nodeid)
+        if reason is None:
+            for path, file_reason in sqlite_only_files.items():
+                if item.nodeid.startswith(f"{path}::"):
+                    reason = file_reason
+                    break
+        if reason is not None:
+            item.add_marker(pytest.mark.skip(reason=f"SQLite-only: {reason}"))
+
+
 @pytest.fixture(scope="session")
 def app(tmp_path_factory):
     db_file = tmp_path_factory.mktemp("db") / "test.sqlite"
@@ -71,7 +144,23 @@ def app(tmp_path_factory):
         "WORKOS_API_KEY",
     )}
 
-    os.environ["DATABASE_URL"] = f"sqlite:///{db_file}"
+    test_database_url = os.environ.get("TEST_DATABASE_URL")
+    postgres_base_url = None
+    postgres_admin_engine = None
+    postgres_schema = None
+    if test_database_url:
+        postgres_base_url = _validated_test_database_url(test_database_url)
+        postgres_schema = f"jaspen_test_{uuid.uuid4().hex}"
+        postgres_admin_engine = create_engine(postgres_base_url, isolation_level="AUTOCOMMIT")
+        with postgres_admin_engine.connect() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{postgres_schema}"'))
+        database_url = _postgres_schema_url(
+            postgres_base_url, postgres_schema,
+        ).render_as_string(hide_password=False)
+    else:
+        database_url = f"sqlite:///{db_file}"
+
+    os.environ["DATABASE_URL"] = database_url
     os.environ["JWT_SECRET_KEY"] = "test-secret-key"
     os.environ["SECRET_KEY"] = "test-secret"
     os.environ["STRIPE_SECRET_KEY"] = "sk_test_123"
@@ -116,7 +205,13 @@ def app(tmp_path_factory):
         _db.create_all()
         yield app
         _db.session.remove()
-        _db.drop_all()
+        if _db.engine.dialect.name != "postgresql":
+            _db.drop_all()
+
+    if postgres_admin_engine is not None:
+        with postgres_admin_engine.connect() as connection:
+            connection.execute(text(f'DROP SCHEMA IF EXISTS "{postgres_schema}" CASCADE'))
+        postgres_admin_engine.dispose()
 
     auth_routes.generate_password_hash = original_generate_password_hash
     connector_store.CONNECTORS_DIR = original_connectors_dir
