@@ -305,10 +305,19 @@ def persist_operation(
                 input_tokens=int(component.get('input_tokens') or 0),
                 output_tokens=int(component.get('output_tokens') or 0),
                 raw_provider_cost_usd=Decimal(str(component_cost or 0)),
-                customer_billable=bool(customer_visible and index == len(components) - 1),
+                # The customer-visible result is the reply; a supporting call
+                # (such as decision capture) is recorded but never the billed row.
+                customer_billable=bool(customer_visible and (
+                    component.get('role') == 'reply' if any(item.get('role') for item in components)
+                    else index == len(components) - 1
+                )),
                 metadata_json={
                     'customer_visible_result': bool(customer_visible),
                     'component_index': index,
+                    'role': component.get('role'),
+                    'operation_type': component.get('operation_type'),
+                    'component_operation_id': component.get('operation_id'),
+                    'governance': component.get('governance'),
                     'settled_once_at_operation': True,
                     'stop_reason': component.get('stop_reason'),
                     'attempt': component.get('attempt'),
