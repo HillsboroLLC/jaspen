@@ -402,7 +402,7 @@ def assemble_record_payload(user_id, thread_id, *, actor_user_id=None):
     return payload, promoted
 
 
-def can_read_record(record, user, membership=None):
+def can_read_record(record, user, membership=None, *, session_row=None, session_loaded=False):
     """May this user read this Decision Record?
 
     A record is a durable artifact DERIVED from a project, so it inherits that
@@ -440,7 +440,7 @@ def can_read_record(record, user, membership=None):
     if membership is None:
         return False
 
-    row = canonical_row(user, record.thread_id, include_archived=True)
+    row = session_row if session_loaded else canonical_row(user, record.thread_id, include_archived=True)
     if row is not None:
         return can_read_session(row, user, membership=membership)
 
@@ -989,7 +989,10 @@ def execution_option_key(scorecard):
     return f'scorecard:{scorecard_id}' if scorecard_id else ''
 
 
-def option_dispositions(record, *, session=None, scorecard_rows=None):
+def option_dispositions(
+    record, *, session=None, scorecard_rows=None, decision_rows=None,
+    decision_signal_rows=None,
+):
     """Return the deterministic option-state read model and reconciliation."""
     from .models import Scorecard
 
@@ -1028,10 +1031,16 @@ def option_dispositions(record, *, session=None, scorecard_rows=None):
         if legacy_id:
             plans = {legacy_id: legacy}
 
-    decision_rows = (
-        OptionDecision.query.filter_by(decision_record_id=str(record.id))
-        .order_by(OptionDecision.decided_at.asc(), OptionDecision.created_at.asc()).all()
-    )
+    if decision_rows is None:
+        decision_rows = (
+            OptionDecision.query.filter_by(decision_record_id=str(record.id))
+            .order_by(OptionDecision.decided_at.asc(), OptionDecision.created_at.asc()).all()
+        )
+    else:
+        decision_rows = sorted(
+            decision_rows,
+            key=lambda item: (item.decided_at or datetime.min, item.created_at or datetime.min),
+        )
     history_by_option = {}
     superseded_ids = {str(row.supersedes_id) for row in decision_rows if row.supersedes_id}
     current = {}
@@ -1047,7 +1056,8 @@ def option_dispositions(record, *, session=None, scorecard_rows=None):
     options = []
     counts = {'pursued': 0, 'not_pursued': 0, 'open': 0, 'archived': 0}
     conditions_by_option = {}
-    for signal in current_decision_signals(decision_signals_for(record)):
+    signals = decision_signals_for(record) if decision_signal_rows is None else decision_signal_rows
+    for signal in current_decision_signals(signals):
         if signal.kind == 'condition' and signal.option_key:
             status = str((signal.structured or {}).get('status') or 'open')
             bucket = conditions_by_option.setdefault(signal.option_key, {})

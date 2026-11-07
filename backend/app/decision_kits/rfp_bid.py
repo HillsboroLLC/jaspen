@@ -5,6 +5,7 @@ KIT = {
     "version": 1,
     "label": "RFP response",
     "description": "Bid / No-Bid evaluation for an RFP response.",
+    "attention_deadline_window_days": 14,
     "changelog": ["v1: initial RFP response methodology thresholds."],
     "fields": [
         {"key": "client", "label": "Client / customer", "type": "text", "role": "identity"},
