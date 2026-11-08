@@ -161,6 +161,46 @@ it('treats Jira as Data & Insights without requiring a default project', async (
   expect(await screen.findByRole('option', { name: 'ABC · Alpha' })).toBeInTheDocument();
 });
 
+it('keeps connector management available when a saved Jira token expires', async () => {
+  mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) {
+      return Promise.resolve(response({ connectors: [
+        {
+          id: 'jira_sync', label: 'Jira', implementation_status: 'implemented', lifecycle_status: 'connected', connected: true,
+          jira: { base_url: 'https://acme.atlassian.net', email: 'owner@acme.test', has_api_token: true, data_enabled: true, data_project_scope: 'all' },
+        },
+        {
+          id: 'salesforce_insights', label: 'Salesforce', implementation_status: 'implemented', lifecycle_status: 'disconnected', connected: false,
+        },
+      ] }));
+    }
+    if (String(url).includes('/api/v1/connectors/jira/projects')) {
+      return Promise.resolve({
+        ok: false,
+        status: 400,
+        json: jest.fn().mockResolvedValue({
+          error: 'Your saved Jira connection no longer works. Reconnect Jira to continue.',
+          reconnect_required: true,
+        }),
+      });
+    }
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success: true, sessions: [] }));
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events: [] }));
+    if (String(url).includes('/api/v1/pm-sync/bindings')) return Promise.resolve(response({ bindings: [] }));
+    if (String(url).includes('/health')) return Promise.resolve(response({ live_status: { status: 'healthy', message: 'Connection successful' } }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+
+  expect(await screen.findByText('Connected as owner@acme.test on acme.atlassian.net')).toBeInTheDocument();
+  expect(screen.getAllByText('Salesforce').length).toBeGreaterThan(0);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Your saved Jira connection no longer works. Reconnect Jira to continue.');
+  expect(screen.getByRole('button', { name: 'Reconnect Jira' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+});
+
 it('keeps the last Jira portfolio visible when refresh fails', async () => {
   mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
   const snapshot = {

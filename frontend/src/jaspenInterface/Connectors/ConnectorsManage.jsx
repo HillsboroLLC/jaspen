@@ -751,11 +751,26 @@ export default function ConnectorsManage() {
         headers: authHeaders(false, 'GET'),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error || 'Could not load Jira projects.');
+      if (!res.ok) {
+        setJiraProjects([]);
+        setJiraPortfolioError({
+          source: 'jira_projects',
+          category: data?.category || 'provider',
+          message: data?.error || 'Could not load Jira projects.',
+          reconnect_required: Boolean(data?.reconnect_required),
+        });
+        return;
+      }
       setJiraProjects(Array.isArray(data?.projects) ? data.projects : []);
+      setJiraPortfolioError((current) => (current?.source === 'jira_projects' ? null : current));
     } catch (err) {
       setJiraProjects([]);
-      setError(err?.message || 'Could not load Jira projects.');
+      setJiraPortfolioError({
+        source: 'jira_projects',
+        category: 'provider',
+        message: err?.message || 'Could not load Jira projects.',
+        reconnect_required: false,
+      });
     } finally {
       setJiraProjectsBusy(false);
     }
