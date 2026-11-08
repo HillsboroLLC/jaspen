@@ -10,6 +10,13 @@ If a task conflicts with either, stop and ask. Don't resolve it yourself.
 
 The AI owns the conversation, the user's intent, and the judgment. The code owns the numbers, the truth, permissions, and money. Don't add keyword or phrase-matching rules that decide what a user meant. If code needs intent, have the AI state it explicitly (for example through a tool call) and check that.
 
+## Root-cause engineering standard
+
+- Trace an issue through its authoritative data model, persistence, API, transformation, component, and styles before editing it. Fix the responsible implementation directly; do not add compensating display logic or competing state.
+- Reuse the existing abstraction when it owns the behavior. Avoid duplicate helpers, redundant fallbacks, unnecessary conditionals, appended CSS overrides, and new architecture when the existing design can be corrected.
+- Add focused regression coverage for the underlying behavior, then review the final diff for dead code, redundancy, accidental scope expansion, and backward-compatibility risks.
+- If the affected area contains overlapping, contradictory, or accumulated patchwork, **stop before modifying it**. Report the exact files and functions, the conflicting behavior, dependencies and risks, and what a coherent correction would require. Mark it for review and wait for approval; do not refactor, work around, disable, move, or delete it. Independent tasks may continue only when they do not touch that area.
+
 ## Working rules
 
 - **Scope:** do only the assigned task. List anything else you notice in your report; don't fix it.
