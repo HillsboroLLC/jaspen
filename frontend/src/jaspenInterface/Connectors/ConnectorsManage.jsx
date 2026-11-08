@@ -518,6 +518,7 @@ export default function ConnectorsManage() {
   const [expandedActivityDetails, setExpandedActivityDetails] = useState(() => new Set());
   const [threads, setThreads] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -691,11 +692,13 @@ export default function ConnectorsManage() {
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     setError('');
     try {
-      await Promise.all([loadConnectors(), loadThreads(), loadPlanBindings()]);
+      await loadConnectors();
+      await Promise.allSettled([loadThreads(), loadPlanBindings()]);
     } catch (err) {
-      setError(err?.message || 'Failed to load connector management data.');
+      setLoadError(err?.message || 'Failed to load connector management data.');
     } finally {
       setLoading(false);
     }
@@ -1047,7 +1050,6 @@ export default function ConnectorsManage() {
     } catch (err) {
       const plainMessage = err?.message || 'The saved connection could not be verified. Reconnect and check the credentials.';
       setConnectionCheckByConnector((prev) => ({ ...prev, [connector.id]: { status: 'error', checkedAt: new Date().toISOString(), message: plainMessage } }));
-      if (announce) setError(plainMessage);
     } finally {
       if (announce) setBusy(false);
     }
@@ -1580,17 +1582,17 @@ export default function ConnectorsManage() {
           </div>
         </section>
       )}
-      {!loading && error && (
+      {!loading && loadError && (
         <div className="connectors-manage-state is-error" role="status" aria-live="polite">
-          <p>{error}</p>
+          <p>{loadError}</p>
           <button type="button" className="int-btn int-btn-ghost connectors-retry-btn" onClick={refresh}>
             Retry
           </button>
         </div>
       )}
-      {!loading && !error && message && <div className="connectors-manage-state is-success" role="status" aria-live="polite">{message}</div>}
+      {!loading && !loadError && !error && message && <div className="connectors-manage-state is-success" role="status" aria-live="polite">{message}</div>}
 
-      {!loading && !error && (
+      {!loading && !loadError && (
         <>
           {/* Slim health + plan bar */}
           <div className="connectors-health-bar">
@@ -1676,7 +1678,10 @@ export default function ConnectorsManage() {
                               <button
                                 type="button"
                                 className={`connector-list-item ${isSelected ? 'is-selected' : ''} ${!implemented ? 'is-coming-soon' : ''}`}
-                                onClick={() => setSelectedConnectorId(connector.id)}
+                                onClick={() => {
+                                  setError('');
+                                  setSelectedConnectorId(connector.id);
+                                }}
                                 title={!implemented ? 'Coming soon' : connector.description}
                               >
                                 <span className="connector-list-item-icon">
@@ -1700,6 +1705,7 @@ export default function ConnectorsManage() {
             </nav>
 
             <section className="connector-detail-panel">
+              {error && <div className="connectors-manage-state is-error" role="alert" aria-live="assertive">{error}</div>}
               {!selectedConnector && <div className="connectors-manage-state">Select a connector.</div>}
               {selectedConnector && selectedDraft && (
                 <>
