@@ -688,6 +688,51 @@ def current_option_decision(record, option_key):
     )
 
 
+def option_decision_display_text(decision):
+    """Canonical user-facing wording for one recorded option decision."""
+    if decision is None:
+        return None
+    option_name = str(decision.option_name or 'this option').strip()
+    if is_plan_decision_source(decision.source):
+        if isinstance(decision.override_info, dict) and decision.override_info:
+            return f"pursuing {option_name} despite Jaspen's No-Bid"
+        return f'moving forward with {option_name}'
+    return str(decision.final_decision or '').strip() or None
+
+
+def recorded_option_decision_summary(actor, thread_id, scorecard):
+    """Return the current human decision for exactly one scorecard option.
+
+    The option key is the boundary: a parent record or sibling option can never
+    supply the decision shown on this card. Reads never create or refresh a
+    Decision Record.
+    """
+    card = scorecard if isinstance(scorecard, dict) else {}
+    option_key = execution_option_key(card)
+    if actor is None or not option_key:
+        return None
+    _row, organization_id, attribution_user_id = canonical_context(actor, thread_id)
+    record = _find_existing_record(organization_id, attribution_user_id or actor.id, thread_id)
+    decision = current_option_decision(record, option_key) if record is not None else None
+    if decision is None:
+        return None
+    option_name = str(
+        decision.option_name
+        or card.get('project_name')
+        or card.get('name')
+        or card.get('label')
+        or 'this option'
+    ).strip()
+    return {
+        'option_name': option_name,
+        'final_decision': str(decision.final_decision or '').strip(),
+        'display_text': option_decision_display_text(decision),
+        'disposition': decision.disposition,
+        'source': decision.source,
+        'plan_decision': is_plan_decision_source(decision.source),
+    }
+
+
 def option_decision_history(record, option_key):
     wanted = str(option_key or '').strip()
     if not wanted:

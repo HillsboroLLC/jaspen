@@ -303,6 +303,9 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
   const context = snapshot?.context || {};
   const kit = context.decision_kit || cards.find((c) => c?.decision_kit)?.decision_kit || null;
   const objective = context.strategy_objective || snapshot?.strategy_objective || null;
+  const recordedDecision = snapshot?.recorded_decision && typeof snapshot.recorded_decision === 'object'
+    ? snapshot.recorded_decision
+    : null;
 
   const ranked = [...cards].sort((a, b) => {
     const rank = (VERDICT_RANK[verdictFor(b)] || 0) - (VERDICT_RANK[verdictFor(a)] || 0);
@@ -494,10 +497,12 @@ export function buildReportModel({ artifactType, snapshot, title, createdAt }) {
     preparedOn: createdAt ? new Date(createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '',
     rubricApproved,
     cardCount: cards.length,
+    recordedDecision: recordedDecision?.display_text ? recordedDecision : null,
     standings,
     featured: featured ? {
       name: featuredName,
       verdict: verdictFor(featured),
+      isRecommendation: Boolean(featured?.recommendation?.label),
       score: cardScore(featured),
       supported,
       keyFacts,
