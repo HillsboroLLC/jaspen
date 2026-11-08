@@ -122,7 +122,7 @@ it('loads connector and thread data once when initial selections are established
   expect(requested('/api/v1/ai-agent/threads')).toHaveLength(1);
 });
 
-it('uses the full-page retry state only when the connector catalog cannot load', async () => {
+it('keeps the supported catalog visible when connector status retrieval has a server outage', async () => {
   authFetch.mockImplementation((url) => {
     if (String(url).includes('/api/v1/connectors/status')) {
       return Promise.resolve({
@@ -138,9 +138,39 @@ it('uses the full-page retry state only when the connector catalog cannot load',
 
   render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
 
-  expect(await screen.findByText('Connector catalog is temporarily unavailable.')).toBeInTheDocument();
+  expect(await screen.findByText('Connector statuses are temporarily unavailable. Your saved connections and settings have not changed.')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-  expect(screen.queryByRole('navigation', { name: 'Connector list' })).not.toBeInTheDocument();
+  expect(screen.getByRole('navigation', { name: 'Connector list' })).toBeInTheDocument();
+  ['Jira', 'Smartsheet', 'Salesforce', 'Snowflake'].forEach((label) => {
+    expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+  });
+  expect(screen.getAllByText('Status unavailable').length).toBeGreaterThanOrEqual(4);
+  expect(screen.getAllByText('Unavailable').length).toBeGreaterThanOrEqual(2);
+  expect(screen.queryByText('0/2')).not.toBeInTheDocument();
+  expect(screen.queryByText(/is not connected/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Test connection/i })).not.toBeInTheDocument();
+});
+
+it('keeps the supported catalog visible when connector status authentication expires', async () => {
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) {
+      return Promise.resolve({
+        ok: false,
+        status: 401,
+        json: jest.fn().mockResolvedValue({ error: 'Authentication required' }),
+      });
+    }
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success: true, sessions: [] }));
+    if (String(url).includes('/api/v1/pm-sync/bindings')) return Promise.resolve(response({ bindings: [] }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+
+  expect(await screen.findByText('Connector statuses are temporarily unavailable. Your saved connections and settings have not changed.')).toBeInTheDocument();
+  expect(screen.getByRole('navigation', { name: 'Connector list' })).toBeInTheDocument();
+  expect(screen.getAllByText('Status unavailable').length).toBeGreaterThanOrEqual(4);
+  expect(screen.queryByText(/is not connected/)).not.toBeInTheDocument();
 });
 
 it('keeps the connector catalog available when auxiliary page data cannot load', async () => {
@@ -160,9 +190,57 @@ it('keeps the connector catalog available when auxiliary page data cannot load',
 
   render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
 
-  expect(await screen.findByText('2 available on your business plan')).toBeInTheDocument();
+  expect(await screen.findByText('4 available on your business plan')).toBeInTheDocument();
   expect(screen.getAllByText('Salesforce').length).toBeGreaterThan(0);
   expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+});
+
+it('recovers connector statuses in place and preserves each connector\'s true state', async () => {
+  mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
+  let statusAttempts = 0;
+  const recoveredConnectors = [
+    {
+      id: 'jira_sync', label: 'Jira', implementation_status: 'implemented', lifecycle_status: 'connected', connected: true, freshness: 'confirmed',
+      jira: { base_url: 'https://acme.atlassian.net', email: 'owner@acme.test', has_api_token: true, data_project_scope: 'all' },
+    },
+    { id: 'smartsheet_sync', label: 'Smartsheet', implementation_status: 'implemented', lifecycle_status: 'disconnected', connected: false },
+    { id: 'salesforce_insights', label: 'Salesforce', implementation_status: 'implemented', lifecycle_status: 'disconnected', connected: false },
+    { id: 'snowflake_insights', label: 'Snowflake', implementation_status: 'implemented', lifecycle_status: 'disconnected', connected: false },
+  ];
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) {
+      statusAttempts += 1;
+      if (statusAttempts === 1) {
+        return Promise.resolve({ ok: false, status: 503, json: jest.fn().mockResolvedValue({ error: 'Unavailable' }) });
+      }
+      return Promise.resolve(response({ connectors: recoveredConnectors }));
+    }
+    if (String(url).includes('/api/v1/connectors/jira/projects')) return Promise.resolve(response({ projects: [] }));
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success: true, sessions: [] }));
+    if (String(url).includes('/api/v1/pm-sync/bindings')) return Promise.resolve(response({ bindings: [] }));
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events: [] }));
+    if (String(url).includes('/health')) return Promise.resolve(response({ live_status: { status: 'healthy' } }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+  expect(await screen.findByText('Connector statuses are temporarily unavailable. Your saved connections and settings have not changed.')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(await screen.findByText('Connected as owner@acme.test on acme.atlassian.net')).toBeInTheDocument();
+  expect(screen.queryByText('Connector statuses are temporarily unavailable. Your saved connections and settings have not changed.')).not.toBeInTheDocument();
+  expect(screen.queryByText('Status unavailable')).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Salesforce' }));
+  expect(screen.getByText('Salesforce is not connected')).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Snowflake' }));
+  expect(screen.getByText('Snowflake is not connected')).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getAllByRole('button', { name: 'Jira' })[0]);
+  expect(screen.getByText('Connected as owner@acme.test on acme.atlassian.net')).toBeInTheDocument();
 });
 
 it('treats Jira as Data & Insights without requiring a default project', async () => {
@@ -249,6 +327,8 @@ it('keeps the connector catalog available when another connector action fails', 
   authFetch.mockImplementation((url) => {
     if (String(url).includes('/api/v1/connectors/status')) {
       return Promise.resolve(response({ connectors: [
+        { id: 'jira_sync', label: 'Jira', implementation_status: 'implemented', lifecycle_status: 'disconnected', connected: false },
+        { id: 'smartsheet_sync', label: 'Smartsheet', implementation_status: 'implemented', lifecycle_status: 'disconnected', connected: false },
         {
           id: 'salesforce_insights', label: 'Salesforce', implementation_status: 'implemented', lifecycle_status: 'connected', connected: true,
           salesforce: { instance_url: 'https://acme.my.salesforce.com', client_id: 'client-id', has_client_secret: true, has_refresh_token: true },
@@ -271,6 +351,7 @@ it('keeps the connector catalog available when another connector action fails', 
 
   render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
 
+  fireEvent.click(await screen.findByRole('button', { name: 'Salesforce' }));
   expect(await screen.findByText('Connected as acme.my.salesforce.com')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /Test connection/i }));
   expect(await screen.findByRole('alert')).toHaveTextContent('The saved connection could not be verified. Reconnect and check the credentials.');

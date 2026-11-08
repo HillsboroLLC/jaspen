@@ -23,15 +23,17 @@ import JaspenAiDrawer from '../Workspace/JaspenAiDrawer';
 import './ConnectorsManage.css';
 import AppMenu from '../shared/AppMenu';
 
-const CONNECTOR_ORDER = [
-  'jira_sync',
-  'smartsheet_sync',
-  'salesforce_insights',
-  'snowflake_insights',
-  'oracle_fusion_insights',
-  'servicenow_insights',
-  'netsuite_insights',
+const SUPPORTED_CONNECTORS = [
+  { id: 'jira_sync', label: 'Jira', description: 'Use read-only portfolio evidence in decisions and sync execution plans with Jira.', implementation_status: 'implemented' },
+  { id: 'smartsheet_sync', label: 'Smartsheet', description: 'Use Smartsheet as a Data & Insights source and sync execution-plan rows and dates.', implementation_status: 'implemented' },
+  { id: 'salesforce_insights', label: 'Salesforce', description: 'Analyze customer and pipeline patterns for delivery and prioritization insights.', implementation_status: 'implemented' },
+  { id: 'snowflake_insights', label: 'Snowflake', description: 'Read governed KPI and financial trend tables to enrich Jaspen recommendations.', implementation_status: 'implemented' },
+  { id: 'oracle_fusion_insights', label: 'Oracle Fusion', description: 'Coming soon: Oracle Fusion ERP operational and finance insights.', implementation_status: 'coming_soon' },
+  { id: 'servicenow_insights', label: 'ServiceNow', description: 'Coming soon: ServiceNow service and change metrics for execution risk insights.', implementation_status: 'coming_soon' },
+  { id: 'netsuite_insights', label: 'NetSuite', description: 'Coming soon: NetSuite operating and finance trend insights.', implementation_status: 'coming_soon' },
 ];
+const CONNECTOR_ORDER = SUPPORTED_CONNECTORS.map((connector) => connector.id);
+const STATUS_UNAVAILABLE_NOTICE = 'Connector statuses are temporarily unavailable. Your saved connections and settings have not changed.';
 
 // Connectors are intentionally available across every plan. Build this map
 // from the canonical plan list so plan renames cannot silently hide the
@@ -103,7 +105,18 @@ function mapConnectors(items) {
   (Array.isArray(items) ? items : []).forEach((item) => {
     map.set(item.id, item);
   });
-  return CONNECTOR_ORDER.map((id) => map.get(id)).filter(Boolean);
+  return SUPPORTED_CONNECTORS.map((definition) => {
+    const saved = map.get(definition.id);
+    if (!saved) {
+      return {
+        ...definition,
+        connected: null,
+        lifecycle_status: 'unknown',
+        status_unavailable: definition.implementation_status === 'implemented',
+      };
+    }
+    return { ...definition, ...saved, status_unavailable: false };
+  });
 }
 
 function connectorIsImplemented(connector) {
@@ -111,10 +124,12 @@ function connectorIsImplemented(connector) {
 }
 
 function normalizeLifecycleStatus(connector) {
+  if (connector?.status_unavailable) return 'unknown';
   return String(connector?.lifecycle_status || (connector?.connected ? 'connected' : 'disconnected')).trim().toLowerCase();
 }
 
 function connectorVerificationState(connector, connectionCheck) {
+  if (connector?.status_unavailable) return 'unavailable';
   const lifecycle = normalizeLifecycleStatus(connector);
   const health = String(connector?.health?.status || '').trim().toLowerCase();
   if (connectionCheck?.status === 'connected') return 'healthy';
@@ -510,7 +525,7 @@ export default function ConnectorsManage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
-  const [connectors, setConnectors] = useState([]);
+  const [connectors, setConnectors] = useState(() => mapConnectors([]));
   const [drafts, setDrafts] = useState({});
   const [selectedConnectorId, setSelectedConnectorId] = useState('');
   const [auditRows, setAuditRows] = useState([]);
@@ -518,6 +533,7 @@ export default function ConnectorsManage() {
   const [expandedActivityDetails, setExpandedActivityDetails] = useState(() => new Set());
   const [threads, setThreads] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [statusRefreshing, setStatusRefreshing] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -691,16 +707,20 @@ export default function ConnectorsManage() {
   }, []);
 
   const refresh = useCallback(async () => {
-    setLoading(true);
-    setLoadError('');
+    setStatusRefreshing(true);
     setError('');
     try {
       await loadConnectors();
+      setLoadError('');
       await Promise.allSettled([loadThreads(), loadPlanBindings()]);
-    } catch (err) {
-      setLoadError(err?.message || 'Failed to load connector management data.');
+    } catch {
+      const fallback = mapConnectors([]);
+      setConnectors(fallback);
+      setDrafts(Object.fromEntries(fallback.map((connector) => [connector.id, normalizeDraft(connector)])));
+      setLoadError(STATUS_UNAVAILABLE_NOTICE);
     } finally {
       setLoading(false);
+      setStatusRefreshing(false);
     }
   }, [loadConnectors, loadPlanBindings, loadThreads]);
 
@@ -711,8 +731,12 @@ export default function ConnectorsManage() {
   useEffect(() => {
     setActivityVisibleCount(10);
     setExpandedActivityDetails(new Set());
+    if (connectors.find((connector) => connector.id === selectedConnectorId)?.status_unavailable) {
+      setAuditRows([]);
+      return;
+    }
     loadAudit(selectedConnectorId);
-  }, [loadAudit, selectedConnectorId]);
+  }, [connectors, loadAudit, selectedConnectorId]);
 
   const selectedConnector = useMemo(
     () => connectors.find((item) => item.id === selectedConnectorId && allowedConnectorIds.includes(item.id)) || null,
@@ -830,11 +854,13 @@ export default function ConnectorsManage() {
 
   const healthSummary = useMemo(() => {
     const allowed = connectors.filter((c) => allowedConnectorIds.includes(c.id) && connectorIsImplemented(c));
-    const confirmed = allowed.filter((c) => c.freshness === 'confirmed').length;
-    const unconfirmed = allowed.filter((c) => c.freshness === 'unconfirmed').length;
-    const degraded = allowed.filter((c) => normalizeLifecycleStatus(c) === 'degraded').length;
+    const available = allowed.filter((c) => !c.status_unavailable);
+    const confirmed = available.filter((c) => c.freshness === 'confirmed').length;
+    const unconfirmed = available.filter((c) => c.freshness === 'unconfirmed').length;
+    const degraded = available.filter((c) => normalizeLifecycleStatus(c) === 'degraded').length;
+    const unavailable = allowed.length - available.length;
     const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000;
-    const staleNames = allowed
+    const staleNames = available
       .filter((c) => {
         if (normalizeLifecycleStatus(c) !== 'connected') return false;
         if (!c.last_sync_at) return false;
@@ -842,7 +868,7 @@ export default function ConnectorsManage() {
         return age > STALE_THRESHOLD_MS;
       })
       .map((c) => c.label);
-    return { confirmed, unconfirmed, degraded, total: allowed.length, staleNames };
+    return { confirmed, unconfirmed, degraded, unavailable, total: allowed.length, staleNames };
   }, [allowedConnectorIds, connectors]);
 
   // Mutual exclusion: close Jaspen drawer whenever App Menu opens
@@ -1583,24 +1609,32 @@ export default function ConnectorsManage() {
         </section>
       )}
       {!loading && loadError && (
-        <div className="connectors-manage-state is-error" role="status" aria-live="polite">
+        <div className="connectors-manage-state is-unavailable" role="status" aria-live="polite">
           <p>{loadError}</p>
-          <button type="button" className="int-btn int-btn-ghost connectors-retry-btn" onClick={refresh}>
-            Retry
+          <button type="button" className="int-btn int-btn-ghost connectors-retry-btn" onClick={refresh} disabled={statusRefreshing}>
+            {statusRefreshing ? 'Retrying…' : 'Retry'}
           </button>
         </div>
       )}
       {!loading && !loadError && !error && message && <div className="connectors-manage-state is-success" role="status" aria-live="polite">{message}</div>}
 
-      {!loading && !loadError && (
+      {!loading && (
         <>
           {/* Slim health + plan bar */}
           <div className="connectors-health-bar">
             <div className="connectors-health-bar-stats">
-              <span className="connectors-health-stat is-connected">
-                <span className="connectors-health-dot" />
-                {healthSummary.confirmed} confirmed
-              </span>
+              {healthSummary.unavailable > 0 && (
+                <span className="connectors-health-stat is-muted">
+                  <span className="connectors-health-dot" />
+                  {healthSummary.unavailable} status unavailable
+                </span>
+              )}
+              {healthSummary.unavailable < healthSummary.total && (
+                <span className="connectors-health-stat is-connected">
+                  <span className="connectors-health-dot" />
+                  {healthSummary.confirmed} confirmed
+                </span>
+              )}
               {healthSummary.unconfirmed > 0 && (
                 <span className="connectors-health-stat is-unconfirmed">
                   <span className="connectors-health-dot" />
@@ -1627,11 +1661,11 @@ export default function ConnectorsManage() {
               type="button"
               className="int-btn int-btn-ghost connectors-health-refresh"
               onClick={refresh}
-              disabled={loading || busy}
+              disabled={loading || busy || statusRefreshing}
               aria-label="Refresh connector status"
             >
               <FontAwesomeIcon icon={faRotate} />
-              Refresh
+              {statusRefreshing ? 'Refreshing…' : 'Refresh'}
             </button>
           </div>
           <div className="connectors-manage-layout">
@@ -1642,6 +1676,9 @@ export default function ConnectorsManage() {
                   category.connectorIds.includes(c.id)
                 );
                 if (categoryConnectors.length === 0) return null;
+                const categoryStatusUnavailable = categoryConnectors.some(
+                  (connector) => connectorIsImplemented(connector) && connector.status_unavailable
+                );
                 const isCollapsed = collapsedGroups.has(category.id);
                 const toggleCollapsed = () =>
                   setCollapsedGroups((prev) => {
@@ -1664,7 +1701,9 @@ export default function ConnectorsManage() {
                       />
                       <span>{category.label}</span>
                       <span className="connector-category-count">
-                        {categoryConnectors.filter((c) => normalizeLifecycleStatus(c) === 'connected').length}/{categoryConnectors.length}
+                        {categoryStatusUnavailable
+                          ? 'Unavailable'
+                          : `${categoryConnectors.filter((c) => normalizeLifecycleStatus(c) === 'connected').length}/${categoryConnectors.length}`}
                       </span>
                     </button>
                     {!isCollapsed && (
@@ -1688,7 +1727,9 @@ export default function ConnectorsManage() {
                                   <FontAwesomeIcon icon={connectorIcon(connector.id)} />
                                 </span>
                                 <span className="connector-list-item-label">{connector.label}</span>
-                                {implemented ? (
+                                {implemented && connector.status_unavailable ? (
+                                  <span className="connector-list-item-state">Status unavailable</span>
+                                ) : implemented ? (
                                   <span className={`connector-list-item-dot ${verification === 'healthy' ? 'is-on' : verification === 'attention' ? 'is-warn' : verification === 'unconfirmed' ? 'is-unconfirmed' : ''}`} />
                                 ) : (
                                   <span className="connector-list-item-soon">Soon</span>
@@ -1719,6 +1760,16 @@ export default function ConnectorsManage() {
                     <div className="connectors-manage-state">
                       This connector is marked as coming soon and is currently read-only.
                     </div>
+                  ) : selectedConnector.status_unavailable ? (
+                    <section className="connector-connection-section">
+                      <div className="connector-connection-summary">
+                        <span className="connector-status-dot" />
+                        <div>
+                          <strong>Status unavailable</strong>
+                          <p>Saved connection details are hidden until Jaspen can verify the current server state.</p>
+                        </div>
+                      </div>
+                    </section>
                   ) : (
                     <>
                   <section className="connector-connection-section">
