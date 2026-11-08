@@ -69,6 +69,9 @@ describe('RecordDecisionPanel', () => {
             plan_decision: true,
             option_name: 'Proposal',
             override_info: overrideInfo,
+            display_text: overrideInfo
+              ? "pursuing Proposal despite Jaspen's No-Bid"
+              : 'moving forward with Proposal',
           },
         }],
       })],
@@ -94,7 +97,12 @@ describe('RecordDecisionPanel', () => {
           ...PENDING_RECORD,
           current_state: 'current',
           final_decision: 'Moving forward with Proposal — execution plan built.',
-          option_decision: { source: 'build_execution_plan', plan_decision: true, option_name: 'Proposal' },
+          option_decision: {
+            source: 'build_execution_plan',
+            plan_decision: true,
+            option_name: 'Proposal',
+            display_text: 'moving forward with Proposal',
+          },
         } : PENDING_RECORD],
       })],
     ]);

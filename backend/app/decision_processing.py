@@ -18,6 +18,15 @@ def _quote_in_corpus(quote, corpus):
 
 def _grounded_gate_evidence(item, corpus):
     """Verify a judge's citations without interpreting their language."""
+    if corpus is None:
+        # Read-time hydration has no copy of the original evidence corpus. The
+        # stored gate evidence was already verified before persistence; retain
+        # that assessment instead of testing it against an artificial empty
+        # corpus and silently demoting pass/fail to unknown.
+        return [
+            str(value).strip() for value in ((item or {}).get("evidence") or [])
+            if str(value).strip()
+        ]
     return [
         str(value).strip() for value in ((item or {}).get("evidence") or [])
         if _quote_in_corpus(value, corpus)

@@ -10,6 +10,7 @@ from app.decision_records import (
     option_decision_history,
     record_execution_plan_decision,
     record_option_decision,
+    recorded_option_decision_summary,
 )
 from app.models_decision_record import DecisionRecord, OptionDecision
 from app.decision_retrieval import summarize
@@ -76,6 +77,49 @@ def test_two_options_keep_independent_current_decisions_and_session_summary(db, 
     assert 'Current decisions by option (the bid/no-bid portfolio)' in prompt
     assert 'Adams County: Bid with conditions — Adams County.' in prompt
     assert 'Denver Water: Moving forward with Denver Water — execution plan built.' in prompt
+
+
+def test_recorded_decision_summary_is_scoped_to_the_requested_option(db, team_setup):
+    owner, record = _portfolio_record(db, team_setup, thread_id='decision-report-summary')
+    record_option_decision(
+        record, 'option-a', 'Bid with conditions — Adams County.',
+        decided_by_user_id=owner.id, source='manual', option_name='Adams County',
+    )
+    record_option_decision(
+        record, 'option-b', 'Moving forward with Denver Water — execution plan built.',
+        decided_by_user_id=owner.id, source='build_execution_plan', option_name='Denver Water',
+    )
+
+    adams = recorded_option_decision_summary(owner, record.thread_id, {
+        'id': 'card-a', 'option_key': 'option-a', 'name': 'Adams County',
+    })
+    denver = recorded_option_decision_summary(owner, record.thread_id, {
+        'id': 'card-b', 'option_key': 'option-b', 'name': 'Denver Water',
+    })
+
+    assert adams['display_text'] == 'Bid with conditions — Adams County.'
+    assert denver['display_text'] == 'moving forward with Denver Water'
+    assert adams['option_name'] != denver['option_name']
+
+
+def test_recorded_decision_summary_handles_legacy_identity_and_missing_metadata(db, team_setup):
+    org, owner = team_setup['org'], team_setup['owner']
+    _seed_scored_project(db, org, owner, session_id='legacy-decision-summary', name='Legacy option')
+    record, _ = create_or_refresh_record(owner, 'legacy-decision-summary')
+    card = record.record['scorecards'][0]
+    option_key = f"scorecard:{card['id']}"
+    record_option_decision(
+        record, option_key, 'Proceed with the legacy option.',
+        decided_by_user_id=owner.id, source='manual', option_name=None,
+    )
+
+    summary = recorded_option_decision_summary(owner, record.thread_id, card)
+
+    assert summary['option_name'] == 'Legacy option'
+    assert summary['display_text'] == 'Proceed with the legacy option.'
+    assert recorded_option_decision_summary(owner, record.thread_id, {
+        'id': 'unrelated-card', 'name': 'Unrelated',
+    }) is None
 
 
 def test_superseding_one_option_keeps_history_and_other_option_unchanged(db, team_setup):

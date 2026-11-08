@@ -1411,7 +1411,10 @@ def _normalize_scorecard_payload(payload):
             decision_kit=decision_kit,
             decision_kit_version=source.get('decision_kit_version'),
             kit_context=source.get('kit_context'),
-            evidence_corpus=source.get('_evidence_corpus') or '',
+            # Missing is different from empty: cards are verified before they
+            # are stored, while an explicit empty corpus is a real score-time
+            # input that cannot support a pass/fail assessment.
+            evidence_corpus=(source.get('_evidence_corpus') if '_evidence_corpus' in source else None),
             force_recommendation=bool(source.get('_force_recommendation')),
         )
         normalized.pop('_evidence_corpus', None)
@@ -10840,10 +10843,15 @@ def get_scorecard_for_workspace(thread_id, scorecard_id):
         )
         normalized['isBaseline'] = False
         overrides = result_blob.get('display_overrides') if isinstance(result_blob.get('display_overrides'), dict) else {}
+        from ..decision_records import recorded_option_decision_summary
+        recorded_decision = recorded_option_decision_summary(
+            User.query.get(user_id), thread_id, normalized,
+        )
 
         return jsonify({
             'scorecard': normalized,
             'display_overrides': overrides,
+            'recorded_decision': recorded_decision,
             'kind': kind,
         }), 200
     except Exception as e:

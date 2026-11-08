@@ -24,6 +24,7 @@ from ..decision_records import (
     current_option_decisions,
     decision_signals_for,
     option_dispositions,
+    option_decision_display_text,
     option_decision_history,
     record_option_decision,
     supersede_record,
@@ -91,6 +92,7 @@ def _decision_view(record, user, option_key=None):
         payload['current_state'] = 'unknown'
         if option_row is not None:
             option_payload = option_row.to_dict()
+            option_payload['display_text'] = option_decision_display_text(option_row)
             option_payload['current_state'] = 'current'
             option_payload['replaces_earlier_decision'] = bool(option_row.supersedes_id)
             option_payload['history'] = [

@@ -389,6 +389,31 @@ def test_shared_one_pager_uses_a_chat_brand_color_when_the_report_has_no_accent(
     assert _shared_presentation({'accent_color': '#ffff00'}) is None
     assert _shared_presentation({'accent_color': 'blue'}) is None
 
+
+def test_shared_scorecard_carries_only_the_recorded_decision_report_fields():
+    from app.sharing import ARTIFACT_SCORECARD, build_snapshot, filter_public_snapshot
+
+    snapshot, *_ = build_snapshot(
+        artifact_type=ARTIFACT_SCORECARD,
+        cards=[_card('report-card-a', 'Adams County')],
+        include_evidence=False,
+        scorecard_id='report-card-a',
+        recorded_decision={
+            'option_name': 'Adams County',
+            'final_decision': 'Bid with conditions — Adams County.',
+            'display_text': 'Bid with conditions — Adams County.',
+            'disposition': 'pursue',
+            'source': 'manual',
+            'plan_decision': False,
+            'decision_record_id': 'private-record-id',
+        },
+    )
+
+    public = filter_public_snapshot(snapshot)
+    assert public['recorded_decision']['display_text'] == 'Bid with conditions — Adams County.'
+    assert public['recorded_decision']['option_name'] == 'Adams County'
+    assert 'decision_record_id' not in public['recorded_decision']
+
 def test_rereading_a_card_keeps_fact_resolved_gates():
     from app.decision_processing import apply_decision_kit
 

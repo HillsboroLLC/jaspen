@@ -400,6 +400,7 @@ export default function JaspenWorkspace() {
   const [resolvedExecScorecardId, setResolvedExecScorecardId] = useState(null);
   const [bundleError, setBundleError] = useState(null);
   const [snapshot, setSnapshot] = useState(null);
+  const [recordedDecision, setRecordedDecision] = useState(null);
   const [overrides, setOverrides] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -704,6 +705,7 @@ export default function JaspenWorkspace() {
       }
 
       setSnapshot(target);
+      setRecordedDecision(focused?.recorded_decision || null);
       skipNextSaveRef.current = true;
       // A freshly loaded artifact may carry a server-side layout; let the adopt
       // effect below run once for it.
@@ -910,6 +912,7 @@ export default function JaspenWorkspace() {
   const [reportEditing, setReportEditing] = useState(false);
   const workspaceReportSnapshot = useMemo(() => ({
     scorecard: rendered || {},
+    ...(recordedDecision ? { recorded_decision: recordedDecision } : {}),
     context: {
       ...(bundle?.strategy_objective ? { strategy_objective: bundle.strategy_objective } : {}),
       ...(bundle?.decision_kit || rendered?.decision_kit ? { decision_kit: bundle?.decision_kit || rendered?.decision_kit } : {}),
@@ -918,7 +921,7 @@ export default function JaspenWorkspace() {
         : {}),
     },
     presentation: overrides?.report_presentation || {},
-  }), [rendered, bundle?.strategy_objective, bundle?.decision_kit, bundle?.report_data_sources, overrides?.report_presentation]);
+  }), [rendered, recordedDecision, bundle?.strategy_objective, bundle?.decision_kit, bundle?.report_data_sources, overrides?.report_presentation]);
   const workspaceNotes = useMemo(() => (
     (Array.isArray(overrides?.custom_blocks) ? overrides.custom_blocks : [])
       .map((block) => ({ id: block.id, heading: String(block.heading || '').trim(), body: String(block.body || '').trim() }))

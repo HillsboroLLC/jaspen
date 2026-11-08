@@ -95,6 +95,12 @@ def _prepare(user, body):
     ) or []
     scorecard_id = str(body.get('scorecard_id') or '').strip() or None
     artifact_type = ARTIFACT_SCORECARD if scorecard_id else ARTIFACT_TRADEOFF
+    selected_card = next(
+        (card for card in cards if str(card.get('id') or card.get('analysis_id') or '') == scorecard_id),
+        None,
+    ) if scorecard_id else None
+    from app.decision_records import recorded_option_decision_summary
+    recorded_decision = recorded_option_decision_summary(user, thread_id, selected_card)
     try:
         raw_snapshot, title, _source_id, _evidence = build_snapshot(
             artifact_type=artifact_type,
@@ -106,6 +112,7 @@ def _prepare(user, body):
             portfolio_summary=session.get('portfolio_summary'),
             decision_kit=session.get('decision_kit'),
             data_sources=session.get('report_data_sources'),
+            recorded_decision=recorded_decision,
         )
     except ValueError as error:
         status = 404 if str(error) == 'scorecard_not_found' else 400

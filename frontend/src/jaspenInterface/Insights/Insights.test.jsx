@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import { DecisionIntelligenceOverview } from './Insights';
@@ -64,6 +64,15 @@ it('renders the v3 activity, effectiveness, reconciliation, and grouped register
   expect(container.querySelector('.di3-kpi-indicator.is-archived')).toBeInTheDocument();
   expect(screen.getByText(/Choose a vendor · Vendor selection/)).toBeVisible();
   expect(screen.getAllByText('Vendor A').length).toBeGreaterThan(0);
+});
+
+it('uses the option-scoped decision name in the plans table', async () => {
+  const plan = { ...ROW, decision_name: 'Proceed with Vendor A', decision_title: 'Proceed with Vendor B' };
+  global.fetch.mockResolvedValue(response({ ...BASE, activity: { ...BASE.activity, plans: [plan] } }));
+  render(<DecisionIntelligenceOverview navigate={jest.fn()} />);
+  const plans = (await screen.findByRole('heading', { name: 'Plans in execution' })).closest('article');
+  expect(within(plans).getByText('Proceed with Vendor A')).toBeVisible();
+  expect(within(plans).queryByText('Proceed with Vendor B')).not.toBeInTheDocument();
 });
 
 it('shows no organization scope control for a solo organization', async () => {

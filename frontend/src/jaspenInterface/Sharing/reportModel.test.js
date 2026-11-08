@@ -97,6 +97,27 @@ test('case strength keeps the evidence-adjusted score primary and only exposes a
   expect(unchanged.strength).toMatchObject({ score: 52, initialScore: 52 });
 });
 
+test('keeps the recorded human decision separate from Jaspen recommendation', () => {
+  const model = buildReportModel({
+    artifactType: 'scorecard',
+    snapshot: {
+      scorecard: bid('Adams County', 54, 'Bid with conditions'),
+      recorded_decision: {
+        option_name: 'Adams County',
+        display_text: 'moving forward with Adams County',
+        disposition: 'pursue',
+      },
+    },
+    title: 'Adams County',
+  });
+
+  expect(model.featured).toMatchObject({
+    verdict: 'Bid with conditions',
+    isRecommendation: true,
+  });
+  expect(model.recordedDecision.display_text).toBe('moving forward with Adams County');
+});
+
 test('carries production guidance: exposure and recommended moves', () => {
   const withGuidance = {
     scorecard: bid('Denver', 64, 'Bid', {
