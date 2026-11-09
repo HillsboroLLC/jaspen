@@ -238,8 +238,10 @@ def get_billing_status():
     admin_override = is_global_admin(user, app_config=current_app.config)
     if admin_override:
         changed = False
-        # Global Jaspen admins should always have the highest self-service plan.
-        if to_public_plan(user.subscription_plan) != 'business' or user.credits_remaining is not None:
+        # Provision the internal account once. A finite balance is expected on
+        # metered Business plans and must never turn this read-only endpoint
+        # into a monthly-credit reset.
+        if to_public_plan(user.subscription_plan) != 'business':
             apply_plan_to_user(user, 'business', current_app.config, reset_credits=True)
             changed = True
         if not bool(user.unlimited_analysis):
@@ -262,8 +264,6 @@ def get_billing_status():
     tokens_used = usage_state.get('used')
     credits_remaining = tokens_to_credits(tokens_remaining, precision=1)
     credits_used = tokens_to_credits(tokens_used, precision=1)
-    if admin_override:
-        credits_used = 0
     allowed_model_types = get_allowed_model_types(access_plan_key, current_app.config)
     default_model_type = get_default_model_type(access_plan_key, current_app.config)
     tool_entitlements = get_tool_entitlements(access_plan_key)

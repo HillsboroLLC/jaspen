@@ -882,7 +882,9 @@ def _enforce_admin_account_profile(user):
         return False
 
     changed = False
-    if to_public_plan(user.subscription_plan) != 'business' or user.credits_remaining is not None:
+    # A finite balance is normal for the metered Business plan. Reapplying the
+    # plan on every authentication would reset the shared monthly pool.
+    if to_public_plan(user.subscription_plan) != 'business':
         apply_plan_to_user(user, 'business', current_app.config, reset_credits=True)
         changed = True
     if not bool(user.unlimited_analysis):
