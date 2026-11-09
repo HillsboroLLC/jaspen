@@ -1,3 +1,6 @@
+from datetime import datetime
+
+
 def test_stripe_webhook_requires_configured_secret(client, app):
     app.config["STRIPE_WEBHOOK_SECRET"] = ""
     resp = client.post("/api/v1/billing/webhook", data=b"{}")
@@ -60,6 +63,82 @@ def test_catalog_exposes_every_configured_annual_plan(client, app):
     assert plans['essential']['annual_monthly_price_usd'] == 32
     assert plans['team']['annual_monthly_price_usd'] == 107
     assert plans['business']['annual_monthly_price_usd'] == 249
+
+
+def test_admin_billing_status_preserves_and_reports_shared_pool_usage(
+    client, app, db, admin_user, admin_auth_headers
+):
+    from app.models import Organization, OrganizationMember
+
+    now = datetime.utcnow()
+    cycle_limit = 80_000_000
+    remaining = cycle_limit - 1_250
+    organization = Organization(
+        name='Admin billing workspace',
+        owner_user_id=admin_user.id,
+        plan_key='business',
+        settings={
+            'thinking_power': {
+                'cycle_limit': cycle_limit,
+                'remaining': remaining,
+                'tokens_used_this_month': cycle_limit - remaining,
+                'overage_tokens': 0,
+                'cycle_reset_at': now.isoformat(),
+            }
+        },
+    )
+    db.session.add(organization)
+    db.session.flush()
+    db.session.add(OrganizationMember(
+        organization_id=organization.id,
+        user_id=admin_user.id,
+        role='owner',
+        status='active',
+    ))
+    admin_user.subscription_plan = 'business'
+    admin_user.active_organization_id = organization.id
+    admin_user.credits_remaining = remaining
+    admin_user.credits_reset_at = now
+    admin_user.stripe_subscription_id = None
+    db.session.commit()
+
+    first = client.get('/api/v1/billing/status', headers=admin_auth_headers)
+    second = client.get('/api/v1/billing/status', headers=admin_auth_headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.get_json()['credits_remaining'] == 79_998.8
+    assert first.get_json()['credits_used'] == 1.2
+    assert second.get_json()['credits_remaining'] == 79_998.8
+    assert second.get_json()['credits_used'] == 1.2
+    db.session.refresh(organization)
+    assert organization.settings['thinking_power']['remaining'] == remaining
+    assert organization.settings['thinking_power']['tokens_used_this_month'] == 1_250
+
+
+def test_admin_profile_enforcement_does_not_reset_finite_business_balance(
+    app, db, admin_user, monkeypatch
+):
+    from app.routes import auth as auth_routes
+
+    admin_user.subscription_plan = 'business'
+    admin_user.credits_remaining = 79_998_750
+    admin_user.unlimited_analysis = True
+    admin_user.max_concurrent_sessions = None
+    db.session.commit()
+    resets = []
+    monkeypatch.setattr(
+        auth_routes,
+        'apply_plan_to_user',
+        lambda *_args, **_kwargs: resets.append(True),
+    )
+
+    with app.test_request_context('/'):
+        changed = auth_routes._enforce_admin_account_profile(admin_user)
+
+    assert changed is False
+    assert resets == []
+    assert admin_user.credits_remaining == 79_998_750
 
 
 def test_embedded_checkout_uses_selected_annual_price(
