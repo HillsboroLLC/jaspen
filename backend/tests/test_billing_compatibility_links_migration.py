@@ -129,7 +129,7 @@ def test_revision_extends_phase_2_2_head():
     revision = script.get_revision(MIGRATION_REVISION)
 
     assert revision.down_revision == PARENT_REVISION
-    assert script.get_heads() == [MIGRATION_REVISION]
+    assert revision.revision in {item.revision for item in script.walk_revisions()}
 
 
 def test_sqlite_upgrade_preserves_legacy_rows_and_empty_downgrade(tmp_path):

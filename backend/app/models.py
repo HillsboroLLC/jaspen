@@ -1109,6 +1109,366 @@ class CapacityPolicyVersion(db.Model):
     )
 
 
+class CreditLot(db.Model):
+    """Immutable organization-owned credit funding source."""
+
+    __tablename__ = 'credit_lots'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    billing_account_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'billing_accounts.id',
+            name='fk_credit_lots_billing_account_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    source_type = db.Column(db.String(40), nullable=False)
+    source_id = db.Column(db.String(255), nullable=False)
+    member_attribution_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'users.id',
+            name='fk_credit_lots_member_attribution_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=True,
+    )
+    eligibility_scope = db.Column(db.JSON, nullable=True)
+    original_amount = db.Column(db.BigInteger, nullable=False)
+    available_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    origin_evidence_json = db.Column(db.JSON, nullable=False)
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=db.func.now(),
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'billing_account_id',
+            'source_type',
+            'source_id',
+            name='uq_credit_lots_account_source',
+        ),
+        db.CheckConstraint(
+            "source_type IN ('free_recurring', 'subscription_recurring', "
+            "'enterprise_recurring', 'credit_pack_purchase', 'promotional', "
+            "'trial', 'comp', 'internal', 'legacy_unattributed')",
+            name='ck_credit_lots_source_type',
+        ),
+        db.CheckConstraint(
+            'original_amount > 0',
+            name='ck_credit_lots_original_amount',
+        ),
+        db.CheckConstraint(
+            'expires_at IS NULL OR expires_at > available_at',
+            name='ck_credit_lots_expiry',
+        ),
+        db.Index(
+            'ix_credit_lots_account_allocation_order',
+            'billing_account_id',
+            'expires_at',
+            'source_type',
+            'available_at',
+            'id',
+        ),
+        db.Index(
+            'ix_credit_lots_member_attribution_id',
+            'member_attribution_id',
+        ),
+    )
+
+
+class CreditReservation(db.Model):
+    """Inactive operation-level reservation coordination metadata."""
+
+    __tablename__ = 'credit_reservations'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    billing_account_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'billing_accounts.id',
+            name='fk_credit_reservations_billing_account_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    operation_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'ai_operations.id',
+            name='fk_credit_reservations_operation_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    pricing_policy_version_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'pricing_policy_versions.id',
+            name='fk_credit_reservations_pricing_policy_version_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    capacity_policy_version_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'capacity_policy_versions.id',
+            name='fk_credit_reservations_capacity_policy_version_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=True,
+    )
+    idempotency_registry_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'idempotency_registry.id',
+            name='fk_credit_reservations_idempotency_registry_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    requested_amount = db.Column(db.BigInteger, nullable=False)
+    authorized_amount = db.Column(db.BigInteger, nullable=False)
+    state = db.Column(db.String(24), nullable=False)
+    request_fingerprint = db.Column(db.String(64), nullable=False)
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=db.func.now(),
+    )
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    finalized_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'operation_id',
+            name='uq_credit_reservations_operation_id',
+        ),
+        db.UniqueConstraint(
+            'idempotency_registry_id',
+            name='uq_credit_reservations_idempotency_registry_id',
+        ),
+        db.CheckConstraint(
+            'requested_amount > 0 AND authorized_amount > 0 '
+            'AND authorized_amount <= requested_amount',
+            name='ck_credit_reservations_amounts',
+        ),
+        db.CheckConstraint(
+            "state IN ('reserved', 'partially_settled', 'settled', 'released', "
+            "'expired')",
+            name='ck_credit_reservations_state',
+        ),
+        db.CheckConstraint(
+            'length(request_fingerprint) = 64 AND '
+            'request_fingerprint = lower(request_fingerprint)',
+            name='ck_credit_reservations_fingerprint',
+        ),
+        db.CheckConstraint(
+            'expires_at > created_at',
+            name='ck_credit_reservations_expiry',
+        ),
+        db.CheckConstraint(
+            "((state IN ('settled', 'released', 'expired') AND finalized_at IS NOT NULL) "
+            "OR (state IN ('reserved', 'partially_settled') AND finalized_at IS NULL))",
+            name='ck_credit_reservations_finalization',
+        ),
+        db.Index(
+            'ix_credit_reservations_account_state_expiry',
+            'billing_account_id',
+            'state',
+            'expires_at',
+        ),
+        db.Index(
+            'ix_credit_reservations_pricing_policy_version_id',
+            'pricing_policy_version_id',
+        ),
+        db.Index(
+            'ix_credit_reservations_capacity_policy_version_id',
+            'capacity_policy_version_id',
+        ),
+    )
+
+
+class CreditLedgerEntry(db.Model):
+    """Append-only signed credit movement with complete provenance."""
+
+    __tablename__ = 'credit_ledger_entries'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    billing_account_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'billing_accounts.id',
+            name='fk_credit_ledger_entries_billing_account_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    lot_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'credit_lots.id',
+            name='fk_credit_ledger_entries_lot_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    entry_type = db.Column(db.String(32), nullable=False)
+    available_delta = db.Column(db.BigInteger, nullable=False)
+    held_delta = db.Column(db.BigInteger, nullable=False)
+    reservation_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'credit_reservations.id',
+            name='fk_credit_ledger_entries_reservation_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=True,
+    )
+    operation_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'ai_operations.id',
+            name='fk_credit_ledger_entries_operation_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=True,
+    )
+    related_entry_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'credit_ledger_entries.id',
+            name='fk_credit_ledger_entries_related_entry_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=True,
+    )
+    idempotency_registry_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'idempotency_registry.id',
+            name='fk_credit_ledger_entries_idempotency_registry_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    effective_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=db.func.now(),
+    )
+    actor_type = db.Column(db.String(40), nullable=False)
+    actor_id = db.Column(db.String(255), nullable=False)
+    reason_code = db.Column(db.String(120), nullable=False)
+    evidence_json = db.Column(db.JSON, nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'idempotency_registry_id',
+            name='uq_credit_ledger_entries_idempotency_registry_id',
+        ),
+        db.CheckConstraint(
+            "entry_type IN ('grant', 'reservation', 'settlement', 'release', "
+            "'expiration', 'refund_reversal', 'dispute_hold', "
+            "'dispute_reversal', 'recovery', 'admin_adjustment', "
+            "'migration_opening')",
+            name='ck_credit_ledger_entries_type',
+        ),
+        db.CheckConstraint(
+            'available_delta != 0 OR held_delta != 0',
+            name='ck_credit_ledger_entries_nonzero',
+        ),
+        db.CheckConstraint(
+            "((entry_type IN ('grant', 'recovery', 'migration_opening') "
+            "AND available_delta > 0 AND held_delta = 0) OR "
+            "(entry_type IN ('reservation', 'dispute_hold') "
+            "AND available_delta < 0 AND held_delta > 0 "
+            "AND available_delta + held_delta = 0) OR "
+            "(entry_type = 'release' AND available_delta > 0 AND held_delta < 0 "
+            "AND available_delta + held_delta = 0) OR "
+            "(entry_type IN ('settlement', 'dispute_reversal') "
+            "AND available_delta = 0 AND held_delta < 0) OR "
+            "(entry_type = 'expiration' AND available_delta <= 0 "
+            "AND held_delta <= 0 AND (available_delta < 0 OR held_delta < 0)) OR "
+            "(entry_type = 'refund_reversal' "
+            "AND available_delta < 0 AND held_delta = 0) OR "
+            "(entry_type = 'admin_adjustment' AND available_delta != 0 "
+            "AND held_delta = 0))",
+            name='ck_credit_ledger_entries_shape',
+        ),
+        db.CheckConstraint(
+            "((entry_type IN ('reservation', 'settlement', 'release') "
+            "AND reservation_id IS NOT NULL AND operation_id IS NOT NULL) OR "
+            "(entry_type NOT IN ('reservation', 'settlement', 'release') "
+            "AND reservation_id IS NULL AND operation_id IS NULL))",
+            name='ck_credit_ledger_entries_operation_reference',
+        ),
+        db.CheckConstraint(
+            "((entry_type IN ('settlement', 'release', 'refund_reversal', "
+            "'dispute_reversal', 'recovery') AND related_entry_id IS NOT NULL) "
+            "OR entry_type = 'expiration' "
+            "OR (entry_type NOT IN ('settlement', 'release', 'expiration', "
+            "'refund_reversal', 'dispute_reversal', 'recovery') "
+            "AND related_entry_id IS NULL))",
+            name='ck_credit_ledger_entries_related_reference',
+        ),
+        db.CheckConstraint(
+            'related_entry_id IS NULL OR related_entry_id != id',
+            name='ck_credit_ledger_entries_not_self_related',
+        ),
+        db.CheckConstraint(
+            'length(trim(actor_type)) > 0 AND length(trim(actor_id)) > 0 '
+            'AND length(trim(reason_code)) > 0',
+            name='ck_credit_ledger_entries_provenance',
+        ),
+        db.Index(
+            'ix_credit_ledger_entries_account_effective',
+            'billing_account_id',
+            'effective_at',
+            'id',
+        ),
+        db.Index(
+            'ix_credit_ledger_entries_lot_effective',
+            'lot_id',
+            'effective_at',
+            'id',
+        ),
+        db.Index(
+            'ix_credit_ledger_entries_reservation_id',
+            'reservation_id',
+        ),
+        db.Index(
+            'ix_credit_ledger_entries_operation_id',
+            'operation_id',
+        ),
+        db.Index(
+            'ix_credit_ledger_entries_related_entry_id',
+            'related_entry_id',
+        ),
+        db.Index(
+            'uq_credit_ledger_entries_lot_opening',
+            'lot_id',
+            unique=True,
+            postgresql_where=db.text(
+                "entry_type IN ('grant', 'migration_opening')"
+            ),
+            sqlite_where=db.text(
+                "entry_type IN ('grant', 'migration_opening')"
+            ),
+        ),
+    )
+
+
 class AppSetting(db.Model):
     __tablename__ = 'app_settings'
 
