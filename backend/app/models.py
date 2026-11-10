@@ -1699,6 +1699,33 @@ class AIOperation(db.Model):
         nullable=True,
         index=True,
     )
+    billing_account_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'billing_accounts.id',
+            name='fk_ai_operations_billing_account_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=True,
+    )
+    pricing_policy_version_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'pricing_policy_versions.id',
+            name='fk_ai_operations_pricing_policy_version_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=True,
+    )
+    capacity_policy_version_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'capacity_policy_versions.id',
+            name='fk_ai_operations_capacity_policy_version_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=True,
+    )
     thread_id = db.Column(db.String(255), nullable=True, index=True)
     operation_type = db.Column(db.String(80), nullable=False, index=True)
     idempotency_key = db.Column(db.String(255), nullable=True, unique=True)
@@ -1738,6 +1765,15 @@ class AIOperation(db.Model):
 
     __table_args__ = (
         db.Index('ix_ai_operations_user_created', 'user_id', 'created_at'),
+        db.Index('ix_ai_operations_billing_account_id', 'billing_account_id'),
+        db.Index(
+            'ix_ai_operations_pricing_policy_version_id',
+            'pricing_policy_version_id',
+        ),
+        db.Index(
+            'ix_ai_operations_capacity_policy_version_id',
+            'capacity_policy_version_id',
+        ),
     )
 
 
@@ -2069,6 +2105,15 @@ class Payment(db.Model):
         index=True,
     )
     organization_id = db.Column(db.String(36), nullable=True, index=True)
+    billing_account_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'billing_accounts.id',
+            name='fk_payments_billing_account_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=True,
+    )
 
     # The Stripe object id (in_… or pi_…). Unique, so a webhook retry or a
     # replayed event cannot double-count revenue.
@@ -2097,6 +2142,7 @@ class Payment(db.Model):
 
     __table_args__ = (
         db.Index('ix_payments_paid_at_amount', 'paid_at', 'amount_paid_cents'),
+        db.Index('ix_payments_billing_account_id', 'billing_account_id'),
     )
 
     def to_dict(self):

@@ -10,6 +10,7 @@ from app.models import (
     AIOperation,
     CapacityPolicyVersion,
     IdempotencyRegistry,
+    Payment,
     PricingPolicyVersion,
     ProviderRateEntry,
 )
@@ -55,12 +56,20 @@ def test_existing_application_activity_creates_no_foundation_rows(db, test_user)
     assert db.session.query(CapacityPolicyVersion).count() == 0
 
 
-def test_phase_2_2_does_not_link_the_legacy_ai_operation_model():
-    columns = set(AIOperation.__table__.columns.keys())
+def test_phase_2_3_compatibility_links_are_nullable_and_inactive():
+    ai_columns = AIOperation.__table__.columns
+    payment_columns = Payment.__table__.columns
 
-    assert "pricing_policy_version_id" not in columns
-    assert "capacity_policy_version_id" not in columns
-    assert "idempotency_registry_id" not in columns
+    assert ai_columns["billing_account_id"].nullable
+    assert ai_columns["pricing_policy_version_id"].nullable
+    assert ai_columns["capacity_policy_version_id"].nullable
+    assert payment_columns["billing_account_id"].nullable
+    assert ai_columns["billing_account_id"].server_default is None
+    assert ai_columns["pricing_policy_version_id"].server_default is None
+    assert ai_columns["capacity_policy_version_id"].server_default is None
+    assert payment_columns["billing_account_id"].server_default is None
+    assert "policy_version" in ai_columns
+    assert "idempotency_registry_id" not in ai_columns
 
 
 def test_duplicate_idempotency_identity_cannot_replace_fingerprint(db):

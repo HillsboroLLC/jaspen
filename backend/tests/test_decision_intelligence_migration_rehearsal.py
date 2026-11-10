@@ -38,6 +38,7 @@ PRODUCTION_REVISION = "f1a2b3c4d5e6"
 MIGRATION_REVISION = "a4d7c9e2f105"
 ACCOUNT_FOUNDATION_REVISION = "b5e7c9a1d3f2"
 CURRENT_ADDITIVE_REVISION = "c6f8d0b2e4a1"
+COMPATIBILITY_LINKS_REVISION = "d7a9e1c3f5b2"
 FIXED_TIME = datetime(2026, 10, 1, 12, 0, 0)
 SCORE_TIME = datetime(2026, 9, 20, 9, 30, 0)
 
@@ -74,6 +75,12 @@ def _current_additive_revision_module():
     return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(CURRENT_ADDITIVE_REVISION).module
 
 
+def _compatibility_links_revision_module():
+    return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(
+        COMPATIBILITY_LINKS_REVISION
+    ).module
+
+
 def _account_foundation_revision_module():
     return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(ACCOUNT_FOUNDATION_REVISION).module
 
@@ -91,6 +98,7 @@ def _prepare_sqlite_at_production_revision(database_url):
     with engine.begin() as connection:
         context = MigrationContext.configure(connection)
         with Operations.context(context):
+            _compatibility_links_revision_module().downgrade()
             _current_additive_revision_module().downgrade()
             _account_foundation_revision_module().downgrade()
             _revision_module().downgrade()
@@ -452,7 +460,7 @@ def _assert_upgraded(engine, before):
         version = connection.execute(sa.text(
             "SELECT version_num FROM alembic_version"
         )).scalar_one()
-    assert version == CURRENT_ADDITIVE_REVISION
+    assert version == COMPATIBILITY_LINKS_REVISION
 
     expected_dispositions = {
         "verdict-advance": "pursue",
