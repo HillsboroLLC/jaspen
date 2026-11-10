@@ -549,6 +549,11 @@ class Organization(db.Model):
         onupdate=datetime.utcnow
     )
     members = db.relationship('OrganizationMember', backref='organization', lazy='dynamic')
+    billing_account = db.relationship(
+        'BillingAccount',
+        back_populates='organization',
+        uselist=False,
+    )
 
     @property
     def owner_id(self):
@@ -586,6 +591,182 @@ class Organization(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class BillingAccount(db.Model):
+    """Organization-owned billing identity; never selected from UI context."""
+
+    __tablename__ = 'billing_accounts'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    organization_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'organizations.id',
+            name='fk_billing_accounts_organization_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    status = db.Column(
+        db.String(24),
+        nullable=False,
+        default='proposed',
+        server_default='proposed',
+    )
+    currency = db.Column(db.String(3), nullable=False)
+    account_anchor_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    processor = db.Column(db.String(32), nullable=True)
+    processor_customer_id = db.Column(db.String(255), nullable=True)
+    tax_context_json = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=db.func.now(),
+    )
+    updated_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        server_default=db.func.now(),
+    )
+
+    organization = db.relationship('Organization', back_populates='billing_account')
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'organization_id',
+            name='uq_billing_accounts_organization_id',
+        ),
+        db.CheckConstraint(
+            "status IN ('proposed', 'active', 'restricted', 'closed')",
+            name='ck_billing_accounts_status',
+        ),
+        db.CheckConstraint(
+            "length(currency) = 3 AND currency = lower(currency) AND "
+            "substr(currency, 1, 1) BETWEEN 'a' AND 'z' AND "
+            "substr(currency, 2, 1) BETWEEN 'a' AND 'z' AND "
+            "substr(currency, 3, 1) BETWEEN 'a' AND 'z'",
+            name='ck_billing_accounts_currency',
+        ),
+        db.CheckConstraint(
+            '((processor IS NULL AND processor_customer_id IS NULL) OR '
+            '(processor IS NOT NULL AND processor_customer_id IS NOT NULL))',
+            name='ck_billing_accounts_processor_identity',
+        ),
+        db.Index(
+            'uq_billing_accounts_processor_customer',
+            'processor',
+            'processor_customer_id',
+            unique=True,
+            postgresql_where=db.text('processor_customer_id IS NOT NULL'),
+            sqlite_where=db.text('processor_customer_id IS NOT NULL'),
+        ),
+        db.Index(
+            'ix_billing_accounts_status_created_at',
+            'status',
+            'created_at',
+        ),
+    )
+
+
+class BillingRoleGrant(db.Model):
+    """Billing permission independent of organization membership or plan."""
+
+    __tablename__ = 'billing_role_grants'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    billing_account_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'billing_accounts.id',
+            name='fk_billing_role_grants_billing_account_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    user_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'users.id',
+            name='fk_billing_role_grants_user_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    role = db.Column(db.String(32), nullable=False)
+    state = db.Column(
+        db.String(16),
+        nullable=False,
+        default='active',
+        server_default='active',
+    )
+    starts_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    ends_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    granted_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'users.id',
+            name='fk_billing_role_grants_granted_by_user_id',
+            ondelete='SET NULL',
+        ),
+        nullable=True,
+    )
+    origin_type = db.Column(db.String(40), nullable=False)
+    origin_id = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=db.func.now(),
+    )
+
+    billing_account = db.relationship('BillingAccount')
+    user = db.relationship('User', foreign_keys=[user_id])
+    granted_by_user = db.relationship('User', foreign_keys=[granted_by_user_id])
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'billing_account_id',
+            'user_id',
+            'role',
+            'starts_at',
+            name='uq_billing_role_grants_account_user_role_start',
+        ),
+        db.CheckConstraint(
+            "role IN ('billing_owner', 'billing_admin', 'billing_viewer')",
+            name='ck_billing_role_grants_role',
+        ),
+        db.CheckConstraint(
+            "state IN ('active', 'revoked', 'expired')",
+            name='ck_billing_role_grants_state',
+        ),
+        db.CheckConstraint(
+            'ends_at IS NULL OR ends_at > starts_at',
+            name='ck_billing_role_grants_interval',
+        ),
+        db.Index(
+            'uq_billing_role_grants_open_role',
+            'billing_account_id',
+            'user_id',
+            'role',
+            unique=True,
+            postgresql_where=db.text("state = 'active' AND ends_at IS NULL"),
+            sqlite_where=db.text("state = 'active' AND ends_at IS NULL"),
+        ),
+        db.Index(
+            'ix_billing_role_grants_account_state',
+            'billing_account_id',
+            'state',
+        ),
+        db.Index(
+            'ix_billing_role_grants_user_state',
+            'user_id',
+            'state',
+        ),
+    )
 
 
 class AppSetting(db.Model):

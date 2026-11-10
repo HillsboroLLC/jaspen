@@ -4,8 +4,9 @@ PostgreSQL starts from an empty schema and Alembic upgrades it to the exact
 production revision before synthetic legacy rows are inserted.  Historical
 SQLite migrations cannot reach that revision (an older migration uses ALTER
 CONSTRAINT, which SQLite does not support), so SQLite builds the current model
-schema, applies the real a4d7c9e2f105 downgrade to obtain its predecessor
-shape, and stamps that database at f1a2b3c4d5e6.  From that point onward both
+schema, removes later empty additive foundations, applies the real
+a4d7c9e2f105 downgrade to obtain its predecessor shape, and stamps that
+database at f1a2b3c4d5e6.  From that point onward both
 dialects run the same seed, upgrade, assertions, no-op upgrade, and downgrade.
 
 The one-step downgrade is intentionally schema-only: it drops decision_signals
@@ -35,6 +36,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = BACKEND_DIR / "migrations"
 PRODUCTION_REVISION = "f1a2b3c4d5e6"
 MIGRATION_REVISION = "a4d7c9e2f105"
+CURRENT_ADDITIVE_REVISION = "b5e7c9a1d3f2"
 FIXED_TIME = datetime(2026, 10, 1, 12, 0, 0)
 SCORE_TIME = datetime(2026, 9, 20, 9, 30, 0)
 
@@ -67,6 +69,10 @@ def _revision_module():
     return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(MIGRATION_REVISION).module
 
 
+def _current_additive_revision_module():
+    return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(CURRENT_ADDITIVE_REVISION).module
+
+
 def _prepare_sqlite_at_production_revision(database_url):
     """Create f1a2b3c4d5e6 shape without replaying SQLite-incompatible history."""
     from app import db
@@ -80,6 +86,7 @@ def _prepare_sqlite_at_production_revision(database_url):
     with engine.begin() as connection:
         context = MigrationContext.configure(connection)
         with Operations.context(context):
+            _current_additive_revision_module().downgrade()
             _revision_module().downgrade()
         connection.execute(sa.text(
             "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
@@ -439,7 +446,7 @@ def _assert_upgraded(engine, before):
         version = connection.execute(sa.text(
             "SELECT version_num FROM alembic_version"
         )).scalar_one()
-    assert version == MIGRATION_REVISION
+    assert version == CURRENT_ADDITIVE_REVISION
 
     expected_dispositions = {
         "verdict-advance": "pursue",
