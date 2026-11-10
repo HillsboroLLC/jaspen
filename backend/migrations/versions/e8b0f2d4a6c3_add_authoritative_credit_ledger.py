@@ -368,7 +368,9 @@ def _create_postgresql_triggers():
     op.execute(sa.text("""
         CREATE FUNCTION enforce_credit_lot_immutable() RETURNS trigger AS $$
         BEGIN
-            RAISE EXCEPTION 'credit lots are immutable; append ledger corrections';
+            RAISE EXCEPTION USING
+                ERRCODE = '55000',
+                MESSAGE = 'credit lots are immutable; append ledger corrections';
         END;
         $$ LANGUAGE plpgsql
     """))
@@ -385,34 +387,58 @@ def _create_postgresql_triggers():
             pricing_state VARCHAR(20);
             registry_fingerprint VARCHAR(64);
         BEGIN
-            SELECT billing_account_id INTO operation_account
-            FROM ai_operations WHERE id = NEW.operation_id;
-            IF operation_account IS DISTINCT FROM NEW.billing_account_id THEN
-                RAISE EXCEPTION 'reservation operation/account mismatch';
-            END IF;
+            IF TG_OP = 'INSERT' THEN
+                SELECT billing_account_id INTO operation_account
+                FROM ai_operations WHERE id = NEW.operation_id;
+                IF operation_account IS DISTINCT FROM NEW.billing_account_id THEN
+                    RAISE EXCEPTION USING
+                        ERRCODE = '23514',
+                        MESSAGE = 'reservation operation/account mismatch';
+                END IF;
 
-            SELECT state INTO pricing_state
-            FROM pricing_policy_versions WHERE id = NEW.pricing_policy_version_id;
-            IF pricing_state NOT IN ('approved', 'announced', 'effective') THEN
-                RAISE EXCEPTION 'reservation requires an approved pricing policy';
-            END IF;
+                SELECT state INTO pricing_state
+                FROM pricing_policy_versions WHERE id = NEW.pricing_policy_version_id;
+                IF pricing_state NOT IN ('approved', 'announced', 'effective') THEN
+                    RAISE EXCEPTION USING
+                        ERRCODE = '23514',
+                        MESSAGE = 'reservation requires an approved pricing policy';
+                END IF;
 
-            SELECT request_fingerprint INTO registry_fingerprint
-            FROM idempotency_registry WHERE id = NEW.idempotency_registry_id;
-            IF registry_fingerprint IS DISTINCT FROM NEW.request_fingerprint THEN
-                RAISE EXCEPTION 'reservation/idempotency fingerprint mismatch';
-            END IF;
-
-            IF TG_OP = 'UPDATE' AND (
+                SELECT request_fingerprint INTO registry_fingerprint
+                FROM idempotency_registry WHERE id = NEW.idempotency_registry_id;
+                IF registry_fingerprint IS DISTINCT FROM NEW.request_fingerprint THEN
+                    RAISE EXCEPTION USING
+                        ERRCODE = '23514',
+                        MESSAGE = 'reservation/idempotency fingerprint mismatch';
+                END IF;
+            ELSIF (
                 NEW.billing_account_id IS DISTINCT FROM OLD.billing_account_id OR
                 NEW.operation_id IS DISTINCT FROM OLD.operation_id OR
                 NEW.pricing_policy_version_id IS DISTINCT FROM OLD.pricing_policy_version_id OR
                 NEW.capacity_policy_version_id IS DISTINCT FROM OLD.capacity_policy_version_id OR
                 NEW.idempotency_registry_id IS DISTINCT FROM OLD.idempotency_registry_id OR
                 NEW.request_fingerprint IS DISTINCT FROM OLD.request_fingerprint OR
+                NEW.requested_amount IS DISTINCT FROM OLD.requested_amount OR
+                NEW.authorized_amount IS DISTINCT FROM OLD.authorized_amount OR
                 NEW.created_at IS DISTINCT FROM OLD.created_at
             ) THEN
-                RAISE EXCEPTION 'reservation identity and authorization are immutable';
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = 'reservation identity and authorization are immutable';
+            ELSIF OLD.state IN ('settled', 'released', 'expired') AND
+                  NEW.state IS DISTINCT FROM OLD.state THEN
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = 'terminal reservation state cannot be reopened';
+            ELSIF OLD.state = 'partially_settled' AND NEW.state = 'reserved' THEN
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = 'reservation state transitions are forward-only';
+            ELSIF OLD.finalized_at IS NOT NULL AND
+                  NEW.finalized_at IS DISTINCT FROM OLD.finalized_at THEN
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = 'reservation finalization is immutable';
             END IF;
             RETURN NEW;
         END;
@@ -434,29 +460,60 @@ def _create_postgresql_triggers():
             operation_account VARCHAR(36);
             related_account VARCHAR(36);
             related_lot VARCHAR(36);
+            related_type VARCHAR(32);
+            related_reservation VARCHAR(36);
+            related_operation VARCHAR(36);
+            related_held BIGINT;
+            reservation_authorized BIGINT;
+            reservation_allocated BIGINT;
+            allocation_consumed BIGINT;
             available_total BIGINT;
             held_total BIGINT;
         BEGIN
-            PERFORM 1 FROM billing_accounts
-            WHERE id = NEW.billing_account_id FOR UPDATE;
+            -- A no-op row update is the serialization fence. READ COMMITTED
+            -- writers wait and then see the committed ledger. Transactions
+            -- with an older REPEATABLE READ/SERIALIZABLE snapshot receive
+            -- PostgreSQL's 40001 serialization failure instead of committing
+            -- a balance calculated from stale rows.
+            UPDATE billing_accounts SET id = id
+            WHERE id = NEW.billing_account_id;
             IF NOT FOUND THEN
-                RAISE EXCEPTION 'ledger billing account does not exist';
+                RAISE EXCEPTION USING
+                    ERRCODE = '23503',
+                    MESSAGE = 'ledger billing account does not exist';
             END IF;
 
             SELECT billing_account_id, original_amount
             INTO lot_account, lot_original
             FROM credit_lots WHERE id = NEW.lot_id FOR UPDATE;
             IF lot_account IS DISTINCT FROM NEW.billing_account_id THEN
-                RAISE EXCEPTION 'ledger lot/account mismatch';
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = 'ledger lot/account mismatch';
             END IF;
 
             IF NEW.reservation_id IS NOT NULL THEN
-                SELECT billing_account_id, operation_id
-                INTO reservation_account, reservation_operation
-                FROM credit_reservations WHERE id = NEW.reservation_id;
+                SELECT billing_account_id, operation_id, authorized_amount
+                INTO reservation_account, reservation_operation, reservation_authorized
+                FROM credit_reservations WHERE id = NEW.reservation_id FOR UPDATE;
                 IF reservation_account IS DISTINCT FROM NEW.billing_account_id OR
                    reservation_operation IS DISTINCT FROM NEW.operation_id THEN
-                    RAISE EXCEPTION 'ledger reservation/account/operation mismatch';
+                    RAISE EXCEPTION USING
+                        ERRCODE = '23514',
+                        MESSAGE = 'ledger reservation/account/operation mismatch';
+                END IF;
+            END IF;
+
+            IF NEW.entry_type = 'reservation' THEN
+                SELECT COALESCE(SUM(held_delta), 0)
+                INTO reservation_allocated
+                FROM credit_ledger_entries
+                WHERE reservation_id = NEW.reservation_id
+                  AND entry_type = 'reservation';
+                IF reservation_allocated + NEW.held_delta > reservation_authorized THEN
+                    RAISE EXCEPTION USING
+                        ERRCODE = '23514',
+                        MESSAGE = 'reservation entries exceed authorized allocation';
                 END IF;
             END IF;
 
@@ -464,16 +521,44 @@ def _create_postgresql_triggers():
                 SELECT billing_account_id INTO operation_account
                 FROM ai_operations WHERE id = NEW.operation_id;
                 IF operation_account IS DISTINCT FROM NEW.billing_account_id THEN
-                    RAISE EXCEPTION 'ledger operation/account mismatch';
+                    RAISE EXCEPTION USING
+                        ERRCODE = '23514',
+                        MESSAGE = 'ledger operation/account mismatch';
                 END IF;
             END IF;
 
             IF NEW.related_entry_id IS NOT NULL THEN
-                SELECT billing_account_id, lot_id INTO related_account, related_lot
-                FROM credit_ledger_entries WHERE id = NEW.related_entry_id;
+                SELECT billing_account_id, lot_id, entry_type, reservation_id,
+                       operation_id, held_delta
+                INTO related_account, related_lot, related_type,
+                     related_reservation, related_operation, related_held
+                FROM credit_ledger_entries
+                WHERE id = NEW.related_entry_id FOR UPDATE;
                 IF related_account IS DISTINCT FROM NEW.billing_account_id OR
                    related_lot IS DISTINCT FROM NEW.lot_id THEN
-                    RAISE EXCEPTION 'related ledger entry must share account and lot';
+                    RAISE EXCEPTION USING
+                        ERRCODE = '23514',
+                        MESSAGE = 'related ledger entry must share account and lot';
+                END IF;
+            END IF;
+
+            IF NEW.entry_type IN ('settlement', 'release') THEN
+                IF related_type IS DISTINCT FROM 'reservation' OR
+                   related_reservation IS DISTINCT FROM NEW.reservation_id OR
+                   related_operation IS DISTINCT FROM NEW.operation_id THEN
+                    RAISE EXCEPTION USING
+                        ERRCODE = '23514',
+                        MESSAGE = 'settlement/release must reference its reservation allocation';
+                END IF;
+                SELECT COALESCE(-SUM(held_delta), 0)
+                INTO allocation_consumed
+                FROM credit_ledger_entries
+                WHERE related_entry_id = NEW.related_entry_id
+                  AND entry_type IN ('settlement', 'release', 'expiration');
+                IF allocation_consumed + (-NEW.held_delta) > related_held THEN
+                    RAISE EXCEPTION USING
+                        ERRCODE = '23514',
+                        MESSAGE = 'settlement/release exceeds reservation allocation';
                 END IF;
             END IF;
 
@@ -483,10 +568,14 @@ def _create_postgresql_triggers():
             available_total := available_total + NEW.available_delta;
             held_total := held_total + NEW.held_delta;
             IF available_total < 0 OR held_total < 0 THEN
-                RAISE EXCEPTION 'credit ledger zero-floor violation';
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = 'credit ledger zero-floor violation';
             END IF;
             IF available_total + held_total > lot_original THEN
-                RAISE EXCEPTION 'credit ledger exceeds original lot amount';
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = 'credit ledger exceeds original lot amount';
             END IF;
             RETURN NEW;
         END;
@@ -500,7 +589,9 @@ def _create_postgresql_triggers():
     op.execute(sa.text("""
         CREATE FUNCTION reject_credit_ledger_mutation() RETURNS trigger AS $$
         BEGIN
-            RAISE EXCEPTION 'credit ledger entries are append-only';
+            RAISE EXCEPTION USING
+                ERRCODE = '55000',
+                MESSAGE = 'credit ledger entries are append-only';
         END;
         $$ LANGUAGE plpgsql
     """))
@@ -554,7 +645,17 @@ def _create_sqlite_triggers():
                OR NEW.capacity_policy_version_id IS NOT OLD.capacity_policy_version_id
                OR NEW.idempotency_registry_id IS NOT OLD.idempotency_registry_id
                OR NEW.request_fingerprint IS NOT OLD.request_fingerprint
+               OR NEW.requested_amount IS NOT OLD.requested_amount
+               OR NEW.authorized_amount IS NOT OLD.authorized_amount
                OR NEW.created_at IS NOT OLD.created_at;
+            SELECT RAISE(ABORT, 'terminal reservation state cannot be reopened')
+            WHERE OLD.state IN ('settled', 'released', 'expired')
+              AND NEW.state IS NOT OLD.state;
+            SELECT RAISE(ABORT, 'reservation state transitions are forward-only')
+            WHERE OLD.state = 'partially_settled' AND NEW.state = 'reserved';
+            SELECT RAISE(ABORT, 'reservation finalization is immutable')
+            WHERE OLD.finalized_at IS NOT NULL
+              AND NEW.finalized_at IS NOT OLD.finalized_at;
         END
     """))
     op.execute(sa.text("""
@@ -571,6 +672,16 @@ def _create_sqlite_triggers():
                   AND billing_account_id = NEW.billing_account_id
                   AND operation_id = NEW.operation_id
             );
+            SELECT RAISE(ABORT, 'reservation entries exceed authorized allocation')
+            WHERE NEW.entry_type = 'reservation'
+              AND COALESCE((
+                    SELECT SUM(held_delta) FROM credit_ledger_entries
+                    WHERE reservation_id = NEW.reservation_id
+                      AND entry_type = 'reservation'
+                  ), 0) + NEW.held_delta > (
+                    SELECT authorized_amount FROM credit_reservations
+                    WHERE id = NEW.reservation_id
+                  );
             SELECT RAISE(ABORT, 'ledger operation/account mismatch')
             WHERE NEW.operation_id IS NOT NULL AND NOT EXISTS (
                 SELECT 1 FROM ai_operations
@@ -584,6 +695,30 @@ def _create_sqlite_triggers():
                   AND billing_account_id = NEW.billing_account_id
                   AND lot_id = NEW.lot_id
             );
+            SELECT RAISE(
+                ABORT,
+                'settlement/release must reference its reservation allocation'
+            )
+            WHERE NEW.entry_type IN ('settlement', 'release') AND NOT EXISTS (
+                SELECT 1 FROM credit_ledger_entries
+                WHERE id = NEW.related_entry_id
+                  AND entry_type = 'reservation'
+                  AND reservation_id = NEW.reservation_id
+                  AND operation_id = NEW.operation_id
+            );
+            SELECT RAISE(
+                ABORT,
+                'settlement/release exceeds reservation allocation'
+            )
+            WHERE NEW.entry_type IN ('settlement', 'release')
+              AND COALESCE((
+                    SELECT -SUM(held_delta) FROM credit_ledger_entries
+                    WHERE related_entry_id = NEW.related_entry_id
+                      AND entry_type IN ('settlement', 'release', 'expiration')
+                  ), 0) + (-NEW.held_delta) > (
+                    SELECT held_delta FROM credit_ledger_entries
+                    WHERE id = NEW.related_entry_id
+                  );
             SELECT RAISE(ABORT, 'credit ledger zero-floor violation')
             WHERE COALESCE((SELECT SUM(available_delta) FROM credit_ledger_entries
                             WHERE lot_id = NEW.lot_id), 0) + NEW.available_delta < 0

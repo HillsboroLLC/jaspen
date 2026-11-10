@@ -1,9 +1,10 @@
 """Migration and database-invariant coverage for the Phase 3 credit ledger."""
 
 import contextlib
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
 import os
+from threading import Event
 import uuid
 
 import pytest
@@ -24,6 +25,10 @@ LATER = datetime(2026, 11, 10, 13, 0, tzinfo=timezone.utc)
 
 def _revision_module():
     return ScriptDirectory(MIGRATIONS_DIR).get_revision(MIGRATION_REVISION).module
+
+
+def _sqlstate(exc):
+    return getattr(exc.orig, "sqlstate", None) or getattr(exc.orig, "pgcode", None)
 
 
 @contextlib.contextmanager
@@ -83,17 +88,23 @@ def _create_predecessor_tables(engine):
             "INSERT INTO ai_operations (id, billing_account_id) VALUES "
             "('operation-one', 'ledger-account'), "
             "('operation-two', 'ledger-account'), "
+            "('operation-three', 'ledger-account'), "
+            "('operation-four', 'ledger-account'), "
+            "('operation-five', 'ledger-account'), "
+            "('operation-six', 'ledger-account'), "
             "('operation-other', 'other-account')"
         ))
         connection.execute(sa.text(
             "INSERT INTO pricing_policy_versions (id, state) VALUES "
-            "('pricing-approved', 'approved'), ('pricing-draft', 'draft')"
+            "('pricing-approved', 'approved'), "
+            "('pricing-approved-two', 'approved'), "
+            "('pricing-draft', 'draft')"
         ))
         connection.execute(sa.text(
             "INSERT INTO capacity_policy_versions (id) VALUES ('capacity-approved')"
         ))
         claim_values = ", ".join(
-            f"('claim-{number}', '{'a' * 64}')" for number in range(1, 30)
+            f"('claim-{number}', '{'a' * 64}')" for number in range(1, 61)
         )
         connection.execute(sa.text(
             "INSERT INTO idempotency_registry (id, request_fingerprint) VALUES "
@@ -270,6 +281,61 @@ def test_sqlite_arithmetic_append_only_and_pricing_invariants(tmp_path):
             connection, "reserve", "claim-3", "reservation", -80, 80,
             reservation="reservation-one", operation="operation-one",
         )
+
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="settlement/release exceeds reservation allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "settle-too-much", "claim-15", "settlement", 0, -81,
+                reservation="reservation-one", operation="operation-one",
+                related="reserve",
+            )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="reservation entries exceed authorized allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "reserve-over-authorized", "claim-18",
+                "reservation", -1, 1,
+                reservation="reservation-one", operation="operation-one",
+            )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="settlement/release must reference its reservation allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "release-grant", "claim-16", "release", 1, -1,
+                reservation="reservation-one", operation="operation-one",
+                related="grant",
+            )
+    with engine.begin() as connection:
+        _insert_reservation(
+            connection,
+            identifier="reservation-two",
+            operation="operation-two",
+            claim="claim-14",
+            amount=10,
+        )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="settlement/release must reference its reservation allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "settle-other-reservation", "claim-17", "settlement", 0, -1,
+                reservation="reservation-two", operation="operation-two",
+                related="reserve",
+            )
+
+    with engine.begin() as connection:
+        connection.execute(sa.text(
+            "UPDATE pricing_policy_versions SET state = 'superseded' "
+            "WHERE id = 'pricing-approved'"
+        ))
         _insert_entry(
             connection, "settle", "claim-4", "settlement", 0, -50,
             reservation="reservation-one", operation="operation-one", related="reserve",
@@ -278,11 +344,37 @@ def test_sqlite_arithmetic_append_only_and_pricing_invariants(tmp_path):
             connection, "release", "claim-5", "release", 30, -30,
             reservation="reservation-one", operation="operation-one", related="reserve",
         )
+        connection.execute(sa.text(
+            "UPDATE credit_reservations SET state = 'settled', "
+            "finalized_at = :finalized_at WHERE id = 'reservation-one'"
+        ), {"finalized_at": LATER})
     with engine.connect() as connection:
         assert connection.execute(sa.text("""
             SELECT SUM(available_delta), SUM(held_delta)
             FROM credit_ledger_entries WHERE lot_id = 'lot-one'
         """)).one() == (50, 0)
+        assert connection.execute(sa.text(
+            "SELECT state FROM credit_reservations WHERE id = 'reservation-one'"
+        )).scalar_one() == "settled"
+
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="terminal reservation state cannot be reopened",
+    ):
+        with engine.begin() as connection:
+            connection.execute(sa.text(
+                "UPDATE credit_reservations SET state = 'reserved', "
+                "finalized_at = NULL WHERE id = 'reservation-one'"
+            ))
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="reservation identity and authorization are immutable",
+    ):
+        with engine.begin() as connection:
+            connection.execute(sa.text(
+                "UPDATE credit_reservations SET authorized_amount = 79 "
+                "WHERE id = 'reservation-one'"
+            ))
 
     with engine.begin() as connection:
         _insert_lot(connection, identifier="lot-expiring", amount=50)
@@ -351,6 +443,7 @@ def test_sqlite_arithmetic_append_only_and_pricing_invariants(tmp_path):
                 identifier="reservation-fingerprint-conflict",
                 operation="operation-two",
                 claim="claim-7",
+                pricing="pricing-approved-two",
             )
     engine.dispose()
 
@@ -488,7 +581,7 @@ def test_postgres_phase_3_constraints_and_concurrent_zero_floor(
                     "UPDATE credit_lots SET source_id = 'rewrite' "
                     "WHERE id = 'lot-one'"
                 ))
-        with pytest.raises(sa.exc.DBAPIError):
+        with pytest.raises(sa.exc.IntegrityError) as draft_error:
             with engine.begin() as connection:
                 _insert_reservation(
                     connection,
@@ -497,55 +590,291 @@ def test_postgres_phase_3_constraints_and_concurrent_zero_floor(
                     claim="claim-7",
                     pricing="pricing-draft",
                 )
-        with pytest.raises(sa.exc.DBAPIError):
+        assert _sqlstate(draft_error.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as fingerprint_error:
             with engine.begin() as connection:
                 _insert_reservation(
                     connection,
                     identifier="reservation-fingerprint-conflict",
                     operation="operation-two",
                     claim="claim-7",
+                    pricing="pricing-approved-two",
                     fingerprint="b" * 64,
                 )
+        assert _sqlstate(fingerprint_error.value) == "23514"
+
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "reserve", "claim-3", "reservation", -80, 80,
+                reservation="reservation-one", operation="operation-one",
+            )
+
+        with pytest.raises(sa.exc.IntegrityError) as over_settlement:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "settle-too-much", "claim-15", "settlement", 0, -81,
+                    reservation="reservation-one", operation="operation-one",
+                    related="reserve",
+                )
+        assert _sqlstate(over_settlement.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as over_authorized:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "reserve-over-authorized", "claim-18",
+                    "reservation", -1, 1,
+                    reservation="reservation-one", operation="operation-one",
+                )
+        assert _sqlstate(over_authorized.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as grant_release:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "release-grant", "claim-16", "release", 1, -1,
+                    reservation="reservation-one", operation="operation-one",
+                    related="grant",
+                )
+        assert _sqlstate(grant_release.value) == "23514"
+
         with engine.begin() as connection:
             _insert_reservation(
                 connection,
                 identifier="reservation-two",
                 operation="operation-two",
-                claim="claim-8",
+                claim="claim-14",
+                amount=10,
+            )
+        with pytest.raises(sa.exc.IntegrityError) as other_reservation:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "settle-other-reservation", "claim-17",
+                    "settlement", 0, -1,
+                    reservation="reservation-two", operation="operation-two",
+                    related="reserve",
+                )
+        assert _sqlstate(other_reservation.value) == "23514"
+
+        with engine.begin() as connection:
+            connection.execute(sa.text(
+                "UPDATE pricing_policy_versions SET state = 'superseded' "
+                "WHERE id = 'pricing-approved'"
+            ))
+            _insert_entry(
+                connection, "settle", "claim-4", "settlement", 0, -50,
+                reservation="reservation-one", operation="operation-one",
+                related="reserve",
+            )
+            _insert_entry(
+                connection, "release", "claim-5", "release", 30, -30,
+                reservation="reservation-one", operation="operation-one",
+                related="reserve",
+            )
+            connection.execute(sa.text(
+                "UPDATE credit_reservations SET state = 'settled', "
+                "finalized_at = :finalized_at WHERE id = 'reservation-one'"
+            ), {"finalized_at": LATER})
+
+        with pytest.raises(sa.exc.IntegrityError) as reopen_error:
+            with engine.begin() as connection:
+                connection.execute(sa.text(
+                    "UPDATE credit_reservations SET state = 'reserved', "
+                    "finalized_at = NULL WHERE id = 'reservation-one'"
+                ))
+        assert _sqlstate(reopen_error.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as amount_edit_error:
+            with engine.begin() as connection:
+                connection.execute(sa.text(
+                    "UPDATE credit_reservations SET authorized_amount = 79 "
+                    "WHERE id = 'reservation-one'"
+                ))
+        assert _sqlstate(amount_edit_error.value) == "23514"
+
+        with engine.begin() as connection:
+            _insert_lot(connection, identifier="lot-concurrent", amount=100)
+            _insert_reservation(
+                connection,
+                identifier="reservation-three",
+                operation="operation-three",
+                claim="claim-19",
+            )
+            _insert_reservation(
+                connection,
+                identifier="reservation-four",
+                operation="operation-four",
+                claim="claim-20",
+            )
+            _insert_entry(
+                connection, "grant-concurrent", "claim-21", "grant", 100, 0,
+                lot="lot-concurrent",
             )
 
         first_connection = engine.connect()
         first_transaction = first_connection.begin()
         _insert_entry(
-            first_connection, "reserve-one", "claim-3", "reservation", -80, 80,
-            reservation="reservation-one", operation="operation-one",
+            first_connection, "reserve-three", "claim-22", "reservation", -80, 80,
+            lot="lot-concurrent", reservation="reservation-three",
+            operation="operation-three",
         )
 
+        competitor_started = Event()
+
         def competing_reservation():
+            competitor_started.set()
             try:
                 with engine.begin() as connection:
                     _insert_entry(
-                        connection, "reserve-two", "claim-9", "reservation", -80, 80,
-                        reservation="reservation-two", operation="operation-two",
+                        connection, "reserve-four", "claim-23", "reservation", -80, 80,
+                        lot="lot-concurrent", reservation="reservation-four",
+                        operation="operation-four",
                     )
-            except (sa.exc.IntegrityError, sa.exc.InternalError):
-                return "rejected"
-            return "inserted"
+            except sa.exc.IntegrityError as exc:
+                return _sqlstate(exc)
+            return None
 
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(competing_reservation)
+            assert competitor_started.wait(timeout=2)
+            with pytest.raises(FutureTimeoutError):
+                future.result(timeout=0.25)
             first_transaction.commit()
             first_connection.close()
-            assert future.result(timeout=10) == "rejected"
+            assert future.result(timeout=10) == "23514"
 
         with engine.connect() as connection:
             assert connection.execute(sa.text("""
                 SELECT SUM(available_delta), SUM(held_delta)
-                FROM credit_ledger_entries WHERE lot_id = 'lot-one'
+                FROM credit_ledger_entries WHERE lot_id = 'lot-concurrent'
             """)).one() == (20, 80)
         with pytest.raises(revision_module.CreditLedgerNotEmptyError):
             with _migration_ops(engine):
                 revision_module.downgrade()
+    finally:
+        engine.dispose()
+        with admin_engine.connect() as connection:
+            connection.execute(sa.text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        admin_engine.dispose()
+
+
+@pytest.mark.postgres
+@pytest.mark.skipif(
+    not os.environ.get("TEST_DATABASE_URL"),
+    reason="local disposable PostgreSQL is not configured",
+)
+def test_postgres_repeatable_read_and_mixed_isolation_prevent_overspend(
+    validate_test_database_url,
+    postgres_schema_url,
+):
+    base_url = validate_test_database_url(os.environ["TEST_DATABASE_URL"])
+    schema = f"phase_3_isolation_{uuid.uuid4().hex}"
+    admin_engine = sa.create_engine(base_url, isolation_level="AUTOCOMMIT")
+    with admin_engine.connect() as connection:
+        connection.execute(sa.text(f'CREATE SCHEMA "{schema}"'))
+    engine = sa.create_engine(postgres_schema_url(base_url, schema))
+    try:
+        _create_predecessor_tables(engine)
+        with _migration_ops(engine):
+            _revision_module().upgrade()
+        with engine.begin() as connection:
+            _insert_lot(connection, identifier="lot-isolation", amount=100)
+            _insert_reservation(
+                connection,
+                identifier="reservation-five",
+                operation="operation-five",
+                claim="claim-30",
+            )
+            _insert_reservation(
+                connection,
+                identifier="reservation-six",
+                operation="operation-six",
+                claim="claim-31",
+            )
+            _insert_entry(
+                connection, "grant-isolation", "claim-32", "grant", 100, 0,
+                lot="lot-isolation",
+            )
+
+        repeatable = engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        )
+        repeatable_transaction = repeatable.begin()
+        repeatable.execute(sa.text("SELECT COUNT(*) FROM billing_accounts"))
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "reserve-five", "claim-33", "reservation", -80, 80,
+                lot="lot-isolation", reservation="reservation-five",
+                operation="operation-five",
+            )
+        try:
+            with pytest.raises(sa.exc.OperationalError) as stale_snapshot:
+                _insert_entry(
+                    repeatable, "reserve-six", "claim-34", "reservation", -80, 80,
+                    lot="lot-isolation", reservation="reservation-six",
+                    operation="operation-six",
+                )
+            assert _sqlstate(stale_snapshot.value) == "40001"
+        finally:
+            repeatable_transaction.rollback()
+            repeatable.close()
+
+        with engine.begin() as connection:
+            _insert_lot(connection, identifier="lot-mixed", amount=100)
+            _insert_reservation(
+                connection,
+                identifier="reservation-three",
+                operation="operation-three",
+                claim="claim-35",
+            )
+            _insert_reservation(
+                connection,
+                identifier="reservation-four",
+                operation="operation-four",
+                claim="claim-36",
+            )
+            _insert_entry(
+                connection, "grant-mixed", "claim-37", "grant", 100, 0,
+                lot="lot-mixed",
+            )
+
+        first_connection = engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        )
+        first_transaction = first_connection.begin()
+        _insert_entry(
+            first_connection, "reserve-three", "claim-38", "reservation", -80, 80,
+            lot="lot-mixed", reservation="reservation-three",
+            operation="operation-three",
+        )
+        competitor_started = Event()
+
+        def read_committed_competitor():
+            competitor_started.set()
+            try:
+                with engine.begin() as connection:
+                    _insert_entry(
+                        connection, "reserve-four", "claim-39", "reservation", -80, 80,
+                        lot="lot-mixed", reservation="reservation-four",
+                        operation="operation-four",
+                    )
+            except sa.exc.IntegrityError as exc:
+                return _sqlstate(exc)
+            return None
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(read_committed_competitor)
+            assert competitor_started.wait(timeout=2)
+            with pytest.raises(FutureTimeoutError):
+                future.result(timeout=0.25)
+            first_transaction.commit()
+            first_connection.close()
+            assert future.result(timeout=10) == "23514"
+
+        with engine.connect() as connection:
+            assert connection.execute(sa.text("""
+                SELECT SUM(available_delta), SUM(held_delta)
+                FROM credit_ledger_entries WHERE lot_id = 'lot-isolation'
+            """)).one() == (20, 80)
+            assert connection.execute(sa.text("""
+                SELECT SUM(available_delta), SUM(held_delta)
+                FROM credit_ledger_entries WHERE lot_id = 'lot-mixed'
+            """)).one() == (20, 80)
     finally:
         engine.dispose()
         with admin_engine.connect() as connection:
