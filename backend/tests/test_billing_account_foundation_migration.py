@@ -63,12 +63,20 @@ def _assert_upgraded_schema(engine):
         "ends_at", "granted_by_user_id", "origin_type", "origin_id", "created_at",
     }
 
-    account_indexes = {index["name"] for index in inspector.get_indexes("billing_accounts")}
+    account_indexes = {
+        index["name"]
+        for index in inspector.get_indexes("billing_accounts")
+        if not index.get("duplicates_constraint")
+    }
     assert account_indexes == {
         "ix_billing_accounts_status_created_at",
         "uq_billing_accounts_processor_customer",
     }
-    role_indexes = {index["name"] for index in inspector.get_indexes("billing_role_grants")}
+    role_indexes = {
+        index["name"]
+        for index in inspector.get_indexes("billing_role_grants")
+        if not index.get("duplicates_constraint")
+    }
     assert role_indexes == {
         "ix_billing_role_grants_account_state",
         "ix_billing_role_grants_user_state",
@@ -146,7 +154,7 @@ def test_guarded_downgrade_refuses_without_partial_schema_change(tmp_path):
     not os.environ.get("TEST_DATABASE_URL"),
     reason="local disposable PostgreSQL is not configured",
 )
-def test_postgres_upgrade_and_empty_downgrade(
+def test_postgres_complete_phase_2_1_verification(
     validate_test_database_url,
     postgres_schema_url,
 ):
@@ -158,15 +166,137 @@ def test_postgres_upgrade_and_empty_downgrade(
 
     test_url = postgres_schema_url(base_url, schema)
     engine = sa.create_engine(test_url)
+    revision_module = _revision_module()
     try:
         _create_predecessor_tables(engine)
+        with engine.begin() as connection:
+            connection.execute(sa.text(
+                "INSERT INTO organizations (id) VALUES "
+                "('legacy-org-primary'), ('legacy-org-secondary')"
+            ))
+            connection.execute(sa.text(
+                "INSERT INTO users (id) VALUES ('legacy-user')"
+            ))
+
         with _migration_ops(engine):
-            _revision_module().upgrade()
+            revision_module.upgrade()
         _assert_upgraded_schema(engine)
+
+        inspector = sa.inspect(engine)
+        account_checks = {
+            constraint["name"]
+            for constraint in inspector.get_check_constraints("billing_accounts")
+        }
+        assert account_checks == {
+            "ck_billing_accounts_currency",
+            "ck_billing_accounts_processor_identity",
+            "ck_billing_accounts_status",
+        }
+        role_checks = {
+            constraint["name"]
+            for constraint in inspector.get_check_constraints("billing_role_grants")
+        }
+        assert role_checks == {
+            "ck_billing_role_grants_interval",
+            "ck_billing_role_grants_role",
+            "ck_billing_role_grants_state",
+        }
+        assert {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("billing_accounts")
+        } == {"uq_billing_accounts_organization_id"}
+        assert {
+            constraint["name"]
+            for constraint in inspector.get_unique_constraints("billing_role_grants")
+        } == {"uq_billing_role_grants_account_user_role_start"}
+        account_fks = {
+            constraint["name"]: constraint
+            for constraint in inspector.get_foreign_keys("billing_accounts")
+        }
+        assert account_fks["fk_billing_accounts_organization_id"]["referred_table"] == "organizations"
+        assert account_fks["fk_billing_accounts_organization_id"]["options"]["ondelete"] == "RESTRICT"
+        role_fks = {
+            constraint["name"]: constraint
+            for constraint in inspector.get_foreign_keys("billing_role_grants")
+        }
+        assert role_fks["fk_billing_role_grants_billing_account_id"]["options"]["ondelete"] == "RESTRICT"
+        assert role_fks["fk_billing_role_grants_user_id"]["options"]["ondelete"] == "RESTRICT"
+        assert role_fks["fk_billing_role_grants_granted_by_user_id"]["options"]["ondelete"] == "SET NULL"
+        account_indexes = {
+            index["name"]: index
+            for index in inspector.get_indexes("billing_accounts")
+        }
+        assert account_indexes["uq_billing_accounts_processor_customer"]["unique"]
+        role_indexes = {
+            index["name"]: index
+            for index in inspector.get_indexes("billing_role_grants")
+        }
+        assert role_indexes["uq_billing_role_grants_open_role"]["unique"]
+
+        with engine.connect() as connection:
+            assert connection.execute(sa.text(
+                "SELECT COUNT(*) FROM billing_accounts"
+            )).scalar_one() == 0
+            assert connection.execute(sa.text(
+                "SELECT COUNT(*) FROM billing_role_grants"
+            )).scalar_one() == 0
+
+        with pytest.raises(sa.exc.IntegrityError):
+            with engine.begin() as connection:
+                connection.execute(sa.text(
+                    "INSERT INTO billing_accounts "
+                    "(id, organization_id, currency, account_anchor_at) "
+                    "VALUES ('bad-currency', 'legacy-org-primary', 'u5d', now())"
+                ))
+
+        with engine.begin() as connection:
+            connection.execute(sa.text(
+                "INSERT INTO billing_accounts "
+                "(id, organization_id, currency, account_anchor_at, processor, "
+                "processor_customer_id) VALUES "
+                "('retained-account', 'legacy-org-primary', 'usd', now(), "
+                "'stripe', 'cus_phase_2_1_postgres')"
+            ))
+            connection.execute(sa.text(
+                "INSERT INTO billing_role_grants "
+                "(id, billing_account_id, user_id, role, starts_at, origin_type, "
+                "origin_id) VALUES "
+                "('retained-role', 'retained-account', 'legacy-user', "
+                "'billing_owner', now(), 'authorized_test', 'postgres-verification')"
+            ))
+
+        with pytest.raises(
+            revision_module.BillingFoundationNotEmptyError,
+            match="billing_accounts contains 1 row.*billing_role_grants contains 1 row",
+        ):
+            with _migration_ops(engine):
+                revision_module.downgrade()
+
+        assert {"billing_accounts", "billing_role_grants"}.issubset(
+            sa.inspect(engine).get_table_names()
+        )
+        with engine.connect() as connection:
+            assert connection.execute(sa.text(
+                "SELECT id FROM billing_accounts"
+            )).scalar_one() == "retained-account"
+            assert connection.execute(sa.text(
+                "SELECT id FROM billing_role_grants"
+            )).scalar_one() == "retained-role"
+
+        with engine.begin() as connection:
+            connection.execute(sa.text("DELETE FROM billing_role_grants"))
+            connection.execute(sa.text("DELETE FROM billing_accounts"))
         with _migration_ops(engine):
-            _revision_module().downgrade()
+            revision_module.downgrade()
         assert "billing_accounts" not in sa.inspect(engine).get_table_names()
         assert "billing_role_grants" not in sa.inspect(engine).get_table_names()
+        with engine.connect() as connection:
+            assert connection.execute(sa.text(
+                "SELECT id FROM organizations ORDER BY id"
+            )).scalars().all() == ["legacy-org-primary", "legacy-org-secondary"]
+            assert connection.execute(sa.text(
+                "SELECT id FROM users"
+            )).scalar_one() == "legacy-user"
     finally:
         engine.dispose()
         with admin_engine.connect() as connection:
