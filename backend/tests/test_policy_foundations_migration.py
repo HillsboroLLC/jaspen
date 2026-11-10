@@ -219,8 +219,13 @@ def _assert_empty(engine):
             )).scalar_one() == 0
 
 
-def _assert_rejected(engine, sql, parameters=None):
-    with pytest.raises(sa.exc.IntegrityError):
+def _assert_rejected(
+    engine,
+    sql,
+    parameters=None,
+    expected_exception=sa.exc.IntegrityError,
+):
+    with pytest.raises(expected_exception):
         with engine.begin() as connection:
             connection.execute(sa.text(sql), parameters or {})
 
@@ -427,6 +432,11 @@ def _exercise_database_enforcement(engine):
         ("infinity-input", float("inf"), ":value", "0"),
         ("infinity-output", float("inf"), "0", ":value"),
     ):
+        expected_exception = (
+            sa.exc.DataError
+            if engine.dialect.name == "postgresql" and label.startswith("infinity-")
+            else sa.exc.IntegrityError
+        )
         _assert_rejected(engine, f"""
             INSERT INTO provider_rate_entries (
                 id, pricing_policy_version_id, provider, model, currency,
@@ -437,7 +447,7 @@ def _exercise_database_enforcement(engine):
                 'model-{label}', 'usd', 'per_1m_tokens',
                 {input_rate}, {output_rate}, 'test-only-source', :observed_at
             )
-        """, {"value": value, "observed_at": NOW})
+        """, {"value": value, "observed_at": NOW}, expected_exception)
 
     with engine.begin() as connection:
         connection.execute(sa.text("""
@@ -761,10 +771,10 @@ def test_postgres_rejects_nan_and_infinite_provider_rates(
 
         for column in ("input_rate", "output_rate"):
             other_column = "output_rate" if column == "input_rate" else "input_rate"
-            for label, literal in (
-                ("nan", "NaN"),
-                ("positive-infinity", "Infinity"),
-                ("negative-infinity", "-Infinity"),
+            for label, literal, expected_exception in (
+                ("nan", "NaN", sa.exc.IntegrityError),
+                ("pos-inf", "Infinity", sa.exc.DataError),
+                ("neg-inf", "-Infinity", sa.exc.DataError),
             ):
                 _assert_rejected(engine, f"""
                     INSERT INTO provider_rate_entries (
@@ -773,11 +783,11 @@ def test_postgres_rejects_nan_and_infinite_provider_rates(
                         source_observed_at
                     ) VALUES (
                         'rate-{column}-{label}', 'pricing-nonfinite',
-                        'provider-{column}-{label}', 'model-{column}-{label}',
+                        'p-{column}-{label}', 'm-{column}-{label}',
                         'usd', 'per_1m_tokens', CAST('{literal}' AS NUMERIC), 0,
                         'test-only-source', :observed_at
                     )
-                """, {"observed_at": NOW})
+                """, {"observed_at": NOW}, expected_exception)
     finally:
         engine.dispose()
         with admin_engine.connect() as connection:
