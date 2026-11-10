@@ -2,11 +2,11 @@
 
 ## D01 Final ADR
 
-Status: **Proposed**
+Status: **Proposed for founder approval**
 
 Decision owners: Product and Engineering
 
-Decision date: pending review
+Decision date: 2026-11-09 (business policy supplied; architecture approval pending)
 
 Implementation authorization: none
 
@@ -30,10 +30,13 @@ kind of truth and explicit event-driven state transitions.
 
 Jaspen will use the following boundaries:
 
-1. **Billing Account Authority** owns the explicit payer/customer relationship,
-   personal or organization ownership, processor identifiers, currency, tax
-   context, and account status. A user or organization may own a billing
-   account; ownership never depends on whichever organization is active.
+1. **Organization and Billing Account Authority** establishes one organization
+   for every customer account, from one member to 1,500 or more. Every
+   organization has exactly one explicit billing account for a given commercial
+   relationship. The billing account owns processor identifiers, currency, tax
+   context, and account status. There is no parallel individual-customer
+   billing architecture. A user's active organization is navigation context,
+   never payer selection or credit ownership.
 2. **Financial Transaction Authority** owns invoices, invoice lines, payments,
    refunds, disputes, recoveries, taxes, fees, discounts, and processor
    evidence. Money records are immutable facts plus append-only corrections.
@@ -55,14 +58,23 @@ Jaspen will use the following boundaries:
    from admin identity, entitlement, funding, and data access.
 8. **Communication Outbox** owns notification delivery state. Communications
    describe authoritative transitions but never cause or substitute for them.
+9. **Pricing Policy Authority** owns immutable, effective-dated provider-rate,
+   model, credit-conversion, and commercial-policy versions. An AI operation
+   binds its pricing version when authorized; later price changes cannot alter
+   it.
+10. **Capacity Policy Authority** owns short-term usage authorization,
+   concurrency, tier priority, provider-pressure inputs, and abuse controls.
+   It is provider-independent and does not grant, consume, or replace credits.
 
 ### Invariants
 
 - Customer available credit is never negative.
 - Recurring credits never roll over.
-- Every credit belongs to exactly one billing account owner, funding source,
-  funded period or non-expiring purchase lot, and originating evidence record.
-- Personal, organization, purchased, promotional, trial, internal, and
+- Every credit belongs to exactly one organization billing account, funding
+  source, funded period or non-expiring purchase lot, and originating evidence
+  record. Optional member attribution or member-limited eligibility does not
+  create a personal billing account.
+- Subscription, purchased, promotional, trial, internal, legacy, and
   Enterprise funding never merge into an unattributed balance.
 - A read cannot create an account, organization, period, lot, ledger entry,
   entitlement, reset, restriction, or schedule.
@@ -81,15 +93,28 @@ Jaspen will use the following boundaries:
 - Capabilities, data access, admin authority, and funding are independent.
 - Stripe event arrival order never overrides effective-time and cumulative-
   amount rules.
+- Credit authorization and short-term capacity authorization are independent:
+  passing one never implies passing the other. A capacity denial creates no
+  credit entry.
+- Provider fallback retains the original operation, capacity authorization,
+  reservation, and pricing version; it never resets accounting or creates a
+  second customer charge.
 
 ### Approved business semantics
+
+- Every customer is an organization. Onboarding explicitly creates the
+  organization, membership, billing account, and billing roles as commands;
+  none is lazily created by an authentication or account read. Membership and
+  billing authority are separate permissions. Enterprise uses the same base
+  model with executed-contract variations.
 
 - Annual subscriptions are paid annually but receive monthly anchored funded
   periods. The anchor is the paid subscription's UTC billing anchor; month-end
   anchors clamp to the last UTC calendar day. The annual payment funds those
   periods, but no future monthly lot becomes spendable before its period opens.
-- Free receives 300 credits per month from the immutable account-creation UTC
-  anchor, with no rollover.
+- Free receives its configured monthly allowance from the immutable
+  organization-account creation UTC anchor, with no rollover. The architecture
+  does not hard-code a commercial quantity.
 - A Free-to-paid successful payment starts a new full paid period. A paid
   upgrade keeps the existing anchor and grants only the deterministic,
   integer-floored UTC proration after payment succeeds.
@@ -122,6 +147,22 @@ Jaspen will use the following boundaries:
 - Mixed invoices are attributed by line. Subscription dispute attribution is
   proportional to subscription principal only and excludes taxes, fees, and
   unrelated lines.
+- `Usage` is the account-management concept, `Credits` are measurable units,
+  and `Thinking Power` is marketing language. The target navigation is
+  **Usage & Billing**. The existing upper-right **BALANCE** indicator and hover
+  behavior remain the only persistent usage widget.
+- One automatic low-credit warning occurs at a configurable 20% remaining per
+  recurring credit period. The first release has no customer-defined alerts or
+  spending limits.
+- A material pricing-policy change that changes customer credit consumption is
+  effective-dated, announced to affected customers in advance with its impact,
+  and evidenced by the outbox. It is never retroactive and never reprices an
+  in-progress operation. A provider change absorbed by Jaspen does not by
+  itself create a customer-notification obligation.
+- Short-term capacity is a replenishing allowance independent of credits.
+  Higher tiers are eligible for greater capacity, concurrency, and preferential
+  service, subject to provider availability and universal safety/abuse rules.
+  No numerical capacity values are approved by this ADR.
 
 ### Consequences
 
@@ -158,6 +199,12 @@ Costs and constraints:
   facts have different lifecycles, owners, and reversal semantics.
 - **Permanent compatibility synchronization.** Rejected because it creates
   hidden dual writers. Compatibility projections must be read-only and sunset.
+- **Separate personal and organization billing stacks.** Rejected because every
+  customer account is an organization; member attribution belongs inside an
+  organization-owned account.
+- **Use credits as a capacity throttle.** Rejected because monthly purchasing
+  power, abuse prevention, concurrency, and scarce-provider capacity have
+  different replenishment and denial semantics.
 
 ## D05 Target service-boundary diagram
 
@@ -198,6 +245,10 @@ Costs and constraints:
 
  Risk Restriction Authority is an independent scoped gate consulted by
  capability and operation authorization. It does not rewrite any box above.
+
+ Pricing Policy is consulted before reservation and is bound to the operation.
+ Capacity Policy is consulted before provider execution. A denial returns a
+ retry time and leaves the ledger unchanged.
 ```
 
 ### Command ownership
@@ -211,6 +262,8 @@ Costs and constraints:
 | Change seat commitment | Entitlement Authority | authorized org admin command and occupancy check |
 | Restrict account risk | Risk Restriction Authority | authorized Jaspen admin, evidence, scope, justification, and review metadata |
 | Notify customer/admin | Communication Outbox | committed domain event |
+| Publish a pricing version | Pricing Policy Authority | approved rates/conversion, effective time, affected-customer analysis, and notification evidence when required |
+| Authorize short-term use/concurrency | Capacity Policy Authority | organization, member, entitlement tier, operation class, policy version, window, and abuse/risk decision |
 
 ## D03 Authoritative-vs-derived field dictionary
 
@@ -221,15 +274,18 @@ only after this ADR is reviewed.
 
 | Entity | Field | Meaning |
 |---|---|---|
-| Billing account | `id`, `owner_type`, `owner_id` | Explicit personal or organization payer; immutable ownership except audited transfer |
+| Organization | `id`, `created_at`, `status` | Universal customer-account identity; one-member accounts are still organizations |
+| Billing account | `id`, `organization_id` | Explicit organization payer relationship; never inferred from active UI context |
 | Billing account | `processor_customer_id`, `currency`, `status` | Processor identity and account lifecycle, not capabilities |
+| Billing role grant | `organization_id`, `member_id`, `permission_set`, `effective_interval` | Billing authority separate from membership and subscription tier |
 | Financial transaction | `kind`, `external_reference`, `effective_at`, `currency` | Immutable invoice/payment/refund/dispute/recovery fact |
 | Financial line | `source_type`, `source_id`, `principal`, `tax`, `fee`, `discount` | Exact mixed-invoice attribution in minor currency units |
 | Entitlement definition | `key`, `capability_set`, `funding_policy` | Versioned approved commercial definition |
 | Entitlement instance | `billing_account_id`, `definition_key`, `state`, `starts_at`, `ends_at` | Effective capability grant; separate from money and balance |
 | Contract | `organization_id`, `executed_reference`, `effective_interval`, `terms_version` | Enterprise authority; never inferred from plan text |
 | Credit period | `billing_account_id`, `anchor_at`, `starts_at`, `ends_at`, `status` | One funded recurring interval |
-| Credit lot | `owner`, `source_type`, `source_id`, `original_amount`, `available_at`, `expires_at` | Funding-specific, immutable origin and limit |
+| Credit lot | `billing_account_id`, `source_type`, `source_id`, `original_amount`, `available_at`, `expires_at` | Organization-owned, funding-specific, immutable origin and limit |
+| Credit lot | `member_attribution_id`, `eligibility_scope` | Optional attribution/limited use inside the organization; never a separate payer |
 | Ledger entry | `lot_id`, `entry_type`, `amount`, `effective_at`, `idempotency_key` | Append-only signed movement; correction uses another entry |
 | Ledger entry | `operation_id`, `financial_line_id`, `related_entry_id`, `metadata` | Traceability, never mutable balance state |
 | AI operation | `id`, `idempotency_key`, `request_fingerprint`, `state` | Exactly-one operation lifecycle |
@@ -239,6 +295,9 @@ only after this ADR is reviewed.
 | Risk restriction | `scope`, `evidence`, `justification`, `actor`, `effective_at`, `review_at`, `release_path` | Explicit, proportionate permissioned restriction |
 | External event | `provider`, `event_id`, `object_id`, `object_version/effective_at`, `payload_digest`, `state` | Inbox identity and ordering evidence |
 | Outbox message | `domain_event_id`, `template_key`, `recipient`, `dedupe_key`, `delivery_state` | Non-authoritative communication delivery |
+| Pricing policy version | `version`, `effective_at`, `provider_rate_version`, `credit_conversion_version`, `customer_impact` | Immutable authorization-time pricing semantics |
+| Capacity policy version | `version`, `effective_at`, `tier_rules`, `window_rules`, `concurrency_rules` | Provider-independent short-term resource policy; numeric values require later approval |
+| Capacity authorization | `organization_id`, `member_id`, `operation_id`, `policy_version`, `state`, `available_again_at` | Temporary permission/denial; never a credit movement |
 
 ### Derived target fields
 
@@ -257,6 +316,9 @@ only after this ADR is reviewed.
 | `persistent_credits` | Available non-expiring lots by owner/source | sum of `PersistentCreditGrant.remaining_amount` |
 | `billing_interval` | Effective subscription/contract terms | live Stripe price/metadata |
 | `access_restricted` | Scoped capability decision with reason | status Boolean |
+| `next_payment_at` | Subscription/contract schedule projection | live Stripe subscription/invoice fields |
+| `pricing_policy_version` | Version bound to an authorized operation | governance/audit metadata |
+| `capacity_remaining` / `available_again_at` | Capacity-policy counters/authorization | `/api/v1/ai-agent/usage/daily` fields and `Retry-After` |
 
 ### Current fields that must not remain authoritative
 

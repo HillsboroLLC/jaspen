@@ -1,6 +1,6 @@
 # Billing Architecture Phase 1
 
-Status: **Proposed for review; no implementation authorized**
+Status: **Reconciled and ready for founder architecture approval; no implementation authorized**
 
 Base: `origin/main` at `88684284a33836106cad639d36e191271109c2c7`
 
@@ -19,8 +19,12 @@ represented and changed in more than one place, while refunds, disputes,
 dunning, scheduled changes, and seats do not have one cumulative lifecycle
 owner.
 
-The target architecture replaces that overlap with four deliberately separate
-authorities:
+The target architecture starts with one non-negotiable account rule: every
+customer is an organization, whether it has one member or 1,500. Each has an
+explicit organization billing account and separate billing-role permissions.
+Active UI organization selection never chooses the payer or credit owner.
+
+It replaces current overlap with deliberately separate authorities:
 
 1. a financial transaction authority for money and Stripe evidence;
 2. an entitlement authority for capabilities, plans, contracts, and seats;
@@ -29,22 +33,32 @@ authorities:
 4. an AI-operation authority that binds one usable result to one reservation
    and settlement without becoming a balance store.
 
+Effective-dated pricing policy binds provider rates and customer-credit
+conversion at operation authorization. A separate provider-independent
+capacity policy governs short-term windows, concurrency, tier preference,
+provider pressure, and abuse. Passing credits never implies passing capacity,
+and a capacity denial never consumes credits.
+
 Read models project those authorities. Authentication, billing status,
 organization resolution, and AI preflight become pure reads. Stripe remains an
 external payment processor and evidence source, not Jaspen's internal state
 machine. Customer communications are emitted from an audited outbox and never
 decide financial, entitlement, or credit state.
 
-The replacement preserves customer money, funded credits, personal and
-organization ownership, saved decisions and plans, plan capabilities through
-valid paid periods, credit-pack value, promotional value, audit evidence, and
-the regression intent of PR #27. It does not preserve accidental reset-on-read,
-negative balances, recurring rollover, account-wide dispute penalties, direct
-balance edits, or duplicated compatibility state as authorities.
+The replacement preserves customer money, funded credits, source/member
+attribution inside organization-owned accounts, saved decisions and plans,
+plan capabilities through valid paid periods, credit-pack value, promotional
+value, audit evidence, and the regression intent of PR #27. It does not
+preserve accidental reset-on-read, negative balances, recurring rollover,
+account-wide dispute penalties, direct balance edits, or duplicated
+compatibility state as authorities.
 
-Phase 2 is **not ready to begin**. This ADR must be reviewed, and the stop-class
-conflicts in [current-state-inventory.md](current-state-inventory.md#d20-newly-discovered-conflicts-and-stop-register)
-must be explicitly accepted as consolidation work. Phase 1 has not changed
+Phase 1 is ready for founder architecture approval. Phase 2 is **not
+authorized**. After approval, only the additive-foundation work in authoritative
+phases 2–5 should be considered for a separate, reversible authorization; no
+backfill or cutover is bundled. The stop-class conflicts in
+[current-state-inventory.md](current-state-inventory.md#d20-newly-discovered-conflicts-and-stop-register)
+remain implementation work. Phase 1 has not changed
 application behavior, schema, migrations, production data, deployment state,
 or PR #27.
 
@@ -72,18 +86,46 @@ or PR #27.
 | D18 | Phase dependency/cutover map | [traceability-and-cutover.md](traceability-and-cutover.md#d18-phase-dependency-and-cutover-map) |
 | D19 | PR #27 supersession analysis | [current-state-inventory.md](current-state-inventory.md#d19-pr-27-supersession-analysis) |
 | D20 | Conflict/stop register | [current-state-inventory.md](current-state-inventory.md#d20-newly-discovered-conflicts-and-stop-register) |
+| D21 | Pricing-policy lifecycle | [lifecycle-specification.md](lifecycle-specification.md#d21-pricing-policy-lifecycle) |
+| D22 | Short-term capacity lifecycle | [lifecycle-specification.md](lifecycle-specification.md#d22-short-term-capacity-lifecycle) |
+| D23 | Usage & Billing projection and interruption behavior | [lifecycle-specification.md](lifecycle-specification.md#d23-usage--billing-projection-and-interruption-behavior) |
+| R01 | Architecture reconciliation report | [architecture-reconciliation-report.md](architecture-reconciliation-report.md) |
+| R02 | Pricing and capacity verification report | [pricing-and-capacity-verification.md](pricing-and-capacity-verification.md) |
 
 ## Acceptance assessment
 
-The design assigns one target authority to every approved rule, maps all 14
-approved policies and lifecycle confirmations to components and tests, defines
-funding ownership and deterministic precedence, and provides sunset conditions
-for compatibility projections. The migration specification is balance
-preserving and explicitly rejects silent data repair.
+The design assigns one target authority to every approved rule, maps approved
+policies and lifecycle confirmations to components and tests, defines universal
+organization ownership and deterministic precedence, and provides sunset
+conditions for compatibility projections. The migration specification is
+balance preserving and explicitly rejects silent data repair.
 
-Phase 1 documentation is complete for review. Acceptance remains pending until
-the ADR and stop register receive human review. No claim is made that the
-current implementation satisfies the target architecture.
+All 25 STOP items are business-policy approved and architecture documented.
+Phase 1 documentation is complete for founder review. No claim is made that the
+current implementation satisfies the target architecture, that existing tests
+cover the target, that production pricing is known, or that cutover is
+authorized.
+
+## Approved customer experience
+
+- Navigation: **Usage & Billing**.
+- Units: **Credits**; marketing language: **Thinking Power**.
+- Retain the upper-right **BALANCE** indicator and hover; do not add a second
+  persistent meter.
+- Show available/used/recurring/purchased credits, usage/session history,
+  subscription term and interval, next credit refresh, and next payment.
+- Warn once per applicable credit period at a configurable 20% remaining.
+- Explain capacity restriction separately from credit exhaustion, preserve the
+  session, state when capacity returns, and charge nothing for unusable work.
+
+## Remaining decisions and evidence limits
+
+No founder decision is required to approve the architectural boundaries.
+Later approvals must select numeric capacity/concurrency/priority thresholds
+from authorized usage/provider evidence and approve notification wording,
+channels, lead time, and any terminal dunning timing. Repository defaults are
+not adopted as those policies. Production modes, rates/configuration, and
+realized margin were not accessed or verified.
 
 ## Scope guardrails
 
@@ -93,3 +135,6 @@ current implementation satisfies the target architecture.
 - No paid AI call was made.
 - PR #27 remains open and unmodified.
 - Exact communication wording remains a later review item.
+- No numerical short-term capacity limit is approved.
+- The original 18 phases are authoritative; Phase 2A–2G are cross-referenced
+  program gates, not a replacement roadmap.

@@ -1,6 +1,7 @@
 # Current Billing State, Retirement, and Conflict Inventory
 
-Inventory base: `88684284a33836106cad639d36e191271109c2c7`.
+Inventory base: `88684284a33836106cad639d36e191271109c2c7`, with Phase 1
+documentation reconciliation performed on `7d2e2510`.
 Line numbers are intentionally omitted because Phase 2 will change them;
 functions and symbols are the stable trace keys.
 
@@ -94,8 +95,72 @@ functions and symbols are the stable trace keys.
 | `test_founder_offer_infrastructure.py` | idempotent offer grants, entitlement separation, renew/reset survival, source consumption/release |
 | `test_limited_time_300k_refund_and_receipt.py` | refund recognition, webhook reversal, idempotent receipt, failed-send independence |
 | `test_payment_recording.py` | paid/comped receipts, duplicate invoice idempotency, interval and pack recording |
-| `test_single_device_and_personal_credits.py` | personal ownership and team-pool separation |
+| `test_single_device_and_personal_credits.py` | legacy member-attributed value and team-pool separation; useful preservation intent, not approval of personal billing accounts |
 | `test_ai_governance.py` | operation idempotency, validate-before-settle, exact release/reversal, batch allocation |
+| `test_ai_economics.py` | provider-rate arithmetic and reported provider cost |
+| `test_shared_ai_rate_limits.py` | shared hourly/daily request counters, Redis cross-worker behavior, per-user isolation, burst limits, and no charge when blocked |
+
+### Verified pricing and AI execution controls
+
+- `billing_config.py` hard-codes Claude and Gemini catalog-rate tables. Unknown
+  Claude models use a Sonnet default, unknown Gemini models use a Pro default,
+  and any other provider currently returns zero cost. No OpenAI customer path
+  is priced.
+- Legacy conversion uses provider cost, `JASPEN_MARGIN_MULTIPLIER` (default
+  `3.0`), and plan budgets overridable by `JASPEN_BUDGET_*`. Provider rate
+  tables themselves have no environment override and require a code change.
+- The newer governance policy is separately versioned as
+  `provider-cost-3600-v1`, mapping provider cost to 3,600 public credits per
+  provider dollar (1,000 internal units per public credit) with ceiling
+  rounding. `JASPEN_CREDIT_POLICY_MODE` defaults to `shadow`; therefore code
+  presence is not proof of production enforcement.
+- No operational automatic provider-rate ingestion/update job was found. The
+  code comment prescribes manual upward updates and sticky-on-decrease behavior.
+  There is no effective-dated customer pricing table or notification evidence.
+- `ai_runtime.py`, `ai_audit.py`, and governed routes provide useful operation,
+  provider-attempt, idempotency, validation, cost, and settlement evidence.
+  Failed attempts are recorded/absorbed and a successful visible result is
+  intended to settle once. The streaming tool boundary is a documented special
+  path and must remain in coverage.
+- Legacy preflight estimation can fall back to token-count charging without a
+  full provider/model rate calculation. Current reservations and transient
+  source allocations therefore do not prove exact worst-case coverage across
+  context growth, tools, retries, or fallback.
+- Admin reporting uses both `AIOperation` attempt costs and recalculated
+  `UsageEvent` costs. This is valuable telemetry, but reporting is not a
+  ledger/profit authority and realized gross margin cannot be verified here.
+- Production environment values were not accessed. Code defaults and example
+  configuration are evidence only; actual production multiplier, modes,
+  budgets, model IDs, and provider tiers remain unverified.
+
+See [pricing-and-capacity-verification.md](pricing-and-capacity-verification.md)
+for execution-path and evidence detail.
+
+### Verified capacity, fallback, and abuse controls
+
+- AI conversation routes use fixed-window, per-user hourly/daily request
+  counters plus route-specific minute bursts. Current code contains numeric
+  plan defaults and a founder override; these are implementation facts, not the
+  approved future capacity policy.
+- Production startup requires shared Redis-backed rate-limit storage and fails
+  closed if it is missing or unavailable. Non-production defaults to memory.
+- `/api/v1/ai-agent/usage/daily` exposes the same counters, but the current
+  frontend loads it only for Free users. A global 429 response supplies
+  `Retry-After`, but incorrectly suggests buying credits can provide more
+  capacity.
+- The limiter key is `user:<id>`. Tests explicitly show members of the same
+  account have independent quotas, so the present implementation cannot prevent
+  a large organization from multiplying capacity by member count and is not an
+  organization-wide fairness control.
+- Claude/Gemini routing, retryable-error classification, provider-attempt
+  telemetry, and fallback tests exist. Some processing turns may prefer Gemini;
+  Business/Enterprise content blocks free-tier Gemini. OpenAI is not a current
+  customer provider.
+- Bounded feature-level parallelism and tool-loop guards exist, but no unified
+  tier-aware concurrency allocator, priority queue, organization capacity
+  budget, provider-pressure controller, or approved abuse policy was found.
+- Existing tests prove a blocked request occurs before provider execution and
+  credit deduction. Purchasing credits does not reset limiter counters.
 
 ## D15 Legacy retirement map
 
@@ -158,37 +223,44 @@ to supersede it.
 
 ## D20 Newly discovered conflicts and stop register
 
-Every item below is a stop condition for the affected Phase 2 area. Phase 1
-documents the root cause and approved consolidation; it does not patch it.
+All 25 business policies are approved. “Architecture documented” below is not
+an implementation, test, or cutover claim. Evidence status uses `verified` for
+code inspected in this review, `partial` where useful behavior exists but not
+the target authority, and `absent` where the target primitive was not found.
+No genuine founder decision remains for these items; implementation choices,
+notification copy, numeric capacity thresholds, and terminal dunning timing are
+later product/engineering approvals, not reopened policy questions.
 
-| ID | Exact conflict/root cause | Affected code | Required consolidation before implementation |
-|---|---|---|---|
-| STOP-01 | Reads allocate/reset/synchronize billing state | billing pool resolvers, status, auth, AI/strategy bootstrap, org resolution | separate explicit commands from pure projections; remove runtime bootstrap |
-| STOP-02 | Four balance authorities can diverge | user counter, user JSON, org JSON, persistent grant counter | one append-only ledger plus rebuildable projections |
-| STOP-03 | Soft-stop grace permits negative recurring balance | `SOFT_STOP_GRACE_MULTIPLIER`, `consume_credits` | hard zero floor; insufficient reservation fails without debit |
-| STOP-04 | Dunning removes paid capabilities and caps funded credits | `RESTRICTED_SUBSCRIPTION_STATUSES`, `effective_plan_key`, invoice-failed webhook | preserve effective entitlement/lot periods; withhold only unfunded future allocations |
-| STOP-05 | Free and recurring anchors drift to first read/reset time | pool resolvers and `credits_reset_at` | immutable account/subscription UTC anchor and deterministic periods |
-| STOP-06 | Annual payment currently maps to invoice-time full reset, not monthly allocations | invoice success handler and reset helper | annual funding schedule with monthly anchored lots |
-| STOP-07 | Paid upgrade changes plan without authoritative prorated funded lot | `modify_subscription(... reset_credits=False)` | payment-confirmed, integer-floored UTC proration entry; Free-to-paid full period |
-| STOP-08 | Schedule lives in mutable Stripe metadata and price is changed before effective downgrade | modify/status/webhook/clear routes | local audited scheduled-change owner and deterministic precedence |
-| STOP-09 | Refund/dispute authority is non-cumulative and irreversible on dispute open | `charge.refunded`, `charge.dispute.created`, reverse helpers | cumulative financial lines plus opened/pending/won/lost hold/release/reverse/recovery machine |
-| STOP-10 | Partial refunds reverse all unused lot value | persistent and 300K reversal helpers | proportional cumulative principal ratio excluding tax/fee |
-| STOP-11 | Payment table cannot represent refund, dispute, recovery, or mixed lines | `Payment`, `_record_payment` | financial transaction and line authority |
-| STOP-12 | Admin direct set/adjust bypasses source ownership and ledger | admin credit/plan/recovery routes | explicit internal funding/adjustment commands with actor/evidence |
-| STOP-13 | Internal admin access is implemented by impersonating Business and resetting funding | auth/status admin enforcement | separate admin authority, capability, data access, and internal funding |
-| STOP-14 | Organization payer is inferred from owner user and active context | user Stripe IDs, org plan sync, active org pool | explicit billing account owned by user or organization |
-| STOP-15 | Enterprise is a nullable-credit sales plan without executed-contract authority | `enterprise_custom`, sales-only checks | organization-owned executed contract and evidence-backed migration |
-| STOP-16 | Seat commitment, occupancy, and plan policy overlap; no reduction state machine | org max fields, seat endpoint, team membership | independent commitment records and blocked reduction workflow |
-| STOP-17 | Event dedupe lacks object ordering/cumulative version semantics | `StripeWebhookEvent` and webhook dispatcher | inbox with payload digest, object/effective ordering, cumulative recomputation |
-| STOP-18 | AI release relies on transient ORM attributes and a combined counter | consume/release helpers, AI reservation functions | persisted reservation allocations and exact entry-linked release/settlement |
-| STOP-19 | Inline receipt email has no durable outbox; send behavior is coupled to fulfillment flow | limited-time email helpers | post-commit domain event and idempotent outbox delivery |
-| STOP-20 | Compatibility aliases and frontend local balance patches can hide drift | founder aliases, status aliases, `JaspenChat` balance patching | versioned projections with explicit sunset conditions |
-| STOP-21 | Consumption ordering cannot compare expiry because recurring value is not represented as lots | recurring JSON meters versus persistent grants | all funding represented as source-specific lots; expiration-first ordering |
-| STOP-22 | Current source labels include legacy offer names and no general trial/promo/internal taxonomy | founder/300K aliases and grant sources | approved source taxonomy; evidence-backed `legacy_unattributed` only when necessary |
-| STOP-23 | No risk-restriction authority exists; billing status is used as an implicit restriction | entitlement and collaboration gates | permissioned scoped restriction records with evidence/review/release |
-| STOP-24 | Cancellation, upgrade, downgrade, and seat changes lack one shared precedence authority | several Stripe mutation endpoints and webhook | entitlement schedule state machines in the lifecycle specification |
-| STOP-25 | Requesting Free through checkout immediately rewrites plan/credits and clears the local subscription ID instead of scheduling/cancelling the paid term | `create_checkout_session` Free branch | route Free transitions through the cancellation/scheduled-change authority |
+| ID | Original problem / root cause | Approved policy and architectural resolution | Existing implementation evidence | Remaining work and required tests | Dependencies | Decision remains? |
+|---|---|---|---|---|---|---|
+| STOP-01 | Reads allocate/reset/sync through pool resolvers, auth, status, AI bootstrap, and org resolution. | Reads are pure; onboarding, allocation, and projection are explicit commands/services. | **Verified conflict**; PR #27 covers only part. | Remove runtime bootstrap; T-READ repeat/auth/status/preflight/org no-write tests. | Schema, commands, projections. | No. |
+| STOP-02 | User counter, user JSON, org JSON, and grant counter can diverge. | Append-only ledger is sole authority; all balances rebuildable. | **Verified conflict**; persistent transaction log is partial. | Add lots/entries/projector; conservation, replay, concurrent-spend tests. | Ledger primitives. | No. |
+| STOP-03 | Soft grace can make recurring balance negative. | Hard zero; reserve enough before work; fail/release without debit. | **Verified conflict** (`SOFT_STOP_GRACE_MULTIPLIER`). | Atomic reservations; zero-floor/concurrency/insufficient-funds tests. | STOP-02, AI operations. | No. |
+| STOP-04 | Dunning caps funded credits and can remove paid capabilities. | Preserve funded benefits/credits; withhold only future unfunded allocations. | **Verified conflict** in status/webhook logic. | Separate financial and entitlement periods; failure/later-success tests. | Financial lines, periods. | No; terminal timing still implementation approval. |
+| STOP-05 | Free/recurring anchors drift to first read/reset. | Deterministic UTC organization/subscription anniversary; reads never move it. | **Verified conflict** in resolvers/reset timestamp. | Immutable anchors; month-end/leap/late-login tests. | Org billing account, periods. | No. |
+| STOP-06 | Annual invoice can trigger full reset instead of monthly funding. | Annual payment, monthly anchored non-rollover allocations. | **Verified conflict**; interval capture exists. | Annual schedule/period allocator; duplicate webhook and 12-boundary tests. | STOP-05, financial evidence. | No. |
+| STOP-07 | Upgrade changes plan without authoritative prorated lot. | Successful payment gate; UTC integer proration; Free-to-paid full period; preserve purchases. | **Verified conflict**; checkout/webhook idempotency patterns are partial. | Funded upgrade command; failed/race/rounding/proration tests. | Financial lines, periods, registry. | No. |
+| STOP-08 | Downgrade schedule lives in mutable Stripe metadata; price timing can diverge. | Local audited schedule owns target/effective rule; price and tier change together after renewal payment. | **Verified conflict**; Stripe metadata integration is reusable only as mirror. | Schedule state machine; browse/no-op, supersede, failure, cancellation tests. | Entitlements, inbox. | No. |
+| STOP-09 | Refund/dispute handling is non-cumulative; dispute open reverses irreversibly. | Cumulative source-specific open/pending hold, won release, lost reversal, recovery. | **Verified conflict**; source-specific grant records are partial. | Case authority; duplicate/out-of-order/won/lost/reopen tests. | Financial lines, ledger. | No. |
+| STOP-10 | Partial refund can reverse all unused lot value. | Proportional cumulative refundable principal excluding tax/fee; no negative. | **Verified conflict** in reversal helpers. | Ratio/delta command; partial/cumulative/bonus/consumed tests. | STOP-09, line attribution. | No. |
+| STOP-11 | `Payment` represents positive receipts, not full money lifecycle. | Immutable transactions and lines for payment/refund/dispute/recovery/mixed invoices. | **Verified conflict**; receipt idempotency is partial. | Add authority/backfill; exact minor-unit/mixed-line tests. | Inbox/schema. | No. |
+| STOP-12 | Admin set/adjust directly edits plan/counter. | Permissioned adjustment/funding commands append entries with actor, reason, evidence. | **Verified conflict**; audit helpers partial. | Remove direct writes; allow/deny/source/replay tests. | Ledger, admin permissions. | No. |
+| STOP-13 | Admin access impersonates Business and resets funding on reads. | Admin authority, capability, data access, and funding are independent. | **Verified conflict**; PR #27 regression intent partial. | Internal entitlement/funding commands; pure-read and visibility tests. | STOP-01/02/12. | No. |
+| STOP-14 | Payer/credits inferred from owner user and active org; prior draft proposed personal vs org billing. | **Every customer is an organization** with explicit billing account; billing roles separate membership; active selection irrelevant. | **Verified conflict** in user Stripe IDs, org sync/pools. | Org-first onboarding/backfill/role checks; single-member, multi-member, org-switch isolation tests. | Org identity, migration. | No. |
+| STOP-15 | Enterprise is a nullable-credit label without executed-contract authority. | Same org foundation; executed contract versions pricing, term, credits, seats, exceptions; never assume unlimited. | **Verified conflict**; catalog sales-only marker partial. | Contract authority/migration quarantine; evidence/term/funding tests. | STOP-14, entitlements. | No. |
+| STOP-16 | Seat policy, commitment, occupancy, and overrides overlap. | Separate paid commitment from occupancy; block incompatible reduction; preserve members/work. | **Verified conflict**; seat purchase/usage tests partial. | Commitment state machine; occupancy/failure/schedule/contract tests. | Financial + entitlements. | No. |
+| STOP-17 | Webhook event dedupe lacks object ordering/cumulative semantics. | Durable inbox, digest integrity, object/effective ordering, cumulative recomputation. | **Verified conflict**; event-ID/purchase claims partial. | Dispatcher/replay; duplicate/cross-type/out-of-order/concurrent tests. | Registry, financial authority. | No. |
+| STOP-18 | AI releases rely on transient ORM source attributes and combined counter. | Persist per-lot reservation allocations; exact settle/release; usable result once; checkpoint/resume. | **Verified conflict**; governed operation/idempotency/attempt telemetry is strong partial. | Bind ledger entries/pricing/capacity; retry/fallback/tool/persistence/concurrency tests. | STOP-02/03, pricing/capacity. | No. |
+| STOP-19 | Receipt email is inline; no durable post-commit outbox. | Domain-event outbox is idempotent/retryable/audited and never reverses business success. | **Verified conflict**; test proves failed send does not reverse one offer. | General outbox worker; delivery/retry/dedupe tests for required events. | Domain events. | No. |
+| STOP-20 | Compatibility aliases and frontend balance patches can hide drift. | Versioned pure projections with explicit retirement; BALANCE reads ledger projection. | **Verified conflict** in status aliases/`JaspenChat`. | Projector versions/consumer migration; parity/staleness/retirement tests. | STOP-02, reader cutover. | No. |
+| STOP-21 | Recurring JSON value and persistent grants cannot share expiry ordering. | All sources are lots; earliest expiry first, deterministic tie rules, purchases protected. | **Verified conflict**; monthly-before-founder test preserves intent. | Unified allocation engine; expiry/hold/tie/source tests. | Ledger/periods. | No. |
+| STOP-22 | Legacy offer labels do not form a general source taxonomy. | Subscription, purchase, promo, trial, internal, legitimate legacy sources; unattributed only with evidence. | **Verified conflict**; offer/grant source records partial. | Versioned sources/offers/backfill review; source-isolation/migration tests. | Ledger/migration. | No. |
+| STOP-23 | No separate risk-restriction authority; billing status doubles as restriction. | Scoped, permissioned, evidenced, reviewable restrictions independent of funding/data/admin. | **Absent** as target authority. | Add records/permissions/release; scope/authority/review/no-credit-impact tests. | Entitlements/admin. | No; numeric triggers later. |
+| STOP-24 | Upgrade/downgrade/cancel/seat commands lack one precedence owner. | Audited schedule state machine with cancellation > paid upgrade > confirmed supersede > existing schedule. | **Verified conflict** across endpoints/webhooks. | Central command/state machine; race/precedence/history tests. | STOP-08/16/17. | No. |
+| STOP-25 | Choosing Free can immediately rewrite paid plan/credits and clear subscription ID. | Paid-to-Free is a scheduled/cancellation transition preserving funded term and work. | **Verified conflict** in checkout Free branch. | Route through schedule authority; term/funding/data-preservation tests. | STOP-04/08/24. | No. |
 
-Recommended action: approve ADR-0001 and these consolidation boundaries before
-authorizing Phase 2. Do not implement any STOP item as a local fix or permanent
-compatibility layer.
+Status summary: all 25 are **business policy approved** and **architecture
+documented**. Existing implementation is partial or conflicting for every
+item; none is cutover-authorized. Test execution status for this reconciliation
+is recorded in the supporting verification report and must not be inferred
+from test-file existence.

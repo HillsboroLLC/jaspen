@@ -8,19 +8,17 @@ boundary is named.
 
 ### Funding ownership
 
-Every lot has exactly one owner:
+Every lot is owned by one explicit organization billing account. Every
+customer, including a single person, belongs to an organization; `personal`
+and `organization` are not competing billing-owner types.
 
-- `personal:<user_id>` for Free, personal subscription, personal purchase,
-  personal promotion, or personal trial value;
-- `organization:<organization_id>` for organization subscriptions, purchases,
-  promotions, or Enterprise contracts; or
-- `internal:<account_id>` for explicitly approved internal funding.
-
-Active organization selection never changes a lot's owner. An operation names
-its billing account before reservation. Organization members can spend only
-organization lots authorized by their membership/capability; personal lots are
-not pooled. Moving between plans or organizations never deletes or transfers a
-personal lot.
+A lot may carry `member_attribution_id` and an eligibility scope when approved
+commercial terms make value usable only by a named member. That preserves
+source ownership and prevents teammate spending without inventing a second
+billing system. Active organization selection never changes owner or
+eligibility. An operation resolves its billing account from its durable
+organization/work context before reservation, never from a UI picker alone.
+Moving between organizations never transfers lots.
 
 ### Source taxonomy
 
@@ -109,6 +107,15 @@ requested -> reserved -> provider_running -> validated -> settled
 - If a result that required persistence cannot be retained, its settlement is
   compensated exactly once and Jaspen absorbs provider cost.
 - Operation idempotent replay returns the prior result and makes no new entry.
+- Authorization binds an immutable pricing-policy version. Provider retry,
+  fallback, context expansion, and tool calls remain components of the same
+  customer-visible operation. Failed attempts are reported as Jaspen-absorbed
+  cost unless an approved future policy explicitly says otherwise.
+- Capacity authorization is evaluated independently after a sufficient credit
+  reservation and before chargeable provider execution. A capacity denial
+  releases any newly created reservation atomically, records no settlement,
+  returns `available_again_at`, and preserves the session at its last completed
+  step.
 
 ## D07 Entitlement and credit-period state machines
 
@@ -155,7 +162,7 @@ Rules:
 
 ### Anchors
 
-- Free anchor: immutable account `created_at` in UTC.
+- Free anchor: immutable organization account `created_at` in UTC.
 - Monthly paid anchor: successful Free-to-paid activation in UTC; subsequent
   boundaries advance calendar months, clamping month-end day.
 - Annual paid anchor: successful annual activation in UTC. Payment covers the
@@ -216,6 +223,10 @@ the pending schedule.
 | Free -> paid | success | target active immediately | full new paid-period lot | new paid anchor |
 | paid -> higher paid | success | target active immediately | floored proration lot | unchanged |
 | any upgrade | failed/pending | unchanged | no grant | unchanged |
+
+Browser confirmation and webhook delivery share financial and allocation
+idempotency keys. They may confirm the same successful payment, but can create
+only one entitlement transition and one funded lot.
 
 ### Downgrade
 
@@ -388,6 +399,10 @@ Authorities emit committed domain events such as:
 - `seat_reduction_blocked`, `seat_change_approaching`, `seat_change_applied`;
 - `refund_recorded`, `dispute_opened`, `dispute_won`, `dispute_lost`;
 - `risk_restriction_applied/reviewed/released`.
+- `low_credit_threshold_crossed`, `credits_exhausted`,
+  `capacity_temporarily_restricted`, `capacity_restored`;
+- `pricing_policy_change_announced` when customer credit consumption will
+  change, including policy version, effective date, and impact class.
 
 The same transaction inserts an outbox row with domain event ID, template key,
 recipient account, locale, data references, and dedupe key. A worker delivers
@@ -398,6 +413,14 @@ Communications must be clear, timely, event-driven, idempotent, auditable, and
 non-authoritative. Exact wording, channels, and timing thresholds are later
 review items. The outbox stores references/minimal facts, not a shadow balance
 or plan state.
+
+The low-credit event is emitted at the configured 20% threshold at most once
+per applicable recurring credit period. It states remaining credits, the next
+refresh, and permitted purchase options. Customers do not configure custom
+alerts in the initial release. Capacity messages are distinct from credit
+exhaustion and disclose the next-available time without sensitive detection
+rules. Delivery failure never changes the capacity, credit, or financial
+decision.
 
 ## D13 Idempotency-key registry
 
@@ -423,6 +446,9 @@ or plan state.
 | Seat command | `seat:<organization_id>:<client_command_id>` |
 | Risk decision | `risk:<restriction_id>:<decision_version>` |
 | Outbox delivery | `message:<domain_event_id>:<template_version>:<recipient>:<channel>` |
+| Pricing policy publication | `pricing:<policy_version>:<effective_at>` |
+| Pricing change notice | `pricing-notice:<policy_version>:<billing_account_id>:<channel>` |
+| Capacity authorization | `capacity:<policy_version>:<operation_id>:<window_key>` |
 
 Keys are globally unique within their command namespace. Reuse with a different
 fingerprint is a conflict, never a replay. Random UUIDs are not acceptable as
@@ -456,3 +482,83 @@ business idempotency keys when a stable external or operation identity exists.
     event complete merely because the HTTP handler caught the exception.
 12. Manual replay uses the same registry and produces no new effect unless
     authoritative cumulative state changed.
+
+## D21 Pricing-policy lifecycle
+
+Pricing is versioned separately from provider execution and from the ledger.
+Each immutable pricing policy names:
+
+- exact provider/model rate-table versions and units;
+- customer-credit conversion and rounding rules;
+- plan-budget and purchased-pack commercial versions;
+- effective UTC instant and superseded version;
+- whether the change affects customer credit consumption; and
+- approval and notification evidence when customer impact exists.
+
+```text
+draft -> approved -> announced_if_required -> effective -> superseded
+```
+
+An operation binds the effective version before reserving credits and retains
+it through retries, fallback, tools, validation, settlement, and replay. A new
+version cannot reprice completed or in-progress operations. Rate ingestion may
+be manual or automated in a future implementation, but publication is always
+validated, approved, auditable, and fail-closed for an unknown billable model.
+No Phase 1 document changes current prices, multipliers, plan allowances, or
+pack economics.
+
+## D22 Short-term capacity lifecycle
+
+Capacity is a provider-independent authorization service, not a credit lot.
+Its policy dimensions may include organization and member windows, operation
+weight, permitted concurrency, entitlement tier, provider health, queue
+priority, abuse signals, and safety restrictions. Numeric thresholds are not
+approved in Phase 1.
+
+```text
+requested -> authorized -> running -> completed
+         \-> delayed/denied_until -> eligible_for_retry
+authorized -> expired_before_start
+running -> interrupted -> resumable_from_last_completed_step
+```
+
+Rules:
+
+- Evaluate organization-wide fairness as well as per-member monopolization.
+- Higher tiers are eligible for more short-term capacity, concurrency, and
+  preferential queueing, but no tier receives a promise beyond provider supply.
+- Purchasing credits cannot bypass capacity or abuse restrictions.
+- Claude-to-Gemini fallback reuses the same authorization and operation. Future
+  OpenAI support uses the same interface and accounting contract.
+- Provider 429/overload signals may reduce available service but do not alter
+  customer credits or silently reset their capacity window.
+- Runaway protection bounds provider attempts, tool iterations, context growth,
+  operation duration, and total reserved exposure. Exhaustion yields a typed,
+  resumable outcome rather than uncontrolled retries.
+- Queue/retry responses include a safe `available_again_at` or retry interval;
+  details of fraud/abuse scoring remain private.
+- The policy version and authorization outcome are audit evidence, not ledger
+  entries.
+
+## D23 Usage & Billing projection and interruption behavior
+
+The pure ledger/entitlement/financial projection supplies:
+
+- tier, subscription status, and monthly/annual interval;
+- available, used, recurring, and separately purchased credits;
+- exact next credit refresh in UTC and customer-display time zone;
+- next payment date and current subscription term;
+- subscription management and permitted credit purchases;
+- overall usage history and per-session credits/activity dates; and
+- separate short-term capacity status and next-available time.
+
+The account navigation label is **Usage & Billing**. UI copy may call capacity
+`Usage`, units `Credits`, and the experience `Thinking Power`. The existing
+top-right **BALANCE** indicator and hover behavior remain; no second persistent
+meter is introduced.
+
+Credit exhaustion blocks only new unfunded chargeable work. Capacity denial
+blocks only temporarily unavailable work. Both preserve completed artifacts,
+the decision session, the pending intent, and a durable checkpoint. When access
+returns, the operation resumes from the last successfully completed step under
+a new explicit authorization; it never repeats a settled step or charge.
