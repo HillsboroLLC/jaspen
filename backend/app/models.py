@@ -769,6 +769,327 @@ class BillingRoleGrant(db.Model):
     )
 
 
+class IdempotencyRegistry(db.Model):
+    """Durable claim identity for future billing command handlers."""
+
+    __tablename__ = 'idempotency_registry'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    namespace = db.Column(db.String(64), nullable=False)
+    key = db.Column(db.String(255), nullable=False)
+    request_fingerprint = db.Column(db.String(64), nullable=False)
+    state = db.Column(db.String(24), nullable=False)
+    result_type = db.Column(db.String(64), nullable=True)
+    result_id = db.Column(db.String(255), nullable=True)
+    claimed_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    completed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    last_error_code = db.Column(db.String(120), nullable=True)
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'namespace',
+            'key',
+            name='uq_idempotency_registry_namespace_key',
+        ),
+        db.CheckConstraint(
+            "state IN ('claimed', 'completed', 'failed_retryable', 'failed_final')",
+            name='ck_idempotency_registry_state',
+        ),
+        db.CheckConstraint(
+            'length(request_fingerprint) = 64 AND '
+            'request_fingerprint = lower(request_fingerprint)',
+            name='ck_idempotency_registry_fingerprint',
+        ),
+        db.CheckConstraint(
+            '((result_type IS NULL AND result_id IS NULL) OR '
+            '(result_type IS NOT NULL AND result_id IS NOT NULL))',
+            name='ck_idempotency_registry_result_reference',
+        ),
+        db.CheckConstraint(
+            'completed_at IS NULL OR completed_at >= claimed_at',
+            name='ck_idempotency_registry_completion_time',
+        ),
+        db.CheckConstraint(
+            "state != 'completed' OR completed_at IS NOT NULL",
+            name='ck_idempotency_registry_completed_state',
+        ),
+        db.CheckConstraint(
+            "state NOT IN ('failed_retryable', 'failed_final') OR "
+            'last_error_code IS NOT NULL',
+            name='ck_idempotency_registry_failure_error',
+        ),
+        db.Index(
+            'ix_idempotency_registry_state_claimed_at',
+            'state',
+            'claimed_at',
+        ),
+        db.Index(
+            'ix_idempotency_registry_result_reference',
+            'result_type',
+            'result_id',
+            postgresql_where=db.text('result_id IS NOT NULL'),
+            sqlite_where=db.text('result_id IS NOT NULL'),
+        ),
+    )
+
+
+class PricingPolicyVersion(db.Model):
+    """Inactive versioned pricing-policy metadata."""
+
+    __tablename__ = 'pricing_policy_versions'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    version = db.Column(db.String(64), nullable=False)
+    state = db.Column(db.String(20), nullable=False)
+    effective_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    approved_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    announced_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    superseded_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    approved_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'users.id',
+            name='fk_pricing_policy_versions_approved_by_user_id',
+            ondelete='SET NULL',
+        ),
+        nullable=True,
+    )
+    supersedes_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'pricing_policy_versions.id',
+            name='fk_pricing_policy_versions_supersedes_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=True,
+    )
+    credit_conversion_version = db.Column(db.String(64), nullable=False)
+    rounding_rule = db.Column(db.String(32), nullable=False)
+    conversion_json = db.Column(db.JSON, nullable=False)
+    customer_credit_impact = db.Column(db.Boolean, nullable=False)
+    notice_required = db.Column(db.Boolean, nullable=False)
+    notice_evidence_reference = db.Column(db.String(255), nullable=True)
+
+    approved_by_user = db.relationship('User', foreign_keys=[approved_by_user_id])
+    supersedes = db.relationship('PricingPolicyVersion', remote_side=[id])
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'version',
+            name='uq_pricing_policy_versions_version',
+        ),
+        db.CheckConstraint(
+            "state IN ('draft', 'approved', 'announced', 'effective', 'superseded')",
+            name='ck_pricing_policy_versions_state',
+        ),
+        db.CheckConstraint(
+            "rounding_rule = 'ceil_whole_credit'",
+            name='ck_pricing_policy_versions_rounding_rule',
+        ),
+        db.CheckConstraint(
+            'supersedes_id IS NULL OR supersedes_id != id',
+            name='ck_pricing_policy_versions_not_self_superseding',
+        ),
+        db.CheckConstraint(
+            "state = 'draft' OR approved_at IS NOT NULL",
+            name='ck_pricing_policy_versions_approval',
+        ),
+        db.CheckConstraint(
+            "state != 'announced' OR announced_at IS NOT NULL",
+            name='ck_pricing_policy_versions_announcement',
+        ),
+        db.CheckConstraint(
+            "state NOT IN ('effective', 'superseded') OR effective_at IS NOT NULL",
+            name='ck_pricing_policy_versions_effective_time',
+        ),
+        db.CheckConstraint(
+            "state != 'superseded' OR superseded_at IS NOT NULL",
+            name='ck_pricing_policy_versions_superseded_time',
+        ),
+        db.CheckConstraint(
+            "superseded_at IS NULL OR state = 'superseded'",
+            name='ck_pricing_policy_versions_superseded_state',
+        ),
+        db.CheckConstraint(
+            "announced_at IS NULL OR state IN ('announced', 'effective', 'superseded')",
+            name='ck_pricing_policy_versions_announced_state',
+        ),
+        db.CheckConstraint(
+            "state NOT IN ('effective', 'superseded') OR NOT notice_required OR "
+            '(announced_at IS NOT NULL AND notice_evidence_reference IS NOT NULL)',
+            name='ck_pricing_policy_versions_notice_evidence',
+        ),
+        db.Index(
+            'uq_pricing_policy_versions_single_effective',
+            'state',
+            unique=True,
+            postgresql_where=db.text("state = 'effective'"),
+            sqlite_where=db.text("state = 'effective'"),
+        ),
+        db.Index(
+            'ix_pricing_policy_versions_state_effective_at',
+            'state',
+            'effective_at',
+        ),
+        db.Index(
+            'ix_pricing_policy_versions_approved_by_user_id',
+            'approved_by_user_id',
+        ),
+        db.Index(
+            'ix_pricing_policy_versions_supersedes_id',
+            'supersedes_id',
+        ),
+    )
+
+
+class ProviderRateEntry(db.Model):
+    """Exact provider/model rates belonging to an inactive pricing version."""
+
+    __tablename__ = 'provider_rate_entries'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    pricing_policy_version_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'pricing_policy_versions.id',
+            name='fk_provider_rate_entries_pricing_policy_version_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=False,
+    )
+    provider = db.Column(db.String(32), nullable=False)
+    model = db.Column(db.String(255), nullable=False)
+    currency = db.Column(db.String(3), nullable=False)
+    unit_basis = db.Column(db.String(32), nullable=False)
+    input_rate = db.Column(db.Numeric(20, 10), nullable=False)
+    output_rate = db.Column(db.Numeric(20, 10), nullable=False)
+    cache_tool_rate_json = db.Column(db.JSON, nullable=True)
+    source_reference = db.Column(db.String(255), nullable=False)
+    source_observed_at = db.Column(db.DateTime(timezone=True), nullable=False)
+
+    pricing_policy_version = db.relationship('PricingPolicyVersion')
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'pricing_policy_version_id',
+            'provider',
+            'model',
+            name='uq_provider_rate_entries_policy_provider_model',
+        ),
+        db.CheckConstraint(
+            "length(trim(provider)) > 0 AND length(trim(model)) > 0",
+            name='ck_provider_rate_entries_identity',
+        ),
+        db.CheckConstraint(
+            "length(currency) = 3 AND currency = lower(currency) AND "
+            "substr(currency, 1, 1) BETWEEN 'a' AND 'z' AND "
+            "substr(currency, 2, 1) BETWEEN 'a' AND 'z' AND "
+            "substr(currency, 3, 1) BETWEEN 'a' AND 'z'",
+            name='ck_provider_rate_entries_currency',
+        ),
+        db.CheckConstraint(
+            "unit_basis = 'per_1m_tokens'",
+            name='ck_provider_rate_entries_unit_basis',
+        ),
+        db.CheckConstraint(
+            'input_rate >= 0 AND output_rate >= 0',
+            name='ck_provider_rate_entries_nonnegative_rates',
+        ),
+        db.CheckConstraint(
+            'length(trim(source_reference)) > 0',
+            name='ck_provider_rate_entries_source_reference',
+        ),
+    )
+
+
+class CapacityPolicyVersion(db.Model):
+    """Inactive versioned short-term capacity-policy metadata."""
+
+    __tablename__ = 'capacity_policy_versions'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    version = db.Column(db.String(64), nullable=False)
+    state = db.Column(db.String(20), nullable=False)
+    effective_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    approved_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    approved_by_user_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'users.id',
+            name='fk_capacity_policy_versions_approved_by_user_id',
+            ondelete='SET NULL',
+        ),
+        nullable=True,
+    )
+    approval_evidence_reference = db.Column(db.String(255), nullable=True)
+    superseded_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    supersedes_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            'capacity_policy_versions.id',
+            name='fk_capacity_policy_versions_supersedes_id',
+            ondelete='RESTRICT',
+        ),
+        nullable=True,
+    )
+    rules_json = db.Column(db.JSON, nullable=False)
+
+    approved_by_user = db.relationship('User', foreign_keys=[approved_by_user_id])
+    supersedes = db.relationship('CapacityPolicyVersion', remote_side=[id])
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'version',
+            name='uq_capacity_policy_versions_version',
+        ),
+        db.CheckConstraint(
+            "state IN ('draft', 'approved', 'effective', 'superseded')",
+            name='ck_capacity_policy_versions_state',
+        ),
+        db.CheckConstraint(
+            'supersedes_id IS NULL OR supersedes_id != id',
+            name='ck_capacity_policy_versions_not_self_superseding',
+        ),
+        db.CheckConstraint(
+            "state = 'draft' OR "
+            '(approved_at IS NOT NULL AND approval_evidence_reference IS NOT NULL)',
+            name='ck_capacity_policy_versions_approval',
+        ),
+        db.CheckConstraint(
+            "state NOT IN ('effective', 'superseded') OR effective_at IS NOT NULL",
+            name='ck_capacity_policy_versions_effective_time',
+        ),
+        db.CheckConstraint(
+            "state != 'superseded' OR superseded_at IS NOT NULL",
+            name='ck_capacity_policy_versions_superseded_time',
+        ),
+        db.CheckConstraint(
+            "superseded_at IS NULL OR state = 'superseded'",
+            name='ck_capacity_policy_versions_superseded_state',
+        ),
+        db.Index(
+            'uq_capacity_policy_versions_single_effective',
+            'state',
+            unique=True,
+            postgresql_where=db.text("state = 'effective'"),
+            sqlite_where=db.text("state = 'effective'"),
+        ),
+        db.Index(
+            'ix_capacity_policy_versions_state_effective_at',
+            'state',
+            'effective_at',
+        ),
+        db.Index(
+            'ix_capacity_policy_versions_approved_by_user_id',
+            'approved_by_user_id',
+        ),
+        db.Index(
+            'ix_capacity_policy_versions_supersedes_id',
+            'supersedes_id',
+        ),
+    )
+
+
 class AppSetting(db.Model):
     __tablename__ = 'app_settings'
 

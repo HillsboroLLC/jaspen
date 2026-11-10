@@ -36,7 +36,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = BACKEND_DIR / "migrations"
 PRODUCTION_REVISION = "f1a2b3c4d5e6"
 MIGRATION_REVISION = "a4d7c9e2f105"
-CURRENT_ADDITIVE_REVISION = "b5e7c9a1d3f2"
+ACCOUNT_FOUNDATION_REVISION = "b5e7c9a1d3f2"
+CURRENT_ADDITIVE_REVISION = "c6f8d0b2e4a1"
 FIXED_TIME = datetime(2026, 10, 1, 12, 0, 0)
 SCORE_TIME = datetime(2026, 9, 20, 9, 30, 0)
 
@@ -73,6 +74,10 @@ def _current_additive_revision_module():
     return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(CURRENT_ADDITIVE_REVISION).module
 
 
+def _account_foundation_revision_module():
+    return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(ACCOUNT_FOUNDATION_REVISION).module
+
+
 def _prepare_sqlite_at_production_revision(database_url):
     """Create f1a2b3c4d5e6 shape without replaying SQLite-incompatible history."""
     from app import db
@@ -87,6 +92,7 @@ def _prepare_sqlite_at_production_revision(database_url):
         context = MigrationContext.configure(connection)
         with Operations.context(context):
             _current_additive_revision_module().downgrade()
+            _account_foundation_revision_module().downgrade()
             _revision_module().downgrade()
         connection.execute(sa.text(
             "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)"

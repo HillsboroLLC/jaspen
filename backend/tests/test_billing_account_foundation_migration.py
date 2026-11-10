@@ -84,12 +84,12 @@ def _assert_upgraded_schema(engine):
     }
 
 
-def test_revision_extends_the_single_validated_head():
+def test_revision_extends_its_validated_parent():
     script = ScriptDirectory(MIGRATIONS_DIR)
     revision = script.get_revision(MIGRATION_REVISION)
 
     assert revision.down_revision == PARENT_REVISION
-    assert script.get_heads() == [MIGRATION_REVISION]
+    assert revision.revision in {item.revision for item in script.walk_revisions()}
 
 
 def test_sqlite_upgrade_creates_empty_schema_and_empty_downgrade_removes_it(tmp_path):
