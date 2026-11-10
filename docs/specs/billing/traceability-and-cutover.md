@@ -237,7 +237,7 @@ useful **program gates**, not a competing sequence. This map authorizes nothing.
 
 | Authoritative phase | Deliverable | Phase 2 gate(s) | Required entry/exit evidence |
 |---:|---|---|---|
-| 1 | ADR and traceability | pre-2A | Founder approves this package; no code change. |
+| 1 | ADR and traceability | pre-2A | **Complete:** founder approved this package on 2026-11-09; no code change. |
 | 2 | Canonical additive schema | 2A | Organization billing accounts, roles, finance, entitlement, ledger, pricing/capacity versions, inbox/outbox/risk tables; migrations reviewed and reversible. |
 | 3 | Ledger primitives | 2A | Append-only constraints, idempotency, zero-floor/concurrency unit tests. |
 | 4 | Entitlement and credit periods | 2A | Org-first plans/contracts/UTC anchors and period tests. |
@@ -277,18 +277,17 @@ only after the projector proves parity; dual writers are never a steady state.
 
 ### Phase 2 readiness
 
-Phase 1 is ready for founder architecture approval: approved policy is now
-coherent, all STOP items are mapped, and genuine evidence limitations are
-stated. Phase 2 is **not authorized**. Phase 2A/authoritative phases 2–5 may be
-recommended for separate authorization only after:
+Phase 1 received founder architecture approval on 2026-11-09: approved policy
+is coherent, all STOP items are mapped, and evidence limitations are stated.
+Phase 2 is **not authorized**. Phase 2A/authoritative phases 2–5 may be
+considered for separate authorization only after:
 
-1. founder approval of ADR-0001, the organization-first correction, and this
-   18-phase sequence;
-2. review of additive schema/migration/downgrade proposals produced in that
-   later phase;
-3. explicit confirmation that numerical capacity thresholds will be selected
-   from usage/provider evidence rather than copied from current defaults; and
-4. an implementation plan that preserves PR #27 regression intent without
+1. review of the additive schema/migration/downgrade proposal for the specific
+   requested increment;
+2. the increment seeds no numerical capacity threshold; later threshold
+   proposals must be based on authorized usage/provider evidence rather than
+   copied from current defaults; and
+3. an implementation plan that preserves PR #27 regression intent without
    modifying or depending on that open PR.
 
 No backfill, shadow use of customer data, production verification, writer

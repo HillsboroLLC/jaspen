@@ -1,6 +1,6 @@
 # Phase 1 Architecture Reconciliation Report
 
-Status: **Ready for founder architecture review; no implementation or cutover authorized**
+Status: **Founder-approved architecture; no implementation or cutover authorized**
 
 Date: 2026-11-09
 
@@ -14,10 +14,10 @@ short-term capacity authority. All STOP-01 through STOP-25 have approved policy
 and a documented resolution. None should be read as implemented or authorized
 for cutover.
 
-Phase 1 is ready for founder approval. The additive-foundation portion of Phase
-2 can be recommended for a later, explicit authorization after this package is
-approved and a reversible schema/migration proposal is reviewed. No migration,
-backfill, production verification, or cutover is recommended yet.
+Founder approval was recorded on 2026-11-09. The additive-foundation portion of
+Phase 2 can be considered only through later, explicit phase authorization and
+the reviewed reversible proposal. No migration, backfill, production
+verification, or cutover is authorized.
 
 ## What was already correct
 
@@ -105,7 +105,7 @@ backfill, production verification, or cutover is recommended yet.
 
 ## Genuine founder decisions still needed
 
-None are needed to approve this architecture. Later approvals must set numeric
+None remain for the approved architecture. Later approvals must set numeric
 capacity/concurrency/queue thresholds and any exact notification wording,
 channels, lead time, or terminal dunning timing. Those are deliberately not
 invented here and are not prerequisites to approve the documented boundaries.
@@ -119,7 +119,7 @@ bundle schema, backfill, writer cutover, reader cutover, and retirement.
 
 ## Approval statement
 
-Founder approval would approve the target architecture and implementation
-sequence only. It would not certify current implementation, approve numeric
+Founder approval covers the target architecture and implementation sequence
+only. It does not certify current implementation, approve numeric
 capacity limits, authorize production access, authorize Phase 2, merge PR #27,
 or authorize customer/data migration.

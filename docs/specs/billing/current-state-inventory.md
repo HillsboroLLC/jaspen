@@ -259,8 +259,9 @@ later product/engineering approvals, not reopened policy questions.
 | STOP-24 | Upgrade/downgrade/cancel/seat commands lack one precedence owner. | Audited schedule state machine with cancellation > paid upgrade > confirmed supersede > existing schedule. | **Verified conflict** across endpoints/webhooks. | Central command/state machine; race/precedence/history tests. | STOP-08/16/17. | No. |
 | STOP-25 | Choosing Free can immediately rewrite paid plan/credits and clear subscription ID. | Paid-to-Free is a scheduled/cancellation transition preserving funded term and work. | **Verified conflict** in checkout Free branch. | Route through schedule authority; term/funding/data-preservation tests. | STOP-04/08/24. | No. |
 
-Status summary: all 25 are **business policy approved** and **architecture
-documented**. Existing implementation is partial or conflicting for every
+Status summary: all 25 are **founder-approved business policy** and
+**founder-approved architecture** as of 2026-11-09. Existing implementation is
+partial or conflicting for every
 item; none is cutover-authorized. Test execution status for this reconciliation
 is recorded in the supporting verification report and must not be inferred
 from test-file existence.

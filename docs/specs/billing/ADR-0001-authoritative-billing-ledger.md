@@ -2,11 +2,15 @@
 
 ## D01 Final ADR
 
-Status: **Proposed for founder approval**
+Status: **Founder-approved architecture**
 
 Decision owners: Product and Engineering
 
-Decision date: 2026-11-09 (business policy supplied; architecture approval pending)
+Decision date: 2026-11-09
+
+Approval scope: ADR-0001, STOP-01 through STOP-25, organization-first billing,
+and the authoritative 18-phase roadmap. Approval is architecture-only; every
+implementation phase requires separate explicit authorization.
 
 Implementation authorization: none
 

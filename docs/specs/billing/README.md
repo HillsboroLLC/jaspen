@@ -1,6 +1,6 @@
 # Billing Architecture Phase 1
 
-Status: **Reconciled and ready for founder architecture approval; no implementation authorized**
+Status: **Founder-approved architecture; no implementation authorized**
 
 Base: `origin/main` at `88684284a33836106cad639d36e191271109c2c7`
 
@@ -53,9 +53,10 @@ preserve accidental reset-on-read, negative balances, recurring rollover,
 account-wide dispute penalties, direct balance edits, or duplicated
 compatibility state as authorities.
 
-Phase 1 is ready for founder architecture approval. Phase 2 is **not
-authorized**. After approval, only the additive-foundation work in authoritative
-phases 2–5 should be considered for a separate, reversible authorization; no
+Founder architecture approval was recorded on 2026-11-09 for ADR-0001,
+STOP-01 through STOP-25, the organization-first model, and the authoritative
+18-phase roadmap. Phase 2 is **not authorized**. The documentation-only phases
+2–5 proposal identifies separately reviewable, reversible increments; no
 backfill or cutover is bundled. The stop-class conflicts in
 [current-state-inventory.md](current-state-inventory.md#d20-newly-discovered-conflicts-and-stop-register)
 remain implementation work. Phase 1 has not changed
@@ -91,6 +92,7 @@ or PR #27.
 | D23 | Usage & Billing projection and interruption behavior | [lifecycle-specification.md](lifecycle-specification.md#d23-usage--billing-projection-and-interruption-behavior) |
 | R01 | Architecture reconciliation report | [architecture-reconciliation-report.md](architecture-reconciliation-report.md) |
 | R02 | Pricing and capacity verification report | [pricing-and-capacity-verification.md](pricing-and-capacity-verification.md) |
+| P01 | Phases 2–5 additive-foundation implementation proposal | [phase-2-5-implementation-proposal.md](phase-2-5-implementation-proposal.md) |
 
 ## Acceptance assessment
 
@@ -100,8 +102,8 @@ organization ownership and deterministic precedence, and provides sunset
 conditions for compatibility projections. The migration specification is
 balance preserving and explicitly rejects silent data repair.
 
-All 25 STOP items are business-policy approved and architecture documented.
-Phase 1 documentation is complete for founder review. No claim is made that the
+All 25 STOP items are founder-approved at the business-policy and architecture
+levels. No claim is made that the
 current implementation satisfies the target architecture, that existing tests
 cover the target, that production pricing is known, or that cutover is
 authorized.
@@ -120,8 +122,8 @@ authorized.
 
 ## Remaining decisions and evidence limits
 
-No founder decision is required to approve the architectural boundaries.
-Later approvals must select numeric capacity/concurrency/priority thresholds
+The architectural boundaries are approved. Later approvals must select numeric
+capacity/concurrency/priority thresholds
 from authorized usage/provider evidence and approve notification wording,
 channels, lead time, and any terminal dunning timing. Repository defaults are
 not adopted as those policies. Production modes, rates/configuration, and
@@ -138,3 +140,5 @@ realized margin were not accessed or verified.
 - No numerical short-term capacity limit is approved.
 - The original 18 phases are authoritative; Phase 2A–2G are cross-referenced
   program gates, not a replacement roadmap.
+- No Phase 2 implementation has begun. See the planning-only
+  [phases 2–5 proposal](phase-2-5-implementation-proposal.md).
