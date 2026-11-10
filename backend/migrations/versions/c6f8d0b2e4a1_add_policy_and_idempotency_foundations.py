@@ -65,6 +65,14 @@ def _create_tables():
             name="ck_idempotency_registry_completed_state",
         ),
         sa.CheckConstraint(
+            "completed_at IS NULL OR state = 'completed'",
+            name="ck_idempotency_registry_completion_state",
+        ),
+        sa.CheckConstraint(
+            "state = 'completed' OR (result_type IS NULL AND result_id IS NULL)",
+            name="ck_idempotency_registry_result_state",
+        ),
+        sa.CheckConstraint(
             "state NOT IN ('failed_retryable', 'failed_final') OR "
             "last_error_code IS NOT NULL",
             name="ck_idempotency_registry_failure_error",
@@ -145,8 +153,19 @@ def _create_tables():
             name="ck_pricing_policy_versions_announced_state",
         ),
         sa.CheckConstraint(
+            "notice_evidence_reference IS NULL OR "
+            "length(trim(notice_evidence_reference)) > 0",
+            name="ck_pricing_policy_versions_notice_evidence_value",
+        ),
+        sa.CheckConstraint(
+            "state NOT IN ('effective', 'superseded') OR NOT customer_credit_impact OR "
+            "notice_required",
+            name="ck_pricing_policy_versions_customer_impact_notice",
+        ),
+        sa.CheckConstraint(
             "state NOT IN ('effective', 'superseded') OR NOT notice_required OR "
-            "(announced_at IS NOT NULL AND notice_evidence_reference IS NOT NULL)",
+            "(announced_at IS NOT NULL AND notice_evidence_reference IS NOT NULL "
+            "AND announced_at < effective_at)",
             name="ck_pricing_policy_versions_notice_evidence",
         ),
         sa.ForeignKeyConstraint(
@@ -344,6 +363,26 @@ def _create_postgresql_triggers():
                 RAISE EXCEPTION 'idempotency registry identity is immutable'
                     USING ERRCODE = '23514';
             END IF;
+            IF NOT (
+                NEW.state = OLD.state
+                OR (OLD.state = 'claimed' AND NEW.state IN (
+                    'completed', 'failed_retryable', 'failed_final'
+                ))
+                OR (OLD.state = 'failed_retryable' AND NEW.state IN (
+                    'claimed', 'failed_final'
+                ))
+            ) THEN
+                RAISE EXCEPTION 'invalid idempotency lifecycle transition'
+                    USING ERRCODE = '23514';
+            END IF;
+            IF OLD.state = 'completed' AND (
+                OLD.completed_at IS DISTINCT FROM NEW.completed_at
+                OR OLD.result_type IS DISTINCT FROM NEW.result_type
+                OR OLD.result_id IS DISTINCT FROM NEW.result_id
+            ) THEN
+                RAISE EXCEPTION 'completed idempotency result is immutable'
+                    USING ERRCODE = '23514';
+            END IF;
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql
@@ -391,7 +430,13 @@ def _create_postgresql_triggers():
                 OR OLD.conversion_json::text IS DISTINCT FROM NEW.conversion_json::text
                 OR OLD.customer_credit_impact IS DISTINCT FROM NEW.customer_credit_impact
                 OR OLD.notice_required IS DISTINCT FROM NEW.notice_required
-                OR OLD.notice_evidence_reference IS DISTINCT FROM NEW.notice_evidence_reference
+                OR (OLD.notice_evidence_reference IS DISTINCT FROM NEW.notice_evidence_reference
+                    AND NOT (
+                        OLD.notice_evidence_reference IS NULL
+                        AND NEW.notice_evidence_reference IS NOT NULL
+                        AND OLD.state IN ('approved', 'announced')
+                        AND NEW.state IN ('approved', 'announced')
+                    ))
             ) THEN
                 RAISE EXCEPTION 'approved pricing policy meaning is immutable'
                     USING ERRCODE = '23514';
@@ -429,6 +474,12 @@ def _create_postgresql_triggers():
                         USING ERRCODE = '23514';
                 END IF;
                 RETURN OLD;
+            END IF;
+
+            IF NEW.input_rate::text IN ('NaN', 'Infinity', '-Infinity')
+               OR NEW.output_rate::text IN ('NaN', 'Infinity', '-Infinity') THEN
+                RAISE EXCEPTION 'provider rates must be finite'
+                    USING ERRCODE = '23514';
             END IF;
 
             SELECT state INTO parent_state FROM pricing_policy_versions
@@ -548,6 +599,28 @@ def _create_sqlite_triggers():
         END
         """,
         """
+        CREATE TRIGGER trg_idempotency_registry_lifecycle
+        BEFORE UPDATE ON idempotency_registry
+        FOR EACH ROW WHEN NOT (
+            NEW.state = OLD.state
+            OR (OLD.state = 'claimed' AND NEW.state IN (
+                'completed', 'failed_retryable', 'failed_final'
+            ))
+            OR (OLD.state = 'failed_retryable' AND NEW.state IN (
+                'claimed', 'failed_final'
+            ))
+        ) OR (
+            OLD.state = 'completed' AND (
+                OLD.completed_at IS NOT NEW.completed_at
+                OR OLD.result_type IS NOT NEW.result_type
+                OR OLD.result_id IS NOT NEW.result_id
+            )
+        )
+        BEGIN
+            SELECT RAISE(ABORT, 'invalid or immutable idempotency lifecycle');
+        END
+        """,
+        """
         CREATE TRIGGER trg_pricing_policy_versions_transition
         BEFORE UPDATE ON pricing_policy_versions
         FOR EACH ROW WHEN NOT (
@@ -579,7 +652,13 @@ def _create_sqlite_triggers():
             OR OLD.conversion_json IS NOT NEW.conversion_json
             OR OLD.customer_credit_impact IS NOT NEW.customer_credit_impact
             OR OLD.notice_required IS NOT NEW.notice_required
-            OR OLD.notice_evidence_reference IS NOT NEW.notice_evidence_reference
+            OR (OLD.notice_evidence_reference IS NOT NEW.notice_evidence_reference
+                AND NOT (
+                    OLD.notice_evidence_reference IS NULL
+                    AND NEW.notice_evidence_reference IS NOT NULL
+                    AND OLD.state IN ('approved', 'announced')
+                    AND NEW.state IN ('approved', 'announced')
+                ))
             OR (OLD.state IN ('announced', 'effective', 'superseded')
                 AND OLD.announced_at IS NOT NEW.announced_at)
             OR (OLD.state = 'superseded'
@@ -595,6 +674,32 @@ def _create_sqlite_triggers():
         FOR EACH ROW WHEN OLD.state <> 'draft'
         BEGIN
             SELECT RAISE(ABORT, 'approved pricing policies cannot be deleted');
+        END
+        """,
+        """
+        CREATE TRIGGER trg_provider_rate_entries_finite_insert
+        BEFORE INSERT ON provider_rate_entries
+        FOR EACH ROW WHEN
+            NEW.input_rate IS NULL OR NEW.output_rate IS NULL
+            OR NOT (
+                NEW.input_rate >= 0 AND NEW.input_rate < 1e999
+                AND NEW.output_rate >= 0 AND NEW.output_rate < 1e999
+            )
+        BEGIN
+            SELECT RAISE(ABORT, 'provider rates must be finite and nonnegative');
+        END
+        """,
+        """
+        CREATE TRIGGER trg_provider_rate_entries_finite_update
+        BEFORE UPDATE OF input_rate, output_rate ON provider_rate_entries
+        FOR EACH ROW WHEN
+            NEW.input_rate IS NULL OR NEW.output_rate IS NULL
+            OR NOT (
+                NEW.input_rate >= 0 AND NEW.input_rate < 1e999
+                AND NEW.output_rate >= 0 AND NEW.output_rate < 1e999
+            )
+        BEGIN
+            SELECT RAISE(ABORT, 'provider rates must be finite and nonnegative');
         END
         """,
         """
@@ -706,11 +811,14 @@ def _drop_triggers(dialect):
             "trg_provider_rate_entries_delete",
             "trg_provider_rate_entries_update",
             "trg_provider_rate_entries_insert",
+            "trg_provider_rate_entries_finite_update",
+            "trg_provider_rate_entries_finite_insert",
             "trg_pricing_policy_versions_delete",
             "trg_pricing_policy_versions_immutable",
             "trg_pricing_policy_versions_transition",
             "trg_idempotency_registry_identity_delete",
             "trg_idempotency_registry_identity_update",
+            "trg_idempotency_registry_lifecycle",
             "trg_idempotency_registry_fingerprint_update",
             "trg_idempotency_registry_fingerprint_insert",
         ):

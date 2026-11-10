@@ -814,6 +814,14 @@ class IdempotencyRegistry(db.Model):
             name='ck_idempotency_registry_completed_state',
         ),
         db.CheckConstraint(
+            "completed_at IS NULL OR state = 'completed'",
+            name='ck_idempotency_registry_completion_state',
+        ),
+        db.CheckConstraint(
+            "state = 'completed' OR (result_type IS NULL AND result_id IS NULL)",
+            name='ck_idempotency_registry_result_state',
+        ),
+        db.CheckConstraint(
             "state NOT IN ('failed_retryable', 'failed_final') OR "
             'last_error_code IS NOT NULL',
             name='ck_idempotency_registry_failure_error',
@@ -915,8 +923,19 @@ class PricingPolicyVersion(db.Model):
             name='ck_pricing_policy_versions_announced_state',
         ),
         db.CheckConstraint(
+            "notice_evidence_reference IS NULL OR "
+            "length(trim(notice_evidence_reference)) > 0",
+            name='ck_pricing_policy_versions_notice_evidence_value',
+        ),
+        db.CheckConstraint(
+            "state NOT IN ('effective', 'superseded') OR NOT customer_credit_impact OR "
+            'notice_required',
+            name='ck_pricing_policy_versions_customer_impact_notice',
+        ),
+        db.CheckConstraint(
             "state NOT IN ('effective', 'superseded') OR NOT notice_required OR "
-            '(announced_at IS NOT NULL AND notice_evidence_reference IS NOT NULL)',
+            '(announced_at IS NOT NULL AND notice_evidence_reference IS NOT NULL '
+            'AND announced_at < effective_at)',
             name='ck_pricing_policy_versions_notice_evidence',
         ),
         db.Index(
