@@ -22,6 +22,34 @@ TABLES = {"credit_lots", "credit_reservations", "credit_ledger_entries"}
 NOW = datetime(2026, 11, 10, 12, 0, tzinfo=timezone.utc)
 LATER = datetime(2026, 11, 10, 13, 0, tzinfo=timezone.utc)
 
+# The matrix is the test contract for the single ledger enforcement path.
+# Every movement receives the shared row-level accounting invariants. Only
+# movements that consume or produce an allocation add transaction-specific
+# rules, and those differences identify the eligible producer entry rather
+# than defining a second balance calculation.
+SHARED_LEDGER_INVARIANTS = {
+    "account_lot_ownership",
+    "entry_shape",
+    "idempotency",
+    "provenance",
+    "zero_floor_and_original_cap",
+}
+TRANSACTION_TYPE_COVERAGE_MATRIX = {
+    "grant": SHARED_LEDGER_INVARIANTS | {"opening_uniqueness"},
+    "reservation": SHARED_LEDGER_INVARIANTS | {"reservation_authorization_cap"},
+    "settlement": SHARED_LEDGER_INVARIANTS
+    | {"held_allocation", "reservation_binding"},
+    "release": SHARED_LEDGER_INVARIANTS
+    | {"held_allocation", "reservation_binding"},
+    "expiration": SHARED_LEDGER_INVARIANTS | {"conditional_held_allocation"},
+    "refund_reversal": SHARED_LEDGER_INVARIANTS | {"related_entry_ownership"},
+    "dispute_hold": SHARED_LEDGER_INVARIANTS,
+    "dispute_reversal": SHARED_LEDGER_INVARIANTS | {"held_allocation"},
+    "recovery": SHARED_LEDGER_INVARIANTS | {"related_entry_ownership"},
+    "admin_adjustment": SHARED_LEDGER_INVARIANTS,
+    "migration_opening": SHARED_LEDGER_INVARIANTS | {"opening_uniqueness"},
+}
+
 
 def _revision_module():
     return ScriptDirectory(MIGRATIONS_DIR).get_revision(MIGRATION_REVISION).module
@@ -246,6 +274,23 @@ def test_revision_extends_phase_2_3_head():
     assert script.get_heads() == [MIGRATION_REVISION]
 
 
+@pytest.mark.parametrize(
+    ("entry_type", "specific_invariants"),
+    sorted(TRANSACTION_TYPE_COVERAGE_MATRIX.items()),
+)
+def test_transaction_type_financial_invariant_coverage_matrix(
+    entry_type,
+    specific_invariants,
+):
+    assert SHARED_LEDGER_INVARIANTS.issubset(specific_invariants)
+    if entry_type in {"settlement", "release", "dispute_reversal"}:
+        assert "held_allocation" in specific_invariants
+    if entry_type == "expiration":
+        assert "conditional_held_allocation" in specific_invariants
+    if entry_type in {"refund_reversal", "recovery"}:
+        assert "related_entry_ownership" in specific_invariants
+
+
 def test_sqlite_upgrade_empty_downgrade_and_legacy_preservation(tmp_path):
     engine = sa.create_engine(f"sqlite:///{tmp_path / 'phase_3_empty.sqlite'}")
     _create_predecessor_tables(engine)
@@ -284,7 +329,7 @@ def test_sqlite_arithmetic_append_only_and_pricing_invariants(tmp_path):
 
     with pytest.raises(
         sa.exc.IntegrityError,
-        match="settlement/release exceeds reservation allocation",
+        match="held movement exceeds referenced allocation",
     ):
         with engine.begin() as connection:
             _insert_entry(
@@ -304,7 +349,7 @@ def test_sqlite_arithmetic_append_only_and_pricing_invariants(tmp_path):
             )
     with pytest.raises(
         sa.exc.IntegrityError,
-        match="settlement/release must reference its reservation allocation",
+        match="held movement must reference an eligible allocation",
     ):
         with engine.begin() as connection:
             _insert_entry(
@@ -322,7 +367,7 @@ def test_sqlite_arithmetic_append_only_and_pricing_invariants(tmp_path):
         )
     with pytest.raises(
         sa.exc.IntegrityError,
-        match="settlement/release must reference its reservation allocation",
+        match="held movement must reference an eligible allocation",
     ):
         with engine.begin() as connection:
             _insert_entry(
@@ -388,7 +433,7 @@ def test_sqlite_arithmetic_append_only_and_pricing_invariants(tmp_path):
         )
         _insert_entry(
             connection, "expire-held", "claim-12", "expiration", -30, -20,
-            lot="lot-expiring",
+            lot="lot-expiring", related="dispute-hold",
         )
     with engine.connect() as connection:
         assert connection.execute(sa.text("""
@@ -445,6 +490,160 @@ def test_sqlite_arithmetic_append_only_and_pricing_invariants(tmp_path):
                 claim="claim-7",
                 pricing="pricing-approved-two",
             )
+    engine.dispose()
+
+
+def test_sqlite_held_expiration_and_dispute_reversal_are_allocation_bound(tmp_path):
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'phase_3_held.sqlite'}")
+    _create_predecessor_tables(engine)
+    with _migration_ops(engine):
+        _revision_module().upgrade()
+
+    with engine.begin() as connection:
+        connection.execute(sa.text("PRAGMA foreign_keys = ON"))
+        _insert_lot(connection, amount=200)
+        _insert_reservation(connection, amount=30)
+        _insert_reservation(
+            connection,
+            identifier="reservation-two",
+            operation="operation-two",
+            claim="claim-2",
+            amount=40,
+        )
+        _insert_entry(connection, "grant", "claim-3", "grant", 200, 0)
+        _insert_entry(
+            connection, "reserve-30", "claim-4", "reservation", -30, 30,
+            reservation="reservation-one", operation="operation-one",
+        )
+        _insert_entry(
+            connection, "reserve-40", "claim-5", "reservation", -40, 40,
+            reservation="reservation-two", operation="operation-two",
+        )
+        _insert_lot(connection, identifier="lot-other", amount=10)
+        _insert_entry(
+            connection, "grant-other", "claim-20", "grant", 10, 0,
+            lot="lot-other",
+        )
+
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement exceeds referenced allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "expire-40-from-30", "claim-6", "expiration", 0, -40,
+                related="reserve-30",
+            )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement must reference an eligible allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "expire-unreferenced", "claim-7", "expiration", 0, -10,
+            )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement must reference an eligible allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "expire-grant", "claim-8", "expiration", 0, -10,
+                related="grant",
+            )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="related ledger entry must share account and lot",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "refund-cross-lot", "claim-21",
+                "refund_reversal", -1, 0, related="grant-other",
+            )
+    with engine.begin() as connection:
+        _insert_entry(
+            connection, "expire-reservation", "claim-9", "expiration", 0, -30,
+            related="reserve-30",
+        )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement exceeds referenced allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "expire-reservation-again", "claim-10",
+                "expiration", 0, -1, related="reserve-30",
+            )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement exceeds referenced allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "settle-expired-reservation", "claim-18",
+                "settlement", 0, -1,
+                reservation="reservation-one", operation="operation-one",
+                related="reserve-30",
+            )
+
+    with engine.begin() as connection:
+        _insert_entry(
+            connection, "dispute-10", "claim-11", "dispute_hold", -10, 10,
+        )
+        _insert_entry(
+            connection, "dispute-20", "claim-12", "dispute_hold", -20, 20,
+        )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement exceeds referenced allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "reverse-20-from-10", "claim-13",
+                "dispute_reversal", 0, -20, related="dispute-10",
+            )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement must reference an eligible allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "reverse-reservation", "claim-14",
+                "dispute_reversal", 0, -5, related="reserve-40",
+            )
+    with engine.begin() as connection:
+        _insert_entry(
+            connection, "reverse-dispute", "claim-15",
+            "dispute_reversal", 0, -10, related="dispute-10",
+        )
+        _insert_entry(
+            connection, "expire-dispute", "claim-16", "expiration", 0, -20,
+            related="dispute-20",
+        )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement exceeds referenced allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "reverse-dispute-again", "claim-17",
+                "dispute_reversal", 0, -1, related="dispute-10",
+            )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement exceeds referenced allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "reverse-expired-dispute", "claim-19",
+                "dispute_reversal", 0, -1, related="dispute-20",
+            )
+
+    with engine.connect() as connection:
+        assert connection.execute(sa.text("""
+            SELECT SUM(available_delta), SUM(held_delta)
+            FROM credit_ledger_entries WHERE lot_id = 'lot-one'
+        """)).one() == (100, 40)
     engine.dispose()
 
 
@@ -688,18 +887,152 @@ def test_postgres_phase_3_constraints_and_concurrent_zero_floor(
         assert _sqlstate(amount_edit_error.value) == "23514"
 
         with engine.begin() as connection:
+            _insert_lot(connection, identifier="lot-held", amount=200)
+            _insert_reservation(
+                connection,
+                identifier="reservation-five",
+                operation="operation-five",
+                claim="claim-40",
+                pricing="pricing-approved-two",
+                amount=30,
+            )
+            _insert_reservation(
+                connection,
+                identifier="reservation-six",
+                operation="operation-six",
+                claim="claim-41",
+                pricing="pricing-approved-two",
+                amount=40,
+            )
+            _insert_entry(
+                connection, "grant-held", "claim-42", "grant", 200, 0,
+                lot="lot-held",
+            )
+            _insert_entry(
+                connection, "reserve-30", "claim-43", "reservation", -30, 30,
+                lot="lot-held", reservation="reservation-five",
+                operation="operation-five",
+            )
+            _insert_entry(
+                connection, "reserve-40", "claim-44", "reservation", -40, 40,
+                lot="lot-held", reservation="reservation-six",
+                operation="operation-six",
+            )
+            _insert_lot(connection, identifier="lot-held-other", amount=10)
+            _insert_entry(
+                connection, "grant-held-other", "claim-58", "grant", 10, 0,
+                lot="lot-held-other",
+            )
+
+        with pytest.raises(sa.exc.IntegrityError) as expiration_too_large:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "expire-40-from-30", "claim-45",
+                    "expiration", 0, -40, lot="lot-held", related="reserve-30",
+                )
+        assert _sqlstate(expiration_too_large.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as expiration_unreferenced:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "expire-unreferenced", "claim-46",
+                    "expiration", 0, -10, lot="lot-held",
+                )
+        assert _sqlstate(expiration_unreferenced.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as refund_cross_lot:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "refund-cross-lot", "claim-59",
+                    "refund_reversal", -1, 0, lot="lot-held",
+                    related="grant-held-other",
+                )
+        assert _sqlstate(refund_cross_lot.value) == "23514"
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "expire-reservation", "claim-47",
+                "expiration", 0, -30, lot="lot-held", related="reserve-30",
+            )
+            _insert_entry(
+                connection, "dispute-10", "claim-48", "dispute_hold", -10, 10,
+                lot="lot-held",
+            )
+            _insert_entry(
+                connection, "dispute-20", "claim-49", "dispute_hold", -20, 20,
+                lot="lot-held",
+            )
+        with pytest.raises(sa.exc.IntegrityError) as expiration_consumed:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "expire-reservation-again", "claim-55",
+                    "expiration", 0, -1, lot="lot-held", related="reserve-30",
+                )
+        assert _sqlstate(expiration_consumed.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as settlement_after_expiration:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "settle-expired-reservation", "claim-56",
+                    "settlement", 0, -1, lot="lot-held",
+                    reservation="reservation-five", operation="operation-five",
+                    related="reserve-30",
+                )
+        assert _sqlstate(settlement_after_expiration.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as dispute_too_large:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "reverse-20-from-10", "claim-50",
+                    "dispute_reversal", 0, -20, lot="lot-held",
+                    related="dispute-10",
+                )
+        assert _sqlstate(dispute_too_large.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as dispute_wrong_type:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "reverse-reservation", "claim-51",
+                    "dispute_reversal", 0, -5, lot="lot-held",
+                    related="reserve-40",
+                )
+        assert _sqlstate(dispute_wrong_type.value) == "23514"
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "reverse-dispute", "claim-52",
+                "dispute_reversal", 0, -10, lot="lot-held",
+                related="dispute-10",
+            )
+            _insert_entry(
+                connection, "expire-dispute", "claim-53",
+                "expiration", 0, -20, lot="lot-held", related="dispute-20",
+            )
+        with pytest.raises(sa.exc.IntegrityError) as dispute_consumed:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "reverse-dispute-again", "claim-54",
+                    "dispute_reversal", 0, -1, lot="lot-held",
+                    related="dispute-10",
+                )
+        assert _sqlstate(dispute_consumed.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as dispute_expired:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "reverse-expired-dispute", "claim-57",
+                    "dispute_reversal", 0, -1, lot="lot-held",
+                    related="dispute-20",
+                )
+        assert _sqlstate(dispute_expired.value) == "23514"
+
+        with engine.begin() as connection:
             _insert_lot(connection, identifier="lot-concurrent", amount=100)
             _insert_reservation(
                 connection,
                 identifier="reservation-three",
                 operation="operation-three",
                 claim="claim-19",
+                pricing="pricing-approved-two",
             )
             _insert_reservation(
                 connection,
                 identifier="reservation-four",
                 operation="operation-four",
                 claim="claim-20",
+                pricing="pricing-approved-two",
             )
             _insert_entry(
                 connection, "grant-concurrent", "claim-21", "grant", 100, 0,
@@ -739,6 +1072,10 @@ def test_postgres_phase_3_constraints_and_concurrent_zero_floor(
             assert future.result(timeout=10) == "23514"
 
         with engine.connect() as connection:
+            assert connection.execute(sa.text("""
+                SELECT SUM(available_delta), SUM(held_delta)
+                FROM credit_ledger_entries WHERE lot_id = 'lot-held'
+            """)).one() == (100, 40)
             assert connection.execute(sa.text("""
                 SELECT SUM(available_delta), SUM(held_delta)
                 FROM credit_ledger_entries WHERE lot_id = 'lot-concurrent'

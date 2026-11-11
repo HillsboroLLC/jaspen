@@ -467,6 +467,8 @@ def _create_postgresql_triggers():
             reservation_authorized BIGINT;
             reservation_allocated BIGINT;
             allocation_consumed BIGINT;
+            allocation_required BOOLEAN;
+            allocation_reference_valid BOOLEAN;
             available_total BIGINT;
             held_total BIGINT;
         BEGIN
@@ -542,23 +544,43 @@ def _create_postgresql_triggers():
                 END IF;
             END IF;
 
-            IF NEW.entry_type IN ('settlement', 'release') THEN
-                IF related_type IS DISTINCT FROM 'reservation' OR
-                   related_reservation IS DISTINCT FROM NEW.reservation_id OR
-                   related_operation IS DISTINCT FROM NEW.operation_id THEN
-                    RAISE EXCEPTION USING
-                        ERRCODE = '23514',
-                        MESSAGE = 'settlement/release must reference its reservation allocation';
-                END IF;
+            -- Every movement that reduces held credit uses this single
+            -- allocation path. The CASE expression is the transaction policy:
+            -- it states which producer entry is eligible without creating a
+            -- second balance or provenance rule.
+            allocation_required := NEW.held_delta < 0 AND NEW.entry_type IN (
+                'settlement', 'release', 'expiration', 'dispute_reversal'
+            );
+            allocation_reference_valid := CASE
+                WHEN NEW.entry_type IN ('settlement', 'release') THEN
+                    related_type = 'reservation' AND
+                    related_reservation = NEW.reservation_id AND
+                    related_operation = NEW.operation_id
+                WHEN NEW.entry_type = 'expiration' AND NEW.held_delta < 0 THEN
+                    related_type IN ('reservation', 'dispute_hold')
+                WHEN NEW.entry_type = 'dispute_reversal' THEN
+                    related_type = 'dispute_hold'
+                ELSE TRUE
+            END;
+            IF allocation_required AND
+               NOT COALESCE(allocation_reference_valid, FALSE) THEN
+                RAISE EXCEPTION USING
+                    ERRCODE = '23514',
+                    MESSAGE = 'held movement must reference an eligible allocation';
+            END IF;
+
+            IF allocation_required THEN
                 SELECT COALESCE(-SUM(held_delta), 0)
                 INTO allocation_consumed
                 FROM credit_ledger_entries
                 WHERE related_entry_id = NEW.related_entry_id
-                  AND entry_type IN ('settlement', 'release', 'expiration');
+                  AND entry_type IN (
+                      'settlement', 'release', 'expiration', 'dispute_reversal'
+                  );
                 IF allocation_consumed + (-NEW.held_delta) > related_held THEN
                     RAISE EXCEPTION USING
                         ERRCODE = '23514',
-                        MESSAGE = 'settlement/release exceeds reservation allocation';
+                        MESSAGE = 'held movement exceeds referenced allocation';
                 END IF;
             END IF;
 
@@ -695,26 +717,39 @@ def _create_sqlite_triggers():
                   AND billing_account_id = NEW.billing_account_id
                   AND lot_id = NEW.lot_id
             );
-            SELECT RAISE(
-                ABORT,
-                'settlement/release must reference its reservation allocation'
-            )
-            WHERE NEW.entry_type IN ('settlement', 'release') AND NOT EXISTS (
+            -- One eligibility map and one cumulative cap govern every held
+            -- movement. Transaction types differ only in which allocation
+            -- producer they may reference.
+            SELECT RAISE(ABORT, 'held movement must reference an eligible allocation')
+            WHERE NEW.held_delta < 0
+              AND NEW.entry_type IN (
+                  'settlement', 'release', 'expiration', 'dispute_reversal'
+              )
+              AND NOT EXISTS (
                 SELECT 1 FROM credit_ledger_entries
                 WHERE id = NEW.related_entry_id
-                  AND entry_type = 'reservation'
-                  AND reservation_id = NEW.reservation_id
-                  AND operation_id = NEW.operation_id
+                  AND (
+                    (NEW.entry_type IN ('settlement', 'release')
+                     AND entry_type = 'reservation'
+                     AND reservation_id = NEW.reservation_id
+                     AND operation_id = NEW.operation_id)
+                    OR (NEW.entry_type = 'expiration'
+                        AND entry_type IN ('reservation', 'dispute_hold'))
+                    OR (NEW.entry_type = 'dispute_reversal'
+                        AND entry_type = 'dispute_hold')
+                  )
             );
-            SELECT RAISE(
-                ABORT,
-                'settlement/release exceeds reservation allocation'
-            )
-            WHERE NEW.entry_type IN ('settlement', 'release')
+            SELECT RAISE(ABORT, 'held movement exceeds referenced allocation')
+            WHERE NEW.held_delta < 0
+              AND NEW.entry_type IN (
+                  'settlement', 'release', 'expiration', 'dispute_reversal'
+              )
               AND COALESCE((
                     SELECT -SUM(held_delta) FROM credit_ledger_entries
                     WHERE related_entry_id = NEW.related_entry_id
-                      AND entry_type IN ('settlement', 'release', 'expiration')
+                      AND entry_type IN (
+                          'settlement', 'release', 'expiration', 'dispute_reversal'
+                      )
                   ), 0) + (-NEW.held_delta) > (
                     SELECT held_delta FROM credit_ledger_entries
                     WHERE id = NEW.related_entry_id
