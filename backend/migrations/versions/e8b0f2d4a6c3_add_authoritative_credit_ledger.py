@@ -28,11 +28,20 @@ class CreditLedgerNotEmptyError(RuntimeError):
     """Raised when downgrade would discard authoritative ledger evidence."""
 
 
-ENTRY_TYPES = (
-    "'grant', 'reservation', 'settlement', 'release', 'expiration', "
-    "'refund_reversal', 'dispute_hold', 'dispute_reversal', 'recovery', "
-    "'admin_adjustment', 'migration_opening'"
+LEDGER_ENTRY_TYPES = (
+    "grant",
+    "reservation",
+    "settlement",
+    "release",
+    "expiration",
+    "refund_reversal",
+    "dispute_hold",
+    "dispute_reversal",
+    "recovery",
+    "admin_adjustment",
+    "migration_opening",
 )
+ENTRY_TYPES = ", ".join(f"'{entry_type}'" for entry_type in LEDGER_ENTRY_TYPES)
 
 
 def _create_tables():
@@ -254,8 +263,11 @@ def _create_tables():
             name="ck_credit_ledger_entries_shape",
         ),
         sa.CheckConstraint(
-            "((entry_type IN ('reservation', 'settlement', 'release') "
+            "((entry_type IN ('reservation', 'settlement') "
             "AND reservation_id IS NOT NULL AND operation_id IS NOT NULL) OR "
+            "(entry_type = 'release' AND ((reservation_id IS NOT NULL "
+            "AND operation_id IS NOT NULL) OR (reservation_id IS NULL "
+            "AND operation_id IS NULL))) OR "
             "(entry_type NOT IN ('reservation', 'settlement', 'release') "
             "AND reservation_id IS NULL AND operation_id IS NULL))",
             name="ck_credit_ledger_entries_operation_reference",
@@ -552,10 +564,14 @@ def _create_postgresql_triggers():
                 'settlement', 'release', 'expiration', 'dispute_reversal'
             );
             allocation_reference_valid := CASE
-                WHEN NEW.entry_type IN ('settlement', 'release') THEN
+                WHEN NEW.entry_type = 'settlement' OR
+                     (NEW.entry_type = 'release' AND
+                      NEW.reservation_id IS NOT NULL) THEN
                     related_type = 'reservation' AND
                     related_reservation = NEW.reservation_id AND
                     related_operation = NEW.operation_id
+                WHEN NEW.entry_type = 'release' THEN
+                    related_type = 'dispute_hold'
                 WHEN NEW.entry_type = 'expiration' AND NEW.held_delta < 0 THEN
                     related_type IN ('reservation', 'dispute_hold')
                 WHEN NEW.entry_type = 'dispute_reversal' THEN
@@ -729,10 +745,16 @@ def _create_sqlite_triggers():
                 SELECT 1 FROM credit_ledger_entries
                 WHERE id = NEW.related_entry_id
                   AND (
-                    (NEW.entry_type IN ('settlement', 'release')
+                    ((NEW.entry_type = 'settlement' OR
+                      (NEW.entry_type = 'release'
+                       AND NEW.reservation_id IS NOT NULL))
                      AND entry_type = 'reservation'
                      AND reservation_id = NEW.reservation_id
                      AND operation_id = NEW.operation_id)
+                    OR (NEW.entry_type = 'release'
+                        AND NEW.reservation_id IS NULL
+                        AND NEW.operation_id IS NULL
+                        AND entry_type = 'dispute_hold')
                     OR (NEW.entry_type = 'expiration'
                         AND entry_type IN ('reservation', 'dispute_hold'))
                     OR (NEW.entry_type = 'dispute_reversal'

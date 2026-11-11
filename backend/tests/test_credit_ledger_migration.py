@@ -40,7 +40,7 @@ TRANSACTION_TYPE_COVERAGE_MATRIX = {
     "settlement": SHARED_LEDGER_INVARIANTS
     | {"held_allocation", "reservation_binding"},
     "release": SHARED_LEDGER_INVARIANTS
-    | {"held_allocation", "reservation_binding"},
+    | {"held_allocation", "conditional_reservation_binding"},
     "expiration": SHARED_LEDGER_INVARIANTS | {"conditional_held_allocation"},
     "refund_reversal": SHARED_LEDGER_INVARIANTS | {"related_entry_ownership"},
     "dispute_hold": SHARED_LEDGER_INVARIANTS,
@@ -132,7 +132,7 @@ def _create_predecessor_tables(engine):
             "INSERT INTO capacity_policy_versions (id) VALUES ('capacity-approved')"
         ))
         claim_values = ", ".join(
-            f"('claim-{number}', '{'a' * 64}')" for number in range(1, 61)
+            f"('claim-{number}', '{'a' * 64}')" for number in range(1, 81)
         )
         connection.execute(sa.text(
             "INSERT INTO idempotency_registry (id, request_fingerprint) VALUES "
@@ -282,9 +282,14 @@ def test_transaction_type_financial_invariant_coverage_matrix(
     entry_type,
     specific_invariants,
 ):
+    assert set(TRANSACTION_TYPE_COVERAGE_MATRIX) == set(
+        _revision_module().LEDGER_ENTRY_TYPES
+    )
     assert SHARED_LEDGER_INVARIANTS.issubset(specific_invariants)
     if entry_type in {"settlement", "release", "dispute_reversal"}:
         assert "held_allocation" in specific_invariants
+    if entry_type == "release":
+        assert "conditional_reservation_binding" in specific_invariants
     if entry_type == "expiration":
         assert "conditional_held_allocation" in specific_invariants
     if entry_type in {"refund_reversal", "recovery"}:
@@ -593,6 +598,30 @@ def test_sqlite_held_expiration_and_dispute_reversal_are_allocation_bound(tmp_pa
         _insert_entry(
             connection, "dispute-20", "claim-12", "dispute_hold", -20, 20,
         )
+        _insert_entry(
+            connection, "dispute-30", "claim-22", "dispute_hold", -30, 30,
+        )
+        _insert_entry(
+            connection, "dispute-15", "claim-23", "dispute_hold", -15, 15,
+        )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement exceeds referenced allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "release-20-from-10", "claim-24",
+                "release", 20, -20, related="dispute-10",
+            )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement must reference an eligible allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "release-grant-as-dispute", "claim-25",
+                "release", 1, -1, related="grant",
+            )
     with pytest.raises(
         sa.exc.IntegrityError,
         match="held movement exceeds referenced allocation",
@@ -620,6 +649,18 @@ def test_sqlite_held_expiration_and_dispute_reversal_are_allocation_bound(tmp_pa
             connection, "expire-dispute", "claim-16", "expiration", 0, -20,
             related="dispute-20",
         )
+        _insert_entry(
+            connection, "reverse-partial-dispute", "claim-26",
+            "dispute_reversal", 0, -10, related="dispute-30",
+        )
+        _insert_entry(
+            connection, "release-remaining-dispute", "claim-27",
+            "release", 20, -20, related="dispute-30",
+        )
+        _insert_entry(
+            connection, "release-won-dispute", "claim-28",
+            "release", 15, -15, related="dispute-15",
+        )
     with pytest.raises(
         sa.exc.IntegrityError,
         match="held movement exceeds referenced allocation",
@@ -638,12 +679,21 @@ def test_sqlite_held_expiration_and_dispute_reversal_are_allocation_bound(tmp_pa
                 connection, "reverse-expired-dispute", "claim-19",
                 "dispute_reversal", 0, -1, related="dispute-20",
             )
+    with pytest.raises(
+        sa.exc.IntegrityError,
+        match="held movement exceeds referenced allocation",
+    ):
+        with engine.begin() as connection:
+            _insert_entry(
+                connection, "release-consumed-dispute", "claim-29",
+                "release", 1, -1, related="dispute-30",
+            )
 
     with engine.connect() as connection:
         assert connection.execute(sa.text("""
             SELECT SUM(available_delta), SUM(held_delta)
             FROM credit_ledger_entries WHERE lot_id = 'lot-one'
-        """)).one() == (100, 40)
+        """)).one() == (90, 40)
     engine.dispose()
 
 
@@ -959,6 +1009,14 @@ def test_postgres_phase_3_constraints_and_concurrent_zero_floor(
                 connection, "dispute-20", "claim-49", "dispute_hold", -20, 20,
                 lot="lot-held",
             )
+            _insert_entry(
+                connection, "dispute-30", "claim-60", "dispute_hold", -30, 30,
+                lot="lot-held",
+            )
+            _insert_entry(
+                connection, "dispute-15", "claim-61", "dispute_hold", -15, 15,
+                lot="lot-held",
+            )
         with pytest.raises(sa.exc.IntegrityError) as expiration_consumed:
             with engine.begin() as connection:
                 _insert_entry(
@@ -991,6 +1049,20 @@ def test_postgres_phase_3_constraints_and_concurrent_zero_floor(
                     related="reserve-40",
                 )
         assert _sqlstate(dispute_wrong_type.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as release_other_dispute:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "release-20-from-10", "claim-62",
+                    "release", 20, -20, lot="lot-held", related="dispute-10",
+                )
+        assert _sqlstate(release_other_dispute.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as release_wrong_type:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "release-grant-as-dispute", "claim-63",
+                    "release", 1, -1, lot="lot-held", related="grant-held",
+                )
+        assert _sqlstate(release_wrong_type.value) == "23514"
         with engine.begin() as connection:
             _insert_entry(
                 connection, "reverse-dispute", "claim-52",
@@ -1000,6 +1072,19 @@ def test_postgres_phase_3_constraints_and_concurrent_zero_floor(
             _insert_entry(
                 connection, "expire-dispute", "claim-53",
                 "expiration", 0, -20, lot="lot-held", related="dispute-20",
+            )
+            _insert_entry(
+                connection, "reverse-partial-dispute", "claim-64",
+                "dispute_reversal", 0, -10, lot="lot-held",
+                related="dispute-30",
+            )
+            _insert_entry(
+                connection, "release-remaining-dispute", "claim-65",
+                "release", 20, -20, lot="lot-held", related="dispute-30",
+            )
+            _insert_entry(
+                connection, "release-won-dispute", "claim-66",
+                "release", 15, -15, lot="lot-held", related="dispute-15",
             )
         with pytest.raises(sa.exc.IntegrityError) as dispute_consumed:
             with engine.begin() as connection:
@@ -1017,6 +1102,13 @@ def test_postgres_phase_3_constraints_and_concurrent_zero_floor(
                     related="dispute-20",
                 )
         assert _sqlstate(dispute_expired.value) == "23514"
+        with pytest.raises(sa.exc.IntegrityError) as release_consumed_dispute:
+            with engine.begin() as connection:
+                _insert_entry(
+                    connection, "release-consumed-dispute", "claim-67",
+                    "release", 1, -1, lot="lot-held", related="dispute-30",
+                )
+        assert _sqlstate(release_consumed_dispute.value) == "23514"
 
         with engine.begin() as connection:
             _insert_lot(connection, identifier="lot-concurrent", amount=100)
@@ -1075,7 +1167,7 @@ def test_postgres_phase_3_constraints_and_concurrent_zero_floor(
             assert connection.execute(sa.text("""
                 SELECT SUM(available_delta), SUM(held_delta)
                 FROM credit_ledger_entries WHERE lot_id = 'lot-held'
-            """)).one() == (100, 40)
+            """)).one() == (90, 40)
             assert connection.execute(sa.text("""
                 SELECT SUM(available_delta), SUM(held_delta)
                 FROM credit_ledger_entries WHERE lot_id = 'lot-concurrent'

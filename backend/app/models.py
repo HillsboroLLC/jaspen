@@ -1407,8 +1407,11 @@ class CreditLedgerEntry(db.Model):
             name='ck_credit_ledger_entries_shape',
         ),
         db.CheckConstraint(
-            "((entry_type IN ('reservation', 'settlement', 'release') "
+            "((entry_type IN ('reservation', 'settlement') "
             "AND reservation_id IS NOT NULL AND operation_id IS NOT NULL) OR "
+            "(entry_type = 'release' AND ((reservation_id IS NOT NULL "
+            "AND operation_id IS NOT NULL) OR (reservation_id IS NULL "
+            "AND operation_id IS NULL))) OR "
             "(entry_type NOT IN ('reservation', 'settlement', 'release') "
             "AND reservation_id IS NULL AND operation_id IS NULL))",
             name='ck_credit_ledger_entries_operation_reference',
