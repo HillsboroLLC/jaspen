@@ -29,7 +29,7 @@ Target test IDs are specifications for Phase 2, not tests added in Phase 1.
 | P21 Reads/auth/preflight/org resolution never mutate | Projection APIs and command/query split | ADR invariant | T-READ-01 through T-READ-08 |
 | P22 Saved work never deleted by billing transitions | Entitlement/seat/risk handlers; data layer excluded | D08/D09/D11 | T-DATA-01 through T-DATA-06 |
 | P23 Every customer is an organization; purchase/promo/trial/internal/member-attributed funding stays specific | Organization billing account, billing roles, lots, allocation | D06 ownership/taxonomy | T-OWNER-01 through T-OWNER-10 |
-| P24 One usable result, one operation-bound settlement | AI operation and ledger | D06 operation lifecycle | T-AI-01 through T-AI-10 |
+| P24 One delivered response, one operation-bound settlement of its actual billable usage; undelivered usage absorbed with evidence | AI operation and ledger | D06 operation lifecycle | T-AI-01 through T-AI-10 |
 | P25 Effective-dated pricing; no retroactivity; notify before customer-impacting change | Pricing policy versions, AI operation, outbox | D21 | T-PRICE-01 through T-PRICE-10 |
 | P26 Credits and short-term capacity are independent; tier-aware and provider-independent | Capacity policy/authorization, AI operation | D22 | T-CAPACITY-01 through T-CAPACITY-12 |
 | P27 Usage & Billing projection, 20% warning once per period, BALANCE retained | Pure projections, outbox, UI adapter | D12/D23 | T-USAGE-01 through T-USAGE-10 |
@@ -42,7 +42,7 @@ Target test IDs are specifications for Phase 2, not tests added in Phase 1.
 | Subscribe/renew | paid invoice lines | Financial -> Entitlement -> Credit Period | financial facts, entitlement, period, lot/entries | billing/access/usage projections | payment/period events |
 | Upgrade | authenticated command + paid proration invoice | Schedule/Financial -> Entitlement/Ledger | schedule history, line, prorated lot | plan/credits projection | upgrade event |
 | Downgrade/cancel | authenticated command + renewal outcome | Scheduled Change | schedule + entitlement transition | plan/status projection | schedule/effective event |
-| Consume AI | operation request and validated usable result | AI Operation -> Ledger | operation, reservation allocations, settlement | usage/balance projection | low/empty balance event if approved |
+| Consume AI | operation request and delivered response | AI Operation -> Ledger | operation, reservation allocations, settlement | usage/balance projection | low/empty balance event if approved |
 | Refund | cumulative refund and line evidence | Financial Case -> Ledger/Entitlement disposition | refund facts, case, deltas | transaction/balance projection | refund event |
 | Dispute/recovery | processor case/version | Financial Case -> Ledger; optional Risk | case, hold/reversal/release/recovery | case/balance projection | dispute events |
 | Seat change | org admin command, occupancy, payment | Seat Commitment | schedule/history | seat projection | blocked/approaching/applied events |
@@ -179,7 +179,7 @@ rewriting ledger history or copying counters backward without a reviewed plan.
 | `test_monthly_credits_are_consumed_before_founder_credits` | expiring value before purchased/persistent | T-LEDGER-01..04 |
 | `test_reservation_release_restores_only_the_current_debit_sources` | exact source restoration | T-AI-04..07 |
 | personal/team-pool tests | legacy member-attributed value cannot be spent by a teammate; migrate it within one org-owned billing account | T-OWNER-01..06 |
-| AI governance idempotency/validation/reversal tests | charge once only for usable retained result | T-AI-01..10 |
+| AI governance idempotency/validation/reversal tests | charge once only for a delivered response; legacy release/reversal paths are replaced in Phase 12 | T-AI-01..10 |
 | `test_ai_economics.py`, `test_ai_governance.py` | provider cost, 3,600-credit policy, attempts/fallback, operation settlement | T-PRICE-01..10, T-AI-01..16 |
 | `test_shared_ai_rate_limits.py` | blocked requests do not charge, shared Redis works, counters isolate users | T-CAPACITY-01..12 |
 | payment-recording idempotency tests | financial object is recorded once | T-FIN-01..04 |
@@ -196,7 +196,7 @@ rewriting ledger history or copying counters backward without a reviewed plan.
 | T-DUNNING-01..05 | capabilities and funded credits retained; no new unfunded credits; terminal transition separated; unrelated saved work untouched |
 | T-LEDGER-01..08 | expiry-first ordering, purchase protection, exact allocation, zero floor, held lot expiry, deterministic ties, replay invariant |
 | T-OWNER-01..10 | universal org creation, explicit org payer, billing-role separation, member attribution, no active-org leakage, shared pool single ownership, internal/trial/promo isolation |
-| T-AI-01..16 | operation fingerprint, concurrent reserve, validation failure release, exact settle, supplemental failure, persistence compensation, fallback/tool-loop accounting, checkpoint/resume, replay |
+| T-AI-01..16 | operation fingerprint, concurrent reserve, no-usage release, undelivered-response release with absorbed-usage evidence, delivered-response exact settle, fallback charges only the delivering attempt, delivered response still charged after a nonessential-step failure, uncertain usage reconciled and never charged, quality never affects billability, supplemental failure, tool-loop accounting, checkpoint/resume, replay |
 | T-REFUND-01..07 | cumulative partial/full purchase refund, taxes/fees excluded, bonus proportional, consumed floor, subscription disposition |
 | T-DISPUTE-01..12 | open/pending hold, won release, lost reversal, consumed shortfall absorbed, mixed-line attribution, expiration while held, unrelated/future funding unchanged |
 | T-RECOVERY-01..05 | exact prior reversal reference, cumulative delta, original cap, expired-lot rule, replay |
@@ -248,7 +248,7 @@ useful **program gates**, not a competing sequence. This map authorizes nothing.
 | 9 | Refunds, disputes, and purchases | 2D financial/ledger | Cumulative source-specific lifecycle and mixed-line tests pass. |
 | 10 | Trials, comps, and internal funding | 2D funding/admin | Approved offer/source/admin authority tests pass. |
 | 11 | Enterprise | 2D entitlement | Executed-contract evidence and no-unlimited-default tests pass. |
-| 12 | AI reservations and settlements | 2D AI | Pricing/capacity binding, fallback, tools, checkpoint/resume, exact settlement tests pass. |
+| 12 | AI reservations and settlements | 2D AI | Pricing/capacity binding, fallback, tools, checkpoint/resume, delivery-based billability, absorbed-usage evidence, and exact settlement tests pass. |
 | 13 | Inventory and reconciliation | 2B | Pure projections, all writer/reader inventory, compatibility field proofs. |
 | 14 | Backfill | 2B/2C | Evidence-ranked deterministic migration; no unexplained account cut over. |
 | 15 | Local rehearsal | 2C | Exact reports, failure injection, downgrade/rollback, rerun no-op. |

@@ -64,7 +64,7 @@ availability and therefore cannot be negative.
 |---|---:|---|
 | `grant` | positive | one per funded lot/origin |
 | `reservation` | hold | operation-bound; not consumption |
-| `settlement` | negative | consumes reservation allocation for usable result |
+| `settlement` | negative | consumes reservation allocation for a delivered response's actual billable usage |
 | `release` | removes hold | exact reservation/dispute allocation only |
 | `expiration` | negative | unspent recurring value at period end; hold does not delay expiry |
 | `refund_reversal` | negative | cumulative source-specific refundable unused value |
@@ -93,29 +93,73 @@ source from an in-memory object.
 ### Operation reservation and settlement
 
 ```text
-requested -> reserved -> provider_running -> validated -> settled
-                      \-> failed ---------> released
-                                      \----> persistence_failed -> released/compensated
+requested -> reserved -> provider_running -> delivered -> settled
+                      \-> no_billable_usage ---------------------> released
+                      \-> undelivered -> usage_recorded_as_absorbed -> released
 ```
+
+AI usage billability rules were approved by the founder on 2026-11-11. Live
+billing behavior is unchanged until the approved AI usage integration phase
+(Phase 12), which implements and verifies them under separate authorization.
 
 - Preflight is a pure availability query.
 - Reserve is an explicit command with operation ID and maximum amount.
-- Provider failure or validation failure releases the exact reservation.
-- A usable validated result settles actual cost, floored at zero and capped by
-  the reservation unless an atomic supplemental reservation succeeds.
+- A response is **delivered** when it has been shown to the customer or is
+  durably saved where the customer can access it. Delivery, not response
+  quality, determines billability.
+- A delivered response settles the actual billable usage of the provider
+  attempt that produced it, converted under the bound pricing-policy version,
+  floored at zero and capped by the reservation unless an atomic supplemental
+  reservation succeeds. Usage above that cap is recorded as Jaspen-absorbed,
+  never silently dropped.
+- Response quality, accuracy, usefulness, or customer satisfaction never
+  determines billability.
 - Unused reservation is released in the same transaction as settlement.
-- If a result that required persistence cannot be retained, its settlement is
-  compensated exactly once and Jaspen absorbs provider cost.
+- If no provider-billable usage occurred, the exact reservation is released
+  with no settlement.
+- A provider attempt whose response is not delivered (provider error, timeout,
+  output that cannot be delivered, or a Jaspen failure that leaves the response
+  inaccessible) is not charged to the customer. Its known billable usage is
+  recorded as Jaspen-absorbed with the evidence below.
+- If a fallback provider then delivers a response, the customer is charged only
+  for the delivering attempt's usage. The same provider usage is never charged
+  twice.
+- If the response was delivered or remains accessible, its usage is charged
+  even if a later nonessential workflow step fails.
+- A timeout or missing response is not assumed to have incurred provider
+  charges. Available evidence is labeled reported, estimated, or unknown;
+  uncertain usage is reconciled against provider records and never charged to
+  the customer.
 - Operation idempotent replay returns the prior result and makes no new entry.
 - Authorization binds an immutable pricing-policy version. Provider retry,
   fallback, context expansion, and tool calls remain components of the same
-  customer-visible operation. Failed attempts are reported as Jaspen-absorbed
-  cost unless an approved future policy explicitly says otherwise.
+  customer-visible operation.
 - Capacity authorization is evaluated independently after a sufficient credit
   reservation and before chargeable provider execution. A capacity denial
   releases any newly created reservation atomically, records no settlement,
   returns `available_again_at`, and preserves the session at its last completed
   step.
+
+### Absorbed provider usage evidence
+
+Provider-billed usage that is not charged to the customer is retained with:
+customer and operation identifiers; provider and model; the provider request
+identifier where available; request and failure timestamps; provider-reported
+token usage and cost where available, labeled reported, estimated, or unknown;
+error category and delivery status; whether fallback was attempted and its
+outcome; the Jaspen-absorbed amount and reason; and provider dispute or
+investigation status and resolution. The record keeps enough evidence for
+reconciliation and provider disputes without storing customer prompts or
+responses.
+
+### Customer billing disputes
+
+A customer billing dispute follows an authorized investigation with documented
+evidence and an audit trail. A resulting credit restoration is an
+`admin_adjustment` entry with actor, reason, and evidence; a money refund
+follows D10. Settlement logic never reverses a charge because of response
+quality. Processor chargebacks are D10 disputes; provider-charge disputes are
+tracked on the absorbed-usage evidence record.
 
 ## D07 Entitlement and credit-period state machines
 
@@ -561,4 +605,6 @@ Credit exhaustion blocks only new unfunded chargeable work. Capacity denial
 blocks only temporarily unavailable work. Both preserve completed artifacts,
 the decision session, the pending intent, and a durable checkpoint. When access
 returns, the operation resumes from the last successfully completed step under
-a new explicit authorization; it never repeats a settled step or charge.
+a new explicit authorization; it never repeats a settled step or charge. A step
+interrupted before its response is delivered is not charged; its known provider
+usage is recorded as Jaspen-absorbed.

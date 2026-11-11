@@ -8,6 +8,9 @@ Decision owners: Product and Engineering
 
 Decision date: 2026-11-09
 
+Amended: 2026-11-11, founder-approved delivery-based AI usage billability
+(lifecycle specification D06). Live behavior is unchanged until Phase 12.
+
 Approval scope: ADR-0001, STOP-01 through STOP-25, organization-first billing,
 and the authoritative 18-phase roadmap. Approval is architecture-only; every
 implementation phase requires separate explicit authorization.
@@ -52,8 +55,8 @@ Jaspen will use the following boundaries:
    movement. Its entries are append-only. Balances are sums of eligible ledger
    entries, never mutable counters.
 5. **AI Operation Authority** owns one customer-visible operation, its request
-   identity, validation outcome, provider attempts, reservation reference, and
-   settlement reference. It never owns a balance.
+   identity, delivery outcome, provider attempts and absorbed-usage evidence,
+   reservation reference, and settlement reference. It never owns a balance.
 6. **Projection Authority** builds read models for API/UI consumers. A
    projection may be cached and rebuilt; it cannot grant, reset, consume,
    reverse, or restrict anything.
@@ -85,8 +88,10 @@ Jaspen will use the following boundaries:
 - Authentication cannot allocate, reset, or synchronize billing state.
 - Organization resolution cannot select a funding owner by active context.
 - Every AI charge is bound to one operation and one reservation/settlement
-  chain; unusable or unpersisted results settle zero or receive an exact
-  compensating release.
+  chain. Only a delivered response is charged, at its actual billable usage
+  under the bound pricing version; undelivered provider usage is recorded as
+  Jaspen-absorbed and the reservation is released. Response quality never
+  determines billability, and the same provider usage is never charged twice.
 - Expiring eligible value is consumed first. Purchased value is protected
   behind expiring value. Within the same expiry, deterministic source priority,
   funded-at time, and lot ID break ties.
@@ -231,7 +236,7 @@ Costs and constraints:
  +----------------------+              +----------------------+
  | AI Operation        | reserve/settle| Credit Ledger        |
  | Authority           +------------->| lots + append entries|
- | validate usable work|<-------------+ balance by projection|
+ | confirm delivery    |<-------------+ balance by projection|
  +----------+-----------+              +----------+-----------+
             |                                         |
             +-------------------+---------------------+
@@ -293,7 +298,7 @@ only after this ADR is reviewed.
 | Ledger entry | `lot_id`, `entry_type`, `amount`, `effective_at`, `idempotency_key` | Append-only signed movement; correction uses another entry |
 | Ledger entry | `operation_id`, `financial_line_id`, `related_entry_id`, `metadata` | Traceability, never mutable balance state |
 | AI operation | `id`, `idempotency_key`, `request_fingerprint`, `state` | Exactly-one operation lifecycle |
-| AI operation | `reservation_entry_id`, `settlement_entry_id`, `usable_result_reference` | Binding from result to credit entries |
+| AI operation | `reservation_entry_id`, `settlement_entry_id`, `delivered_result_reference` | Binding from the delivered result to credit entries |
 | Scheduled change | `subscription_id`, `kind`, `target`, `effective_rule`, `state`, `precedence` | One active plan change with retained history |
 | Seat commitment | `organization_id`, `quantity`, `interval`, `effective_interval`, `state` | Paid commitment, independent of occupancy |
 | Risk restriction | `scope`, `evidence`, `justification`, `actor`, `effective_at`, `review_at`, `release_path` | Explicit, proportionate permissioned restriction |

@@ -2,6 +2,10 @@
 
 Status: development-only; both policies default to `shadow`.
 
+Billability was clarified on 2026-11-11 (founder-approved, delivery-based; see
+`docs/specs/billing/lifecycle-specification.md` D06). Live billing behavior is
+unchanged until the approved AI usage integration phase.
+
 ## Policy
 
 - Claude is primary. Gemini is the only core failover provider.
@@ -10,8 +14,11 @@ Status: development-only; both policies default to `shadow`.
   ambiguity, context size, attachments, alternatives, and validation failures.
 - Public credits map at 3,600 credits per provider dollar. The existing ledger
   retains 1,000 internal units per displayed credit.
-- A customer-visible operation is settled once from the successful result's
-  provider cost. Failed attempts and internal support calls are Jaspen costs.
+- A customer-visible operation is charged once, only when its response is
+  delivered, at the delivering provider attempt's actual billable usage.
+  Undelivered attempts, failed fallback attempts, and internal support calls
+  are Jaspen-absorbed costs recorded with audit evidence. Response quality never
+  determines billability.
 - Free, test, admin/unlimited, promotional, fully-comped, anonymous public
   intake, and internal use is classified explicitly as subsidized. It is not
   treated as revenue-backed margin.
@@ -40,7 +47,9 @@ status, and router/policy versions.
 
 If a failed provider attempt returns usage, the ledger records its actual
 cost. If it does not, the gateway records a conservative token/cost estimate,
-labels the estimate method, and marks that cost as Jaspen-absorbed.
+labels the estimate method, and marks that cost as Jaspen-absorbed. A timeout
+or missing response is not assumed to be billable; uncertain usage is
+reconciled against provider records and never charged to the customer.
 
 Customer-visible operations accept `X-Jaspen-Idempotency-Key`. The shared
 runtime claims a namespaced operation before generation and replays its stored

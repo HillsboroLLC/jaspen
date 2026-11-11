@@ -1,6 +1,6 @@
 # Billing Architecture Phase 1
 
-Status: **Phases 1–3 accepted; Phase 4 implementation authorized and inactive**
+Status: **Phases 1–3 accepted; Phase 4 verified and implementation-complete, not deployed or activated**
 
 Base: `origin/main` at `88684284a33836106cad639d36e191271109c2c7`
 
@@ -30,8 +30,9 @@ It replaces current overlap with deliberately separate authorities:
 2. an entitlement authority for capabilities, plans, contracts, and seats;
 3. one append-only credit ledger for every funded lot, hold, reservation,
    settlement, expiration, release, reversal, and recovery; and
-4. an AI-operation authority that binds one usable result to one reservation
-   and settlement without becoming a balance store.
+4. an AI-operation authority that binds one delivered response's actual
+   billable usage to one reservation and settlement without becoming a balance
+   store; undelivered provider usage is Jaspen-absorbed with audit evidence.
 
 Effective-dated pricing policy binds provider rates and customer-credit
 conversion at operation authorization. A separate provider-independent
@@ -57,7 +58,9 @@ Founder architecture approval was recorded on 2026-11-09 for ADR-0001,
 STOP-01 through STOP-25, the organization-first model, and the authoritative
 18-phase roadmap. Phases 2.1, 2.2, 2.3, and 3 were subsequently authorized,
 implemented, independently verified, and accepted as additive, inactive
-foundations. The phases 2–5 proposal continues to identify separately
+foundations. Phase 4 was then implemented and independently verified on
+PostgreSQL 18.6 (commit `24c14d5`); it is implementation-complete but not
+merged, deployed, or activated. The phases 2–5 proposal continues to identify separately
 reviewable, reversible increments; no backfill, runtime activation, or cutover
 is bundled. The stop-class conflicts in
 [current-state-inventory.md](current-state-inventory.md#d20-newly-discovered-conflicts-and-stop-register)
@@ -119,7 +122,8 @@ production pricing is known, or that customer traffic uses the new ledger.
   subscription term and interval, next credit refresh, and next payment.
 - Warn once per applicable credit period at a configurable 20% remaining.
 - Explain capacity restriction separately from credit exhaustion, preserve the
-  session, state when capacity returns, and charge nothing for unusable work.
+  session, state when capacity returns, and charge nothing for an undelivered
+  response (2026-11-11 delivery-based billability; lifecycle D06).
 
 ## Remaining decisions and evidence limits
 
@@ -132,8 +136,15 @@ realized margin were not accessed or verified.
 
 ## Scope guardrails
 
-- Phases 2.1–2.3 and Phase 3 are accepted. Phase 4 implementation is
-  authorized on an isolated branch but is not accepted or active.
+- Phases 2.1–2.3 and Phase 3 are accepted. Phase 4 is verified and
+  implementation-complete on its isolated branch (`24c14d5`) but is not merged,
+  deployed, or activated.
+- Runtime prerequisite: before any Phase 4 runtime activation, the production
+  backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
+  and the Docker image. `app/billing_entitlements.py` uses `X | None` type
+  annotations that fail to import on Python 3.9. The Phase 4 models imported at
+  startup do not use that syntax, so the inactive foundation does not affect
+  current startup.
 - The accepted schema, models, and tests remain additive and disconnected from
   legacy runtime billing readers and writers.
 - No production or staging system was accessed.

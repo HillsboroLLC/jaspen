@@ -120,7 +120,9 @@ functions and symbols are the stable trace keys.
 - `ai_runtime.py`, `ai_audit.py`, and governed routes provide useful operation,
   provider-attempt, idempotency, validation, cost, and settlement evidence.
   Failed attempts are recorded/absorbed and a successful visible result is
-  intended to settle once. The streaming tool boundary is a documented special
+  intended to settle once. This matches the 2026-11-11 delivery-based
+  billability policy in intent; the required absorbed-usage evidence fields and
+  uncertain-usage reconciliation are not yet complete. The streaming tool boundary is a documented special
   path and must remain in coverage.
 - Legacy preflight estimation can fall back to token-count charging without a
   full provider/model rate calculation. Current reservations and transient
@@ -250,7 +252,7 @@ later product/engineering approvals, not reopened policy questions.
 | STOP-15 | Enterprise is a nullable-credit label without executed-contract authority. | Same org foundation; executed contract versions pricing, term, credits, seats, exceptions; never assume unlimited. | **Verified conflict**; catalog sales-only marker partial. | Contract authority/migration quarantine; evidence/term/funding tests. | STOP-14, entitlements. | No. |
 | STOP-16 | Seat policy, commitment, occupancy, and overrides overlap. | Separate paid commitment from occupancy; block incompatible reduction; preserve members/work. | **Verified conflict**; seat purchase/usage tests partial. | Commitment state machine; occupancy/failure/schedule/contract tests. | Financial + entitlements. | No. |
 | STOP-17 | Webhook event dedupe lacks object ordering/cumulative semantics. | Durable inbox, digest integrity, object/effective ordering, cumulative recomputation. | **Verified conflict**; event-ID/purchase claims partial. | Dispatcher/replay; duplicate/cross-type/out-of-order/concurrent tests. | Registry, financial authority. | No. |
-| STOP-18 | AI releases rely on transient ORM source attributes and combined counter. | Persist per-lot reservation allocations; exact settle/release; usable result once; checkpoint/resume. | **Verified conflict**; governed operation/idempotency/attempt telemetry is strong partial. | Bind ledger entries/pricing/capacity; retry/fallback/tool/persistence/concurrency tests. | STOP-02/03, pricing/capacity. | No. |
+| STOP-18 | AI releases rely on transient ORM source attributes and combined counter. | Persist per-lot reservation allocations; exact settle/release; delivered response charged once; absorbed-usage evidence; checkpoint/resume. | **Verified conflict**; governed operation/idempotency/attempt telemetry is strong partial. | Bind ledger entries/pricing/capacity; retry/fallback/tool/persistence/concurrency tests. | STOP-02/03, pricing/capacity. | No. |
 | STOP-19 | Receipt email is inline; no durable post-commit outbox. | Domain-event outbox is idempotent/retryable/audited and never reverses business success. | **Verified conflict**; test proves failed send does not reverse one offer. | General outbox worker; delivery/retry/dedupe tests for required events. | Domain events. | No. |
 | STOP-20 | Compatibility aliases and frontend balance patches can hide drift. | Versioned pure projections with explicit retirement; BALANCE reads ledger projection. | **Verified conflict** in status aliases/`JaspenChat`. | Projector versions/consumer migration; parity/staleness/retirement tests. | STOP-02, reader cutover. | No. |
 | STOP-21 | Recurring JSON value and persistent grants cannot share expiry ordering. | All sources are lots; earliest expiry first, deterministic tie rules, purchases protected. | **Verified conflict**; monthly-before-founder test preserves intent. | Unified allocation engine; expiry/hold/tie/source tests. | Ledger/periods. | No. |

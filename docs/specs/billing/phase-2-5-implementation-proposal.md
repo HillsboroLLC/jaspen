@@ -1,6 +1,6 @@
 # Phases 2–5 Additive-Foundation Implementation Proposal
 
-Status: **Phases 2.1–3 accepted; Phase 4 implementation authorized; Phase 5 remains planning only**
+Status: **Phases 2.1–3 accepted; Phase 4 verified and implementation-complete, not deployed or activated; Phase 5 remains planning only**
 
 Founder architecture approval recorded: 2026-11-09
 
@@ -20,7 +20,7 @@ cutover.
 | Phase 2.2 | Implemented, independently verified, and accepted | `c6f8d0b2e4a1` |
 | Phase 2.3 | Implemented, independently verified, and accepted | `d7a9e1c3f5b2` |
 | Phase 3 | Implemented, independently verified, and accepted | `e8b0f2d4a6c3`; accepted implementation commit `9969a1421e322d7840bde97c346c116425439dd0` |
-| Phase 4 | Implementation authorized; acceptance pending | Inactive entitlement and credit-period foundations only |
+| Phase 4 | Implemented and independently verified; implementation-complete, not deployed or activated | `f9c1a3e5b7d4`; verified implementation commit `24c14d596973c311ba305d6e3132a7ed696074d7` |
 | Phase 5 | Not authorized for implementation | Planning specifications only |
 
 All accepted tables and links remain additive and inactive. Existing billing
@@ -55,7 +55,9 @@ Every phase-specific review must demonstrate, where applicable:
   must not change or duplicate those surfaces;
 - pure authentication, account, organization, and UI reads;
 - an approved, authorization-time pricing version for chargeable AI work;
-- no charge for failed, unusable, duplicated, or unpersisted work;
+- charge only delivered responses, at actual billable usage and never twice;
+  undelivered provider usage is Jaspen-absorbed with audit evidence, and
+  response quality never determines billability;
 - separate credit and short-term capacity decisions, with no unapproved limits;
 - universal organization ownership and billing roles separate from membership;
 - subscription-tier ownership of seat allowances/capabilities, with no plan or
@@ -78,7 +80,7 @@ Every phase-specific review must demonstrate, where applicable:
 | Preserve purchased/funded/source value | No backfill or legacy writes; lots require exact org/source/evidence | Phases 13–17 reconciliation/backfill/cutover |
 | Pure reads | No phase 2–5 runtime reader/writer; schema has no read-triggered defaults | Phase 13 inventory; phase 17 reader cutover |
 | Approved authorization-time pricing | Phase 2 immutable policy/rate schema; phase 3 reservation FK | Phase 12 enforcement; phase 16 evidence |
-| Preserve sessions/work; charge usable persisted work only | No cascading FK from billing to work/session data; no execution integration | Phase 12 checkpoint/settlement tests |
+| Preserve sessions/work; charge delivered responses only | No cascading FK from billing to work/session data; no execution integration | Phase 12 checkpoint/settlement tests |
 | Credit exhaustion differs from capacity | Separate pricing/ledger and capacity policy identities; no limits seeded | Phase 12 service/UI behavior |
 | Usage & Billing, BALANCE, 20% warning | Explicit no-change acceptance check for every phases 2–5 increment | Later projection/outbox/UI phase |
 | Organization-first; tiers own seats/capabilities | Unique organization billing account and separate role grants; org-owned entitlements | Phases 7, 8, 11, 13–17 |
@@ -431,6 +433,21 @@ or UI integration. Disposable funding tests demonstrate only atomic compatibilit
 with the Phase 3 ledger; Phase 5 financial evidence and later command activation
 remain mandatory before live funding.
 
+Verification (2026-11-11): commit `24c14d5` passed independent verification
+against a disposable PostgreSQL 18.6 database: Phase 4 concurrency tests across
+six isolation combinations, Phase 3 ledger integrity, real migration-chain
+upgrade/downgrade rehearsal with downgrade refused for populated tables,
+independent probes, and the full PostgreSQL and SQLite suites. The founder
+recorded Phase 4 as verified and implementation-complete, not deployed or
+activated.
+
+Runtime prerequisite: before any Phase 4 runtime activation, the production
+backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
+and the Docker image. `app/billing_entitlements.py` uses `X | None` type
+annotations that fail to import on Python 3.9. The Phase 4 models imported at
+startup do not use that syntax, so the inactive foundation does not affect
+current startup.
+
 Existing legacy authorities remain intentionally unchanged during Phase 4:
 
 | Legacy authority | Phase 4 disposition | Approved retirement |
@@ -545,7 +562,7 @@ because no customer data is written.
 2. **Accepted:** Phase 2.2 idempotency and pricing/capacity version catalogs.
 3. **Accepted:** Phase 2.3 nullable compatibility links.
 4. **Accepted:** Phase 3 unused credit-lot/reservation/ledger primitives and invariants.
-5. **Implementation authorized; acceptance pending:** Phase 4 inactive entitlement/subscription/period primitives.
+5. **Verified and implementation-complete; not deployed or activated:** Phase 4 inactive entitlement/subscription/period primitives (runtime activation requires Python 3.10+, 3.12 preferred).
 6. **Not authorized:** Phase 5 disconnected financial/inbox/case/domain/outbox primitives.
 
 No authorization should cover more than one numbered increment by implication.
