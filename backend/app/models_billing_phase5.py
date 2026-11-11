@@ -1,7 +1,8 @@
 """Inactive Phase 5 financial-evidence models.
 
-Phase 5.1 adds only the minimal-data external event inbox. Nothing in live
-routes, webhooks, jobs, or readers writes to or reads from it.
+Phase 5.1 adds only the minimal-data external event inbox and its append-only
+digest-conflict evidence. Nothing in live routes, webhooks, jobs, or readers
+writes to or reads from them.
 """
 
 import uuid
@@ -36,9 +37,6 @@ class ExternalEventInbox(db.Model):
     lease_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
     processed_at = db.Column(db.DateTime(timezone=True), nullable=True)
     error_code = db.Column(db.String(120), nullable=True)
-    digest_conflict_count = db.Column(db.Integer, nullable=False, server_default="0")
-    last_conflict_digest = db.Column(db.String(64), nullable=True)
-    last_conflict_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         db.CheckConstraint("provider IN ('stripe')", name="ck_external_event_inbox_provider"),
@@ -76,12 +74,6 @@ class ExternalEventInbox(db.Model):
             "state <> 'quarantined' OR error_code IS NOT NULL",
             name="ck_external_event_inbox_quarantine_reason",
         ),
-        db.CheckConstraint(
-            "(digest_conflict_count = 0 AND last_conflict_digest IS NULL AND last_conflict_at IS NULL) OR "
-            "(digest_conflict_count > 0 AND last_conflict_digest IS NOT NULL AND last_conflict_at IS NOT NULL "
-            "AND length(last_conflict_digest) = 64 AND last_conflict_digest <> payload_digest)",
-            name="ck_external_event_inbox_conflict",
-        ),
         db.UniqueConstraint("provider", "event_id", name="uq_external_event_inbox_provider_event"),
         db.Index("ix_external_event_inbox_state_next_attempt", "state", "next_attempt_at"),
         db.Index(
@@ -89,4 +81,39 @@ class ExternalEventInbox(db.Model):
             "provider", "object_id", "provider_created_at",
         ),
         db.Index("ix_external_event_inbox_state_processed", "state", "processed_at"),
+    )
+
+
+class ExternalEventInboxConflict(db.Model):
+    """Append-only evidence of a same-ID event received with a different digest."""
+
+    __tablename__ = "external_event_inbox_conflicts"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    inbox_event_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "external_event_inbox.id",
+            name="fk_external_event_inbox_conflicts_inbox_event_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    conflicting_digest = db.Column(db.String(64), nullable=False)
+    state_at_detection = db.Column(db.String(16), nullable=False)
+    detected_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "length(conflicting_digest) = 64 AND conflicting_digest = lower(conflicting_digest)",
+            name="ck_external_event_inbox_conflicts_digest",
+        ),
+        db.CheckConstraint(
+            f"state_at_detection IN ({_quoted(INBOX_STATES)})",
+            name="ck_external_event_inbox_conflicts_state",
+        ),
+        db.UniqueConstraint(
+            "inbox_event_id", "conflicting_digest",
+            name="uq_external_event_inbox_conflicts_event_digest",
+        ),
     )

@@ -2,21 +2,29 @@
 
 Nothing in live routes, webhooks, authentication, jobs, or readers imports this
 module. A later, separately authorized increment will verify the Stripe
-signature at the webhook boundary and then call ``record_event``.
+signature at the webhook boundary and then call ``record_event``. Retention
+purging is not scheduled and requires separate authorization to run.
 
-Data minimization and retention policy (approved 2026-11-11; documented in
+Data minimization and retention policy (documented in
 docs/specs/billing/phase-2-5-implementation-proposal.md, Phase 5.1):
 
 * Stored: provider, event ID and type, referenced object type and ID, livemode,
   provider-created and received times, a SHA-256 digest of the verified raw
-  payload, processing state/attempts/errors, digest-conflict evidence, and an
-  allowlisted scalar summary (identifiers, amounts, currency, status).
+  payload, processing state/attempts/errors, and an allowlisted scalar summary
+  (identifiers, amounts, currency, status). Conflicting digests are separate
+  append-only evidence rows.
 * Never stored: the raw payload, payment-card details, billing details,
   customer names, emails, addresses, phone numbers, metadata, descriptions,
   or any nested object.
-* Processed events may be deleted RETENTION_DAYS after processing. Received,
-  processing, retryable, and quarantined events are never deleted by
-  retention. The database enforces the same rule.
+* Processed events without digest conflicts may be deleted RETENTION_DAYS
+  after processing. Received, processing, retryable, quarantined, and
+  conflicted events are never deleted by retention. The database enforces the
+  same rule.
+
+Claims are fenced: ``claim_next_event`` returns the row whose ``attempt_count``
+is the claim token. Completing, retrying, or quarantining requires that token
+and an unexpired lease; a stale worker updates zero rows and gets
+``StaleClaimError``.
 """
 
 import hashlib
@@ -24,11 +32,11 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, exists, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from .billing_ledger import _begin_serialized_sqlite_write
-from .models_billing_phase5 import ExternalEventInbox
+from .models_billing_phase5 import ExternalEventInbox, ExternalEventInboxConflict
 
 PROVIDER = "stripe"
 SUMMARY_SCHEMA_VERSION = 1
@@ -37,6 +45,7 @@ LEASE_SECONDS = 300
 MAX_ATTEMPTS = 10
 BASE_RETRY_SECONDS = 60
 MAX_RETRY_SECONDS = 6 * 60 * 60
+DIGEST_CONFLICT_ERROR = "digest_conflict"
 
 AMOUNT_FIELDS = ("amount", "amount_due", "amount_paid", "amount_refunded")
 REFERENCE_FIELDS = (
@@ -47,6 +56,7 @@ SUMMARY_FIELDS = (
     "schema_version", "api_version", "status", "currency",
     *AMOUNT_FIELDS, *REFERENCE_FIELDS,
 )
+UNPROCESSED_STATES = ("received", "processing", "retryable")
 
 _STRIPE_ID = re.compile(r"^[a-z]+_[A-Za-z0-9]{1,250}$")
 _TOKEN = re.compile(r"^[a-z][a-z0-9_.]{0,119}$")
@@ -56,6 +66,10 @@ _API_VERSION = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}(\.[a-z]+)?$")
 
 class InboxInvariantError(ValueError):
     """Raised before a write that would violate the inbox contract."""
+
+
+class StaleClaimError(InboxInvariantError):
+    """Raised when a worker's claim token or lease is no longer current."""
 
 
 def _utcnow():
@@ -117,8 +131,6 @@ def minimize_stripe_event(raw_body: bytes, event: dict) -> dict:
         reference = _stripe_id(data_object.get(field))
         if reference:
             summary[field] = reference
-    # The referenced object itself is identified by object_type/object_id; also
-    # expose it under its own reference key when it is one of the known types.
     if object_type in REFERENCE_FIELDS:
         summary[object_type] = object_id
 
@@ -135,13 +147,31 @@ def minimize_stripe_event(raw_body: bytes, event: dict) -> dict:
     }
 
 
+def _locked_event(session, provider, event_id):
+    return session.execute(
+        select(ExternalEventInbox)
+        .where(ExternalEventInbox.provider == provider, ExternalEventInbox.event_id == event_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+
+
+def _reload(session, event_pk):
+    return session.execute(
+        select(ExternalEventInbox)
+        .where(ExternalEventInbox.id == event_pk)
+        .execution_options(populate_existing=True)
+    ).scalar_one()
+
+
 def record_event(session, raw_body: bytes, event: dict, *, now=None):
     """Record a verified event once.
 
     Returns ``(row, outcome)`` where outcome is ``inserted``, ``duplicate``, or
     ``digest_conflict``. A same-ID event with a different digest is never
-    stored; its digest is recorded as conflict evidence and an unprocessed event
-    is quarantined for investigation.
+    stored as the event. Each distinct conflicting digest is appended once to
+    ``external_event_inbox_conflicts``, and an unprocessed event (received,
+    processing, or retryable) is quarantined. Processed and already
+    quarantined events keep their state.
     """
     now = now or _utcnow()
     fields = minimize_stripe_event(raw_body, event)
@@ -161,30 +191,45 @@ def record_event(session, raw_body: bytes, event: dict, *, now=None):
                 raise
     if existing.payload_digest == fields["payload_digest"]:
         return existing, "duplicate"
-    existing.digest_conflict_count = int(existing.digest_conflict_count or 0) + 1
-    existing.last_conflict_digest = fields["payload_digest"]
-    existing.last_conflict_at = now
-    if existing.state in ("received", "retryable"):
-        existing.state = "quarantined"
-        existing.next_attempt_at = None
-        existing.error_code = "digest_conflict"
-    session.flush()
-    return existing, "digest_conflict"
 
-
-def _locked_event(session, provider, event_id):
-    return session.execute(
-        select(ExternalEventInbox)
-        .where(ExternalEventInbox.provider == provider, ExternalEventInbox.event_id == event_id)
-        .with_for_update()
+    already_recorded = session.execute(
+        select(ExternalEventInboxConflict.id).where(
+            ExternalEventInboxConflict.inbox_event_id == existing.id,
+            ExternalEventInboxConflict.conflicting_digest == fields["payload_digest"],
+        )
     ).scalar_one_or_none()
+    if already_recorded is None:
+        try:
+            with session.begin_nested():
+                session.add(ExternalEventInboxConflict(
+                    id=str(uuid.uuid4()), inbox_event_id=existing.id,
+                    conflicting_digest=fields["payload_digest"],
+                    state_at_detection=existing.state, detected_at=now,
+                ))
+                session.flush()
+        except IntegrityError:
+            pass  # The same conflicting digest was recorded concurrently.
+    session.execute(
+        update(ExternalEventInbox)
+        .where(
+            ExternalEventInbox.id == existing.id,
+            ExternalEventInbox.state.in_(UNPROCESSED_STATES),
+        )
+        .values(
+            state="quarantined", error_code=DIGEST_CONFLICT_ERROR,
+            lease_expires_at=None, next_attempt_at=None,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    return _reload(session, existing.id), "digest_conflict"
 
 
 def claim_next_event(session, *, now=None, lease_seconds=LEASE_SECONDS):
     """Claim one available event with ``FOR UPDATE SKIP LOCKED``.
 
     Available means received, retryable and due, or processing with an expired
-    lease. Returns the claimed row or ``None``.
+    lease. Returns the claimed row (its ``attempt_count`` is the claim token)
+    or ``None``.
     """
     now = now or _utcnow()
     _begin_serialized_sqlite_write(session)
@@ -210,18 +255,32 @@ def claim_next_event(session, *, now=None, lease_seconds=LEASE_SECONDS):
     return row
 
 
-def _require_processing(row):
-    if row.state != "processing":
-        raise InboxInvariantError("event must be claimed before it is completed")
+def _fenced_update(session, event_pk, claim_token, now, values):
+    """Apply a worker transition only for the current, unexpired claim."""
+    if isinstance(claim_token, bool) or not isinstance(claim_token, int) or claim_token < 1:
+        raise InboxInvariantError("a positive integer claim token is required")
+    inbox = ExternalEventInbox
+    result = session.execute(
+        update(inbox)
+        .where(
+            inbox.id == event_pk,
+            inbox.state == "processing",
+            inbox.attempt_count == claim_token,
+            inbox.lease_expires_at > now,
+        )
+        .values(lease_expires_at=None, **values)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        raise StaleClaimError("claim is no longer current: lease expired, reclaimed, or completed")
+    return _reload(session, event_pk)
 
 
-def mark_processed(session, row, *, now=None):
-    _require_processing(row)
-    row.state = "processed"
-    row.processed_at = now or _utcnow()
-    row.lease_expires_at = None
-    session.flush()
-    return row
+def mark_processed(session, event_pk, claim_token, *, now=None):
+    now = now or _utcnow()
+    return _fenced_update(session, event_pk, claim_token, now, {
+        "state": "processed", "processed_at": now,
+    })
 
 
 def retry_delay_seconds(attempt_count: int) -> int:
@@ -229,61 +288,80 @@ def retry_delay_seconds(attempt_count: int) -> int:
     return min(MAX_RETRY_SECONDS, BASE_RETRY_SECONDS * (2 ** min(exponent, 20)))
 
 
-def mark_retryable(session, row, error_code: str, *, now=None):
+def _bounded_error(error_code):
+    if not isinstance(error_code, str) or not error_code or len(error_code) > 120:
+        raise InboxInvariantError("a bounded error code is required")
+
+
+def mark_retryable(session, event_pk, claim_token, error_code: str, *, now=None):
     """Schedule a retry, or quarantine once MAX_ATTEMPTS is reached."""
-    _require_processing(row)
-    if not error_code or len(error_code) > 120:
-        raise InboxInvariantError("a bounded error code is required")
+    _bounded_error(error_code)
     now = now or _utcnow()
-    row.lease_expires_at = None
-    if int(row.attempt_count or 0) >= MAX_ATTEMPTS:
-        row.state = "quarantined"
-        row.error_code = "retry_exhausted"
-        row.next_attempt_at = None
+    if int(claim_token) >= MAX_ATTEMPTS:
+        values = {"state": "quarantined", "error_code": "retry_exhausted", "next_attempt_at": None}
     else:
-        row.state = "retryable"
-        row.error_code = error_code
-        row.next_attempt_at = now + timedelta(seconds=retry_delay_seconds(row.attempt_count))
-    session.flush()
-    return row
+        values = {
+            "state": "retryable", "error_code": error_code,
+            "next_attempt_at": now + timedelta(seconds=retry_delay_seconds(claim_token)),
+        }
+    return _fenced_update(session, event_pk, claim_token, now, values)
 
 
-def mark_quarantined(session, row, error_code: str):
-    if row.state not in ("processing", "received", "retryable"):
-        raise InboxInvariantError("only unprocessed events can be quarantined")
-    if not error_code or len(error_code) > 120:
-        raise InboxInvariantError("a bounded error code is required")
-    row.state = "quarantined"
-    row.error_code = error_code
-    row.lease_expires_at = None
-    row.next_attempt_at = None
-    session.flush()
-    return row
+def mark_quarantined(session, event_pk, error_code: str, *, claim_token=None, now=None):
+    """Quarantine an event.
+
+    A worker holding a claim passes its ``claim_token``. Without a token only a
+    received or retryable event can be quarantined (operator action).
+    """
+    _bounded_error(error_code)
+    now = now or _utcnow()
+    if claim_token is not None:
+        return _fenced_update(session, event_pk, claim_token, now, {
+            "state": "quarantined", "error_code": error_code, "next_attempt_at": None,
+        })
+    result = session.execute(
+        update(ExternalEventInbox)
+        .where(ExternalEventInbox.id == event_pk, ExternalEventInbox.state.in_(("received", "retryable")))
+        .values(state="quarantined", error_code=error_code, next_attempt_at=None)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        raise InboxInvariantError("only received or retryable events can be quarantined without a claim")
+    return _reload(session, event_pk)
 
 
-def requeue_quarantined(session, row, *, now=None):
+def requeue_quarantined(session, event_pk, *, now=None):
     """Operator action after investigation: make a quarantined event retryable."""
-    if row.state != "quarantined":
+    result = session.execute(
+        update(ExternalEventInbox)
+        .where(ExternalEventInbox.id == event_pk, ExternalEventInbox.state == "quarantined")
+        .values(state="retryable", next_attempt_at=now or _utcnow())
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
         raise InboxInvariantError("only quarantined events can be requeued")
-    row.state = "retryable"
-    row.next_attempt_at = now or _utcnow()
-    session.flush()
-    return row
+    return _reload(session, event_pk)
 
 
 def purge_expired_events(session, *, now=None, batch_size=500):
-    """Delete processed events older than RETENTION_DAYS. Returns the count.
+    """Delete processed, conflict-free events older than RETENTION_DAYS.
 
-    The database rejects any delete outside this rule, so a caller-supplied
-    ``now`` in the future cannot shorten retention.
+    Not scheduled; running it requires separate authorization. The database
+    rejects any delete outside this rule, so a caller-supplied ``now`` in the
+    future cannot shorten retention.
     """
     now = now or _utcnow()
     cutoff = now - timedelta(days=RETENTION_DAYS)
     _begin_serialized_sqlite_write(session)
     inbox = ExternalEventInbox
+    conflict = ExternalEventInboxConflict
     rows = session.execute(
         select(inbox)
-        .where(inbox.state == "processed", inbox.processed_at <= cutoff)
+        .where(
+            inbox.state == "processed",
+            inbox.processed_at <= cutoff,
+            ~exists().where(conflict.inbox_event_id == inbox.id),
+        )
         .order_by(inbox.processed_at, inbox.id)
         .limit(batch_size)
         .with_for_update(skip_locked=True)
