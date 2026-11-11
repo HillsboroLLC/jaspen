@@ -1,6 +1,6 @@
 # Phases 2–5 Additive-Foundation Implementation Proposal
 
-Status: **Phases 2.1–3 accepted; Phase 4 verified and implementation-complete, not deployed or activated; Phase 5 remains planning only**
+Status: **Phases 2.1–4 complete and inactive; Phase 5.1 implemented and verified; Phases 5.2–5.4 remain planning only**
 
 Founder architecture approval recorded: 2026-11-09
 
@@ -20,8 +20,9 @@ cutover.
 | Phase 2.2 | Implemented, independently verified, and accepted | `c6f8d0b2e4a1` |
 | Phase 2.3 | Implemented, independently verified, and accepted | `d7a9e1c3f5b2` |
 | Phase 3 | Implemented, independently verified, and accepted | `e8b0f2d4a6c3`; accepted implementation commit `9969a1421e322d7840bde97c346c116425439dd0` |
-| Phase 4 | Implemented and independently verified; implementation-complete, not deployed or activated | `f9c1a3e5b7d4`; verified implementation commit `24c14d596973c311ba305d6e3132a7ed696074d7` |
-| Phase 5 | Not authorized for implementation | Planning specifications only |
+| Phase 4 | Implemented, independently verified, merged into `develop` (`14cb0ab6`) with CI passing, and closed; not deployed or activated | `f9c1a3e5b7d4`; verified implementation commit `24c14d596973c311ba305d6e3132a7ed696074d7` |
+| Phase 5.1 | Implemented and independently verified on its branch; not merged, connected, or activated | `b2d4f6a8c0e3`; minimal-data external event inbox |
+| Phases 5.2–5.4 | Not authorized for implementation | Planning specifications only |
 
 All accepted tables and links remain additive and inactive. Existing billing
 continues to be authoritative until a separately approved migration,
@@ -522,6 +523,59 @@ ensure later notification failure cannot roll back a financial transaction.
 - No Stripe webhook or browser route references new services in Phase 5.
 - Production/staging access and live payload replay remain prohibited.
 
+### Phase 5.1 implementation record — minimal-data external event inbox
+
+Phase 5.1 was authorized on 2026-11-11 as the first Phase 5 increment. Migration
+`b2d4f6a8c0e3` adds only `external_event_inbox`; `app/billing_inbox.py` is an
+inactive library with no live route, webhook, job, or reader. A later,
+separately authorized increment verifies the Stripe signature at the webhook
+boundary and calls `record_event`.
+
+**Data minimization.** The inbox keeps only what idempotency, reconciliation,
+retries, and auditability require:
+
+| Kept | Never kept |
+|---|---|
+| Provider, event ID and type, referenced object type and ID, livemode, provider-created and received times | Raw payload |
+| SHA-256 digest of the exact verified request body | Payment-card details (number, last4, brand, expiry, fingerprint) |
+| Processing state, attempt count, retry time, lease expiry, processed time, bounded error code | Billing details, names, emails, addresses, phone numbers |
+| Digest-conflict count, latest conflicting digest and time | Metadata, descriptions, receipt emails, or any nested object |
+| Allowlisted scalar summary: schema version, API version, status, currency, amounts, and Stripe IDs for customer, subscription, invoice, payment intent, charge, refund, dispute, checkout session | Any field not on the allowlist |
+
+The database enforces the allowlist: the summary must be a flat object of
+allowlisted keys with scalar values no longer than 255 characters. Event
+identity, digest, summary, livemode, and timestamps are immutable after insert.
+
+**Idempotency and conflicts.** `(provider, event_id)` is unique; a repeated
+event with the same digest returns the existing row. A same-ID event with a
+different digest is never stored. Its digest is recorded as append-only
+conflict evidence, and an unprocessed event is quarantined as
+`digest_conflict`. A processed event keeps its state and records the conflict.
+
+**Processing lifecycle.** `received -> processing -> processed | retryable |
+quarantined`; `retryable -> processing | quarantined`; `quarantined ->
+retryable` only by operator requeue after investigation. Claims use `FOR UPDATE
+SKIP LOCKED` with a lease; an expired lease can be reclaimed and every claim
+adds exactly one attempt. Retries back off exponentially from 60 seconds to a
+six-hour cap; after ten attempts an event is quarantined as `retry_exhausted`.
+
+**Retention policy.** Processed events may be deleted 400 days after
+processing, which exceeds Stripe's 30-day event-resend window and leaves more
+than a year for reconciliation and provider disputes. Received, processing,
+retryable, and quarantined events are never deleted by retention and require
+resolution first. A database trigger rejects every other delete, so neither a
+direct delete nor a purge with a future clock can shorten retention. Later
+financial records that reference an inbox event will add `RESTRICT` foreign
+keys, which keeps referenced evidence for as long as those records exist.
+
+**Verification (2026-11-11).** On a disposable PostgreSQL 18.6 database: the
+inbox suite (minimization against a full synthetic card payload, database
+allowlist, idempotency and conflict quarantine, lifecycle, lease reclaim, retry
+exhaustion, retention, downgrade guard, and concurrent claims and receipt under
+READ COMMITTED, REPEATABLE READ, and SERIALIZABLE), a direct-SQL probe of the
+real migration chain, Phase 3 and Phase 4 integrity, and the full PostgreSQL
+and SQLite suites.
+
 ## Backward compatibility and protection of current customers
 
 1. All migrations are additive; existing columns, constraints, data, APIs, and
@@ -562,8 +616,9 @@ because no customer data is written.
 2. **Accepted:** Phase 2.2 idempotency and pricing/capacity version catalogs.
 3. **Accepted:** Phase 2.3 nullable compatibility links.
 4. **Accepted:** Phase 3 unused credit-lot/reservation/ledger primitives and invariants.
-5. **Verified and implementation-complete; not deployed or activated:** Phase 4 inactive entitlement/subscription/period primitives (runtime activation requires Python 3.10+, 3.12 preferred).
-6. **Not authorized:** Phase 5 disconnected financial/inbox/case/domain/outbox primitives.
+5. **Closed (in `develop`, not deployed or activated):** Phase 4 inactive entitlement/subscription/period primitives (runtime activation requires Python 3.10+, 3.12 preferred).
+6. **Implemented and verified:** Phase 5.1 minimal-data external event inbox.
+7. **Not authorized:** Phases 5.2–5.4 financial transactions and lines, refund/dispute cases, and domain events/outbox.
 
 No authorization should cover more than one numbered increment by implication.
 Passing a schema migration does not authorize data creation or service wiring.

@@ -2848,3 +2848,4 @@ from .models_billing_phase4 import (  # noqa: E402,F401
     EntitlementEvent,
     EntitlementInstance,
 )
+from .models_billing_phase5 import ExternalEventInbox  # noqa: E402,F401

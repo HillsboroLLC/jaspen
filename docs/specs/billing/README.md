@@ -1,6 +1,6 @@
 # Billing Architecture Phase 1
 
-Status: **Phases 1–3 accepted; Phase 4 verified and implementation-complete, not deployed or activated**
+Status: **Phases 1–4 complete and inactive (Phase 4 in `develop`, not deployed); Phase 5.1 implemented and verified on its branch**
 
 Base: `origin/main` at `88684284a33836106cad639d36e191271109c2c7`
 
@@ -59,8 +59,10 @@ STOP-01 through STOP-25, the organization-first model, and the authoritative
 18-phase roadmap. Phases 2.1, 2.2, 2.3, and 3 were subsequently authorized,
 implemented, independently verified, and accepted as additive, inactive
 foundations. Phase 4 was then implemented and independently verified on
-PostgreSQL 18.6 (commit `24c14d5`); it is implementation-complete but not
-merged, deployed, or activated. The phases 2–5 proposal continues to identify separately
+PostgreSQL 18.6 (commit `24c14d5`), merged into `develop` at `14cb0ab6` with CI
+passing, and closed; it is not deployed or activated. Phase 5.1 (minimal-data
+external event inbox) is implemented and verified on its branch and is not
+connected to any webhook. The phases 2–5 proposal continues to identify separately
 reviewable, reversible increments; no backfill, runtime activation, or cutover
 is bundled. The stop-class conflicts in
 [current-state-inventory.md](current-state-inventory.md#d20-newly-discovered-conflicts-and-stop-register)
@@ -136,9 +138,11 @@ realized margin were not accessed or verified.
 
 ## Scope guardrails
 
-- Phases 2.1–2.3 and Phase 3 are accepted. Phase 4 is verified and
-  implementation-complete on its isolated branch (`24c14d5`) but is not merged,
-  deployed, or activated.
+- Phases 2.1–2.3 and Phase 3 are accepted. Phase 4 is closed: merged into
+  `develop` at `14cb0ab6` with CI passing, not deployed or activated.
+- Phase 5.1 is implemented and verified on its branch. The inbox is not
+  connected to live Stripe webhooks and stores no card or unnecessary personal
+  data (see the Phase 5.1 record in the proposal).
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type

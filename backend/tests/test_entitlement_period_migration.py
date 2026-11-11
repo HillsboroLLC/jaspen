@@ -226,7 +226,9 @@ def _insert_annual_period(connection, identifier):
 def test_revision_is_linear_and_schema_is_complete(sqlite_engine):
     script = ScriptDirectory(MIGRATIONS_DIR)
     assert script.get_revision(REVISION).down_revision == PARENT
-    assert script.get_heads() == [REVISION]
+    assert REVISION in {
+        item.revision for item in script.iterate_revisions(script.get_current_head(), "base")
+    }
     _upgrade(sqlite_engine)
     inspector = sa.inspect(sqlite_engine)
     assert set(_revision().PHASE_4_TABLES).issubset(inspector.get_table_names())
