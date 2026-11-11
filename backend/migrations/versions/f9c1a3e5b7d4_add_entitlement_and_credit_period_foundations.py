@@ -191,17 +191,23 @@ def _postgresql_triggers():
       SELECT ((anchor_value AT TIME ZONE 'UTC') + make_interval(months => month_count)) AT TIME ZONE 'UTC';
     $$ LANGUAGE sql IMMUTABLE;
 
-    CREATE OR REPLACE FUNCTION phase4_json_has_unlimited(value jsonb)
+    CREATE OR REPLACE FUNCTION phase4_json_has_unlimited(payload jsonb)
     RETURNS boolean AS $$
     DECLARE item record;
     BEGIN
-      IF jsonb_typeof(value) = 'object' THEN
-        FOR item IN SELECT key, value AS child FROM jsonb_each(value) LOOP
+      IF jsonb_typeof(payload) = 'object' THEN
+        FOR item IN
+          SELECT object_entry.key, object_entry.value AS child
+          FROM jsonb_each(payload) AS object_entry
+        LOOP
           IF (lower(item.key) LIKE '%unlimited%' AND item.child NOT IN ('false'::jsonb,'0'::jsonb,'null'::jsonb))
              OR phase4_json_has_unlimited(item.child) THEN RETURN true; END IF;
         END LOOP;
-      ELSIF jsonb_typeof(value) = 'array' THEN
-        FOR item IN SELECT value AS child FROM jsonb_array_elements(value) LOOP
+      ELSIF jsonb_typeof(payload) = 'array' THEN
+        FOR item IN
+          SELECT array_entry.value AS child
+          FROM jsonb_array_elements(payload) AS array_entry
+        LOOP
           IF phase4_json_has_unlimited(item.child) THEN RETURN true; END IF;
         END LOOP;
       END IF;
@@ -296,7 +302,10 @@ def _postgresql_triggers():
     BEGIN
       IF TG_OP='DELETE' THEN RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='entitlement instances are historical records'; END IF;
       IF TG_OP='INSERT' THEN
-        PERFORM 1 FROM billing_accounts WHERE id=NEW.billing_account_id FOR UPDATE;
+        UPDATE billing_accounts SET id=id WHERE id=NEW.billing_account_id;
+        IF NOT FOUND THEN
+          RAISE EXCEPTION USING ERRCODE='23503', MESSAGE='entitlement billing account does not exist';
+        END IF;
         IF NEW.state <> 'proposed' OR NEW.last_event_id IS NOT NULL THEN
           RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='entitlement instance must begin proposed';
         END IF;
@@ -328,7 +337,10 @@ def _postgresql_triggers():
     DECLARE current_instance entitlement_instances%ROWTYPE; allowed boolean; exclusivity varchar(80); account_id varchar(36);
     BEGIN
       SELECT i.billing_account_id INTO account_id FROM entitlement_instances i WHERE i.id=NEW.entitlement_instance_id;
-      PERFORM 1 FROM billing_accounts WHERE id=account_id FOR UPDATE;
+      UPDATE billing_accounts SET id=id WHERE id=account_id;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='23503', MESSAGE='entitlement billing account does not exist';
+      END IF;
       SELECT i.* INTO current_instance FROM entitlement_instances i WHERE i.id=NEW.entitlement_instance_id FOR UPDATE;
       IF current_instance.id IS NULL OR NEW.from_state <> current_instance.state THEN
         RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='entitlement event does not match current state';
@@ -376,7 +388,11 @@ def _postgresql_triggers():
       subscription_row billing_subscriptions%ROWTYPE; lot_row credit_lots%ROWTYPE; allowed boolean;
     BEGIN
       IF TG_OP='DELETE' THEN RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='credit periods are historical records'; END IF;
-      SELECT account_anchor_at INTO account_anchor FROM billing_accounts WHERE id=NEW.billing_account_id FOR UPDATE;
+      UPDATE billing_accounts SET id=id WHERE id=NEW.billing_account_id;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE='23503', MESSAGE='credit period billing account does not exist';
+      END IF;
+      SELECT account_anchor_at INTO account_anchor FROM billing_accounts WHERE id=NEW.billing_account_id;
       IF TG_OP='INSERT' AND (NEW.state<>'planned' OR NEW.funding_idempotency_registry_id IS NOT NULL OR NEW.funded_lot_id IS NOT NULL) THEN
         RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='credit period must begin planned and unfunded'; END IF;
       SELECT * INTO instance_row FROM entitlement_instances WHERE id=NEW.entitlement_instance_id;
@@ -419,7 +435,7 @@ def _postgresql_triggers():
         SELECT * INTO lot_row FROM credit_lots WHERE id=NEW.funded_lot_id;
         IF lot_row.id IS NULL OR lot_row.billing_account_id<>NEW.billing_account_id OR lot_row.source_id<>NEW.id OR
            lot_row.original_amount<>NEW.planned_allocation_amount OR lot_row.available_at<>NEW.starts_at OR lot_row.expires_at<>NEW.ends_at OR
-           lot_row.source_type<>CASE NEW.kind WHEN 'free' THEN 'free_recurring' WHEN 'enterprise' THEN 'enterprise_recurring' ELSE 'subscription_recurring' END OR
+           lot_row.source_type<>(CASE NEW.kind WHEN 'free' THEN 'free_recurring' WHEN 'enterprise' THEN 'enterprise_recurring' ELSE 'subscription_recurring' END) OR
            NOT EXISTS (SELECT 1 FROM credit_ledger_entries e WHERE e.lot_id=NEW.funded_lot_id AND e.entry_type='grant'
              AND e.available_delta=NEW.planned_allocation_amount AND e.held_delta=0 AND e.idempotency_registry_id=NEW.funding_idempotency_registry_id) THEN
           RAISE EXCEPTION USING ERRCODE='23514', MESSAGE='funded period does not match its authoritative lot and grant'; END IF;
