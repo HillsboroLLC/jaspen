@@ -1,6 +1,6 @@
 # Phases 2–5 Additive-Foundation Implementation Proposal
 
-Status: **Phases 2.1–4 complete and inactive; Phase 5.1 implemented, pending acceptance; Phases 5.2–5.4 remain planning only**
+Status: **Phases 2.1–5.1 accepted and inactive; Phase 5.2 implemented, pending independent acceptance; Phases 5.3–5.4 remain planning only**
 
 Founder architecture approval recorded: 2026-11-09
 
@@ -21,8 +21,9 @@ cutover.
 | Phase 2.3 | Implemented, independently verified, and accepted | `d7a9e1c3f5b2` |
 | Phase 3 | Implemented, independently verified, and accepted | `e8b0f2d4a6c3`; accepted implementation commit `9969a1421e322d7840bde97c346c116425439dd0` |
 | Phase 4 | Implemented, independently verified, merged into `develop` (`14cb0ab6`) with CI passing, and closed; not deployed or activated | `f9c1a3e5b7d4`; verified implementation commit `24c14d596973c311ba305d6e3132a7ed696074d7` |
-| Phase 5.1 | Implemented on its branch, pending acceptance; not merged, connected, or activated | `b2d4f6a8c0e3`; minimal-data external event inbox |
-| Phases 5.2–5.4 | Not authorized for implementation | Planning specifications only |
+| Phase 5.1 | Independently verified, accepted, and integrated; not connected or activated | `b2d4f6a8c0e3`; accepted baseline `26734e84eaa1f40d4344692f9126f72a56fa133e` |
+| Phase 5.2 | Implemented on its isolated branch, pending independent acceptance; not connected or activated | `c3e5a7b9d1f4`; immutable financial transactions and source-attributed lines |
+| Phases 5.3–5.4 | Not authorized for implementation | Planning specifications only |
 
 All accepted tables and links remain additive and inactive. Existing billing
 continues to be authoritative until a separately approved migration,
@@ -525,7 +526,7 @@ ensure later notification failure cannot roll back a financial transaction.
 
 ### Phase 5.1 implementation record — minimal-data external event inbox
 
-Status: **implemented, pending acceptance.** Phase 5.1 was authorized on
+Status: **independently verified, accepted, and integrated; inactive.** Phase 5.1 was authorized on
 2026-11-11 as the first Phase 5 increment. Migration `b2d4f6a8c0e3` adds
 `external_event_inbox` and its append-only `external_event_inbox_conflicts`
 evidence table; `app/billing_inbox.py` is an inactive library with no live
@@ -604,7 +605,43 @@ retry exhaustion, retention, `TRUNCATE` rejection, the downgrade lock race, and
 concurrent claims and receipt under READ COMMITTED, REPEATABLE READ, and
 SERIALIZABLE), a direct-SQL probe of the real migration chain, Phase 3 and
 Phase 4 integrity, and the full PostgreSQL and SQLite suites. Independent
-acceptance is pending.
+acceptance passed and the increment was integrated into `develop` at
+`26734e84eaa1f40d4344692f9126f72a56fa133e`. It remains inactive.
+
+### Phase 5.2 implementation record — financial transactions and lines
+
+Status: **implemented, pending independent acceptance.** Migration
+`c3e5a7b9d1f4`, directly after Phase 5.1 revision `b2d4f6a8c0e3`, adds empty
+`financial_transactions` and `financial_lines` tables. The inactive
+`app/billing_financial.py` recorder has no live route, webhook, browser
+confirmation, worker, entitlement, or ledger caller.
+
+The header records one immutable provider/internal business version using a
+unique provider/object/kind/version identity, UTC effective time, lowercase
+currency, and signed integer minor-unit principal, tax, fee, discount, and
+gross components. Non-adjustment facts require a compatible, processed,
+unconflicted Phase 5.1 inbox event for the same provider and object. Internal
+adjustments retain an explicit Jaspen object identity/version without claiming
+Stripe evidence.
+
+Each immutable line retains its external identity, classification, source
+type/id, positive quantity, currency, signed component amounts, and optional
+subscription/entitlement provenance. Database constraints and ownership
+triggers prevent cross-account or cross-currency evidence. PostgreSQL deferred
+constraint triggers require at least one line and exact component-by-component
+header reconciliation at commit; PostgreSQL also permits line insertion only
+in the transaction that created its header, closing later append-only mutation.
+The shared recorder atomically enforces the same sealed line-set result for
+SQLite. `RESTRICT` foreign keys preserve inbox and related evidence,
+PostgreSQL rejects `TRUNCATE`, and downgrade takes an exclusive lock and refuses
+to remove either populated table.
+
+The recorder treats an identical business version and line set as a duplicate,
+rejects reuse with different evidence, and permits out-of-order versions to be
+recorded as distinct immutable facts without projecting a current state. This
+increment deliberately creates no financial-case state, refund/dispute credit
+effects, domain events, communication outbox, entitlement changes, or credit
+ledger entries; those remain owned by separately authorized later increments.
 
 ## Backward compatibility and protection of current customers
 
@@ -647,8 +684,9 @@ because no customer data is written.
 3. **Accepted:** Phase 2.3 nullable compatibility links.
 4. **Accepted:** Phase 3 unused credit-lot/reservation/ledger primitives and invariants.
 5. **Closed (in `develop`, not deployed or activated):** Phase 4 inactive entitlement/subscription/period primitives (runtime activation requires Python 3.10+, 3.12 preferred).
-6. **Implemented, pending acceptance:** Phase 5.1 minimal-data external event inbox.
-7. **Not authorized:** Phases 5.2–5.4 financial transactions and lines, refund/dispute cases, and domain events/outbox.
+6. **Accepted and integrated, inactive:** Phase 5.1 minimal-data external event inbox.
+7. **Implemented, pending independent acceptance:** Phase 5.2 immutable financial transactions and lines.
+8. **Not authorized:** Phases 5.3–5.4 refund/dispute cases and domain events/outbox.
 
 No authorization should cover more than one numbered increment by implication.
 Passing a schema migration does not authorize data creation or service wiring.

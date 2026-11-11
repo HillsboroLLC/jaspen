@@ -42,6 +42,7 @@ COMPATIBILITY_LINKS_REVISION = "d7a9e1c3f5b2"
 CREDIT_LEDGER_REVISION = "e8b0f2d4a6c3"
 ENTITLEMENT_FOUNDATION_REVISION = "f9c1a3e5b7d4"
 EVENT_INBOX_REVISION = "b2d4f6a8c0e3"
+FINANCIAL_FOUNDATION_REVISION = "c3e5a7b9d1f4"
 FIXED_TIME = datetime(2026, 10, 1, 12, 0, 0)
 SCORE_TIME = datetime(2026, 9, 20, 9, 30, 0)
 
@@ -102,6 +103,12 @@ def _event_inbox_revision_module():
     ).module
 
 
+def _financial_foundation_revision_module():
+    return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(
+        FINANCIAL_FOUNDATION_REVISION
+    ).module
+
+
 def _account_foundation_revision_module():
     return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(ACCOUNT_FOUNDATION_REVISION).module
 
@@ -119,6 +126,7 @@ def _prepare_sqlite_at_production_revision(database_url):
     with engine.begin() as connection:
         context = MigrationContext.configure(connection)
         with Operations.context(context):
+            _financial_foundation_revision_module().downgrade()
             _event_inbox_revision_module().downgrade()
             _entitlement_foundation_revision_module().downgrade()
             _credit_ledger_revision_module().downgrade()
@@ -484,7 +492,7 @@ def _assert_upgraded(engine, before):
         version = connection.execute(sa.text(
             "SELECT version_num FROM alembic_version"
         )).scalar_one()
-    assert version == EVENT_INBOX_REVISION
+    assert version == FINANCIAL_FOUNDATION_REVISION
 
     expected_dispositions = {
         "verdict-advance": "pursue",

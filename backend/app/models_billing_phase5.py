@@ -11,6 +11,12 @@ from . import db
 
 
 INBOX_STATES = ("received", "processing", "processed", "retryable", "quarantined")
+FINANCIAL_TRANSACTION_KINDS = (
+    "invoice", "payment", "refund", "dispute", "recovery", "adjustment",
+)
+FINANCIAL_LINE_KINDS = (
+    "subscription", "seat", "credit_pack", "tax", "fee", "discount", "other",
+)
 
 
 def _quoted(values):
@@ -116,4 +122,159 @@ class ExternalEventInboxConflict(db.Model):
             "inbox_event_id", "conflicting_digest",
             name="uq_external_event_inbox_conflicts_event_digest",
         ),
+    )
+
+
+class FinancialTransaction(db.Model):
+    """Immutable processor/internal money fact; never a credit balance."""
+
+    __tablename__ = "financial_transactions"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    billing_account_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "billing_accounts.id",
+            name="fk_financial_transactions_billing_account_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    kind = db.Column(db.String(24), nullable=False)
+    provider = db.Column(db.String(32), nullable=False)
+    object_type = db.Column(db.String(64), nullable=False)
+    object_id = db.Column(db.String(255), nullable=False)
+    external_version = db.Column(db.String(255), nullable=False)
+    effective_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    currency = db.Column(db.String(3), nullable=False)
+    principal_minor = db.Column(db.BigInteger, nullable=False)
+    tax_minor = db.Column(db.BigInteger, nullable=False)
+    fee_minor = db.Column(db.BigInteger, nullable=False)
+    discount_minor = db.Column(db.BigInteger, nullable=False)
+    gross_minor = db.Column(db.BigInteger, nullable=False)
+    inbox_event_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "external_event_inbox.id",
+            name="fk_financial_transactions_inbox_event_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+
+    __table_args__ = (
+        db.CheckConstraint(
+            f"kind IN ({_quoted(FINANCIAL_TRANSACTION_KINDS)})",
+            name="ck_financial_transactions_kind",
+        ),
+        db.CheckConstraint(
+            "length(trim(provider)) > 0 AND length(trim(object_type)) > 0 "
+            "AND length(trim(object_id)) > 0 AND length(trim(external_version)) > 0",
+            name="ck_financial_transactions_identity",
+        ),
+        db.CheckConstraint(
+            "length(currency) = 3 AND currency = lower(currency) AND "
+            "substr(currency, 1, 1) BETWEEN 'a' AND 'z' AND "
+            "substr(currency, 2, 1) BETWEEN 'a' AND 'z' AND "
+            "substr(currency, 3, 1) BETWEEN 'a' AND 'z'",
+            name="ck_financial_transactions_currency",
+        ),
+        db.CheckConstraint(
+            "gross_minor = principal_minor + tax_minor + fee_minor + discount_minor",
+            name="ck_financial_transactions_arithmetic",
+        ),
+        db.CheckConstraint(
+            "kind = 'adjustment' OR inbox_event_id IS NOT NULL",
+            name="ck_financial_transactions_external_evidence",
+        ),
+        db.UniqueConstraint(
+            "provider", "object_type", "object_id", "kind", "external_version",
+            name="uq_financial_transactions_business_version",
+        ),
+        db.Index(
+            "ix_financial_transactions_account_effective",
+            "billing_account_id", "effective_at", "id",
+        ),
+        db.Index(
+            "ix_financial_transactions_provider_object_effective",
+            "provider", "object_type", "object_id", "effective_at",
+        ),
+        db.Index("ix_financial_transactions_inbox_event_id", "inbox_event_id"),
+    )
+
+
+class FinancialLine(db.Model):
+    """Immutable, source-attributed component of one financial transaction."""
+
+    __tablename__ = "financial_lines"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    financial_transaction_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "financial_transactions.id",
+            name="fk_financial_lines_transaction_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    external_line_id = db.Column(db.String(255), nullable=False)
+    line_kind = db.Column(db.String(32), nullable=False)
+    source_type = db.Column(db.String(40), nullable=False)
+    source_id = db.Column(db.String(255), nullable=False)
+    quantity = db.Column(db.BigInteger, nullable=False)
+    currency = db.Column(db.String(3), nullable=False)
+    principal_minor = db.Column(db.BigInteger, nullable=False)
+    tax_minor = db.Column(db.BigInteger, nullable=False)
+    fee_minor = db.Column(db.BigInteger, nullable=False)
+    discount_minor = db.Column(db.BigInteger, nullable=False)
+    subscription_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "billing_subscriptions.id",
+            name="fk_financial_lines_subscription_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    entitlement_instance_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "entitlement_instances.id",
+            name="fk_financial_lines_entitlement_instance_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+
+    __table_args__ = (
+        db.CheckConstraint(
+            f"line_kind IN ({_quoted(FINANCIAL_LINE_KINDS)})",
+            name="ck_financial_lines_kind",
+        ),
+        db.CheckConstraint(
+            "length(trim(external_line_id)) > 0 AND length(trim(source_type)) > 0 "
+            "AND length(trim(source_id)) > 0",
+            name="ck_financial_lines_identity",
+        ),
+        db.CheckConstraint("quantity > 0", name="ck_financial_lines_quantity"),
+        db.CheckConstraint(
+            "length(currency) = 3 AND currency = lower(currency) AND "
+            "substr(currency, 1, 1) BETWEEN 'a' AND 'z' AND "
+            "substr(currency, 2, 1) BETWEEN 'a' AND 'z' AND "
+            "substr(currency, 3, 1) BETWEEN 'a' AND 'z'",
+            name="ck_financial_lines_currency",
+        ),
+        db.UniqueConstraint(
+            "financial_transaction_id", "external_line_id", "line_kind",
+            name="uq_financial_lines_transaction_external_kind",
+        ),
+        db.Index(
+            "ix_financial_lines_source",
+            "source_type", "source_id", "financial_transaction_id",
+        ),
+        db.Index("ix_financial_lines_subscription_id", "subscription_id"),
+        db.Index("ix_financial_lines_entitlement_instance_id", "entitlement_instance_id"),
     )
