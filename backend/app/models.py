@@ -2836,3 +2836,15 @@ class SavedUtilityEstimate(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+# Phase 4 remains a separate inactive model component. Re-exporting the models
+# keeps the repository's established ``app.models`` import surface without
+# coupling any billing route, access gate, or legacy writer to the new tables.
+from .models_billing_phase4 import (  # noqa: E402,F401
+    BillingSubscription,
+    CreditPeriod,
+    EntitlementDefinition,
+    EntitlementEvent,
+    EntitlementInstance,
+)

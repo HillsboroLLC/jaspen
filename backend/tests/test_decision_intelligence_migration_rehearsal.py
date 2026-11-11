@@ -40,6 +40,7 @@ ACCOUNT_FOUNDATION_REVISION = "b5e7c9a1d3f2"
 CURRENT_ADDITIVE_REVISION = "c6f8d0b2e4a1"
 COMPATIBILITY_LINKS_REVISION = "d7a9e1c3f5b2"
 CREDIT_LEDGER_REVISION = "e8b0f2d4a6c3"
+ENTITLEMENT_FOUNDATION_REVISION = "f9c1a3e5b7d4"
 FIXED_TIME = datetime(2026, 10, 1, 12, 0, 0)
 SCORE_TIME = datetime(2026, 9, 20, 9, 30, 0)
 
@@ -88,6 +89,12 @@ def _credit_ledger_revision_module():
     ).module
 
 
+def _entitlement_foundation_revision_module():
+    return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(
+        ENTITLEMENT_FOUNDATION_REVISION
+    ).module
+
+
 def _account_foundation_revision_module():
     return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(ACCOUNT_FOUNDATION_REVISION).module
 
@@ -105,6 +112,7 @@ def _prepare_sqlite_at_production_revision(database_url):
     with engine.begin() as connection:
         context = MigrationContext.configure(connection)
         with Operations.context(context):
+            _entitlement_foundation_revision_module().downgrade()
             _credit_ledger_revision_module().downgrade()
             _compatibility_links_revision_module().downgrade()
             _current_additive_revision_module().downgrade()
@@ -468,7 +476,7 @@ def _assert_upgraded(engine, before):
         version = connection.execute(sa.text(
             "SELECT version_num FROM alembic_version"
         )).scalar_one()
-    assert version == CREDIT_LEDGER_REVISION
+    assert version == ENTITLEMENT_FOUNDATION_REVISION
 
     expected_dispositions = {
         "verdict-advance": "pursue",

@@ -1,6 +1,6 @@
 # Phases 2–5 Additive-Foundation Implementation Proposal
 
-Status: **Phases 2.1–2.3 and 3 implemented and accepted; Phases 4–5 remain planning only**
+Status: **Phases 2.1–3 accepted; Phase 4 implementation authorized; Phase 5 remains planning only**
 
 Founder architecture approval recorded: 2026-11-09
 
@@ -20,7 +20,8 @@ cutover.
 | Phase 2.2 | Implemented, independently verified, and accepted | `c6f8d0b2e4a1` |
 | Phase 2.3 | Implemented, independently verified, and accepted | `d7a9e1c3f5b2` |
 | Phase 3 | Implemented, independently verified, and accepted | `e8b0f2d4a6c3`; accepted implementation commit `9969a1421e322d7840bde97c346c116425439dd0` |
-| Phases 4–5 | Not authorized for implementation | Planning specifications only |
+| Phase 4 | Implementation authorized; acceptance pending | Inactive entitlement and credit-period foundations only |
+| Phase 5 | Not authorized for implementation | Planning specifications only |
 
 All accepted tables and links remain additive and inactive. Existing billing
 continues to be authoritative until a separately approved migration,
@@ -395,6 +396,52 @@ evidence. Unique idempotency reference.
 - Empty-schema downgrade is reversible; funded rows make destructive downgrade
   prohibited.
 
+### Phase 4 implementation record
+
+Phase 4 was authorized as one inactive, cohesive foundation under the standing
+whole-system architecture standard. The following vocabulary and ownership
+rules are part of that authorization:
+
+- Subscription lifecycle states are `proposed`, `incomplete`, `active`,
+  `past_due`, `unpaid`, `paused`, `cancel_at_period_end`, `cancelled`, and
+  `expired`. This state describes processor/subscription coordination and never
+  grants or removes effective capabilities.
+- Entitlement-instance states remain `proposed`, `scheduled`, `active`,
+  `reducing`, `expired`, `superseded`, and `cancelled`. Append-only
+  `entitlement_events` are authoritative for transitions; instance state is the
+  transactionally maintained current-state projection and cannot be edited
+  independently.
+- Credit-period states remain `planned`, `funded`, `unfunded`, and `expired`.
+  Funding identity and the unique `funded_lot_id` result are write-once.
+- Definitions use immutable `key`/`version` and `exclusivity_key` identities.
+  Capability and funding payloads have explicit schema versions, explicit
+  finite credit quantities, and no implicit unlimited benefits.
+- Entitlement origins are `free`, `subscription`, `trial`, `promotion`,
+  `comp`, `enterprise_contract`, or `internal`. Trial, promotion, comp, and
+  contract activation remains blocked until their later authoritative phases
+  supply the approved evidence; Phase 4 creates no substitute authority.
+- `BillingAccount.account_anchor_at` is the Free-period anchor. Subscription
+  anchors are immutable UTC values. One shared calendar policy owns month-end,
+  leap-year, annual-monthly, and late-period calculations.
+- `credit_periods.funded_lot_id` is the only period-to-lot relationship. The
+  Phase 3 ledger remains the sole future credit authority.
+
+Phase 4 has no live route, webhook, authentication, access-gate, background-job,
+or UI integration. Disposable funding tests demonstrate only atomic compatibility
+with the Phase 3 ledger; Phase 5 financial evidence and later command activation
+remain mandatory before live funding.
+
+Existing legacy authorities remain intentionally unchanged during Phase 4:
+
+| Legacy authority | Phase 4 disposition | Approved retirement |
+|---|---|---|
+| `User.subscription_plan` / `User.subscription_status` | Existing live compatibility authority | Inventory/backfill/cutover in phases 13–17; removal in phase 18 |
+| `Organization.plan_key` synchronization | Existing live organization projection | Pure projection cutover in phase 17; removal in phase 18 |
+| `AccountEntitlement` and founder-offer services | Existing live offer authority | Reconcile in phases 13–16; cut over in phase 17; retire in phase 18 |
+| Persistent credit grants and transactions | Existing live legacy-credit path | Reconcile/backfill in phases 13–16; ledger cutover in phase 17; retire in phase 18 |
+| Stripe billing routes and webhook writers | Existing live processor path | External inbox/financial foundations in phase 5; controlled writer cutover in phase 17 |
+| Existing access and collaboration gates | Continue reading legacy state | Reader/projection cutover in phase 17; obsolete compatibility readers removed in phase 18 |
+
 ## Phase 5 — Financial transactions and external-event inbox
 
 Phase 5 records no live processor events until separately authorized. It adds
@@ -498,7 +545,7 @@ because no customer data is written.
 2. **Accepted:** Phase 2.2 idempotency and pricing/capacity version catalogs.
 3. **Accepted:** Phase 2.3 nullable compatibility links.
 4. **Accepted:** Phase 3 unused credit-lot/reservation/ledger primitives and invariants.
-5. **Not authorized:** Phase 4 inactive entitlement/subscription/period primitives.
+5. **Implementation authorized; acceptance pending:** Phase 4 inactive entitlement/subscription/period primitives.
 6. **Not authorized:** Phase 5 disconnected financial/inbox/case/domain/outbox primitives.
 
 No authorization should cover more than one numbered increment by implication.

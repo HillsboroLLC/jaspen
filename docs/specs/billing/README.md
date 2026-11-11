@@ -1,6 +1,6 @@
 # Billing Architecture Phase 1
 
-Status: **Phases 1–3 founder-approved, implemented, and accepted; additive foundations remain inactive**
+Status: **Phases 1–3 accepted; Phase 4 implementation authorized and inactive**
 
 Base: `origin/main` at `88684284a33836106cad639d36e191271109c2c7`
 
@@ -132,7 +132,8 @@ realized margin were not accessed or verified.
 
 ## Scope guardrails
 
-- Phases 2.1–2.3 and Phase 3 are accepted; Phase 4 is not authorized.
+- Phases 2.1–2.3 and Phase 3 are accepted. Phase 4 implementation is
+  authorized on an isolated branch but is not accepted or active.
 - The accepted schema, models, and tests remain additive and disconnected from
   legacy runtime billing readers and writers.
 - No production or staging system was accessed.

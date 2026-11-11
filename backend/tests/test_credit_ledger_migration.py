@@ -271,7 +271,9 @@ def test_revision_extends_phase_2_3_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
     revision = script.get_revision(MIGRATION_REVISION)
     assert revision.down_revision == PARENT_REVISION
-    assert script.get_heads() == [MIGRATION_REVISION]
+    assert MIGRATION_REVISION in {
+        item.revision for item in script.iterate_revisions(script.get_current_head(), "base")
+    }
 
 
 @pytest.mark.parametrize(
