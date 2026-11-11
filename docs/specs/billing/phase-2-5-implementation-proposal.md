@@ -1,18 +1,40 @@
 # Phases 2–5 Additive-Foundation Implementation Proposal
 
-Status: **Planning proposal only; no implementation authorized**
+Status: **Phases 2.1–2.3 and 3 implemented and accepted; Phases 4–5 remain planning only**
 
 Founder architecture approval recorded: 2026-11-09
 
 Scope: authoritative roadmap phases 2–5 only
 
-## Approval and authorization boundary
+## Accepted implementation status
+
+This document remains the approved scope and historical authorization record.
+Subsequent founder authorizations completed the following additive increments;
+acceptance did not authorize backfill, runtime integration, activation, or
+cutover.
+
+| Increment | Status | Accepted migration / evidence |
+|---|---|---|
+| Phase 1 | Architecture reconciled and founder-approved | ADR-0001 and the Phase 1 deliverable package |
+| Phase 2.1 | Implemented, independently verified, and accepted | `b5e7c9a1d3f2` |
+| Phase 2.2 | Implemented, independently verified, and accepted | `c6f8d0b2e4a1` |
+| Phase 2.3 | Implemented, independently verified, and accepted | `d7a9e1c3f5b2` |
+| Phase 3 | Implemented, independently verified, and accepted | `e8b0f2d4a6c3`; accepted implementation commit `9969a1421e322d7840bde97c346c116425439dd0` |
+| Phases 4–5 | Not authorized for implementation | Planning specifications only |
+
+All accepted tables and links remain additive and inactive. Existing billing
+continues to be authoritative until a separately approved migration,
+reconciliation, and cutover sequence.
+
+## Original approval and authorization boundary
 
 The founder approved ADR-0001, STOP-01 through STOP-25, the organization-first
-model, and the 18-phase roadmap. This proposal does not authorize application
-code, models, migrations, backfill, production access, shadow traffic, cutover,
-legacy retirement, price changes, credit changes, or numerical capacity rules.
-Each phase and each implementation increment below requires separate approval.
+model, and the 18-phase roadmap. As originally approved, this proposal did not
+itself authorize application code, models, migrations, backfill, production
+access, shadow traffic, cutover, legacy retirement, price changes, credit
+changes, or numerical capacity rules. Phases 2.1–2.3 and 3 later received the
+separate authorizations and acceptances recorded above. Every remaining phase
+and implementation increment still requires separate approval.
 
 The foundations are additive. During phases 2–5 the existing application keeps
 reading and writing its legacy stores. New tables receive no customer data and
@@ -472,12 +494,12 @@ because no customer data is written.
 
 ## Sequencing and separate authorization gates
 
-1. **Phase 2.1 only:** empty `billing_accounts` and `billing_role_grants` schema.
-2. Phase 2.2: idempotency and pricing/capacity version catalogs.
-3. Phase 2.3: nullable compatibility links.
-4. Phase 3: unused credit-lot/reservation/ledger primitives and invariants.
-5. Phase 4: inactive entitlement/subscription/period primitives.
-6. Phase 5: disconnected financial/inbox/case/domain/outbox primitives.
+1. **Accepted:** Phase 2.1 empty `billing_accounts` and `billing_role_grants` schema.
+2. **Accepted:** Phase 2.2 idempotency and pricing/capacity version catalogs.
+3. **Accepted:** Phase 2.3 nullable compatibility links.
+4. **Accepted:** Phase 3 unused credit-lot/reservation/ledger primitives and invariants.
+5. **Not authorized:** Phase 4 inactive entitlement/subscription/period primitives.
+6. **Not authorized:** Phase 5 disconnected financial/inbox/case/domain/outbox primitives.
 
 No authorization should cover more than one numbered increment by implication.
 Passing a schema migration does not authorize data creation or service wiring.

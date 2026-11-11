@@ -1,6 +1,6 @@
 # Billing Architecture Phase 1
 
-Status: **Founder-approved architecture; no implementation authorized**
+Status: **Phases 1–3 founder-approved, implemented, and accepted; additive foundations remain inactive**
 
 Base: `origin/main` at `88684284a33836106cad639d36e191271109c2c7`
 
@@ -55,13 +55,14 @@ compatibility state as authorities.
 
 Founder architecture approval was recorded on 2026-11-09 for ADR-0001,
 STOP-01 through STOP-25, the organization-first model, and the authoritative
-18-phase roadmap. Phase 2 is **not authorized**. The documentation-only phases
-2–5 proposal identifies separately reviewable, reversible increments; no
-backfill or cutover is bundled. The stop-class conflicts in
+18-phase roadmap. Phases 2.1, 2.2, 2.3, and 3 were subsequently authorized,
+implemented, independently verified, and accepted as additive, inactive
+foundations. The phases 2–5 proposal continues to identify separately
+reviewable, reversible increments; no backfill, runtime activation, or cutover
+is bundled. The stop-class conflicts in
 [current-state-inventory.md](current-state-inventory.md#d20-newly-discovered-conflicts-and-stop-register)
-remain implementation work. Phase 1 has not changed
-application behavior, schema, migrations, production data, deployment state,
-or PR #27.
+remain later implementation work. The accepted work through Phase 3 has not
+changed legacy billing behavior, customer data, deployment state, or PR #27.
 
 ## Package index and deliverables
 
@@ -103,10 +104,10 @@ conditions for compatibility projections. The migration specification is
 balance preserving and explicitly rejects silent data repair.
 
 All 25 STOP items are founder-approved at the business-policy and architecture
-levels. No claim is made that the
-current implementation satisfies the target architecture, that existing tests
-cover the target, that production pricing is known, or that cutover is
-authorized.
+levels. The accepted Phase 2 and Phase 3 foundations implement only their
+approved additive schema, policy, compatibility-link, and inactive-ledger
+boundaries. No claim is made that later phases or cutover are complete, that
+production pricing is known, or that customer traffic uses the new ledger.
 
 ## Approved customer experience
 
@@ -131,8 +132,9 @@ realized margin were not accessed or verified.
 
 ## Scope guardrails
 
-- No Phase 2 implementation is included.
-- No schema, migration, application, test, or customer-facing wording changed.
+- Phases 2.1–2.3 and Phase 3 are accepted; Phase 4 is not authorized.
+- The accepted schema, models, and tests remain additive and disconnected from
+  legacy runtime billing readers and writers.
 - No production or staging system was accessed.
 - No paid AI call was made.
 - PR #27 remains open and unmodified.
@@ -140,5 +142,6 @@ realized margin were not accessed or verified.
 - No numerical short-term capacity limit is approved.
 - The original 18 phases are authoritative; Phase 2A–2G are cross-referenced
   program gates, not a replacement roadmap.
-- No Phase 2 implementation has begun. See the planning-only
+- No backfill, dual write, ledger activation, cutover, or customer-facing
+  behavior change is authorized. See the status-preserving
   [phases 2–5 proposal](phase-2-5-implementation-proposal.md).
