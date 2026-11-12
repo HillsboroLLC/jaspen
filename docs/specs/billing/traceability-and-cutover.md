@@ -216,6 +216,18 @@ rewriting ledger history or copying counters backward without a reviewed plan.
 | T-CAPACITY-01..12 | org/member windows, concurrency, tier priority, provider pressure/fallback, abuse/runaway guard, no credit deduction, credit purchase no bypass, available-again response |
 | T-USAGE-01..10 | ledger-synchronized totals/history/session usage, recurring vs purchased, refresh/payment/term dates, interval/time zone, 20% warning once per period, distinct capacity/exhaustion copy, BALANCE retained |
 
+### Deferred Phase 5.1/5.2 activation gate — conflict evidence integrity
+
+Status: **Deferred — required before inbox activation.** These PostgreSQL
+regressions must be implemented and pass before `billing_inbox.record_event()`
+is connected to a live event source.
+
+| Test ID | Required assertion |
+|---|---|
+| T-INBOX-01 | A genuine concurrent duplicate is handled idempotently; it is not misclassified as a conflict or silently lost. |
+| T-INBOX-02 | An unexpected `IntegrityError` while recording conflict evidence propagates; it is not suppressed as a harmless duplicate. |
+| T-INBOX-03 | `digest_conflict` quarantine is committed only with durable conflict evidence; a failed evidence insert cannot leave a quarantined event without its audit row. |
+
 ### Acceptance gates for the target implementation
 
 - Every command produces one authoritative transition or a typed no-op.

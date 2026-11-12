@@ -694,10 +694,8 @@ def test_postgres_financial_evidence_rejects_stale_inbox_snapshot(
         stale.rollback()
 
     with postgres_engine.connect() as connection:
-        state, conflict_count, financial_count, line_count = connection.execute(sa.text("""
+        state, financial_count, line_count = connection.execute(sa.text("""
             SELECT event.state,
-                   (SELECT COUNT(*) FROM external_event_inbox_conflicts AS conflict
-                    WHERE conflict.inbox_event_id = event.id),
                    (SELECT COUNT(*) FROM financial_transactions
                     WHERE external_version = 'invoice:stale_snapshot'),
                    (SELECT COUNT(*) FROM financial_lines AS line
@@ -706,8 +704,15 @@ def test_postgres_financial_evidence_rejects_stale_inbox_snapshot(
                     WHERE txn.external_version = 'invoice:stale_snapshot')
             FROM external_event_inbox AS event WHERE event.id = :id
         """), {"id": event_pk}).one()
+        conflict = connection.execute(sa.text("""
+            SELECT conflicting_digest, state_at_detection
+            FROM external_event_inbox_conflicts
+            WHERE inbox_event_id = :id
+        """), {"id": event_pk}).one_or_none()
     expected_state = "processed" if event_state == "processed" else "quarantined"
-    assert (state, conflict_count, financial_count, line_count) == (expected_state, 1, 0, 0)
+    assert (state, financial_count, line_count) == (expected_state, 0, 0)
+    assert conflict is not None
+    assert tuple(conflict) == (hashlib.sha256(conflict_body).hexdigest(), event_state)
 
 
 @pytest.mark.postgres

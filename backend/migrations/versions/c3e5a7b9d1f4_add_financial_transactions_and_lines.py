@@ -173,7 +173,8 @@ def _postgresql_triggers():
         BEGIN
           UPDATE external_event_inbox AS inbox
           SET state = inbox.state
-          WHERE inbox.id = NEW.inbox_event_id;
+          WHERE inbox.id = NEW.inbox_event_id
+            AND inbox.state = 'processed';
           RETURN NEW;
         END;
         $$ LANGUAGE plpgsql

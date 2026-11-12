@@ -29,6 +29,12 @@ All accepted tables and links remain additive and inactive. Existing billing
 continues to be authoritative until a separately approved migration,
 reconciliation, and cutover sequence.
 
+### Deferred hardening before Phase 5.1 inbox activation
+
+| Area | Status | Required evidence |
+|---|---|---|
+| Phase 5.1/5.2 — Conflict evidence integrity | **Deferred — required before inbox activation** | `billing_inbox.record_event()` handles genuine concurrent duplicates idempotently, propagates unexpected `IntegrityError`s, and never leaves `digest_conflict` quarantine without durable conflict evidence. Required PostgreSQL regression cases: T-INBOX-01..03 in D17. |
+
 ## Original approval and authorization boundary
 
 The founder approved ADR-0001, STOP-01 through STOP-25, the organization-first
@@ -636,11 +642,12 @@ at insert, so savepoints do not break header/line atomicity and `xmin` wraparoun
 cannot make an older header appear current. Separate deferred trigger wrappers
 read the header and line row shapes without cross-referencing nonexistent
 columns. The Phase 5.2 migration adds a reversible PostgreSQL conflict fence:
-after any conflict is inserted, a no-op update of its parent inbox row makes
-stale snapshots retry instead of accepting unseen evidence. It applies to
-processed and processing events without changing Phase 5.1 state-transition
-rules. The inactive retention helper skips inbox events referenced by financial
-transactions; `RESTRICT` preserves that evidence, and purging remains
+for processed events, a no-op update of the parent inbox row makes stale
+snapshots retry instead of accepting unseen evidence. Unprocessed events are
+fenced by their existing quarantine state update. The trigger does not update
+processing rows, preserving Phase 5.1 state-transition rules and conflict
+evidence. The inactive retention helper skips inbox events referenced by
+financial transactions; `RESTRICT` preserves that evidence, and purging remains
 unscheduled.
 The shared recorder atomically enforces the same sealed line-set result for
 SQLite. `RESTRICT` foreign keys preserve inbox and related evidence,
