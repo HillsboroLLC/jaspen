@@ -631,6 +631,16 @@ triggers prevent cross-account or cross-currency evidence. PostgreSQL deferred
 constraint triggers require at least one line and exact component-by-component
 header reconciliation at commit; PostgreSQL also permits line insertion only
 in the transaction that created its header, closing later append-only mutation.
+The PostgreSQL creator marker is a full-width top-level transaction ID captured
+at insert, so savepoints do not break header/line atomicity and `xmin` wraparound
+cannot make an older header appear current. Separate deferred trigger wrappers
+read the header and line row shapes without cross-referencing nonexistent
+columns. The Phase 5.2 migration also adds a reversible inbox conflict
+generation fence: a new conflict against a processed event changes its locked
+parent row, forcing stale PostgreSQL snapshots to retry rather than accept
+unseen evidence. The inactive retention helper skips inbox events referenced by
+financial transactions; `RESTRICT` preserves that evidence, and purging remains
+unscheduled.
 The shared recorder atomically enforces the same sealed line-set result for
 SQLite. `RESTRICT` foreign keys preserve inbox and related evidence,
 PostgreSQL rejects `TRUNCATE`, and downgrade takes an exclusive lock and refuses

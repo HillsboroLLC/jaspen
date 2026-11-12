@@ -161,6 +161,7 @@ class FinancialTransaction(db.Model):
         ),
         nullable=True,
     )
+    created_xid = db.Column(db.String(20), nullable=False, server_default="0")
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
 
     __table_args__ = (

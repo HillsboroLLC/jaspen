@@ -111,12 +111,12 @@ def postgres_engine(validate_test_database_url, postgres_schema_url):
         yield engine
 
 
-def _stripe_event(event_id="evt_financial001", object_id="in_financial001"):
+def _stripe_event(event_id="evt_financial001", object_id="in_financial001", created=NOW):
     event = {
         "id": event_id,
         "object": "event",
         "api_version": "2024-06-20",
-        "created": int(NOW.timestamp()),
+        "created": int(created.timestamp()),
         "livemode": False,
         "type": "invoice.paid",
         "data": {"object": {
@@ -131,22 +131,29 @@ def _stripe_event(event_id="evt_financial001", object_id="in_financial001"):
     return json.dumps(event, sort_keys=True).encode(), event
 
 
-def _seed_account_and_event(engine, *, account="account-one", event_id="evt_financial001"):
+def _seed_account_and_event(
+    engine, *, account="account-one", event_id="evt_financial001", created=NOW,
+):
     with engine.begin() as connection:
         connection.execute(sa.text(
             "INSERT INTO billing_accounts (id,currency) VALUES (:id,'usd')"
         ), {"id": account})
-    raw, event = _stripe_event(event_id)
+    raw, event = _stripe_event(event_id, created=created)
     with Session(engine, expire_on_commit=False) as session:
-        row, _ = billing_inbox.record_event(session, raw, event, now=NOW)
+        row, _ = billing_inbox.record_event(session, raw, event, now=created)
         session.commit()
         event_pk = row.id
     with Session(engine, expire_on_commit=False) as session:
-        row = billing_inbox.claim_next_event(session, now=NOW, lease_seconds=600)
+        lease_seconds = max(600, int((NOW - created).total_seconds() + 3600))
+        row = billing_inbox.claim_next_event(
+            session, now=created, lease_seconds=lease_seconds,
+        )
         session.commit()
         token = row.attempt_count
     with Session(engine) as session:
-        billing_inbox.mark_processed(session, event_pk, token, now=NOW + timedelta(seconds=1))
+        billing_inbox.mark_processed(
+            session, event_pk, token, now=created + timedelta(seconds=1)
+        )
         session.commit()
     return event_pk
 
@@ -217,6 +224,12 @@ def test_revision_is_linear_additive_and_empty(sqlite_engine):
     assert script.get_revision(REVISION).down_revision == PARENT
     inspector = sa.inspect(sqlite_engine)
     assert {"financial_transactions", "financial_lines"}.issubset(inspector.get_table_names())
+    assert "conflict_generation" in {
+        column["name"] for column in inspector.get_columns("external_event_inbox")
+    }
+    assert "created_xid" in {
+        column["name"] for column in inspector.get_columns("financial_transactions")
+    }
     assert {index["name"] for index in inspector.get_indexes("financial_transactions")} >= {
         "ix_financial_transactions_account_effective",
         "ix_financial_transactions_provider_object_effective",
@@ -226,6 +239,38 @@ def test_revision_is_linear_additive_and_empty(sqlite_engine):
         assert connection.execute(sa.text("SELECT amount FROM legacy_ledger_sentinel")).scalar_one() == 77
         assert connection.execute(sa.text("SELECT COUNT(*) FROM financial_transactions")).scalar_one() == 0
         assert connection.execute(sa.text("SELECT COUNT(*) FROM financial_lines")).scalar_one() == 0
+
+
+def test_upgrade_backfills_conflict_fence_and_downgrade_preserves_inbox(tmp_path):
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'financial-existing-inbox.sqlite'}")
+    @sa.event.listens_for(engine, "connect")
+    def _foreign_keys(dbapi_connection, _connection_record):
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+    _predecessor(engine)
+    event_pk = _seed_account_and_event(engine)
+    raw, _ = _stripe_event()
+    conflict_body = raw + b" "
+    with Session(engine) as session:
+        _, outcome = billing_inbox.record_event(
+            session, conflict_body, json.loads(conflict_body), now=NOW,
+        )
+        assert outcome == "digest_conflict"
+        session.commit()
+
+    _upgrade(engine)
+    with engine.connect() as connection:
+        assert connection.execute(sa.text(
+            "SELECT conflict_generation FROM external_event_inbox WHERE id=:id"
+        ), {"id": event_pk}).scalar_one() == 1
+    _downgrade(engine)
+    with engine.connect() as connection:
+        assert connection.execute(sa.text(
+            "SELECT COUNT(*) FROM external_event_inbox_conflicts WHERE inbox_event_id=:id"
+        ), {"id": event_pk}).scalar_one() == 1
+    assert "conflict_generation" not in {
+        column["name"] for column in sa.inspect(engine).get_columns("external_event_inbox")
+    }
+    engine.dispose()
 
 
 def test_mixed_invoice_records_exact_integer_minor_units_and_sources(sqlite_engine):
@@ -272,6 +317,83 @@ def test_business_version_is_idempotent_and_conflicts_fail(sqlite_engine):
     conflicting[0]["source_id"] = "price_other"
     with pytest.raises(billing_financial.FinancialIdentityConflictError):
         _record(sqlite_engine, _header(event_pk), conflicting)
+
+
+def test_processed_digest_conflicts_advance_the_transaction_fence(sqlite_engine):
+    event_pk = _seed_account_and_event(sqlite_engine)
+    raw, _ = _stripe_event()
+
+    with Session(sqlite_engine) as session:
+        _, outcome = billing_inbox.record_event(
+            session, raw + b" ", json.loads(raw + b" "), now=NOW,
+        )
+        assert outcome == "digest_conflict"
+        session.commit()
+
+    with Session(sqlite_engine) as session:
+        _, outcome = billing_inbox.record_event(
+            session, raw + b"\n", json.loads(raw + b"\n"), now=NOW,
+        )
+        assert outcome == "digest_conflict"
+        session.commit()
+
+    with sqlite_engine.connect() as connection:
+        state, generation, conflict_count = connection.execute(sa.text("""
+            SELECT event.state, event.conflict_generation, COUNT(conflict.id)
+            FROM external_event_inbox AS event
+            JOIN external_event_inbox_conflicts AS conflict
+              ON conflict.inbox_event_id = event.id
+            WHERE event.id = :id
+            GROUP BY event.id
+        """), {"id": event_pk}).one()
+    assert (state, generation, conflict_count) == ("processed", 2, 2)
+
+
+def test_retention_purge_skips_events_referenced_by_financial_facts(sqlite_engine):
+    old_event = _seed_account_and_event(
+        sqlite_engine, event_id="evt_financialold", created=NOW - timedelta(days=500),
+    )
+    unreferenced_event = _seed_account_and_event(
+        sqlite_engine, account="account-two", event_id="evt_unreferencedold",
+        created=NOW - timedelta(days=500),
+    )
+    _record(sqlite_engine, _header(old_event), _lines())
+
+    with Session(sqlite_engine) as session:
+        assert billing_inbox.purge_expired_events(session, now=NOW) == 1
+        session.commit()
+
+    with sqlite_engine.connect() as connection:
+        remaining = set(connection.execute(sa.text(
+            "SELECT id FROM external_event_inbox"
+        )).scalars())
+        transaction_count = connection.execute(sa.text(
+            "SELECT COUNT(*) FROM financial_transactions WHERE inbox_event_id=:id"
+        ), {"id": old_event}).scalar_one()
+    assert remaining == {old_event}
+    assert unreferenced_event not in remaining
+    assert transaction_count == 1
+
+
+@pytest.mark.postgres
+def test_postgres_retention_purge_skips_financially_referenced_event(postgres_engine):
+    old_event = _seed_account_and_event(
+        postgres_engine, event_id="evt_financialold", created=NOW - timedelta(days=500),
+    )
+    _seed_account_and_event(
+        postgres_engine, account="account-two", event_id="evt_unreferencedold",
+        created=NOW - timedelta(days=500),
+    )
+    _record(postgres_engine, _header(old_event), _lines())
+
+    with Session(postgres_engine) as session:
+        assert billing_inbox.purge_expired_events(session, now=NOW) == 1
+        session.commit()
+
+    with postgres_engine.connect() as connection:
+        assert connection.execute(sa.text(
+            "SELECT COUNT(*) FROM external_event_inbox WHERE id=:id"
+        ), {"id": old_event}).scalar_one() == 1
 
 
 def test_out_of_order_versions_remain_distinct_immutable_facts(sqlite_engine):
@@ -364,6 +486,9 @@ def test_records_and_inbox_evidence_are_immutable_and_restricted(sqlite_engine):
 def test_empty_downgrade_and_populated_guard(sqlite_engine, tmp_path):
     _downgrade(sqlite_engine)
     assert not {"financial_transactions", "financial_lines"} & set(sa.inspect(sqlite_engine).get_table_names())
+    assert "conflict_generation" not in {
+        column["name"] for column in sa.inspect(sqlite_engine).get_columns("external_event_inbox")
+    }
 
     engine = sa.create_engine(f"sqlite:///{tmp_path / 'financial-populated.sqlite'}")
     @sa.event.listens_for(engine, "connect")
@@ -392,7 +517,7 @@ def test_financial_recorder_has_no_live_runtime_importers():
 
 
 @pytest.mark.postgres
-def test_postgres_deferred_reconciliation_and_truncate_guards(postgres_engine):
+def test_postgres_deferred_reconciliation_uses_each_trigger_row_shape(postgres_engine):
     event_pk = _seed_account_and_event(postgres_engine)
     transaction_id, _ = _record(postgres_engine, _header(event_pk), _lines())
     for table in ("financial_lines", "financial_transactions"):
@@ -408,7 +533,7 @@ def test_postgres_deferred_reconciliation_and_truncate_guards(postgres_engine):
                   (id,billing_account_id,kind,provider,object_type,object_id,external_version,
                    effective_at,currency,principal_minor,tax_minor,fee_minor,discount_minor,
                    gross_minor,inbox_event_id)
-                VALUES ('mismatch','account-one','invoice','stripe','invoice','in_other','invoice:2',
+                VALUES ('mismatch','account-one','invoice','stripe','invoice','in_financial001','invoice:2',
                   :now,'usd',10,0,0,0,10,:event)
             """), {"now": NOW, "event": event_pk})
             connection.execute(sa.text("""
@@ -438,6 +563,39 @@ def test_postgres_deferred_reconciliation_and_truncate_guards(postgres_engine):
 
 
 @pytest.mark.postgres
+def test_postgres_header_atomicity_uses_full_xid_across_savepoints_and_wraparound(
+    postgres_engine,
+):
+    event_pk = _seed_account_and_event(postgres_engine)
+    header = _header(event_pk, external_version="invoice:savepoint")
+    with Session(postgres_engine, expire_on_commit=False) as session:
+        with session.begin():
+            with session.begin_nested():
+                transaction, outcome = billing_financial.record_financial_transaction(
+                    session, header, _lines(),
+                )
+            assert outcome == "inserted"
+            assert session.execute(sa.text("""
+                SELECT created_xid = pg_current_xact_id()::text
+                FROM financial_transactions WHERE id = :id
+            """), {"id": transaction.id}).scalar_one()
+            column_length, column_default = session.execute(sa.text("""
+                SELECT character_maximum_length, column_default
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'financial_transactions'
+                  AND column_name = 'created_xid'
+            """)).one()
+            assert column_length == 20
+            assert "pg_current_xact_id" in column_default
+
+    with postgres_engine.connect() as connection:
+        assert connection.execute(sa.text("""
+            SELECT COUNT(*) FROM financial_lines WHERE financial_transaction_id = :id
+        """), {"id": transaction.id}).scalar_one() == 2
+
+
+@pytest.mark.postgres
 def test_postgres_concurrent_business_identity_converges(postgres_engine):
     event_pk = _seed_account_and_event(postgres_engine)
     barrier = threading.Barrier(4)
@@ -463,6 +621,59 @@ def test_postgres_concurrent_business_identity_converges(postgres_engine):
     assert errors == []
     assert sorted(outcome for _, outcome in outcomes) == ["duplicate", "duplicate", "duplicate", "inserted"]
     assert len({identifier for identifier, _ in outcomes}) == 1
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("isolation", "expected_sqlstate"),
+    [
+        ("READ COMMITTED", "23514"),
+        ("REPEATABLE READ", "40001"),
+        ("SERIALIZABLE", "40001"),
+    ],
+)
+def test_postgres_financial_evidence_rejects_stale_inbox_snapshot(
+    postgres_engine, isolation, expected_sqlstate,
+):
+    event_pk = _seed_account_and_event(postgres_engine)
+    stale_engine = postgres_engine.execution_options(isolation_level=isolation)
+    with Session(stale_engine) as stale:
+        assert stale.execute(sa.text(
+            "SELECT state FROM external_event_inbox WHERE id=:id"
+        ), {"id": event_pk}).scalar_one() == "processed"
+
+        raw, _ = _stripe_event()
+        conflict_body = raw + b" "
+        with Session(postgres_engine) as conflict_session:
+            row, outcome = billing_inbox.record_event(
+                conflict_session, conflict_body, json.loads(conflict_body), now=NOW,
+            )
+            assert row.id == event_pk
+            assert outcome == "digest_conflict"
+            conflict_session.commit()
+
+        with pytest.raises(sa.exc.DBAPIError) as rejected:
+            billing_financial.record_financial_transaction(
+                stale,
+                _header(event_pk, external_version="invoice:stale_snapshot"),
+                _lines(),
+            )
+            stale.commit()
+        assert getattr(rejected.value.orig, "sqlstate", None) == expected_sqlstate
+        stale.rollback()
+
+    with postgres_engine.connect() as connection:
+        state, generation, financial_count, line_count = connection.execute(sa.text("""
+            SELECT event.state, event.conflict_generation,
+                   (SELECT COUNT(*) FROM financial_transactions
+                    WHERE external_version = 'invoice:stale_snapshot'),
+                   (SELECT COUNT(*) FROM financial_lines AS line
+                    JOIN financial_transactions AS txn
+                      ON txn.id = line.financial_transaction_id
+                    WHERE txn.external_version = 'invoice:stale_snapshot')
+            FROM external_event_inbox AS event WHERE event.id = :id
+        """), {"id": event_pk}).one()
+    assert (state, generation, financial_count, line_count) == ("processed", 1, 0, 0)
 
 
 @pytest.mark.postgres

@@ -32,7 +32,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, exists, or_, select, update
+from sqlalchemy import and_, column, exists, inspect, or_, select, table, update
 from sqlalchemy.exc import IntegrityError
 
 from .billing_ledger import _begin_serialized_sqlite_write
@@ -346,6 +346,10 @@ def requeue_quarantined(session, event_pk, *, now=None):
 def purge_expired_events(session, *, now=None, batch_size=500):
     """Delete processed, conflict-free events older than RETENTION_DAYS.
 
+    Financial transaction evidence pins its source inbox event; those rows are
+    skipped so one retained fact cannot abort a batch of otherwise eligible
+    transport records.
+
     Not scheduled; running it requires separate authorization. The database
     rejects any delete outside this rule, so a caller-supplied ``now`` in the
     future cannot shorten retention.
@@ -355,14 +359,20 @@ def purge_expired_events(session, *, now=None, batch_size=500):
     _begin_serialized_sqlite_write(session)
     inbox = ExternalEventInbox
     conflict = ExternalEventInboxConflict
-    rows = session.execute(
-        select(inbox)
-        .where(
-            inbox.state == "processed",
-            inbox.processed_at <= cutoff,
-            ~exists().where(conflict.inbox_event_id == inbox.id),
+    statement = select(inbox).where(
+        inbox.state == "processed",
+        inbox.processed_at <= cutoff,
+        ~exists().where(conflict.inbox_event_id == inbox.id),
+    )
+    if inspect(session.connection()).has_table("financial_transactions"):
+        financial_transactions = table(
+            "financial_transactions", column("inbox_event_id")
         )
-        .order_by(inbox.processed_at, inbox.id)
+        statement = statement.where(
+            ~exists().where(financial_transactions.c.inbox_event_id == inbox.id)
+        )
+    rows = session.execute(
+        statement.order_by(inbox.processed_at, inbox.id)
         .limit(batch_size)
         .with_for_update(skip_locked=True)
     ).scalars().all()
