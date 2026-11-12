@@ -1,6 +1,6 @@
 # Phases 2–5 Additive-Foundation Implementation Proposal
 
-Status: **Phases 2.1–5.1 accepted and inactive; Phase 5.2 implemented, pending independent acceptance; Phases 5.3–5.4 remain planning only**
+Status: **Phases 2.1–5.2 accepted and inactive; Phase 5.3 implemented locally, pending independent acceptance; Phase 5.4 remains planning only**
 
 Founder architecture approval recorded: 2026-11-09
 
@@ -22,8 +22,9 @@ cutover.
 | Phase 3 | Implemented, independently verified, and accepted | `e8b0f2d4a6c3`; accepted implementation commit `9969a1421e322d7840bde97c346c116425439dd0` |
 | Phase 4 | Implemented, independently verified, merged into `develop` (`14cb0ab6`) with CI passing, and closed; not deployed or activated | `f9c1a3e5b7d4`; verified implementation commit `24c14d596973c311ba305d6e3132a7ed696074d7` |
 | Phase 5.1 | Independently verified, accepted, and integrated; not connected or activated | `b2d4f6a8c0e3`; accepted baseline `26734e84eaa1f40d4344692f9126f72a56fa133e` |
-| Phase 5.2 | Implemented on its isolated branch, pending independent acceptance; not connected or activated | `c3e5a7b9d1f4`; immutable financial transactions and source-attributed lines |
-| Phases 5.3–5.4 | Not authorized for implementation | Planning specifications only |
+| Phase 5.2 | Independently accepted and integrated into `develop`; inactive, not deployed or connected | `c3e5a7b9d1f4`; immutable financial transactions and source-attributed lines |
+| Phase 5.3 | Implemented on its isolated branch, pending independent acceptance; not connected or activated | `d3e5a7b9c1f4`; cumulative refund/dispute cases and immutable case evidence |
+| Phase 5.4 | Not authorized for implementation | Domain events and transactional communication outbox |
 
 All accepted tables and links remain additive and inactive. Existing billing
 continues to be authoritative until a separately approved migration,
@@ -505,6 +506,13 @@ minimal referenced facts, recipient/account, template/channel version, dedupe
 key, delivery state and attempts. No delivery worker is activated. These tables
 ensure later notification failure cannot roll back a financial transaction.
 
+The approved increment boundary is Phase 5.3 for refund/dispute case
+foundations and Phase 5.4 for domain events and the transactional outbox.
+Phase 5.3 remains inactive and does not connect a live event source; its case
+recorder commits case state, immutable case version, and exact source-line
+attribution together. Phase 5.4 must add domain/outbox records atomically with
+the business transition before any delivery worker or event integration.
+
 ### Phase 5 transaction and ordering rules
 
 - Verify signature before acceptance; persist event ID/digest before dispatch.
@@ -616,7 +624,7 @@ acceptance passed and the increment was integrated into `develop` at
 
 ### Phase 5.2 implementation record — financial transactions and lines
 
-Status: **implemented, pending independent acceptance.** Migration
+Status: **independently accepted and integrated; inactive.** Migration
 `c3e5a7b9d1f4`, directly after Phase 5.1 revision `b2d4f6a8c0e3`, adds empty
 `financial_transactions` and `financial_lines` tables. The inactive
 `app/billing_financial.py` recorder has no live route, webhook, browser
@@ -661,6 +669,57 @@ increment deliberately creates no financial-case state, refund/dispute credit
 effects, domain events, communication outbox, entitlement changes, or credit
 ledger entries; those remain owned by separately authorized later increments.
 
+### Phase 5.3 implementation record — refund and dispute cases
+
+Status: **implemented locally, pending independent acceptance; inactive.**
+Migration `d3e5a7b9c1f4` follows Phase 5.2 and adds an empty case projection,
+append-only case events, exact source-line attribution, and an append-only
+reference table for later credit-ledger effects. `app/billing_financial_cases.py`
+is not called by a route, webhook, worker, entitlement writer, or ledger
+command. It consumes already-recorded Phase 5.1/5.2 evidence only.
+
+The case identity is scoped to provider, case type/object, and source
+financial transaction. The recorder serializes updates to an existing case,
+uses provider financial-version identity for replay, rejects conflicting
+version reuse, and ignores stale effective/received ordering without advancing
+the projection. Accepted case state, immutable event, and source-line
+attribution are written in one caller-owned transaction. PostgreSQL guards
+reconcile cumulative principal to its attributed source lines at commit, seal
+attribution to the event-creation transaction, validate inbox and financial
+source ownership/currency, enforce state/disposition and transition rules, and
+preserve immutable evidence. SQLite tests exercise the shared recorder
+invariants and migration triggers.
+
+This increment records case facts only: it does not calculate or apply credit
+holds, releases, reversals, recoveries, refunds, or entitlement changes and
+does not write credit-ledger entries. Exact line attribution must be resolved
+before calling the recorder; missing or ambiguous attribution is rejected,
+not inferred. Detailed credit effects remain Phase 9, and transactional domain
+events/outbox remain Phase 5.4. The Phase 5.1/5.2 T-INBOX-01..03 hardening gate
+is unchanged and remains required before inbox activation.
+
+Each immutable case version retains its source financial-transaction and inbox
+references, provider version, evidence fingerprint, state, disposition,
+cumulative principal in integer minor units, and effective/received timestamps.
+Its append-only line rows retain the exact integer minor-unit amount for each
+referenced source financial line. The recorder enforces that line amounts sum
+to the cumulative principal and do not exceed eligible source-line principal;
+it never apportions or rewrites those values. Ledger-effect references attach
+later Phase 9 entries to the immutable case version without making this case
+projection a second ledger authority.
+
+**Phase 9 dependency and acceptance criteria:** the later credit-effect
+implementation must consume or provide the exact line attribution before
+recording a case version, apply D10's proportional refund/dispute rules using
+integer minor-unit arithmetic, exclude taxes and fees, and preserve the
+per-version source-line evidence recorded here. It must define and test a
+deterministic residual/tie-break rule for proportional dispute allocations
+before implementation. Its regression coverage must include mixed invoices,
+discounted and ineligible lines, cumulative partial-to-full changes, exact
+minor-unit boundaries, replay/concurrency, and proof that unrelated funding
+and source lines are untouched. No Phase 9 calculation or effect is activated
+by Phase 5.3.
+
 ## Backward compatibility and protection of current customers
 
 1. All migrations are additive; existing columns, constraints, data, APIs, and
@@ -703,8 +762,9 @@ because no customer data is written.
 4. **Accepted:** Phase 3 unused credit-lot/reservation/ledger primitives and invariants.
 5. **Closed (in `develop`, not deployed or activated):** Phase 4 inactive entitlement/subscription/period primitives (runtime activation requires Python 3.10+, 3.12 preferred).
 6. **Accepted and integrated, inactive:** Phase 5.1 minimal-data external event inbox.
-7. **Implemented, pending independent acceptance:** Phase 5.2 immutable financial transactions and lines.
-8. **Not authorized:** Phases 5.3–5.4 refund/dispute cases and domain events/outbox.
+7. **Accepted and integrated, inactive:** Phase 5.2 immutable financial transactions and lines.
+8. **Implemented locally, pending independent acceptance and inactive:** Phase 5.3 refund/dispute cases.
+9. **Not authorized:** Phase 5.4 domain events and transactional outbox.
 
 No authorization should cover more than one numbered increment by implication.
 Passing a schema migration does not authorize data creation or service wiring.

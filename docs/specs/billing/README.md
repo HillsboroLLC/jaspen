@@ -1,6 +1,6 @@
 # Billing Architecture Phase 1
 
-Status: **Phases 1–5.1 accepted and integrated but inactive; Phase 5.2 implemented, pending independent acceptance**
+Status: **Phases 1–5.2 accepted and integrated but inactive; Phase 5.3 implemented locally, pending independent acceptance**
 
 Base: `origin/main` at `88684284a33836106cad639d36e191271109c2c7`
 
@@ -62,10 +62,12 @@ foundations. Phase 4 was then implemented and independently verified on
 PostgreSQL 18.6 (commit `24c14d5`), merged into `develop` at `14cb0ab6` with CI
 passing, and closed; it is not deployed or activated. Phase 5.1 (minimal-data
 external event inbox) passed independent acceptance and was integrated into
-`develop` at `26734e84eaa1f40d4344692f9126f72a56fa133e`. Phase 5.2 adds the inactive,
-immutable financial-transaction and source-attributed-line foundation and is
-pending independent acceptance. Neither increment is connected to a webhook,
-browser confirmation, job, entitlement transition, or credit movement. The
+`develop` at `26734e84eaa1f40d4344692f9126f72a56fa133e`. Phase 5.2's inactive,
+immutable financial-transaction and source-attributed-line foundation was
+independently accepted and integrated into `develop`. Phase 5.3 adds inactive
+refund/dispute case foundations on an isolated branch and is pending independent
+acceptance. Neither increment is connected to a webhook, browser confirmation,
+job, entitlement transition, or credit movement. The
 phases 2–5 proposal continues to identify separately
 reviewable, reversible increments; no backfill, runtime activation, or cutover
 is bundled. The stop-class conflicts in
@@ -147,9 +149,10 @@ realized margin were not accessed or verified.
 - Phase 5.1 is independently accepted and integrated at `26734e84`; the inbox
   remains disconnected from live Stripe webhooks and stores no card or
   unnecessary personal data (see the Phase 5.1 record in the proposal).
-- Phase 5.2 is implemented on its isolated branch, pending independent
-  acceptance. Its immutable money facts and source-attributed lines remain
-  empty and inactive; they do not move credits or grant capabilities.
+- Phase 5.2 is independently accepted and integrated into `develop`; its
+  immutable money facts and source-attributed lines remain empty and inactive.
+  Phase 5.3 is implemented locally, pending independent acceptance; its
+  refund/dispute case recorder remains disconnected from live sources.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type

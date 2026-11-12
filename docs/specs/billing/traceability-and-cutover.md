@@ -216,6 +216,34 @@ rewriting ledger history or copying counters backward without a reviewed plan.
 | T-CAPACITY-01..12 | org/member windows, concurrency, tier priority, provider pressure/fallback, abuse/runaway guard, no credit deduction, credit purchase no bypass, available-again response |
 | T-USAGE-01..10 | ledger-synchronized totals/history/session usage, recurring vs purchased, refresh/payment/term dates, interval/time zone, 20% warning once per period, distinct capacity/exhaustion copy, BALANCE retained |
 
+### Phase 5.3 implementation traceability
+
+Status: **Implemented locally, pending independent acceptance; inactive.**
+The authorized boundary is case persistence and recording only. Phase 5.4
+domain events/outbox and Phase 9 credit effects remain out of scope.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| Additive case projection, append-only versions, source attribution and ledger-effect references | Migration `d3e5a7b9c1f4`; `FinancialCase`, `FinancialCaseEvent`, `FinancialCaseEventLine`, `FinancialCaseEventLedgerEntry` | `test_phase53_migration_is_linear_additive_and_model_consistent`; `test_empty_downgrade_removes_only_phase53_tables`; `test_downgrade_refuses_case_evidence` |
+| Exact Phase 5.1 inbox and Phase 5.2 financial source, account, currency and line relationships | `billing_financial_cases.record_financial_case_event()` plus migration guards | `test_case_recording_is_idempotent_immutable_and_does_not_touch_ledger`; `test_conflicted_inbox_evidence_cannot_support_a_case`; `test_case_ledger_links_enforce_account_and_effect_type` |
+| Stable replay identity, conflict detection, stale ordering and cumulative state updates | Provider financial object/version identity; current case projection backed by an immutable event | `test_case_recording_is_idempotent_immutable_and_does_not_touch_ledger`; `test_case_event_rejects_reused_version_with_different_evidence`; `test_stale_refund_case_version_is_ignored`; `test_same_effective_time_uses_received_time_as_ordering_tiebreaker`; `test_dispute_transitions_append_versions_and_reopen_from_terminal` |
+| Exact integer-minor-unit line attribution and auditable source references per case version | Append-only `FinancialCaseEventLine`; event links to financial transaction and inbox evidence; no allocation calculation in Phase 5.3 | `test_case_preserves_exact_line_allocations_and_audit_references`; `test_case_recording_is_idempotent_immutable_and_does_not_touch_ledger`; migration reconciliation and immutable-evidence guards |
+| Explicit subscription-refund disposition; no inferred attribution or entitlement/ledger mutation | D10 disposition is retained in the immutable event; caller-supplied exact line allocations; Phase 3 remains the sole ledger authority | `test_subscription_refund_requires_explicit_disposition_and_rollback_is_atomic`; `test_case_attribution_cannot_exceed_eligible_source_principal`; `test_case_recorder_has_no_live_runtime_callers` |
+| PostgreSQL concurrency, deferred line reconciliation, immutable evidence and transaction atomicity | Row lock/unique identity; deferred projection and reconciliation constraints; top-level `created_xid` event seal | `test_postgres_concurrent_duplicate_case_versions_converge`; `test_postgres_case_recording_keeps_event_lines_atomic_across_savepoint`; `test_postgres_deferred_case_line_reconciliation_rejects_partial_commit` |
+
+PostgreSQL-specific cases use only the disposable `TEST_DATABASE_URL` fixture
+and skip when it is unavailable. The Phase 5.1/5.2 T-INBOX-01..03 hardening gate
+below is unchanged and remains a prerequisite to inbox activation.
+
+**Deferred Phase 9 dependency:** Phase 5.3 stores, validates, and preserves
+exact caller-resolved line amounts; it does not calculate D10 proportional
+refund/dispute allocations. Before Phase 9 financial effects are implemented,
+that phase must specify a deterministic integer-minor-unit residual/tie-break
+rule for proportional dispute allocation and test D10's tax/fee exclusions,
+discounted mixed-line attribution, cumulative deltas, replay/concurrency, and
+isolation of unrelated funding. Phase 9 must link each resulting ledger effect
+to the immutable case version without rewriting its evidence.
+
 ### Deferred Phase 5.1/5.2 activation gate — conflict evidence integrity
 
 Status: **Deferred — required before inbox activation.** These PostgreSQL

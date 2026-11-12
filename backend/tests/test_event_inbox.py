@@ -208,7 +208,8 @@ def test_inbox_has_no_live_runtime_importers():
     importers = []
     for path in app_dir.rglob("*.py"):
         if path.name in {
-            "billing_inbox.py", "billing_financial.py", "models_billing_phase5.py", "models.py",
+            "billing_inbox.py", "billing_financial.py", "billing_financial_cases.py",
+            "models_billing_phase5.py", "models.py",
         }:
             continue
         text = path.read_text()

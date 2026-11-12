@@ -2851,6 +2851,10 @@ from .models_billing_phase4 import (  # noqa: E402,F401
 from .models_billing_phase5 import (  # noqa: E402,F401
     ExternalEventInbox,
     ExternalEventInboxConflict,
+    FinancialCase,
+    FinancialCaseEvent,
+    FinancialCaseEventLedgerEntry,
+    FinancialCaseEventLine,
     FinancialLine,
     FinancialTransaction,
 )

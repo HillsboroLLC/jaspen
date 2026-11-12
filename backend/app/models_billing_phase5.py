@@ -17,6 +17,10 @@ FINANCIAL_TRANSACTION_KINDS = (
 FINANCIAL_LINE_KINDS = (
     "subscription", "seat", "credit_pack", "tax", "fee", "discount", "other",
 )
+FINANCIAL_CASE_STATES = (
+    "refund_recorded", "financial_only", "entitlement_reducing_review",
+    "scheduled", "applied", "opened", "pending", "won", "lost",
+)
 
 
 def _quoted(values):
@@ -278,4 +282,214 @@ class FinancialLine(db.Model):
         ),
         db.Index("ix_financial_lines_subscription_id", "subscription_id"),
         db.Index("ix_financial_lines_entitlement_instance_id", "entitlement_instance_id"),
+    )
+
+
+class FinancialCase(db.Model):
+    """Mutable cumulative projection over immutable refund or dispute evidence."""
+
+    __tablename__ = "financial_cases"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    billing_account_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "billing_accounts.id",
+            name="fk_financial_cases_billing_account_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    provider = db.Column(db.String(32), nullable=False)
+    case_type = db.Column(db.String(16), nullable=False)
+    case_object_id = db.Column(db.String(255), nullable=False)
+    source_financial_transaction_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "financial_transactions.id",
+            name="fk_financial_cases_source_transaction_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    state = db.Column(db.String(32), nullable=False)
+    disposition = db.Column(db.String(40), nullable=True)
+    cumulative_principal_minor = db.Column(db.BigInteger, nullable=False)
+    current_external_version = db.Column(db.String(255), nullable=False)
+    current_event_id = db.Column(db.String(36), nullable=False)
+    current_effective_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    current_received_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+
+    __table_args__ = (
+        db.CheckConstraint("case_type IN ('refund', 'dispute')", name="ck_financial_cases_type"),
+        db.CheckConstraint(
+            "length(trim(provider)) > 0 AND length(trim(case_object_id)) > 0 "
+            "AND length(trim(current_external_version)) > 0",
+            name="ck_financial_cases_identity",
+        ),
+        db.CheckConstraint(
+            "(case_type = 'refund' AND ("
+            "(state = 'refund_recorded' AND disposition IS NULL) OR "
+            "(state = 'financial_only' AND disposition = 'financial_only') OR "
+            "(state IN ('entitlement_reducing_review', 'scheduled', 'applied') "
+            "AND disposition = 'entitlement_reducing_review'))) OR "
+            "(case_type = 'dispute' AND state IN ('opened', 'pending', 'won', 'lost') "
+            "AND disposition IS NULL)",
+            name="ck_financial_cases_state_disposition",
+        ),
+        db.CheckConstraint(
+            "cumulative_principal_minor >= 0",
+            name="ck_financial_cases_cumulative_principal",
+        ),
+        db.UniqueConstraint(
+            "provider", "case_type", "case_object_id", "source_financial_transaction_id",
+            name="uq_financial_cases_provider_object_source",
+        ),
+        db.Index(
+            "ix_financial_cases_account_state",
+            "billing_account_id", "state", "updated_at",
+        ),
+        db.Index(
+            "ix_financial_cases_source_transaction",
+            "source_financial_transaction_id",
+        ),
+    )
+
+
+class FinancialCaseEvent(db.Model):
+    """Append-only accepted version of a refund or dispute case."""
+
+    __tablename__ = "financial_case_events"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    financial_case_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "financial_cases.id",
+            name="fk_financial_case_events_case_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    financial_transaction_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "financial_transactions.id",
+            name="fk_financial_case_events_transaction_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    inbox_event_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "external_event_inbox.id",
+            name="fk_financial_case_events_inbox_event_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    external_version = db.Column(db.String(255), nullable=False)
+    event_fingerprint = db.Column(db.String(64), nullable=False)
+    state = db.Column(db.String(32), nullable=False)
+    disposition = db.Column(db.String(40), nullable=True)
+    cumulative_principal_minor = db.Column(db.BigInteger, nullable=False)
+    effective_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    received_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    created_xid = db.Column(db.String(20), nullable=False, server_default="0")
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "length(trim(external_version)) > 0 AND length(event_fingerprint) = 64 "
+            "AND event_fingerprint = lower(event_fingerprint)",
+            name="ck_financial_case_events_identity",
+        ),
+        db.CheckConstraint(
+            "cumulative_principal_minor >= 0",
+            name="ck_financial_case_events_cumulative_principal",
+        ),
+        db.UniqueConstraint(
+            "financial_case_id", "external_version",
+            name="uq_financial_case_events_case_version",
+        ),
+        db.Index(
+            "ix_financial_case_events_transaction",
+            "financial_transaction_id",
+        ),
+        db.Index("ix_financial_case_events_inbox_event", "inbox_event_id"),
+    )
+
+
+class FinancialCaseEventLine(db.Model):
+    """Exact source-line attribution for one cumulative case version."""
+
+    __tablename__ = "financial_case_event_lines"
+
+    financial_case_event_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "financial_case_events.id",
+            name="fk_financial_case_event_lines_event_id",
+            ondelete="RESTRICT",
+        ),
+        primary_key=True,
+    )
+    financial_line_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "financial_lines.id",
+            name="fk_financial_case_event_lines_financial_line_id",
+            ondelete="RESTRICT",
+        ),
+        primary_key=True,
+    )
+    attributed_principal_minor = db.Column(db.BigInteger, nullable=False)
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "attributed_principal_minor >= 0",
+            name="ck_financial_case_event_lines_principal",
+        ),
+        db.Index("ix_financial_case_event_lines_financial_line", "financial_line_id"),
+    )
+
+
+class FinancialCaseEventLedgerEntry(db.Model):
+    """Append-only links to credit effects owned by the later Phase 9 command."""
+
+    __tablename__ = "financial_case_event_ledger_entries"
+
+    financial_case_event_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "financial_case_events.id",
+            name="fk_financial_case_event_ledger_entries_event_id",
+            ondelete="RESTRICT",
+        ),
+        primary_key=True,
+    )
+    credit_ledger_entry_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "credit_ledger_entries.id",
+            name="fk_financial_case_event_ledger_entries_ledger_entry_id",
+            ondelete="RESTRICT",
+        ),
+        primary_key=True,
+    )
+    effect_type = db.Column(db.String(16), primary_key=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "effect_type IN ('hold', 'release', 'reversal', 'recovery')",
+            name="ck_financial_case_event_ledger_entries_effect_type",
+        ),
+        db.Index(
+            "ix_financial_case_event_ledger_entries_ledger_entry",
+            "credit_ledger_entry_id",
+        ),
     )

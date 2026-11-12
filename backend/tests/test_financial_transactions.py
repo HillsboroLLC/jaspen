@@ -224,7 +224,7 @@ def _record(engine, header, lines):
 
 def test_revision_is_linear_additive_and_empty(sqlite_engine):
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == [REVISION]
+    assert script.get_heads() == ["d3e5a7b9c1f4"]
     assert script.get_revision(REVISION).down_revision == PARENT
     inspector = sa.inspect(sqlite_engine)
     assert {"financial_transactions", "financial_lines"}.issubset(inspector.get_table_names())
@@ -536,7 +536,10 @@ def test_financial_recorder_has_no_live_runtime_importers():
     app_dir = BACKEND_DIR / "app"
     importers = []
     for path in app_dir.rglob("*.py"):
-        if path.name in {"billing_financial.py", "models_billing_phase5.py", "models.py"}:
+        if path.name in {
+            "billing_financial.py", "billing_financial_cases.py",
+            "models_billing_phase5.py", "models.py",
+        }:
             continue
         text = path.read_text()
         if "billing_financial" in text or "FinancialTransaction" in text or "FinancialLine" in text:
