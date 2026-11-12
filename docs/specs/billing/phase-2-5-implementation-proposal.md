@@ -741,9 +741,8 @@ untouched. No Phase 9 calculation or effect is activated by Phase 5.3.
    tables start empty. The Phase 5.3 concurrency-only source-line fence table is
    intentionally backfilled for existing invoice/payment transactions and
    populated for subsequent eligible transactions by its migration trigger.
-   This coordination mechanism creates no financial evidence and does not
-   activate billing. No default, login, GET request, or organization resolver
-   populates live billing state.
+   That trigger only maintains coordination metadata; it creates no financial
+   evidence, starts no billing workflow, and does not activate billing.
 3. There are no dual writes in phases 2–5. Later command cutovers replace one
    writer at a time; compatibility fields become projections only after proof.
 4. No session/work table is referenced with cascading deletion. Billing FKs use

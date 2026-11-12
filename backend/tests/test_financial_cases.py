@@ -654,7 +654,7 @@ def test_postgres_concurrent_cases_cannot_overattribute_source_line(
         with Session(postgres_engine) as session:
             session.execute(sa.text(f"SET TRANSACTION ISOLATION LEVEL {isolation_level}"))
             session.execute(
-                select(FinancialTransaction.id).where(
+                sa.select(FinancialTransaction.id).where(
                     FinancialTransaction.id == source_id,
                 )
             ).scalar_one()
@@ -691,6 +691,204 @@ def test_postgres_concurrent_cases_cannot_overattribute_source_line(
             WHERE line.financial_line_id = :line_id
         """), {"line_id": source_line_id}).scalar_one()
         assert current_total == 600
+
+
+@pytest.mark.parametrize(
+    "isolation_level", ["READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"],
+)
+def test_postgres_competing_case_corrections_preserve_source_capacity(
+    postgres_engine, isolation_level,
+):
+    source_id, source_line_id = _seed_source(postgres_engine)
+    proposals = {}
+    case_ids = {}
+    initial_event_ids = {}
+
+    for case_object_id in ("re_case_a", "re_case_b"):
+        initial_tx = _seed_case_version(
+            postgres_engine, source_id, case_object_id=case_object_id,
+            version=1, principal=-300,
+        )
+        initial = _case_input(
+            source_id, source_line_id, initial_tx, amount=300, allocation=300,
+        )
+        initial["case_object_id"] = case_object_id
+        case_id, event_id, outcome = _record_case(postgres_engine, initial)
+        assert outcome == "inserted"
+        case_ids[case_object_id] = case_id
+        initial_event_ids[case_object_id] = event_id
+
+        correction_tx = _seed_case_version(
+            postgres_engine, source_id, case_object_id=case_object_id,
+            version=2, principal=-600,
+        )
+        correction = _case_input(
+            source_id, source_line_id, correction_tx, amount=600, allocation=600,
+        )
+        correction["case_object_id"] = case_object_id
+        proposals[case_object_id] = correction
+
+    barrier = threading.Barrier(2)
+
+    def record_correction(case_object_id, case):
+        with Session(postgres_engine) as session:
+            session.execute(sa.text(f"SET TRANSACTION ISOLATION LEVEL {isolation_level}"))
+            session.execute(
+                sa.select(FinancialTransaction.id).where(
+                    FinancialTransaction.id == source_id,
+                )
+            ).scalar_one()
+            barrier.wait(timeout=10)
+            try:
+                result = billing_financial_cases.record_financial_case_event(session, case)
+                session.commit()
+                return case_object_id, result[1].id, result[2]
+            except billing_financial_cases.FinancialCaseInvariantError:
+                session.rollback()
+                return case_object_id, None, "rejected"
+            except sa.exc.DBAPIError as error:
+                sqlstate = (
+                    getattr(error.orig, "sqlstate", None)
+                    or getattr(error.orig, "pgcode", None)
+                )
+                if sqlstate not in {"23514", "40001", "40P01"}:
+                    raise
+                session.rollback()
+                return case_object_id, None, "rejected"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(
+            lambda item: record_correction(*item),
+            proposals.items(),
+        ))
+    outcomes = {case_object_id: outcome for case_object_id, _, outcome in results}
+    assert sorted(outcomes.values()) == ["inserted", "rejected"]
+    winner = next(name for name, outcome in outcomes.items() if outcome == "inserted")
+    loser = next(name for name, outcome in outcomes.items() if outcome == "rejected")
+    race_event_ids = {
+        case_object_id: event_id
+        for case_object_id, event_id, _ in results
+    }
+    assert race_event_ids[winner] is not None
+    assert race_event_ids[loser] is None
+
+    with Session(postgres_engine) as session:
+        cases = {
+            case.case_object_id: case
+            for case in session.query(FinancialCase).all()
+        }
+        assert set(cases) == set(case_ids)
+        assert {name: case.id for name, case in cases.items()} == case_ids
+        assert cases[winner].current_external_version == "refund:2"
+        assert cases[loser].current_external_version == "refund:1"
+        assert cases[loser].current_event_id == initial_event_ids[loser]
+        assert session.query(FinancialCaseEvent).count() == 3
+        assert (
+            session.get(FinancialCaseEvent, initial_event_ids[winner])
+            .cumulative_principal_minor == 300
+        )
+        assert (
+            session.get(FinancialCaseEvent, initial_event_ids[loser])
+            .cumulative_principal_minor == 300
+        )
+        assert (
+            session.get(FinancialCaseEvent, race_event_ids[winner])
+            .cumulative_principal_minor == 600
+        )
+        assert session.query(FinancialCaseEvent).filter_by(
+            financial_case_id=case_ids[loser],
+        ).count() == 1
+        current_total = session.execute(sa.text("""
+            SELECT COALESCE(SUM(line.attributed_principal_minor), 0)
+            FROM financial_case_event_lines AS line
+            JOIN financial_cases AS case_row
+              ON case_row.current_event_id = line.financial_case_event_id
+            WHERE line.financial_line_id = :line_id
+        """), {"line_id": source_line_id}).scalar_one()
+        assert current_total == 900
+        current_by_case = dict(session.execute(sa.text("""
+            SELECT case_row.case_object_id,
+                   COALESCE(SUM(line.attributed_principal_minor), 0)
+            FROM financial_cases AS case_row
+            JOIN financial_case_event_lines AS line
+              ON line.financial_case_event_id = case_row.current_event_id
+            WHERE case_row.source_financial_transaction_id = :source_id
+            GROUP BY case_row.case_object_id
+        """), {"source_id": source_id}).all())
+        assert current_by_case == {winner: 600, loser: 300}
+
+    release_tx = _seed_case_version(
+        postgres_engine, source_id, case_object_id=winner,
+        version=3, principal=-300,
+    )
+    release = _case_input(
+        source_id, source_line_id, release_tx, amount=300, allocation=300,
+    )
+    release["case_object_id"] = winner
+    _, release_event_id, release_outcome = _record_case(postgres_engine, release)
+    assert release_outcome == "inserted"
+
+    _, retry_event_id, retry_outcome = _record_case(postgres_engine, proposals[loser])
+    assert retry_outcome == "inserted"
+
+    with Session(postgres_engine) as session:
+        cases = {
+            case.case_object_id: case
+            for case in session.query(FinancialCase).all()
+        }
+        assert cases[winner].current_external_version == "refund:3"
+        assert cases[winner].cumulative_principal_minor == 300
+        assert cases[loser].current_external_version == "refund:2"
+        assert cases[loser].cumulative_principal_minor == 600
+        assert session.query(FinancialCaseEvent).count() == 5
+        assert session.query(FinancialCaseEvent).filter_by(
+            financial_case_id=case_ids[winner],
+        ).count() == 3
+        assert session.query(FinancialCaseEvent).filter_by(
+            financial_case_id=case_ids[loser],
+        ).count() == 2
+        assert session.get(FinancialCaseEvent, initial_event_ids[winner]) is not None
+        assert session.get(FinancialCaseEvent, initial_event_ids[loser]) is not None
+        assert session.get(FinancialCaseEvent, release_event_id) is not None
+        assert session.get(FinancialCaseEvent, retry_event_id) is not None
+        assert (
+            session.get(FinancialCaseEvent, initial_event_ids[winner])
+            .cumulative_principal_minor == 300
+        )
+        assert (
+            session.get(FinancialCaseEvent, initial_event_ids[loser])
+            .cumulative_principal_minor == 300
+        )
+        assert (
+            session.get(FinancialCaseEvent, race_event_ids[winner])
+            .cumulative_principal_minor == 600
+        )
+        assert (
+            session.get(FinancialCaseEvent, release_event_id)
+            .cumulative_principal_minor == 300
+        )
+        assert (
+            session.get(FinancialCaseEvent, retry_event_id)
+            .cumulative_principal_minor == 600
+        )
+        current_total = session.execute(sa.text("""
+            SELECT COALESCE(SUM(line.attributed_principal_minor), 0)
+            FROM financial_case_event_lines AS line
+            JOIN financial_cases AS case_row
+              ON case_row.current_event_id = line.financial_case_event_id
+            WHERE line.financial_line_id = :line_id
+        """), {"line_id": source_line_id}).scalar_one()
+        assert current_total == 900
+        current_by_case = dict(session.execute(sa.text("""
+            SELECT case_row.case_object_id,
+                   COALESCE(SUM(line.attributed_principal_minor), 0)
+            FROM financial_cases AS case_row
+            JOIN financial_case_event_lines AS line
+              ON line.financial_case_event_id = case_row.current_event_id
+            WHERE case_row.source_financial_transaction_id = :source_id
+            GROUP BY case_row.case_object_id
+        """), {"source_id": source_id}).all())
+        assert current_by_case == {winner: 300, loser: 600}
 
 
 def test_case_ledger_links_enforce_account_and_effect_type(sqlite_engine):
