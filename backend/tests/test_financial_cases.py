@@ -23,6 +23,7 @@ from app.models import (
     FinancialCaseEvent,
     FinancialCaseEventLedgerEntry,
     FinancialCaseEventLine,
+    FinancialCaseSourceFence,
     FinancialLine,
     FinancialTransaction,
 )
@@ -279,17 +280,64 @@ def _record_case(engine, case):
         return result[0].id, result[1].id if result[1] else None, result[2]
 
 
+def _insert_case_version_direct(
+    session, source_id, event_tx_id, *, cumulative_principal_minor, allocations,
+):
+    event_transaction = session.get(FinancialTransaction, event_tx_id)
+    inbox_event = session.get(ExternalEventInbox, event_transaction.inbox_event_id)
+    case_id, event_id = str(uuid.uuid4()), str(uuid.uuid4())
+    state = "opened" if event_transaction.kind == "dispute" else "refund_recorded"
+    session.add(FinancialCase(
+        id=case_id,
+        billing_account_id=event_transaction.billing_account_id,
+        provider=event_transaction.provider,
+        case_type=event_transaction.kind,
+        case_object_id=event_transaction.object_id,
+        source_financial_transaction_id=source_id,
+        state=state,
+        disposition=None,
+        cumulative_principal_minor=cumulative_principal_minor,
+        current_external_version=event_transaction.external_version,
+        current_event_id=event_id,
+        current_effective_at=event_transaction.effective_at,
+        current_received_at=inbox_event.received_at,
+    ))
+    session.flush()
+    session.add(FinancialCaseEvent(
+        id=event_id,
+        financial_case_id=case_id,
+        financial_transaction_id=event_tx_id,
+        inbox_event_id=inbox_event.id,
+        external_version=event_transaction.external_version,
+        event_fingerprint="a" * 64,
+        state=state,
+        disposition=None,
+        cumulative_principal_minor=cumulative_principal_minor,
+        effective_at=event_transaction.effective_at,
+        received_at=inbox_event.received_at,
+    ))
+    session.flush()
+    for financial_line_id, attributed_principal_minor in allocations:
+        session.add(FinancialCaseEventLine(
+            financial_case_event_id=event_id,
+            financial_line_id=financial_line_id,
+            attributed_principal_minor=attributed_principal_minor,
+        ))
+    session.flush()
+    return case_id, event_id
+
+
 def test_phase53_migration_is_linear_additive_and_model_consistent(sqlite_engine):
     script = ScriptDirectory(MIGRATIONS_DIR)
     assert script.get_heads() == [REVISION]
     assert script.get_revision(REVISION).down_revision == PARENT
     assert set((
         "financial_cases", "financial_case_events", "financial_case_event_lines",
-        "financial_case_event_ledger_entries",
+        "financial_case_event_ledger_entries", "financial_case_source_fences",
     )).issubset(sa.inspect(sqlite_engine).get_table_names())
     for model in (
         FinancialCase, FinancialCaseEvent, FinancialCaseEventLine,
-        FinancialCaseEventLedgerEntry,
+        FinancialCaseEventLedgerEntry, FinancialCaseSourceFence,
     ):
         assert {
             column["name"] for column in sa.inspect(sqlite_engine).get_columns(model.__tablename__)
@@ -299,12 +347,13 @@ def test_phase53_migration_is_linear_additive_and_model_consistent(sqlite_engine
 
 
 def test_empty_downgrade_removes_only_phase53_tables(sqlite_engine):
+    _seed_source(sqlite_engine)
     with _ops(sqlite_engine):
         _revision().downgrade()
     tables = set(sa.inspect(sqlite_engine).get_table_names())
     assert not {
         "financial_cases", "financial_case_events", "financial_case_event_lines",
-        "financial_case_event_ledger_entries",
+        "financial_case_event_ledger_entries", "financial_case_source_fences",
     } & tables
     assert {"financial_transactions", "financial_lines", "external_event_inbox"} <= tables
 
@@ -347,7 +396,9 @@ def test_case_preserves_exact_line_allocations_and_audit_references(sqlite_engin
         second_line_id = session.query(FinancialLine).filter_by(
             financial_transaction_id=source_id, external_line_id="source-line-2",
         ).one().id
-    event_tx_id = _seed_case_version(sqlite_engine, source_id, version=7)
+    event_tx_id = _seed_case_version(
+        sqlite_engine, source_id, version=7, principal=-317,
+    )
     case = _case_input(source_id, first_line_id, event_tx_id, amount=317, allocation=109)
     case["line_allocations"] = [
         {"financial_line_id": first_line_id, "attributed_principal_minor": 109},
@@ -377,6 +428,269 @@ def test_case_preserves_exact_line_allocations_and_audit_references(sqlite_engin
         assert event.received_at == inbox_event.received_at
         assert event.event_fingerprint
         assert case_row.current_event_id == event.id
+
+
+def test_case_principal_matches_signed_cumulative_financial_snapshot(sqlite_engine):
+    source_id, source_line_id = _seed_source(sqlite_engine)
+    mismatched_tx = _seed_case_version(sqlite_engine, source_id, principal=-1)
+    with pytest.raises(
+        billing_financial_cases.FinancialCaseInvariantError,
+        match="signed financial transaction version",
+    ):
+        _record_case(
+            sqlite_engine,
+            _case_input(source_id, source_line_id, mismatched_tx, amount=200),
+        )
+
+    positive_tx = _seed_case_version(sqlite_engine, source_id, version=2, principal=200)
+    with pytest.raises(
+        billing_financial_cases.FinancialCaseInvariantError,
+        match="signed financial transaction version",
+    ):
+        _record_case(
+            sqlite_engine,
+            _case_input(source_id, source_line_id, positive_tx, amount=200),
+        )
+
+    first_tx = _seed_case_version(sqlite_engine, source_id, version=3, principal=-200)
+    case = _case_input(source_id, source_line_id, first_tx, amount=200)
+    case_id, first_event, _ = _record_case(sqlite_engine, case)
+    correction_tx = _seed_case_version(
+        sqlite_engine, source_id, version=4, principal=-350,
+    )
+    correction = _case_input(source_id, source_line_id, correction_tx, amount=350)
+    assert _record_case(sqlite_engine, correction)[0] == case_id
+    reversal_tx = _seed_case_version(
+        sqlite_engine, source_id, version=5, principal=-100,
+    )
+    reversal = _case_input(source_id, source_line_id, reversal_tx, amount=100)
+    assert _record_case(sqlite_engine, reversal)[0] == case_id
+
+    with Session(sqlite_engine) as session:
+        current = session.get(FinancialCase, case_id)
+        assert current.cumulative_principal_minor == 100
+        assert current.current_event_id != first_event
+        assert session.query(FinancialCaseEvent).filter_by(
+            financial_case_id=case_id,
+        ).count() == 3
+
+
+def test_database_rejects_case_principal_mismatch(sqlite_engine):
+    source_id, source_line_id = _seed_source(sqlite_engine)
+    event_tx_id = _seed_case_version(sqlite_engine, source_id, principal=-1)
+    with Session(sqlite_engine) as session:
+        with pytest.raises(IntegrityError):
+            _insert_case_version_direct(
+                session, source_id, event_tx_id,
+                cumulative_principal_minor=200,
+                allocations=[(source_line_id, 200)],
+            )
+        session.rollback()
+    with Session(sqlite_engine) as session:
+        assert session.query(FinancialCase).count() == 0
+        assert session.query(FinancialCaseEvent).count() == 0
+
+
+@pytest.mark.postgres
+def test_postgres_database_rejects_case_principal_mismatch(postgres_engine):
+    source_id, source_line_id = _seed_source(postgres_engine)
+    event_tx_id = _seed_case_version(postgres_engine, source_id, principal=-1)
+    with Session(postgres_engine) as session:
+        with pytest.raises(IntegrityError):
+            _insert_case_version_direct(
+                session, source_id, event_tx_id,
+                cumulative_principal_minor=200,
+                allocations=[(source_line_id, 200)],
+            )
+            session.commit()
+        session.rollback()
+    with Session(postgres_engine) as session:
+        assert session.query(FinancialCase).count() == 0
+        assert session.query(FinancialCaseEvent).count() == 0
+
+
+def test_current_case_attributions_release_capacity_on_cumulative_correction(sqlite_engine):
+    source_id, source_line_id = _seed_source(sqlite_engine)
+    first_tx = _seed_case_version(
+        sqlite_engine, source_id, case_object_id="re_case_a", version=1, principal=-800,
+    )
+    first = _case_input(source_id, source_line_id, first_tx, amount=800, allocation=800)
+    first["case_object_id"] = "re_case_a"
+    case_a_id, _, _ = _record_case(sqlite_engine, first)
+
+    correction_tx = _seed_case_version(
+        sqlite_engine, source_id, case_object_id="re_case_a", version=2, principal=-500,
+    )
+    correction = _case_input(
+        source_id, source_line_id, correction_tx, amount=500, allocation=500,
+    )
+    correction["case_object_id"] = "re_case_a"
+    _record_case(sqlite_engine, correction)
+
+    reversal_tx = _seed_case_version(
+        sqlite_engine, source_id, case_object_id="re_case_a", version=3, principal=0,
+    )
+    reversal = _case_input(
+        source_id, source_line_id, reversal_tx, amount=0, allocation=0,
+    )
+    reversal["case_object_id"] = "re_case_a"
+    _record_case(sqlite_engine, reversal)
+
+    second_tx = _seed_case_version(
+        sqlite_engine, source_id, case_object_id="re_case_b", principal=-900,
+    )
+    second = _case_input(
+        source_id, source_line_id, second_tx, amount=900, allocation=900,
+    )
+    second["case_object_id"] = "re_case_b"
+    _record_case(sqlite_engine, second)
+
+    with Session(sqlite_engine) as session:
+        current_total = session.execute(sa.text("""
+            SELECT COALESCE(SUM(line.attributed_principal_minor), 0)
+            FROM financial_case_event_lines AS line
+            JOIN financial_cases AS case_row
+              ON case_row.current_event_id = line.financial_case_event_id
+            WHERE line.financial_line_id = :line_id
+        """), {"line_id": source_line_id}).scalar_one()
+        historical_total = session.execute(
+            sa.select(sa.func.sum(FinancialCaseEventLine.attributed_principal_minor))
+        ).scalar_one()
+        assert current_total == 900
+        assert historical_total == 2200
+        assert session.get(FinancialCase, case_a_id).cumulative_principal_minor == 0
+
+
+def test_sequential_current_cases_cannot_overattribute_source_line(sqlite_engine):
+    source_id, source_line_id = _seed_source(sqlite_engine)
+    first_tx = _seed_case_version(
+        sqlite_engine, source_id, case_object_id="re_case_a", principal=-900,
+    )
+    first = _case_input(source_id, source_line_id, first_tx, amount=900, allocation=900)
+    first["case_object_id"] = "re_case_a"
+    _record_case(sqlite_engine, first)
+
+    second_tx = _seed_case_version(
+        sqlite_engine, source_id, case_object_id="re_case_b", principal=-900,
+    )
+    second = _case_input(source_id, source_line_id, second_tx, amount=900, allocation=900)
+    second["case_object_id"] = "re_case_b"
+    with pytest.raises(
+        billing_financial_cases.FinancialCaseInvariantError,
+        match="current case attributions",
+    ):
+        _record_case(sqlite_engine, second)
+
+    with Session(sqlite_engine) as session:
+        assert session.query(FinancialCase).count() == 1
+        assert session.query(FinancialCaseEvent).count() == 1
+
+
+def _assert_database_rejects_aggregate_overattribution(engine):
+    source_id, source_line_id = _seed_source(engine)
+    first_tx = _seed_case_version(
+        engine, source_id, case_object_id="re_case_a", principal=-600,
+    )
+    first = _case_input(source_id, source_line_id, first_tx, amount=600, allocation=600)
+    first["case_object_id"] = "re_case_a"
+    _record_case(engine, first)
+
+    second_tx = _seed_case_version(
+        engine, source_id, case_object_id="re_case_b", principal=-600,
+    )
+    with Session(engine) as session:
+        with pytest.raises(IntegrityError):
+            _insert_case_version_direct(
+                session, source_id, second_tx,
+                cumulative_principal_minor=600,
+                allocations=[(source_line_id, 600)],
+            )
+            session.commit()
+        session.rollback()
+
+    with Session(engine) as session:
+        assert session.query(FinancialCase).count() == 1
+        assert session.query(FinancialCaseEvent).count() == 1
+        current_total = session.execute(sa.text("""
+            SELECT COALESCE(SUM(line.attributed_principal_minor), 0)
+            FROM financial_case_event_lines AS line
+            JOIN financial_cases AS case_row
+              ON case_row.current_event_id = line.financial_case_event_id
+            WHERE line.financial_line_id = :line_id
+        """), {"line_id": source_line_id}).scalar_one()
+        assert current_total == 600
+
+
+def test_database_rejects_aggregate_overattribution(sqlite_engine):
+    _assert_database_rejects_aggregate_overattribution(sqlite_engine)
+
+
+@pytest.mark.postgres
+def test_postgres_database_rejects_aggregate_overattribution(postgres_engine):
+    _assert_database_rejects_aggregate_overattribution(postgres_engine)
+
+
+@pytest.mark.parametrize(
+    "isolation_level", ["READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"],
+)
+def test_postgres_concurrent_cases_cannot_overattribute_source_line(
+    postgres_engine, isolation_level,
+):
+    source_id, source_line_id = _seed_source(postgres_engine)
+    proposals = []
+    for case_object_id in ("re_case_a", "re_case_b"):
+        event_tx_id = _seed_case_version(
+            postgres_engine, source_id, case_object_id=case_object_id, principal=-600,
+        )
+        case = _case_input(
+            source_id, source_line_id, event_tx_id, amount=600, allocation=600,
+        )
+        case["case_object_id"] = case_object_id
+        proposals.append(case)
+
+    barrier = threading.Barrier(2)
+
+    def record(case):
+        with Session(postgres_engine) as session:
+            session.execute(sa.text(f"SET TRANSACTION ISOLATION LEVEL {isolation_level}"))
+            session.execute(
+                select(FinancialTransaction.id).where(
+                    FinancialTransaction.id == source_id,
+                )
+            ).scalar_one()
+            barrier.wait(timeout=10)
+            try:
+                result = billing_financial_cases.record_financial_case_event(session, case)
+                session.commit()
+                return result[2]
+            except billing_financial_cases.FinancialCaseInvariantError:
+                session.rollback()
+                return "rejected"
+            except sa.exc.DBAPIError as error:
+                sqlstate = (
+                    getattr(error.orig, "sqlstate", None)
+                    or getattr(error.orig, "pgcode", None)
+                )
+                if sqlstate not in {"23514", "40001", "40P01"}:
+                    raise
+                session.rollback()
+                return "rejected"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(record, proposals))
+    assert sorted(outcomes) == ["inserted", "rejected"]
+
+    with Session(postgres_engine) as session:
+        assert session.query(FinancialCase).count() == 1
+        assert session.query(FinancialCaseEvent).count() == 1
+        current_total = session.execute(sa.text("""
+            SELECT COALESCE(SUM(line.attributed_principal_minor), 0)
+            FROM financial_case_event_lines AS line
+            JOIN financial_cases AS case_row
+              ON case_row.current_event_id = line.financial_case_event_id
+            WHERE line.financial_line_id = :line_id
+        """), {"line_id": source_line_id}).scalar_one()
+        assert current_total == 600
 
 
 def test_case_ledger_links_enforce_account_and_effect_type(sqlite_engine):
@@ -410,6 +724,92 @@ def test_case_ledger_links_enforce_account_and_effect_type(sqlite_engine):
             session.rollback()
 
 
+def _assert_ledger_entry_has_one_case_version_owner(engine):
+    source_id, source_line_id = _seed_source(engine)
+    first_tx = _seed_case_version(engine, source_id, principal=-200)
+    first_case = _case_input(source_id, source_line_id, first_tx, amount=200)
+    _, first_event_id, _ = _record_case(engine, first_case)
+
+    correction_tx = _seed_case_version(
+        engine, source_id, version=2, principal=-250,
+    )
+    correction_case = _case_input(
+        source_id, source_line_id, correction_tx, amount=250,
+    )
+    _, correction_event_id, _ = _record_case(engine, correction_case)
+
+    unrelated_tx = _seed_case_version(
+        engine, source_id, case_object_id="re_other_case", principal=-200,
+    )
+    unrelated_case = _case_input(
+        source_id, source_line_id, unrelated_tx, amount=200,
+    )
+    unrelated_case["case_object_id"] = "re_other_case"
+    _, unrelated_event_id, _ = _record_case(engine, unrelated_case)
+
+    ledger_entry_id = str(uuid.uuid4())
+    correction_ledger_entry_id = str(uuid.uuid4())
+    additional_correction_ledger_entry_id = str(uuid.uuid4())
+    with Session(engine) as session:
+        session.execute(sa.text(
+            "INSERT INTO credit_ledger_entries (id,billing_account_id,entry_type) "
+            "VALUES (:id,'account-one','refund_reversal'),"
+            "(:correction_id,'account-one','refund_reversal'),"
+            "(:additional_correction_id,'account-one','refund_reversal')"
+        ), {
+            "id": ledger_entry_id,
+            "correction_id": correction_ledger_entry_id,
+            "additional_correction_id": additional_correction_ledger_entry_id,
+        })
+        session.add_all([
+            FinancialCaseEventLedgerEntry(
+                financial_case_event_id=first_event_id,
+                credit_ledger_entry_id=ledger_entry_id,
+                effect_type="reversal",
+            ),
+            FinancialCaseEventLedgerEntry(
+                financial_case_event_id=correction_event_id,
+                credit_ledger_entry_id=correction_ledger_entry_id,
+                effect_type="reversal",
+            ),
+            FinancialCaseEventLedgerEntry(
+                financial_case_event_id=correction_event_id,
+                credit_ledger_entry_id=additional_correction_ledger_entry_id,
+                effect_type="reversal",
+            ),
+        ])
+        session.commit()
+
+    for event_id in (correction_event_id, unrelated_event_id):
+        with Session(engine) as session:
+            session.add(FinancialCaseEventLedgerEntry(
+                financial_case_event_id=event_id,
+                credit_ledger_entry_id=ledger_entry_id,
+                effect_type="reversal",
+            ))
+            with pytest.raises(IntegrityError):
+                session.flush()
+            session.rollback()
+
+    with Session(engine) as session:
+        assert session.query(FinancialCaseEventLedgerEntry).count() == 3
+        assert session.query(FinancialCaseEventLedgerEntry).filter_by(
+            credit_ledger_entry_id=ledger_entry_id,
+        ).one().financial_case_event_id == first_event_id
+        assert session.query(FinancialCaseEventLedgerEntry).filter_by(
+            credit_ledger_entry_id=correction_ledger_entry_id,
+        ).one().financial_case_event_id == correction_event_id
+
+
+def test_ledger_entry_has_one_case_version_owner(sqlite_engine):
+    _assert_ledger_entry_has_one_case_version_owner(sqlite_engine)
+
+
+@pytest.mark.postgres
+def test_postgres_ledger_entry_has_one_case_version_owner(postgres_engine):
+    _assert_ledger_entry_has_one_case_version_owner(postgres_engine)
+
+
 def test_case_recorder_has_no_live_runtime_callers():
     app_dir = BACKEND_DIR / "app"
     callers = []
@@ -429,7 +829,7 @@ def test_case_event_rejects_reused_version_with_different_evidence(sqlite_engine
     _record_case(sqlite_engine, _case_input(source_id, source_line_id, event_tx_id))
     changed = _case_input(
         source_id, source_line_id, event_tx_id, state="financial_only",
-        disposition="financial_only", amount=150, allocation=150,
+        disposition="financial_only", amount=200, allocation=200,
     )
     with pytest.raises(billing_financial_cases.FinancialCaseIdentityConflictError):
         with Session(sqlite_engine) as session:
@@ -447,7 +847,7 @@ def test_stale_refund_case_version_is_ignored(sqlite_engine):
 
     stale_tx = _seed_case_version(
         sqlite_engine, source_id, version=2,
-        effective_at=NOW + timedelta(hours=1),
+        effective_at=NOW + timedelta(hours=1), principal=-150,
     )
     stale = _case_input(source_id, source_line_id, stale_tx, amount=150)
     assert _record_case(sqlite_engine, stale)[2] == "stale"
@@ -477,7 +877,7 @@ def test_same_effective_time_uses_received_time_as_ordering_tiebreaker(sqlite_en
 
 def test_case_attribution_cannot_exceed_eligible_source_principal(sqlite_engine):
     source_id, source_line_id = _seed_source(sqlite_engine)
-    event_tx_id = _seed_case_version(sqlite_engine, source_id)
+    event_tx_id = _seed_case_version(sqlite_engine, source_id, principal=-950)
     invalid = _case_input(
         source_id, source_line_id, event_tx_id, amount=950, allocation=950,
     )

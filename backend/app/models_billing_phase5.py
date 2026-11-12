@@ -358,6 +358,23 @@ class FinancialCase(db.Model):
     )
 
 
+class FinancialCaseSourceFence(db.Model):
+    """Concurrency-only fence serializing case allocations for one source transaction."""
+
+    __tablename__ = "financial_case_source_fences"
+
+    source_financial_transaction_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "financial_transactions.id",
+            name="fk_financial_case_source_fences_source_transaction_id",
+            ondelete="RESTRICT",
+        ),
+        primary_key=True,
+    )
+    fence_bit = db.Column(db.Boolean, nullable=False, server_default=db.false())
+
+
 class FinancialCaseEvent(db.Model):
     """Append-only accepted version of a refund or dispute case."""
 
@@ -487,6 +504,10 @@ class FinancialCaseEventLedgerEntry(db.Model):
         db.CheckConstraint(
             "effect_type IN ('hold', 'release', 'reversal', 'recovery')",
             name="ck_financial_case_event_ledger_entries_effect_type",
+        ),
+        db.UniqueConstraint(
+            "credit_ledger_entry_id",
+            name="uq_financial_case_event_ledger_entry_owner",
         ),
         db.Index(
             "ix_financial_case_event_ledger_entries_ledger_entry",

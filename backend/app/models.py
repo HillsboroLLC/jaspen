@@ -2855,6 +2855,7 @@ from .models_billing_phase5 import (  # noqa: E402,F401
     FinancialCaseEvent,
     FinancialCaseEventLedgerEntry,
     FinancialCaseEventLine,
+    FinancialCaseSourceFence,
     FinancialLine,
     FinancialTransaction,
 )

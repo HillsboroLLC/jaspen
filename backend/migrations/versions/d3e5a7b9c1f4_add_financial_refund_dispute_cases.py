@@ -20,6 +20,7 @@ CASE_TABLE = "financial_cases"
 EVENT_TABLE = "financial_case_events"
 LINE_TABLE = "financial_case_event_lines"
 LEDGER_LINK_TABLE = "financial_case_event_ledger_entries"
+FENCE_TABLE = "financial_case_source_fences"
 PHASE_5_3_TABLES = (LEDGER_LINK_TABLE, LINE_TABLE, EVENT_TABLE, CASE_TABLE)
 
 
@@ -190,6 +191,10 @@ def _create_tables(dialect):
             ["credit_ledger_entry_id"], ["credit_ledger_entries.id"],
             name="fk_financial_case_event_ledger_entries_ledger_entry_id", ondelete="RESTRICT",
         ),
+        sa.UniqueConstraint(
+            "credit_ledger_entry_id",
+            name="uq_financial_case_event_ledger_entry_owner",
+        ),
         sa.PrimaryKeyConstraint(
             "financial_case_event_id", "credit_ledger_entry_id", "effect_type",
             name="pk_financial_case_event_ledger_entries",
@@ -200,8 +205,52 @@ def _create_tables(dialect):
         LEDGER_LINK_TABLE, ["credit_ledger_entry_id"],
     )
 
+    op.create_table(
+        FENCE_TABLE,
+        sa.Column("source_financial_transaction_id", sa.String(36), nullable=False),
+        sa.Column("fence_bit", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.ForeignKeyConstraint(
+            ["source_financial_transaction_id"], ["financial_transactions.id"],
+            name="fk_financial_case_source_fences_source_transaction_id",
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint(
+            "source_financial_transaction_id",
+            name="pk_financial_case_source_fences",
+        ),
+    )
+    if dialect == "postgresql":
+        op.execute(sa.text("""
+            INSERT INTO financial_case_source_fences (source_financial_transaction_id)
+            SELECT id FROM financial_transactions WHERE kind IN ('invoice', 'payment')
+            ON CONFLICT DO NOTHING
+        """))
+    elif dialect == "sqlite":
+        op.execute(sa.text("""
+            INSERT OR IGNORE INTO financial_case_source_fences (source_financial_transaction_id)
+            SELECT id FROM financial_transactions WHERE kind IN ('invoice', 'payment')
+        """))
+
 
 def _postgresql_triggers():
+    op.execute(sa.text("""
+        CREATE FUNCTION phase53_financial_case_source_fence_insert() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.kind IN ('invoice', 'payment') THEN
+            INSERT INTO financial_case_source_fences (source_financial_transaction_id)
+            VALUES (NEW.id)
+            ON CONFLICT DO NOTHING;
+          END IF;
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+    """))
+    op.execute(sa.text("""
+        CREATE TRIGGER trg_financial_case_source_fence_insert
+        AFTER INSERT ON financial_transactions
+        FOR EACH ROW EXECUTE FUNCTION phase53_financial_case_source_fence_insert()
+    """))
+
     op.execute(sa.text("""
         CREATE FUNCTION phase53_financial_case_guard() RETURNS trigger AS $$
         BEGIN
@@ -282,6 +331,15 @@ def _postgresql_triggers():
           WHERE id = case_row.source_financial_transaction_id;
           SELECT * INTO inbox_row FROM external_event_inbox
           WHERE id = NEW.inbox_event_id FOR UPDATE;
+          IF case_row.id IS NOT NULL THEN
+            UPDATE financial_case_source_fences
+            SET fence_bit = NOT fence_bit
+            WHERE source_financial_transaction_id = case_row.source_financial_transaction_id;
+            IF NOT FOUND THEN
+              RAISE EXCEPTION USING ERRCODE = '23514',
+                MESSAGE = 'financial case source allocation fence is missing';
+            END IF;
+          END IF;
           IF case_row.id IS NULL OR event_tx.id IS NULL OR source_tx.id IS NULL
              OR inbox_row.id IS NULL
              OR event_tx.kind IS DISTINCT FROM case_row.case_type
@@ -292,6 +350,7 @@ def _postgresql_triggers():
              OR event_tx.inbox_event_id IS DISTINCT FROM NEW.inbox_event_id
              OR event_tx.billing_account_id IS DISTINCT FROM case_row.billing_account_id
              OR event_tx.currency IS DISTINCT FROM source_tx.currency
+             OR event_tx.principal_minor IS DISTINCT FROM -NEW.cumulative_principal_minor
              OR source_tx.billing_account_id IS DISTINCT FROM case_row.billing_account_id
              OR source_tx.provider IS DISTINCT FROM case_row.provider
              OR source_tx.kind NOT IN ('invoice', 'payment')
@@ -467,6 +526,8 @@ def _postgresql_triggers():
         CREATE FUNCTION phase53_financial_case_event_reconcile() RETURNS trigger AS $$
         DECLARE
           case_row record;
+          allocation record;
+          current_total numeric;
         BEGIN
           PERFORM phase53_financial_case_reconcile_id(NEW.id);
           SELECT * INTO case_row FROM financial_cases
@@ -481,6 +542,29 @@ def _postgresql_triggers():
             RAISE EXCEPTION USING ERRCODE = '23514',
               MESSAGE = 'accepted financial case event must become its current projection';
           END IF;
+          FOR allocation IN
+            SELECT event_line.financial_line_id,
+                 source_line.principal_minor,
+                 source_line.discount_minor
+            FROM financial_case_event_lines AS event_line
+            JOIN financial_lines AS source_line
+            ON source_line.id = event_line.financial_line_id
+            WHERE event_line.financial_case_event_id = NEW.id
+          LOOP
+            SELECT COALESCE(SUM(current_line.attributed_principal_minor::numeric), 0)
+            INTO current_total
+            FROM financial_case_event_lines AS current_line
+            JOIN financial_cases AS current_case
+            ON current_case.current_event_id = current_line.financial_case_event_id
+            WHERE current_line.financial_line_id = allocation.financial_line_id;
+            IF current_total > GREATEST(
+            0::numeric,
+            allocation.principal_minor::numeric + allocation.discount_minor::numeric
+            ) THEN
+            RAISE EXCEPTION USING ERRCODE = '23514',
+              MESSAGE = 'current financial case attributions exceed source-line principal';
+            END IF;
+          END LOOP;
           RETURN NULL;
         END;
         $$ LANGUAGE plpgsql
@@ -552,6 +636,13 @@ def _postgresql_triggers():
 
 def _sqlite_triggers():
     statements = (
+        """CREATE TRIGGER trg_financial_case_source_fence_insert
+        AFTER INSERT ON financial_transactions
+        WHEN NEW.kind IN ('invoice', 'payment')
+        BEGIN
+          INSERT OR IGNORE INTO financial_case_source_fences
+            (source_financial_transaction_id) VALUES (NEW.id);
+        END""",
         """CREATE TRIGGER trg_financial_cases_update BEFORE UPDATE ON financial_cases BEGIN
           SELECT RAISE(ABORT, 'financial case identity is immutable')
           WHERE NEW.id <> OLD.id
@@ -596,6 +687,12 @@ def _sqlite_triggers():
           SELECT RAISE(ABORT, 'financial case projections cannot be deleted');
         END""",
         """CREATE TRIGGER trg_financial_case_events_insert BEFORE INSERT ON financial_case_events BEGIN
+          UPDATE financial_case_source_fences
+          SET fence_bit = NOT fence_bit
+          WHERE source_financial_transaction_id = (
+            SELECT source_financial_transaction_id FROM financial_cases
+            WHERE id = NEW.financial_case_id
+          );
           SELECT RAISE(ABORT, 'financial case event requires compatible unconflicted source evidence')
           WHERE NOT EXISTS (
             SELECT 1 FROM financial_cases AS case_row
@@ -613,6 +710,7 @@ def _sqlite_triggers():
               AND event_tx.inbox_event_id = NEW.inbox_event_id
               AND event_tx.billing_account_id = case_row.billing_account_id
               AND event_tx.currency = source_tx.currency
+              AND event_tx.principal_minor = -NEW.cumulative_principal_minor
               AND source_tx.billing_account_id = case_row.billing_account_id
               AND source_tx.provider = case_row.provider
               AND source_tx.kind IN ('invoice', 'payment')
@@ -655,6 +753,14 @@ def _sqlite_triggers():
             WHERE event.id = NEW.financial_case_event_id
               AND source_line.line_kind NOT IN ('tax', 'fee', 'discount')
               AND NEW.attributed_principal_minor <=
+                  max(0, source_line.principal_minor + source_line.discount_minor)
+              AND COALESCE((
+                SELECT SUM(current_line.attributed_principal_minor)
+                FROM financial_case_event_lines AS current_line
+                JOIN financial_cases AS current_case
+                  ON current_case.current_event_id = current_line.financial_case_event_id
+                WHERE current_line.financial_line_id = source_line.id
+              ), 0) + NEW.attributed_principal_minor <=
                   max(0, source_line.principal_minor + source_line.discount_minor));
         END""",
         """CREATE TRIGGER trg_financial_case_event_lines_update BEFORE UPDATE ON financial_case_event_lines BEGIN
@@ -709,8 +815,9 @@ def downgrade():
     dialect = bind.dialect.name
     if dialect == "postgresql":
         op.execute(sa.text(
-            "LOCK TABLE financial_cases, financial_case_events, "
-            "financial_case_event_lines, financial_case_event_ledger_entries "
+            "LOCK TABLE financial_transactions, financial_case_source_fences, "
+            "financial_cases, financial_case_events, financial_case_event_lines, "
+            "financial_case_event_ledger_entries "
             "IN ACCESS EXCLUSIVE MODE"
         ))
     counts = {
@@ -723,6 +830,13 @@ def downgrade():
             f"Cannot downgrade {revision}: {details}. Phase 5.3 downgrade may remove only empty tables."
         )
     if dialect == "postgresql":
+        op.execute(sa.text(
+            "DROP TRIGGER IF EXISTS trg_financial_case_source_fence_insert "
+            "ON financial_transactions"
+        ))
+        op.execute(sa.text(
+            "DROP FUNCTION IF EXISTS phase53_financial_case_source_fence_insert()"
+        ))
         for table in PHASE_5_3_TABLES:
             op.execute(sa.text(f"DROP TRIGGER IF EXISTS trg_{table}_no_truncate ON {table}"))
         op.execute(sa.text(
@@ -779,6 +893,7 @@ def downgrade():
         ))
     elif dialect == "sqlite":
         for trigger in (
+            "trg_financial_case_source_fence_insert",
             "trg_financial_case_ledger_entries_delete",
             "trg_financial_case_ledger_entries_update",
             "trg_financial_case_ledger_entries_insert",
@@ -807,3 +922,4 @@ def downgrade():
     op.drop_index("ix_financial_cases_source_transaction", table_name=CASE_TABLE)
     op.drop_index("ix_financial_cases_account_state", table_name=CASE_TABLE)
     op.drop_table(CASE_TABLE)
+    op.drop_table(FENCE_TABLE)

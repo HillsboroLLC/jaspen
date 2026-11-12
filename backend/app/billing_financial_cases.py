@@ -5,7 +5,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import Numeric, cast, func, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from .billing_ledger import _begin_serialized_sqlite_write
@@ -201,6 +201,10 @@ def _validate_sources(session, case):
         )
     if case["cumulative_principal_minor"] > abs(source.principal_minor):
         raise FinancialCaseInvariantError("case principal exceeds its source transaction")
+    if event_transaction.principal_minor != -case["cumulative_principal_minor"]:
+        raise FinancialCaseInvariantError(
+            "case cumulative principal must equal the signed financial transaction version"
+        )
     inbox_event = session.execute(
         select(ExternalEventInbox)
         .where(ExternalEventInbox.id == event_transaction.inbox_event_id)
@@ -253,7 +257,40 @@ def _validate_sources(session, case):
             raise FinancialCaseInvariantError(
                 "entitlement review state requires its matching disposition"
             )
-    return source, event_transaction, inbox_event
+    return source, event_transaction, inbox_event, source_lines_by_id
+
+
+def _validate_aggregate_attribution(session, case, source_lines_by_id, current_case):
+    for allocation in case["line_allocations"]:
+        line_id = allocation["financial_line_id"]
+        current_amount = session.execute(
+            select(func.coalesce(
+                func.sum(cast(
+                    FinancialCaseEventLine.attributed_principal_minor,
+                    Numeric(38, 0),
+                )),
+                0,
+            ))
+            .select_from(FinancialCaseEventLine)
+            .join(
+                FinancialCase,
+                FinancialCase.current_event_id
+                == FinancialCaseEventLine.financial_case_event_id,
+            )
+            .where(FinancialCaseEventLine.financial_line_id == line_id)
+            .where(
+                FinancialCase.id != current_case.id
+                if current_case is not None
+                else True
+            )
+        ).scalar_one()
+        proposed_total = current_amount + allocation["attributed_principal_minor"]
+        source_line = source_lines_by_id[line_id]
+        source_limit = max(0, source_line.principal_minor + source_line.discount_minor)
+        if proposed_total > source_limit:
+            raise FinancialCaseInvariantError(
+                "current case attributions exceed eligible source-line principal"
+            )
 
 
 def _event_matches(existing_event, case, fingerprint):
@@ -274,7 +311,7 @@ def record_financial_case_event(session, proposed_case):
     case = _normalize_case(proposed_case)
     _begin_serialized_sqlite_write(session)
     session.flush()
-    source, event_transaction, inbox_event = _validate_sources(session, case)
+    source, event_transaction, inbox_event, source_lines_by_id = _validate_sources(session, case)
     effective_at = _utc_datetime(event_transaction.effective_at, "effective_at")
     received_at = _utc_datetime(inbox_event.received_at, "received_at")
     fingerprint = _fingerprint(case)
@@ -359,6 +396,8 @@ def record_financial_case_event(session, proposed_case):
             return existing, None, "stale"
         _transition_allowed(existing, case)
 
+    _validate_aggregate_attribution(session, case, source_lines_by_id, existing)
+
     if existing is None:
         case_id = str(uuid.uuid4())
         current_event_id = str(uuid.uuid4())
@@ -398,14 +437,6 @@ def record_financial_case_event(session, proposed_case):
     )
     session.add(event)
     session.flush()
-    for allocation in case["line_allocations"]:
-        session.add(FinancialCaseEventLine(
-            financial_case_event_id=event.id,
-            financial_line_id=allocation["financial_line_id"],
-            attributed_principal_minor=allocation["attributed_principal_minor"],
-        ))
-    session.flush()
-
     if existing.current_event_id != event.id:
         existing.state = case["state"]
         existing.disposition = case["disposition"]
@@ -415,5 +446,13 @@ def record_financial_case_event(session, proposed_case):
         existing.current_effective_at = effective_at
         existing.current_received_at = received_at
         existing.updated_at = datetime.now(timezone.utc)
+    session.flush()
+
+    for allocation in case["line_allocations"]:
+        session.add(FinancialCaseEventLine(
+            financial_case_event_id=event.id,
+            financial_line_id=allocation["financial_line_id"],
+            attributed_principal_minor=allocation["attributed_principal_minor"],
+        ))
     session.flush()
     return existing, event, "inserted"

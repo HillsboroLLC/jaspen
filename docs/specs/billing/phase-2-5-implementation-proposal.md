@@ -703,10 +703,21 @@ references, provider version, evidence fingerprint, state, disposition,
 cumulative principal in integer minor units, and effective/received timestamps.
 Its append-only line rows retain the exact integer minor-unit amount for each
 referenced source financial line. The recorder enforces that line amounts sum
-to the cumulative principal and do not exceed eligible source-line principal;
-it never apportions or rewrites those values. Ledger-effect references attach
-later Phase 9 entries to the immutable case version without making this case
-projection a second ledger authority.
+to the cumulative principal, equal the negated signed principal of the linked
+Phase 5.2 refund/dispute transaction version, and do not exceed eligible
+source-line principal. The linked transaction version is the authoritative
+cumulative snapshot for that provider refund/dispute object; a correction or
+reversal is a subsequent immutable transaction and case version, not a
+reinterpretation of an earlier movement. Attribution capacity is enforced
+across the current versions of distinct cases sharing a source line; superseded
+historical versions remain immutable but do not consume current capacity. The
+recorder never apportions or rewrites those values.
+
+Each Phase 3 ledger entry may be linked to at most one immutable case version.
+Multiple ledger entries may refer to one case version; a correction or reversal
+must use its own new ledger entry rather than reusing an entry already owned by
+another case version. This reference constraint does not create ledger effects
+or make the case projection a second ledger authority.
 
 **Phase 9 dependency and acceptance criteria:** the later credit-effect
 implementation must consume or provide the exact line attribution before
@@ -714,18 +725,25 @@ recording a case version, apply D10's proportional refund/dispute rules using
 integer minor-unit arithmetic, exclude taxes and fees, and preserve the
 per-version source-line evidence recorded here. It must define and test a
 deterministic residual/tie-break rule for proportional dispute allocations
-before implementation. Its regression coverage must include mixed invoices,
-discounted and ineligible lines, cumulative partial-to-full changes, exact
-minor-unit boundaries, replay/concurrency, and proof that unrelated funding
-and source lines are untouched. No Phase 9 calculation or effect is activated
-by Phase 5.3.
+before implementation. It must establish DB-verifiable source/lot provenance
+atomically with each corresponding ledger-effect link, so a Phase 3 effect
+cannot be attributed to an unrelated source line or lot. Its regression
+coverage must include mixed invoices, discounted and ineligible lines,
+cumulative partial-to-full changes, exact minor-unit boundaries,
+replay/concurrency, and proof that unrelated funding and source lines are
+untouched. No Phase 9 calculation or effect is activated by Phase 5.3.
 
 ## Backward compatibility and protection of current customers
 
 1. All migrations are additive; existing columns, constraints, data, APIs, and
    response fields remain unchanged.
-2. New FKs on existing tables are nullable. New tables start empty. No default,
-   trigger, login, GET request, or organization resolver populates them.
+2. New FKs on existing tables are nullable. Financial case and ledger-reference
+   tables start empty. The Phase 5.3 concurrency-only source-line fence table is
+   intentionally backfilled for existing invoice/payment transactions and
+   populated for subsequent eligible transactions by its migration trigger.
+   This coordination mechanism creates no financial evidence and does not
+   activate billing. No default, login, GET request, or organization resolver
+   populates live billing state.
 3. There are no dual writes in phases 2–5. Later command cutovers replace one
    writer at a time; compatibility fields become projections only after proof.
 4. No session/work table is referenced with cascading deletion. Billing FKs use
