@@ -218,9 +218,12 @@ rewriting ledger history or copying counters backward without a reviewed plan.
 
 ### Phase 5.3 implementation traceability
 
-Status: **Implemented locally, pending independent acceptance; inactive.**
-The authorized boundary is case persistence and recording only. Phase 5.4
-domain events/outbox and Phase 9 credit effects remain out of scope.
+Status: **Independently accepted on PostgreSQL 18.6; integration into `develop`
+pending; inactive.** Acceptance completed with 129 passed, 0 failed, and 0
+skipped. The recorder has no live runtime caller, and acceptance did not
+authorize deployment or billing activation. The authorized boundary remains
+case persistence and recording only. Phase 5.4 domain events/outbox and Phase 9
+credit effects remain out of scope.
 
 | Requirement | Component/contract | Regression coverage |
 |---|---|---|
@@ -231,7 +234,7 @@ domain events/outbox and Phase 9 credit effects remain out of scope.
 | Exact integer-minor-unit line attribution and auditable source references per case version | Append-only `FinancialCaseEventLine`; event links to financial transaction and inbox evidence; current versions across distinct cases share source-line capacity; historical versions remain immutable but do not consume current capacity | `test_case_preserves_exact_line_allocations_and_audit_references`; `test_current_case_attributions_release_capacity_on_cumulative_correction`; `test_sequential_current_cases_cannot_overattribute_source_line`; `test_database_rejects_aggregate_overattribution`; `test_postgres_database_rejects_aggregate_overattribution`; `test_postgres_concurrent_cases_cannot_overattribute_source_line` |
 | Explicit subscription-refund disposition; no inferred attribution or entitlement/ledger mutation | D10 disposition is retained in the immutable event; caller-supplied exact line allocations; Phase 3 remains the sole ledger authority | `test_subscription_refund_requires_explicit_disposition_and_rollback_is_atomic`; `test_case_attribution_cannot_exceed_eligible_source_principal`; `test_case_recorder_has_no_live_runtime_callers` |
 | One immutable case-version owner per Phase 3 ledger entry | Database uniqueness prevents one ledger entry from being claimed by unrelated case versions; multiple entries per case version remain allowed | `test_ledger_entry_has_one_case_version_owner`; `test_postgres_ledger_entry_has_one_case_version_owner`; `test_case_ledger_links_enforce_account_and_effect_type` |
-| PostgreSQL concurrency, deferred line reconciliation, immutable evidence and transaction atomicity | Per-source transaction fence serializes current-attribution checks; deferred projection/reconciliation constraints; top-level `created_xid` event seal | `test_postgres_concurrent_duplicate_case_versions_converge`; `test_postgres_concurrent_cases_cannot_overattribute_source_line`; `test_postgres_case_recording_keeps_event_lines_atomic_across_savepoint`; `test_postgres_deferred_case_line_reconciliation_rejects_partial_commit` |
+| PostgreSQL concurrency, deferred line reconciliation, immutable evidence and transaction atomicity | Per-source transaction fence serializes current-attribution checks; distinct-case inserts and simultaneous competing corrections are verified under READ COMMITTED, REPEATABLE READ, and SERIALIZABLE; deferred projection/reconciliation constraints; top-level `created_xid` event seal | `test_postgres_concurrent_duplicate_case_versions_converge`; `test_postgres_concurrent_cases_cannot_overattribute_source_line`; `test_postgres_competing_case_corrections_preserve_source_capacity`; `test_postgres_case_recording_keeps_event_lines_atomic_across_savepoint`; `test_postgres_deferred_case_line_reconciliation_rejects_partial_commit` |
 
 PostgreSQL-specific cases use only the disposable `TEST_DATABASE_URL` fixture
 and skip when it is unavailable. The Phase 5.1/5.2 T-INBOX-01..03 hardening gate

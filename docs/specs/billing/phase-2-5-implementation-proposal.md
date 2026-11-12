@@ -1,6 +1,6 @@
 # Phases 2–5 Additive-Foundation Implementation Proposal
 
-Status: **Phases 2.1–5.2 accepted and inactive; Phase 5.3 implemented locally, pending independent acceptance; Phase 5.4 remains planning only**
+Status: **Phases 2.1–5.2 accepted and inactive; Phase 5.3 independently accepted and inactive, with integration into `develop` pending; Phase 5.4 remains planning only**
 
 Founder architecture approval recorded: 2026-11-09
 
@@ -23,7 +23,7 @@ cutover.
 | Phase 4 | Implemented, independently verified, merged into `develop` (`14cb0ab6`) with CI passing, and closed; not deployed or activated | `f9c1a3e5b7d4`; verified implementation commit `24c14d596973c311ba305d6e3132a7ed696074d7` |
 | Phase 5.1 | Independently verified, accepted, and integrated; not connected or activated | `b2d4f6a8c0e3`; accepted baseline `26734e84eaa1f40d4344692f9126f72a56fa133e` |
 | Phase 5.2 | Independently accepted and integrated into `develop`; inactive, not deployed or connected | `c3e5a7b9d1f4`; immutable financial transactions and source-attributed lines |
-| Phase 5.3 | Implemented on its isolated branch, pending independent acceptance; not connected or activated | `d3e5a7b9c1f4`; cumulative refund/dispute cases and immutable case evidence |
+| Phase 5.3 | Independently accepted on PostgreSQL 18.6 (129 passed, 0 failed, 0 skipped); integration into `develop` pending; inactive, not connected or activated | `d3e5a7b9c1f4`; cumulative refund/dispute cases and immutable case evidence |
 | Phase 5.4 | Not authorized for implementation | Domain events and transactional communication outbox |
 
 All accepted tables and links remain additive and inactive. Existing billing
@@ -671,7 +671,10 @@ ledger entries; those remain owned by separately authorized later increments.
 
 ### Phase 5.3 implementation record — refund and dispute cases
 
-Status: **implemented locally, pending independent acceptance; inactive.**
+Status: **independently accepted on PostgreSQL 18.6; integration into `develop`
+pending; inactive.** Acceptance completed with 129 passed, 0 failed, and 0
+skipped. It did not authorize deployment, a live runtime caller, or billing
+activation.
 Migration `d3e5a7b9c1f4` follows Phase 5.2 and adds an empty case projection,
 append-only case events, exact source-line attribution, and an append-only
 reference table for later credit-ledger effects. `app/billing_financial_cases.py`
@@ -780,7 +783,7 @@ because no customer data is written.
 5. **Closed (in `develop`, not deployed or activated):** Phase 4 inactive entitlement/subscription/period primitives (runtime activation requires Python 3.10+, 3.12 preferred).
 6. **Accepted and integrated, inactive:** Phase 5.1 minimal-data external event inbox.
 7. **Accepted and integrated, inactive:** Phase 5.2 immutable financial transactions and lines.
-8. **Implemented locally, pending independent acceptance and inactive:** Phase 5.3 refund/dispute cases.
+8. **Independently accepted, pending integration into `develop`, and inactive:** Phase 5.3 refund/dispute cases (PostgreSQL 18.6: 129 passed, 0 failed, 0 skipped; no live runtime caller or billing activation).
 9. **Not authorized:** Phase 5.4 domain events and transactional outbox.
 
 No authorization should cover more than one numbered increment by implication.

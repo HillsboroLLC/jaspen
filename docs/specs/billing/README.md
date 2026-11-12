@@ -1,6 +1,6 @@
 # Billing Architecture Phase 1
 
-Status: **Phases 1–5.2 accepted and integrated but inactive; Phase 5.3 implemented locally, pending independent acceptance**
+Status: **Phases 1–5.2 accepted and integrated but inactive; Phase 5.3 independently accepted and inactive, with integration into `develop` pending**
 
 Base: `origin/main` at `88684284a33836106cad639d36e191271109c2c7`
 
@@ -64,10 +64,12 @@ passing, and closed; it is not deployed or activated. Phase 5.1 (minimal-data
 external event inbox) passed independent acceptance and was integrated into
 `develop` at `26734e84eaa1f40d4344692f9126f72a56fa133e`. Phase 5.2's inactive,
 immutable financial-transaction and source-attributed-line foundation was
-independently accepted and integrated into `develop`. Phase 5.3 adds inactive
-refund/dispute case foundations on an isolated branch and is pending independent
-acceptance. Neither increment is connected to a webhook, browser confirmation,
-job, entitlement transition, or credit movement. The
+independently accepted and integrated into `develop`. Phase 5.3's inactive
+refund/dispute case foundation passed independent PostgreSQL 18.6 acceptance
+(129 passed, 0 failed, 0 skipped); integration into `develop` remains pending.
+It has no live runtime caller and is not connected to a webhook, browser
+confirmation, job, entitlement transition, credit movement, or billing
+activation. The
 phases 2–5 proposal continues to identify separately
 reviewable, reversible increments; no backfill, runtime activation, or cutover
 is bundled. The stop-class conflicts in
@@ -151,8 +153,10 @@ realized margin were not accessed or verified.
   unnecessary personal data (see the Phase 5.1 record in the proposal).
 - Phase 5.2 is independently accepted and integrated into `develop`; its
   immutable money facts and source-attributed lines remain empty and inactive.
-  Phase 5.3 is implemented locally, pending independent acceptance; its
-  refund/dispute case recorder remains disconnected from live sources.
+  Phase 5.3 passed independent PostgreSQL 18.6 acceptance (129 passed, 0 failed,
+  0 skipped), but integration into `develop` remains pending. Its inactive
+  refund/dispute case recorder has no live runtime caller and remains
+  disconnected from live sources and billing activation.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type
