@@ -635,11 +635,12 @@ The PostgreSQL creator marker is a full-width top-level transaction ID captured
 at insert, so savepoints do not break header/line atomicity and `xmin` wraparound
 cannot make an older header appear current. Separate deferred trigger wrappers
 read the header and line row shapes without cross-referencing nonexistent
-columns. The Phase 5.2 migration also adds a reversible inbox conflict
-generation fence: a new conflict against a processed event changes its locked
-parent row, forcing stale PostgreSQL snapshots to retry rather than accept
-unseen evidence. The inactive retention helper skips inbox events referenced by
-financial transactions; `RESTRICT` preserves that evidence, and purging remains
+columns. The Phase 5.2 migration adds a reversible PostgreSQL conflict fence:
+after any conflict is inserted, a no-op update of its parent inbox row makes
+stale snapshots retry instead of accepting unseen evidence. It applies to
+processed and processing events without changing Phase 5.1 state-transition
+rules. The inactive retention helper skips inbox events referenced by financial
+transactions; `RESTRICT` preserves that evidence, and purging remains
 unscheduled.
 The shared recorder atomically enforces the same sealed line-set result for
 SQLite. `RESTRICT` foreign keys preserve inbox and related evidence,

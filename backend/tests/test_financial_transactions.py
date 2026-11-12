@@ -17,7 +17,9 @@ from alembic.script import ScriptDirectory
 from sqlalchemy.orm import Session
 
 from app import billing_financial, billing_inbox
-from app.models_billing_phase5 import FinancialLine, FinancialTransaction
+from app.models_billing_phase5 import (
+    ExternalEventInbox, ExternalEventInboxConflict, FinancialLine, FinancialTransaction,
+)
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -133,6 +135,7 @@ def _stripe_event(event_id="evt_financial001", object_id="in_financial001", crea
 
 def _seed_account_and_event(
     engine, *, account="account-one", event_id="evt_financial001", created=NOW,
+    mark_processed=True,
 ):
     with engine.begin() as connection:
         connection.execute(sa.text(
@@ -150,11 +153,12 @@ def _seed_account_and_event(
         )
         session.commit()
         token = row.attempt_count
-    with Session(engine) as session:
-        billing_inbox.mark_processed(
-            session, event_pk, token, now=created + timedelta(seconds=1)
-        )
-        session.commit()
+    if mark_processed:
+        with Session(engine) as session:
+            billing_inbox.mark_processed(
+                session, event_pk, token, now=created + timedelta(seconds=1)
+            )
+            session.commit()
     return event_pk
 
 
@@ -224,9 +228,12 @@ def test_revision_is_linear_additive_and_empty(sqlite_engine):
     assert script.get_revision(REVISION).down_revision == PARENT
     inspector = sa.inspect(sqlite_engine)
     assert {"financial_transactions", "financial_lines"}.issubset(inspector.get_table_names())
-    assert "conflict_generation" in {
-        column["name"] for column in inspector.get_columns("external_event_inbox")
-    }
+    assert {column["name"] for column in inspector.get_columns("external_event_inbox")} == set(
+        ExternalEventInbox.__table__.columns.keys()
+    )
+    assert {
+        column["name"] for column in inspector.get_columns("external_event_inbox_conflicts")
+    } == set(ExternalEventInboxConflict.__table__.columns.keys())
     assert "created_xid" in {
         column["name"] for column in inspector.get_columns("financial_transactions")
     }
@@ -241,7 +248,7 @@ def test_revision_is_linear_additive_and_empty(sqlite_engine):
         assert connection.execute(sa.text("SELECT COUNT(*) FROM financial_lines")).scalar_one() == 0
 
 
-def test_upgrade_backfills_conflict_fence_and_downgrade_preserves_inbox(tmp_path):
+def test_upgrade_and_downgrade_preserve_phase51_conflict_evidence(tmp_path):
     engine = sa.create_engine(f"sqlite:///{tmp_path / 'financial-existing-inbox.sqlite'}")
     @sa.event.listens_for(engine, "connect")
     def _foreign_keys(dbapi_connection, _connection_record):
@@ -257,19 +264,30 @@ def test_upgrade_backfills_conflict_fence_and_downgrade_preserves_inbox(tmp_path
         assert outcome == "digest_conflict"
         session.commit()
 
-    _upgrade(engine)
-    with engine.connect() as connection:
-        assert connection.execute(sa.text(
-            "SELECT conflict_generation FROM external_event_inbox WHERE id=:id"
-        ), {"id": event_pk}).scalar_one() == 1
-    _downgrade(engine)
-    with engine.connect() as connection:
-        assert connection.execute(sa.text(
-            "SELECT COUNT(*) FROM external_event_inbox_conflicts WHERE inbox_event_id=:id"
-        ), {"id": event_pk}).scalar_one() == 1
-    assert "conflict_generation" not in {
+    inbox_columns = {
         column["name"] for column in sa.inspect(engine).get_columns("external_event_inbox")
     }
+    _upgrade(engine)
+    assert {
+        column["name"] for column in sa.inspect(engine).get_columns("external_event_inbox")
+    } == inbox_columns
+    with engine.connect() as connection:
+        state = connection.execute(sa.text(
+            "SELECT state FROM external_event_inbox WHERE id=:id"
+        ), {"id": event_pk}).scalar_one()
+        conflict_count = connection.execute(sa.text(
+            "SELECT COUNT(*) FROM external_event_inbox_conflicts WHERE inbox_event_id=:id"
+        ), {"id": event_pk}).scalar_one()
+    assert (state, conflict_count) == ("processed", 1)
+    _downgrade(engine)
+    with engine.connect() as connection:
+        retained = connection.execute(sa.text(
+            "SELECT COUNT(*) FROM external_event_inbox_conflicts WHERE inbox_event_id=:id"
+        ), {"id": event_pk}).scalar_one()
+    assert retained == 1
+    assert {
+        column["name"] for column in sa.inspect(engine).get_columns("external_event_inbox")
+    } == inbox_columns
     engine.dispose()
 
 
@@ -319,7 +337,7 @@ def test_business_version_is_idempotent_and_conflicts_fail(sqlite_engine):
         _record(sqlite_engine, _header(event_pk), conflicting)
 
 
-def test_processed_digest_conflicts_advance_the_transaction_fence(sqlite_engine):
+def test_processed_digest_conflicts_are_distinct_append_only_evidence(sqlite_engine):
     event_pk = _seed_account_and_event(sqlite_engine)
     raw, _ = _stripe_event()
 
@@ -337,16 +355,25 @@ def test_processed_digest_conflicts_advance_the_transaction_fence(sqlite_engine)
         assert outcome == "digest_conflict"
         session.commit()
 
+    with Session(sqlite_engine) as session:
+        _, outcome = billing_inbox.record_event(
+            session, raw + b" ", json.loads(raw + b" "), now=NOW,
+        )
+        assert outcome == "digest_conflict"
+        session.commit()
+
     with sqlite_engine.connect() as connection:
-        state, generation, conflict_count = connection.execute(sa.text("""
-            SELECT event.state, event.conflict_generation, COUNT(conflict.id)
-            FROM external_event_inbox AS event
-            JOIN external_event_inbox_conflicts AS conflict
-              ON conflict.inbox_event_id = event.id
-            WHERE event.id = :id
-            GROUP BY event.id
-        """), {"id": event_pk}).one()
-    assert (state, generation, conflict_count) == ("processed", 2, 2)
+        state = connection.execute(sa.text(
+            "SELECT state FROM external_event_inbox WHERE id=:id"
+        ), {"id": event_pk}).scalar_one()
+        conflict_count = connection.execute(sa.text(
+            "SELECT COUNT(*) FROM external_event_inbox_conflicts WHERE inbox_event_id=:id"
+        ), {"id": event_pk}).scalar_one()
+        detection_states = connection.execute(sa.text(
+            "SELECT DISTINCT state_at_detection FROM external_event_inbox_conflicts "
+            "WHERE inbox_event_id=:id"
+        ), {"id": event_pk}).scalars().all()
+    assert (state, conflict_count, detection_states) == ("processed", 2, ["processed"])
 
 
 def test_retention_purge_skips_events_referenced_by_financial_facts(sqlite_engine):
@@ -486,9 +513,10 @@ def test_records_and_inbox_evidence_are_immutable_and_restricted(sqlite_engine):
 def test_empty_downgrade_and_populated_guard(sqlite_engine, tmp_path):
     _downgrade(sqlite_engine)
     assert not {"financial_transactions", "financial_lines"} & set(sa.inspect(sqlite_engine).get_table_names())
-    assert "conflict_generation" not in {
+    assert {
         column["name"] for column in sa.inspect(sqlite_engine).get_columns("external_event_inbox")
-    }
+    } == set(ExternalEventInbox.__table__.columns.keys())
+    assert "external_event_inbox_conflicts" in sa.inspect(sqlite_engine).get_table_names()
 
     engine = sa.create_engine(f"sqlite:///{tmp_path / 'financial-populated.sqlite'}")
     @sa.event.listens_for(engine, "connect")
@@ -632,15 +660,18 @@ def test_postgres_concurrent_business_identity_converges(postgres_engine):
         ("SERIALIZABLE", "40001"),
     ],
 )
+@pytest.mark.parametrize("event_state", ["processed", "processing"])
 def test_postgres_financial_evidence_rejects_stale_inbox_snapshot(
-    postgres_engine, isolation, expected_sqlstate,
+    postgres_engine, isolation, expected_sqlstate, event_state,
 ):
-    event_pk = _seed_account_and_event(postgres_engine)
+    event_pk = _seed_account_and_event(
+        postgres_engine, mark_processed=event_state == "processed",
+    )
     stale_engine = postgres_engine.execution_options(isolation_level=isolation)
     with Session(stale_engine) as stale:
         assert stale.execute(sa.text(
             "SELECT state FROM external_event_inbox WHERE id=:id"
-        ), {"id": event_pk}).scalar_one() == "processed"
+        ), {"id": event_pk}).scalar_one() == event_state
 
         raw, _ = _stripe_event()
         conflict_body = raw + b" "
@@ -663,8 +694,10 @@ def test_postgres_financial_evidence_rejects_stale_inbox_snapshot(
         stale.rollback()
 
     with postgres_engine.connect() as connection:
-        state, generation, financial_count, line_count = connection.execute(sa.text("""
-            SELECT event.state, event.conflict_generation,
+        state, conflict_count, financial_count, line_count = connection.execute(sa.text("""
+            SELECT event.state,
+                   (SELECT COUNT(*) FROM external_event_inbox_conflicts AS conflict
+                    WHERE conflict.inbox_event_id = event.id),
                    (SELECT COUNT(*) FROM financial_transactions
                     WHERE external_version = 'invoice:stale_snapshot'),
                    (SELECT COUNT(*) FROM financial_lines AS line
@@ -673,7 +706,8 @@ def test_postgres_financial_evidence_rejects_stale_inbox_snapshot(
                     WHERE txn.external_version = 'invoice:stale_snapshot')
             FROM external_event_inbox AS event WHERE event.id = :id
         """), {"id": event_pk}).one()
-    assert (state, generation, financial_count, line_count) == ("processed", 1, 0, 0)
+    expected_state = "processed" if event_state == "processed" else "quarantined"
+    assert (state, conflict_count, financial_count, line_count) == (expected_state, 1, 0, 0)
 
 
 @pytest.mark.postgres

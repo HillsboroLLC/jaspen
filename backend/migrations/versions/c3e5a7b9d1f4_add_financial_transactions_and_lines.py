@@ -171,9 +171,9 @@ def _postgresql_triggers():
     op.execute(sa.text("""
         CREATE FUNCTION phase5_financial_fence_inbox_conflict() RETURNS trigger AS $$
         BEGIN
-          UPDATE external_event_inbox
-          SET conflict_generation = conflict_generation + 1
-          WHERE id = NEW.inbox_event_id AND state = 'processed';
+          UPDATE external_event_inbox AS inbox
+          SET state = inbox.state
+          WHERE inbox.id = NEW.inbox_event_id;
           RETURN NEW;
         END;
         $$ LANGUAGE plpgsql
@@ -191,7 +191,6 @@ def _postgresql_triggers():
           event_state varchar(16);
           event_object_type varchar(64);
           event_object_id varchar(255);
-          event_conflict_generation bigint;
         BEGIN
           IF TG_OP <> 'INSERT' THEN
             RAISE EXCEPTION USING ERRCODE = '23514',
@@ -204,16 +203,13 @@ def _postgresql_triggers():
               MESSAGE = 'financial transaction currency must match its billing account';
           END IF;
           IF NEW.inbox_event_id IS NOT NULL THEN
-            SELECT event.provider, event.state, event.object_type, event.object_id,
-                   event.conflict_generation
-            INTO event_provider, event_state, event_object_type, event_object_id,
-                 event_conflict_generation
+            SELECT event.provider, event.state, event.object_type, event.object_id
+            INTO event_provider, event_state, event_object_type, event_object_id
             FROM external_event_inbox AS event WHERE event.id = NEW.inbox_event_id FOR UPDATE;
             IF event_provider IS NULL OR event_provider IS DISTINCT FROM NEW.provider
                OR event_object_type IS DISTINCT FROM NEW.object_type
                OR event_object_id IS DISTINCT FROM NEW.object_id
                OR event_state NOT IN ('processing', 'processed')
-               OR event_conflict_generation > 0
                OR EXISTS (
                  SELECT 1 FROM external_event_inbox_conflicts AS conflict
                  WHERE conflict.inbox_event_id = NEW.inbox_event_id
@@ -364,13 +360,6 @@ def _postgresql_triggers():
 
 def _sqlite_triggers():
     statements = (
-        """CREATE TRIGGER trg_financial_fence_inbox_conflict
-        AFTER INSERT ON external_event_inbox_conflicts
-        BEGIN
-          UPDATE external_event_inbox
-          SET conflict_generation = conflict_generation + 1
-          WHERE id = NEW.inbox_event_id AND state = 'processed';
-        END""",
         """CREATE TRIGGER trg_financial_transactions_insert BEFORE INSERT ON financial_transactions BEGIN
           SELECT RAISE(ABORT, 'financial transaction currency must match its billing account')
           WHERE NOT EXISTS (SELECT 1 FROM billing_accounts AS account
@@ -381,7 +370,6 @@ def _sqlite_triggers():
             WHERE event.id = NEW.inbox_event_id AND event.provider = NEW.provider
               AND event.object_type = NEW.object_type AND event.object_id = NEW.object_id
               AND event.state IN ('processing', 'processed')
-              AND event.conflict_generation = 0
               AND NOT EXISTS (SELECT 1 FROM external_event_inbox_conflicts AS conflict
                               WHERE conflict.inbox_event_id = event.id));
         END""",
@@ -423,24 +411,6 @@ def _sqlite_triggers():
 
 def upgrade():
     dialect = op.get_bind().dialect.name
-    op.add_column(
-        "external_event_inbox",
-        sa.Column(
-            "conflict_generation", sa.BigInteger(), nullable=False,
-            server_default=sa.text("0"),
-        ),
-    )
-    op.execute(sa.text("""
-        UPDATE external_event_inbox
-        SET conflict_generation = (
-          SELECT COUNT(*) FROM external_event_inbox_conflicts AS conflict
-          WHERE conflict.inbox_event_id = external_event_inbox.id
-        )
-        WHERE EXISTS (
-          SELECT 1 FROM external_event_inbox_conflicts AS conflict
-          WHERE conflict.inbox_event_id = external_event_inbox.id
-        )
-    """))
     _create_tables(dialect)
     if dialect == "postgresql":
         _postgresql_triggers()
@@ -492,7 +462,6 @@ def downgrade():
         op.execute(sa.text("DROP FUNCTION IF EXISTS phase5_financial_transaction_guard()"))
     elif dialect == "sqlite":
         for trigger in (
-            "trg_financial_fence_inbox_conflict",
             "trg_financial_lines_delete",
             "trg_financial_lines_update",
             "trg_financial_lines_insert",
@@ -509,4 +478,3 @@ def downgrade():
     op.drop_index("ix_financial_transactions_provider_object_effective", table_name=TRANSACTION_TABLE)
     op.drop_index("ix_financial_transactions_account_effective", table_name=TRANSACTION_TABLE)
     op.drop_table(TRANSACTION_TABLE)
-    op.drop_column("external_event_inbox", "conflict_generation")
