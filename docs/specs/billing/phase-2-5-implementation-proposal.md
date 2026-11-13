@@ -25,6 +25,7 @@ cutover.
 | Phase 5.2 | Independently accepted and integrated into `develop`; inactive, not deployed or connected | `c3e5a7b9d1f4`; immutable financial transactions and source-attributed lines |
 | Phase 5.3 | Independently accepted on PostgreSQL 18.6 (129 passed, 0 failed, 0 skipped); integration into `develop` pending; inactive, not connected or activated | `d3e5a7b9c1f4`; cumulative refund/dispute cases and immutable case evidence |
 | Phase 5.4 | Independently accepted on PostgreSQL 18.6; integration into `develop` pending; inactive, not connected or activated | `e4b7c2d9a1f0`; immutable domain events, transactional communication outbox, and auditable delivery attempts |
+| Phase 6 | Audit remediation and source-identity contract resolution implemented locally; independent re-review pending; inactive, not integrated, deployed, or activated | `f5c8d3e0b2a1`; immutable evidence binding free and paid subscription monthly periods to Phase 3 lots |
 
 All accepted tables and links remain additive and inactive. Existing billing
 continues to be authoritative until a separately approved migration,
@@ -494,6 +495,12 @@ checks.
 subscription/seat/credit-pack/tax/fee/discount/other; source type/id; quantity;
 currency and signed integer minor-unit principal/tax/fee/discount amounts;
 optional subscription/entitlement link; unique transaction/external-line/kind.
+`source_type` and `source_id` identify the external provider or catalog source;
+they are not aliases for Jaspen subscription or entitlement IDs. The optional
+subscription and entitlement foreign keys remain the authoritative internal
+links. Consumers must validate those internal links and tenant ownership without
+requiring `source_id` to equal either FK, restricting accepted evidence to
+`stripe_price`, or rewriting historical accepted lines.
 
 `financial_cases` and `financial_case_events`: case header uniquely identifies a
 provider refund/dispute object and stores current cumulative state under row
@@ -778,6 +785,57 @@ T-INBOX-01..03. Phase 9 remains responsible for refund/dispute credit effects,
 and Phase 12 remains responsible for AI-operation integration; neither
 dependency is implemented or activated by Phase 5.4.
 
+### Phase 6 implementation record — free and subscription allocations
+
+Status: **audit remediation and final source-identity contract resolution
+implemented and locally verified on PostgreSQL 18.6; independent re-review
+pending; inactive.** The implementation adds one immutable
+`recurring_credit_allocations` evidence row for each funded free,
+monthly-subscription, or annual monthly period. `app/billing_allocations.py`
+locks the organization billing account before dependent rows, derives calendar
+boundaries from the immutable account or subscription anchor, reads the credit
+amount from the approved effective entitlement definition, and requires a
+matching positive Phase 5.2 subscription payment line for paid allocations.
+The caller owns the transaction; allocation, idempotency claim, Phase 4 period,
+Phase 3 lot and grant entry, and immutable evidence commit or roll back
+together. The caller must also supply at least one complete delivery obligation.
+The same transaction records the canonical Phase 5.4 `credit_period_funded`
+domain event and all obligations; expiration similarly records
+`credits_expired` and its complete obligations before the period becomes
+expired. Phase 5.4 validation, fingerprinting, event identity, message dedupe,
+immutability, and replay-conflict behavior are reused without production
+defaults for template, channel, locale, or timing.
+
+Annual terms open only the current monthly period and never grant a full year
+of value. Monthly renewals require payment evidence effective within that
+monthly period. Free allocations use the organization billing-account creation
+anchor and no financial line. Canonical D13 allocation keys, request
+fingerprints, unique evidence links, account-scoped foreign keys, PostgreSQL
+row locks, and migration triggers enforce replay, tenant, source, period,
+definition, subscription-term, and payment-period contracts. Period expiration
+removes unspent available and held value at the immutable end without rollover,
+while retaining the Phase 3 source-entry provenance for every held allocation.
+
+PostgreSQL 18.6 remediation verification completed with 263 Phase 2–6 tests
+passing, with 0 failures and 0 skips. The complete empty-database migration
+chain reached `f5c8d3e0b2a1`; empty downgrade to Phase 5.4 and re-upgrade passed;
+populated/concurrent downgrade refusal, immutable evidence, direct-SQL D12
+bypass rejection, fully migrated funding and expiration replay, atomic rollback,
+concurrent allocation, concurrent expiration, and expiration versus held-value
+changes under READ COMMITTED, REPEATABLE READ, and SERIALIZABLE passed. The
+approved Phase 5.2 distinction is preserved: external provider/catalog
+`source_type`/`source_id` evidence remains independent of the authoritative
+internal subscription and entitlement foreign keys, with provider flexibility
+and historical evidence compatibility. These results await the separately
+assigned independent re-review.
+
+Phase 6 has no route, webhook, scheduler, worker, provider call, live runtime
+caller, legacy balance mutation, or billing activation. Phase 7 retains
+upgrade/downgrade/proration and schedule ownership. Phase 9 retains purchase,
+refund, and dispute credit effects. Phase 12 retains AI reservation and
+settlement integration. Phase 5.4 immutable evidence and outbox guarantees are
+unchanged.
+
 ## Backward compatibility and protection of current customers
 
 1. All migrations are additive; existing columns, constraints, data, APIs, and
@@ -827,6 +885,7 @@ because no customer data is written.
 7. **Accepted and integrated, inactive:** Phase 5.2 immutable financial transactions and lines.
 8. **Independently accepted, pending integration into `develop`, and inactive:** Phase 5.3 refund/dispute cases (PostgreSQL 18.6: 129 passed, 0 failed, 0 skipped; no live runtime caller or billing activation).
 9. **Independently accepted, pending integration into `develop`, and inactive:** Phase 5.4 immutable domain events and transactional outbox (PostgreSQL 18.6; Phase 5.1–5.4: 144 passed, 0 failed, 0 skipped; billing foundations: 62 passed, 0 failed, 0 skipped; no live caller, worker, provider integration, or billing activation).
+10. **Audit remediation and source-identity contract resolution implemented locally, pending independent re-review, and inactive:** Phase 6 free and subscription recurring allocations with atomic Phase 5.4 funding/expiration events and caller-supplied delivery obligations; external financial-line source identity remains separate from authoritative internal subscription/entitlement links (PostgreSQL 18.6 remediation verification: Phase 2–6 263 passed, 0 failed, 0 skipped; no live caller or billing activation).
 
 No authorization should cover more than one numbered increment by implication.
 Passing a schema migration does not authorize data creation or service wiring.

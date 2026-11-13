@@ -76,7 +76,20 @@ cleanup, the inactive-library importer guard, and database enforcement of the
 reference-only JSON and canonical deduplication-key contracts. Neither
 increment has a live runtime caller or is connected to a webhook, browser
 confirmation, delivery worker, provider integration, entitlement transition,
-credit movement, or billing activation. The phases 2–5 proposal continues to
+credit movement, or billing activation. Phase 6 audit remediation is implemented
+locally for independent re-review: its inactive allocation service binds configured free and
+paid subscription entitlements to one monthly credit period and Phase 3 lot,
+with immutable funding evidence and no recurring rollover. PostgreSQL 18.6
+remediation verification completed with 263 Phase 2–6 tests passing, with no
+failures or skips; fully migrated service paths, direct-SQL D12 bypass rejection,
+concurrent expiration and held-value races, the complete migration chain, empty
+Phase 6 downgrade, re-upgrade, and all three transaction-isolation variants passed.
+The approved Phase 5.2 source-identity contract keeps external provider/catalog
+`source_type` and `source_id` separate from the internal subscription and
+entitlement foreign keys that authorize Phase 6 funding. Phase 6 neither equates
+those identities nor restricts them to one provider convention. This is
+implementation evidence, not independent acceptance or integration.
+The phases 2–5 proposal continues to
 identify separately reviewable, reversible increments; no backfill, runtime
 activation, or cutover is bundled. The stop-class conflicts in
 [current-state-inventory.md](current-state-inventory.md#d20-newly-discovered-conflicts-and-stop-register)
@@ -170,6 +183,20 @@ realized margin were not accessed or verified.
   no live caller, delivery worker, provider integration, or Phase 12 command
   path. Phase 9 credit effects and the Phase 5.1/5.2 inbox activation gate
   remain deferred under their approved contracts.
+- Phase 6 audit remediation and final source-identity contract resolution are
+  implemented locally and awaiting independent re-review. Free,
+  monthly-subscription, and annual monthly allocations are additive and
+  inactive. Each funding and expiration command requires caller-supplied,
+  nonempty delivery obligations and atomically uses Phase 5.4 to record its
+  domain event and outbox rows; no production template, channel, locale, or
+  timing default is defined. The service has no route, webhook, scheduler,
+  worker, provider call, or legacy billing caller. Phase 7 schedule/proration behavior, Phase 9
+  refund/dispute and purchase effects, and Phase 12 AI-operation integration
+  remain deferred. Financial-line `source_type` and `source_id` preserve external
+  provider/catalog identity, while internal subscription and entitlement foreign
+  keys remain authoritative for recurring funding; no historical financial line
+  is rewritten or invalidated. Implementation and local verification do not authorize
+  integration, deployment, or activation.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type

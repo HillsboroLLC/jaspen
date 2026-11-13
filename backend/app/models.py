@@ -2862,3 +2862,4 @@ from .models_billing_phase5 import (  # noqa: E402,F401
     FinancialLine,
     FinancialTransaction,
 )
+from .models_billing_phase6 import RecurringCreditAllocation  # noqa: E402,F401

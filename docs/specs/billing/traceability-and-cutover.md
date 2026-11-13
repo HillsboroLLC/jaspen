@@ -281,6 +281,39 @@ unchanged and remains a prerequisite to inbox activation; Phase 9 credit
 effects and Phase 12 AI-operation integration remain deferred under their
 approved contracts.
 
+### Phase 6 implementation traceability
+
+Status: **Audit remediation and final source-identity contract resolution
+implemented and locally verified on PostgreSQL 18.6; independent re-review
+pending; inactive.** Migration `f5c8d3e0b2a1` and the inactive
+`billing_allocations` service add no runtime caller, provider operation,
+scheduler, worker, deployment setting, or billing activation.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| Free allowance uses configured entitlement value and the immutable organization billing-account anchor | Approved effective `EntitlementDefinition`; account-scoped `RecurringCreditAllocation`; canonical `period:free` key | `test_free_period_is_anchored_idempotent_expiring_and_nonrolling`; direct-SQL account/anchor enforcement |
+| Monthly subscription allocation requires current paid line evidence and commits one period, lot, grant, and evidence row atomically | Phase 5.2 `FinancialLine`/transaction binding; caller-owned `allocate_recurring_credits()` transaction | `test_monthly_subscription_requires_payment_in_each_period`; valid-boundary and invalid-prior-period database tests; rollback test |
+| External financial-line source identity remains distinct from internal funding authority | Phase 5.2 `source_type`/`source_id` retain provider or catalog identity and provider flexibility; `subscription_id` and `entitlement_instance_id` remain the authoritative Phase 6 links; no external-to-internal ID equality rule or historical rewrite | Paid-allocation fixtures use `stripe_price`/price identity separately from matching subscription and entitlement FKs; cross-account and wrong-line service/database tests validate the internal authority links |
+| Annual payment opens one anchored monthly allocation at a time without future purchasing power | Annual term/line validation; canonical indexed `period:annual` key; current-period opening fence | `test_annual_payment_opens_monthly_periods_without_future_value` |
+| Funding and expiration satisfy D12 without invented delivery defaults | Caller supplies at least one complete obligation; Phase 5.4 atomically records `credit_period_funded` or `credits_expired` and all canonical outbox rows; Phase 6 database triggers reject recurring lots, grants, and expiration effects without matching allocation/event/outbox evidence; replay revalidates the event-plus-obligation fingerprint | `test_free_period_is_anchored_idempotent_expiring_and_nonrolling`; `test_postgres_migrated_schema_funding_and_expiration_replay`; `test_delivery_validation_failure_rolls_back_allocation_and_expiration`; `test_outbox_persistence_failure_rolls_back_funding_and_expiration`; `test_postgres_blocks_direct_recurring_ledger_bypass` |
+| Replay and simultaneous allocation converge without cross-tenant evidence or duplicate value | Durable idempotency registry, immutable allocation key/fingerprint, account-first locks, unique period/evidence/lot links | Isolation-parameterized `test_postgres_concurrent_free_period_allocation_converges`; cross-account service and direct-SQL tests |
+| Available and held recurring value expires at the fixed period end without rollover | Phase 3 expiration entries retain each held source allocation; Phase 4 period state; database zero-balance and end-time guard | `test_free_period_is_anchored_idempotent_expiring_and_nonrolling`; `test_period_end_expires_available_and_held_value`; `test_postgres_migrated_concurrent_expiration_converges`; `test_postgres_migrated_expiration_races_held_allocation` under READ COMMITTED, REPEATABLE READ, and SERIALIZABLE; migration trigger coverage |
+| Evidence is immutable and additive migration downgrade cannot race or discard populated history | Row and statement triggers, including PostgreSQL `TRUNCATE` rejection; consistently ordered exclusive downgrade locks | `test_postgres_constraints_truncate_and_downgrade_race`; empty and populated downgrade tests; full migration-chain rehearsal |
+
+PostgreSQL 18.6 remediation verification completed with 263 Phase 2–6 tests
+passing, 0 failed, and 0 skipped. READ COMMITTED, REPEATABLE READ, and
+SERIALIZABLE allocation, expiration, and held-value race variants passed. The
+full empty-database migration chain, empty Phase 6 downgrade and re-upgrade,
+rollback, replay, tenant isolation, immutable evidence, and direct-SQL database
+contract checks passed. The final contract resolution preserves external
+provider/catalog `source_type`/`source_id` evidence independently from the
+authoritative internal subscription and entitlement foreign keys, without a
+single-provider restriction or historical evidence rewrite. Independent
+re-review remains the acceptance gate. Integration, deployment, and activation
+remain separate gates. Phase 7 scheduling/proration, Phase 9
+purchases and case credit effects, and Phase 12 AI-operation integration remain
+deferred.
+
 ### Deferred Phase 5.1/5.2 activation gate — conflict evidence integrity
 
 Status: **Deferred — required before inbox activation.** These PostgreSQL

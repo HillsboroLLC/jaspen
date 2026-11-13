@@ -542,6 +542,7 @@ def test_financial_recorder_has_no_live_runtime_importers():
     importers = []
     for path in app_dir.rglob("*.py"):
         if path.name in {
+            "billing_allocations.py",
             "billing_financial.py", "billing_financial_cases.py",
             "models_billing_phase5.py", "models.py",
         }:
