@@ -76,6 +76,7 @@ from app.tool_registry import (
     is_tool_allowed,
 )
 from sqlalchemy import or_
+from app.conversation_turn import ConversationTurn, TurnBilling, TurnStore
 from app.orgs import normalize_org_role, resolve_active_org_for_user
 from app.scenarios_store import clear_all_scenarios_data
 from app.scorecards import (
@@ -231,6 +232,7 @@ from .sessions import (
 from app.session_access import (
     RevisionConflict,
     SessionAccessError,
+    require_can_create_session,
     SessionNotFound,
     can_archive_session,
     canonical_row,
@@ -13548,9 +13550,12 @@ def _record_failed_chat_usage(session, error, *, regenerated=False, attachments=
 
 
 def _persist_failed_conversation_turn(
-    *, session, sessions, thread_id, user_id, chat_history, readiness,
+    *, turn, chat_history, readiness,
     user_message, error, attachments=None, name=None, model_type=None,
 ):
+    """Keep the user's message when no provider could answer, so they can
+    retry. Saves through the turn, so only this turn's project is written."""
+    session = turn.session
     session["chat_history"] = list(chat_history)
     session["timestamp"] = _iso_now()
     session["status"] = "in_progress"
@@ -13561,8 +13566,7 @@ def _persist_failed_conversation_turn(
     if model_type:
         session["model_type"] = model_type
     _record_failed_chat_usage(session, error, attachments=attachments)
-    sessions[thread_id] = session
-    return bool(save_user_sessions(user_id, sessions))
+    return turn.save()
 
 
 def _analysis_unavailable_stream_payload(user, thread_id):
@@ -14869,6 +14873,438 @@ def _persist_thread_insight(user_id, thread_id, filename, insight_payload, summa
     return event
 
 
+# ---------------------------------------------------------------------------
+# Conversation-turn lifecycle
+#
+# Every chat turn (start, continue, regenerate; streamed or not) reserves,
+# generates, settles and saves through ONE ConversationTurn. The rules live in
+# app/conversation_turn.py; the functions below are the only callers.
+# ---------------------------------------------------------------------------
+
+_NO_USAGE = {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+    "Connection": "keep-alive",
+}
+
+
+def _conversation_turn(*, user, user_id, thread_id, session, sessions, model_type, session_key=None):
+    """Bind one turn to today's billing and storage.
+
+    This is the single binding to replace when the authoritative ledger takes
+    over AI settlement (billing Phase 12). Each function is looked up when it
+    is called, so tests that substitute one of them still take effect.
+    """
+    return ConversationTurn(
+        user=user,
+        user_id=user_id,
+        thread_id=thread_id,
+        session=session,
+        sessions=sessions,
+        model_type=model_type,
+        session_key=session_key,
+        billing=TurnBilling(
+            reserve=lambda *a, **k: _reserve_preflight_credits(*a, **k),
+            price=lambda *a, **k: _charge_for_usage(*a, **k),
+            settle=lambda *a, **k: _settle_reserved_credits(*a, **k),
+            release=lambda *a, **k: _release_reserved_credits(*a, **k),
+            persist_balance=lambda *a, **k: _persist_credit_deduction(*a, **k),
+            insufficient_payload=lambda *a, **k: _insufficient_credits_payload(*a, **k),
+        ),
+        store=TurnStore(save=lambda *a, **k: save_user_sessions(*a, **k)),
+    )
+
+
+class _TurnRequest:
+    """What a start/continue route worked out before generation begins."""
+
+    __slots__ = (
+        "route", "user_message", "attachments", "chat_history",
+        "previous_readiness", "readiness", "context_budget", "model_selection",
+        "idempotency_key", "request_fingerprint", "session_created", "name",
+    )
+
+    def __init__(self, *, route, user_message, attachments, chat_history,
+                 previous_readiness, readiness, context_budget, model_selection,
+                 idempotency_key, request_fingerprint, session_created, name=None):
+        self.route = route                      # "conversation_start" | "conversation_continue"
+        self.user_message = user_message
+        self.attachments = attachments
+        self.chat_history = chat_history        # includes this turn's user message
+        self.previous_readiness = previous_readiness
+        self.readiness = readiness
+        self.context_budget = context_budget
+        self.model_selection = model_selection
+        self.idempotency_key = idempotency_key
+        self.request_fingerprint = request_fingerprint
+        self.session_created = session_created
+        self.name = name                        # conversation/start only
+
+
+def _turn_readiness_payload(final_readiness):
+    return {
+        "percent": final_readiness["overall"]["percent"],
+        "categories": final_readiness["categories"],
+        "items": final_readiness.get("items", []),
+        "checklist_summary": final_readiness.get("checklist_summary", {}),
+        "version": final_readiness.get("version"),
+        "updated_at": _iso_now(),
+    }
+
+
+def _finish_conversation_turn(turn, req, *, reply, usage, actions, mutations, undo_snapshot, streaming):
+    """Settle, save and describe a generated start/continue turn.
+
+    Returns ``(payload, None)`` on success, or ``(None, (body, http_status))``
+    when the turn has to be refused or could not be saved.
+
+    Two orderings are inherited from the code this replaced and are kept on
+    purpose, because changing either changes live charging:
+
+    * a JSON turn makes its charge durable BEFORE saving the project; a
+      streamed turn does it AFTER;
+    * a streamed turn applies artifact and rubric actions before settling; a
+      JSON turn after.
+    """
+    user, user_id, thread_id, session = turn.user, turn.user_id, turn.thread_id, turn.session
+    model_selection = req.model_selection
+    is_start = req.route == "conversation_start"
+
+    reply, usage, scoring_failure = _apply_scoring_failure_state(reply, usage, actions)
+    reply, _decision_failure = _apply_option_decision_failure_state(reply, actions)
+    usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
+
+    def apply_artifacts():
+        entries = _artifact_entries_from_actions(
+            actions, user_message=req.user_message, user_id=user_id, thread_id=thread_id, reply=reply,
+        )
+        _apply_rubric_action_to_session(session, actions)
+        return entries
+
+    if streaming:
+        artifact_messages = apply_artifacts()
+
+    refusal = turn.settle(usage)
+    if refusal is not None:
+        return None, (refusal, 402)
+
+    if not streaming:
+        turn.persist_balance()
+        artifact_messages = apply_artifacts()
+
+    credits_charged, remaining = turn.credits_charged, turn.remaining
+    undo_available = _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict)
+    final_chat_history = list(req.chat_history)
+    final_chat_history.append(_assistant_chat_entry(
+        reply,
+        mutations=mutations,
+        undo={"available": True} if undo_available else None,
+    ))
+    assistant_message_index = len(final_chat_history) - 1
+    if artifact_messages:
+        final_chat_history.extend(artifact_messages)
+    final_readiness = _clamp_readiness_with_delta(
+        req.previous_readiness,
+        _compute_readiness(final_chat_history, session.get("strategy_objective")),
+    )
+    ready = _is_ready_to_analyze(final_readiness)
+
+    session["chat_history"] = final_chat_history
+    if undo_available:
+        session[PENDING_MUTATION_UNDO_KEY] = {
+            "message_index": assistant_message_index,
+            "snapshot": undo_snapshot,
+        }
+    else:
+        session.pop(PENDING_MUTATION_UNDO_KEY, None)
+    if is_start:
+        session["name"] = req.name
+    session["model_type"] = model_selection["model_type"]
+    session["timestamp"] = _iso_now()
+    session["status"] = "in_progress" if is_start or not ready else "ready_to_analyze"
+    session["readiness"] = final_readiness
+    _record_usage(
+        session,
+        usage,
+        credits_charged,
+        actions=actions,
+        attachments=req.attachments,
+        idempotency_key=req.idempotency_key,
+        request_fingerprint=req.request_fingerprint,
+        success=not bool(scoring_failure),
+        error_code=scoring_failure.get("code") if scoring_failure else None,
+        operation_type="score_next" if scoring_failure else None,
+    )
+    if not turn.save():
+        return None, ({"error": "Failed to persist conversation state"}, 500)
+
+    if streaming:
+        turn.persist_balance()
+
+    if req.session_created:
+        _audit_ai_agent_event(
+            "session.created",
+            user=user,
+            details={
+                "thread_id": thread_id,
+                "name": req.name if is_start else (session.get("name") or "Jaspen Intake"),
+                "model_type": model_selection["model_type"],
+                "stream": bool(streaming),
+                "source": req.route,
+            },
+        )
+
+    public_mutations = mutations if isinstance(mutations, list) else []
+    payload = {"type": "done"} if streaming else {}
+    payload.update({
+        "thread_id": thread_id,
+        "session_id": thread_id,
+        "reply": reply,
+        "message": reply,
+        "assistant_message_index": assistant_message_index,
+        "model_type": model_selection["model_type"],
+        "allowed_model_types": model_selection["allowed_model_types"],
+        "actions": actions if isinstance(actions, list) else [],
+        "mutations": public_mutations,
+        "tool_results": public_mutations,
+        "artifact_messages": artifact_messages,
+        "undo_available": undo_available,
+        "usage": _public_usage_payload(
+            usage,
+            model_type=model_selection["model_type"],
+            credits_charged=credits_charged,
+            credits_remaining=remaining,
+            user=user,
+        ),
+        "context_budget": req.context_budget,
+        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
+        "readiness": _turn_readiness_payload(final_readiness),
+        "status": "ready_to_analyze" if ready else "gathering_info",
+        "strategy_objective": session.get("strategy_objective") or "balanced",
+        "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+        "organization_id": session.get("organization_id"),
+        "visibility": session.get("visibility") or "private",
+        "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
+    })
+    if is_start:
+        payload.update({
+            "decision_kit": session.get("decision_kit"),
+            "decision_kit_family": session.get("decision_kit_family"),
+            "decision_kit_suggestion": session.get("decision_kit_suggestion"),
+        })
+    if scoring_failure:
+        payload.update({
+            "success": False,
+            "failure_state": True,
+            "code": scoring_failure.get("code"),
+            "retryable": True,
+            "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
+            "message_saved": True,
+        })
+    _remember_conversation_payload(
+        session, req.idempotency_key, req.request_fingerprint, payload,
+    )
+    if not turn.save():
+        return None, ({"error": "Failed to persist idempotency state"}, 500)
+    return payload, None
+
+
+def _conversation_turn_failed(turn, req, error):
+    """Shared failure path for a start/continue turn.
+
+    Gives back an unsettled reservation, then either keeps the user's message
+    for a retry (provider outage) or records the failed attempt. Returns
+    ``(body, http_status)`` when the failure was turned into a customer
+    response, or ``None`` when the caller should surface the error itself.
+    """
+    turn.release_unsettled()
+    if isinstance(error, ConversationProviderUnavailable):
+        persisted = _persist_failed_conversation_turn(
+            turn=turn,
+            chat_history=req.chat_history,
+            readiness=req.readiness,
+            user_message=req.user_message,
+            error=error,
+            attachments=req.attachments,
+            name=req.name,
+            model_type=req.model_selection["model_type"],
+        )
+        if persisted:
+            return _analysis_unavailable_stream_payload(turn.user, turn.thread_id), 503
+        return {"error": "Failed to save your message", "retryable": True}, 500
+    if not turn.settled:
+        _record_failed_chat_usage(turn.session, error, attachments=req.attachments)
+    return None
+
+
+def _turn_generation_kwargs(turn, req):
+    return dict(
+        context_budget=req.context_budget,
+        session=turn.session,
+        user=turn.user,
+        user_id=turn.user_id,
+        thread_id=turn.thread_id,
+        intake_context=turn.session.get("intake_context"),
+        view_context=turn.session.get("view_context"),
+        attachments=req.attachments,
+    )
+
+
+def _stream_conversation_turn(turn, req):
+    """Run a reserved start/continue turn as a server-sent event stream."""
+
+    @stream_with_context
+    def event_stream():
+        state = {}
+        try:
+            for payload in _stream_assistant_reply_events(
+                req.user_message, req.chat_history, req.readiness, req.model_selection,
+                state=state, **_turn_generation_kwargs(turn, req),
+            ):
+                yield _sse_payload(payload)
+            done_payload, error = _finish_conversation_turn(
+                turn,
+                req,
+                reply=str(state.get("reply") or "").strip(),
+                usage=state.get("usage") if isinstance(state.get("usage"), dict) else dict(_NO_USAGE),
+                actions=state.get("actions") if isinstance(state.get("actions"), list) else [],
+                mutations=state.get("mutations") if isinstance(state.get("mutations"), list) else [],
+                undo_snapshot=state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None,
+                streaming=True,
+            )
+            if error is not None:
+                yield _sse_payload({"type": "error", **error[0]})
+                return
+            yield _sse_payload(done_payload)
+        except Exception as generation_error:
+            handled = _conversation_turn_failed(turn, req, generation_error)
+            if handled is not None:
+                body, status = handled
+                if status == 503:
+                    current_app.logger.warning("%s providers unavailable; user message preserved", req.route)
+                    yield _sse_payload(body)
+                else:
+                    yield _sse_payload({"type": "error", **body})
+                return
+            current_app.logger.exception("%s stream failed", req.route)
+            yield _sse_payload({"type": "error", "error": "Streaming failed"})
+            return
+
+    return Response(event_stream(), mimetype="text/event-stream", headers=dict(_SSE_HEADERS))
+
+
+def _run_conversation_turn(turn, req):
+    """Run a reserved start/continue turn and answer with one JSON response."""
+    try:
+        reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
+            req.user_message, req.chat_history, req.readiness, req.model_selection,
+            **_turn_generation_kwargs(turn, req),
+        )
+    except Exception as generation_error:
+        handled = _conversation_turn_failed(turn, req, generation_error)
+        if handled is not None:
+            return jsonify(handled[0]), handled[1]
+        raise
+
+    payload, error = _finish_conversation_turn(
+        turn, req, reply=reply, usage=usage, actions=actions, mutations=mutations,
+        undo_snapshot=undo_snapshot, streaming=False,
+    )
+    if error is not None:
+        return jsonify(error[0]), error[1]
+    return jsonify(payload), 200
+
+
+def _finish_regenerated_turn(turn, *, reply, usage, chat_history, last_msg, old_response,
+                             previous_readiness, context_budget, model_selection,
+                             idempotency_key, request_fingerprint, streaming):
+    """Settle, save and describe a regenerated reply.
+
+    Same return contract as ``_finish_conversation_turn``. A regenerated turn
+    makes its charge durable before saving on both the streamed and the JSON
+    path; that inherited order is kept.
+    """
+    user, thread_id, session = turn.user, turn.thread_id, turn.session
+
+    refusal = turn.settle(usage)
+    if refusal is not None:
+        return None, (refusal, 402)
+    turn.persist_balance()
+    credits_charged, remaining = turn.credits_charged, turn.remaining
+
+    alternatives = [
+        old_response,
+        *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else []),
+    ]
+    new_msg = _assistant_chat_entry(reply, regenerated=True, alternatives=alternatives)
+    chat_history[-1] = new_msg
+    assistant_message_index = len(chat_history) - 1
+    final_readiness = _clamp_readiness_with_delta(
+        previous_readiness,
+        _compute_readiness(chat_history, session.get("strategy_objective")),
+    )
+
+    session["chat_history"] = chat_history
+    session["timestamp"] = _iso_now()
+    session["readiness"] = final_readiness
+    _record_usage(
+        session,
+        usage,
+        credits_charged,
+        regenerated=True,
+        idempotency_key=idempotency_key,
+        request_fingerprint=request_fingerprint,
+    )
+    if not turn.save():
+        return None, ({"error": "Failed to persist regenerated response"}, 500)
+
+    _audit_ai_agent_event(
+        "message.regenerated",
+        user=user,
+        details={
+            "thread_id": str(session.get("session_id") or turn.session_key),
+            "message_index": assistant_message_index,
+            "alternatives_count": len(new_msg.get("alternatives") or []),
+        },
+    )
+
+    payload = {"type": "done"} if streaming else {}
+    payload.update({
+        "thread_id": thread_id,
+        "session_id": thread_id,
+        "reply": reply,
+        "message": reply,
+        "assistant_message_index": assistant_message_index,
+        "regenerated": True,
+        "alternatives_count": len(new_msg.get("alternatives") or []),
+        "model_type": model_selection["model_type"],
+        "allowed_model_types": model_selection["allowed_model_types"],
+        "mutations": [],
+        "tool_results": [],
+        "usage": _public_usage_payload(
+            usage,
+            model_type=model_selection["model_type"],
+            credits_charged=credits_charged,
+            credits_remaining=remaining,
+            user=user,
+        ),
+        "context_budget": context_budget,
+        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
+        "readiness": _turn_readiness_payload(final_readiness),
+        "strategy_objective": session.get("strategy_objective") or "balanced",
+        "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+        "organization_id": session.get("organization_id"),
+        "visibility": session.get("visibility") or "private",
+    })
+    _remember_conversation_payload(session, idempotency_key, request_fingerprint, payload)
+    if not turn.save():
+        return None, ({"error": "Failed to persist idempotency state"}, 500)
+    return payload, None
+
+
 @ai_agent_bp.route("/conversation/start", methods=["POST"])
 @jwt_required()
 @limiter.limit("3 per minute")          # C — burst protection
@@ -14946,6 +15382,10 @@ def conversation_start():
     sessions = load_user_sessions(user_id)
     existing_session = sessions.get(thread_id)
     session_created = not isinstance(existing_session, dict)
+    if session_created:
+        # A new thread has no row for the save to authorize against, so check
+        # the role here, before anything is reserved or generated.
+        require_can_create_session(user, active_org_id)
     session = existing_session or _new_session(
         user_id,
         thread_id,
@@ -15054,8 +15494,11 @@ def conversation_start():
     session["timestamp"] = _iso_now()
     session["status"] = "in_progress"
     session["readiness"] = readiness
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
+    turn = _conversation_turn(
+        user=user, user_id=user_id, thread_id=thread_id, session=session,
+        sessions=sessions, model_type=model_selection["model_type"],
+    )
+    if not turn.save():
         return jsonify({
             "error": "The conversation could not be saved. Your scoring request was not started. Try again.",
             "code": "conversation_persist_failed",
@@ -15064,398 +15507,31 @@ def conversation_start():
             "action": {"type": "retry", "label": "Retry"},
         }), 500
     context_budget = get_context_budget(effective_plan_key(user, current_app.config))
-    preflight_token_hint = _preflight_token_hint_for_conversation(
+    refusal = turn.reserve(token_hint=_preflight_token_hint_for_conversation(
         user_message,
         chat_history=chat_history,
         attachments=attachments,
-    )
-    credit_reservation = _reserve_preflight_credits(
-        user,
-        model_selection["model_type"],
-        token_hint=preflight_token_hint,
-    )
-    if not credit_reservation["ok"]:
-        return jsonify(credit_reservation["payload"]), 402
-    reserved_credits = int(credit_reservation["reserved"] or 0)
-
-    if stream_requested:
-        @stream_with_context
-        def event_stream():
-            state = {}
-            credits_settled = False
-            try:
-                for payload in _stream_assistant_reply_events(
-                    user_message,
-                    chat_history,
-                    readiness,
-                    model_selection,
-                    context_budget=context_budget,
-                    session=session,
-                    user=user,
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    intake_context=session.get("intake_context"),
-                    view_context=session.get("view_context"),
-                    attachments=attachments,
-                    state=state,
-                ):
-                    yield _sse_payload(payload)
-                assistant_reply = str(state.get("reply") or "").strip()
-                usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-                actions = state.get("actions") if isinstance(state.get("actions"), list) else []
-                assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
-                    assistant_reply, usage, actions,
-                )
-                assistant_reply, _decision_failure = _apply_option_decision_failure_state(
-                    assistant_reply, actions,
-                )
-                mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
-                usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
-                undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
-                _apply_rubric_action_to_session(session, actions)
-
-                credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-                credit_settlement = _settle_reserved_credits(
-                    user,
-                    reserved_credits=reserved_credits,
-                    actual_credits=credits_charged,
-                )
-                credits_settled = True
-                if not credit_settlement["ok"]:
-                    yield _sse_payload({
-                        "type": "error",
-                        **(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)),
-                    })
-                    return
-                remaining = credit_settlement["remaining"]
-                credits_charged = credit_settlement["charged"]
-
-                undo_available = _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict)
-                final_chat_history = list(chat_history)
-                final_chat_history.append(_assistant_chat_entry(
-                    assistant_reply,
-                    mutations=mutations,
-                    undo={"available": True} if undo_available else None,
-                ))
-                assistant_message_index = len(final_chat_history) - 1
-                if artifact_messages:
-                    final_chat_history.extend(artifact_messages)
-                final_readiness = _clamp_readiness_with_delta(
-                    previous_readiness,
-                    _compute_readiness(final_chat_history, session.get("strategy_objective")),
-                )
-
-                session["chat_history"] = final_chat_history
-                if undo_available:
-                    session[PENDING_MUTATION_UNDO_KEY] = {
-                        "message_index": assistant_message_index,
-                        "snapshot": undo_snapshot,
-                    }
-                else:
-                    session.pop(PENDING_MUTATION_UNDO_KEY, None)
-                session["name"] = name
-                session["model_type"] = model_selection["model_type"]
-                session["timestamp"] = _iso_now()
-                session["status"] = "in_progress"
-                session["readiness"] = final_readiness
-                _record_usage(
-                    session,
-                    usage,
-                    credits_charged,
-                    actions=actions,
-                    attachments=attachments,
-                    idempotency_key=idempotency_key,
-                    request_fingerprint=request_fingerprint,
-                    success=not bool(scoring_failure),
-                    error_code=scoring_failure.get("code") if scoring_failure else None,
-                    operation_type="score_next" if scoring_failure else None,
-                )
-                sessions[thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
-                    return
-
-                _persist_credit_deduction(user_id, remaining)
-
-                if session_created:
-                    _audit_ai_agent_event(
-                        "session.created",
-                        user=user,
-                        details={
-                            "thread_id": thread_id,
-                            "name": name,
-                            "model_type": model_selection["model_type"],
-                            "stream": True,
-                            "source": "conversation_start",
-                        },
-                    )
-
-                _stream_start_actions = actions if isinstance(actions, list) else []
-
-                done_payload = {
-                    "type": "done",
-                    "thread_id": thread_id,
-                    "session_id": thread_id,
-                    "reply": assistant_reply,
-                    "message": assistant_reply,
-                    "assistant_message_index": assistant_message_index,
-                    "model_type": model_selection["model_type"],
-                    "allowed_model_types": model_selection["allowed_model_types"],
-                    "actions": _stream_start_actions,
-                    "mutations": mutations,
-                    "tool_results": mutations,
-                    "artifact_messages": artifact_messages,
-                    "undo_available": undo_available,
-                    "usage": _public_usage_payload(
-                        usage,
-                        model_type=model_selection["model_type"],
-                        credits_charged=credits_charged,
-                        credits_remaining=remaining,
-                        user=user,
-                    ),
-                    "context_budget": context_budget,
-                    "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-                    "readiness": {
-                        "percent": final_readiness["overall"]["percent"],
-                        "categories": final_readiness["categories"],
-                        "items": final_readiness.get("items", []),
-                        "checklist_summary": final_readiness.get("checklist_summary", {}),
-                        "version": final_readiness.get("version"),
-                        "updated_at": _iso_now(),
-                    },
-                    "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness) else "gathering_info",
-                    "strategy_objective": session.get("strategy_objective") or "balanced",
-                    "decision_kit": session.get("decision_kit"),
-                    "decision_kit_family": session.get("decision_kit_family"),
-            "decision_kit_suggestion": session.get("decision_kit_suggestion"),
-                    "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-                    "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-                    "organization_id": session.get("organization_id"),
-                    "visibility": session.get("visibility") or "private",
-                    "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-                }
-                if scoring_failure:
-                    done_payload.update({
-                        "success": False,
-                        "failure_state": True,
-                        "code": scoring_failure.get("code"),
-                        "retryable": True,
-                        "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
-                        "message_saved": True,
-                    })
-                _remember_conversation_payload(
-                    session, idempotency_key, request_fingerprint, done_payload,
-                )
-                sessions[thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist idempotency state"})
-                    return
-                yield _sse_payload(done_payload)
-            except Exception as generation_error:
-                if not credits_settled:
-                    _release_reserved_credits(user, reserved_credits)
-                if isinstance(generation_error, ConversationProviderUnavailable):
-                    persisted = _persist_failed_conversation_turn(
-                        session=session,
-                        sessions=sessions,
-                        thread_id=thread_id,
-                        user_id=user_id,
-                        chat_history=chat_history,
-                        readiness=readiness,
-                        user_message=user_message,
-                        error=generation_error,
-                        attachments=attachments,
-                        name=name,
-                        model_type=model_selection["model_type"],
-                    )
-                    if not persisted:
-                        yield _sse_payload({"type": "error", "error": "Failed to save your message", "retryable": True})
-                        return
-                    current_app.logger.warning("conversation_start providers unavailable; user message preserved")
-                    yield _sse_payload(_analysis_unavailable_stream_payload(user, thread_id))
-                    return
-                if not credits_settled:
-                    _record_failed_chat_usage(session, generation_error, attachments=attachments)
-                current_app.logger.exception("conversation_start stream failed")
-                yield _sse_payload({"type": "error", "error": "Streaming failed"})
-                return
-
-        return Response(
-            event_stream(),
-            mimetype="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
-        )
-
-    try:
-        assistant_reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
-            user_message,
-            chat_history,
-            readiness,
-            model_selection,
-            context_budget=context_budget,
-            session=session,
-            user=user,
-            user_id=user_id,
-            thread_id=thread_id,
-            intake_context=session.get("intake_context"),
-            view_context=session.get("view_context"),
-            attachments=attachments,
-        )
-    except Exception as generation_error:
-        _release_reserved_credits(user, reserved_credits)
-        if isinstance(generation_error, ConversationProviderUnavailable):
-            persisted = _persist_failed_conversation_turn(
-                session=session, sessions=sessions, thread_id=thread_id, user_id=user_id,
-                chat_history=chat_history, readiness=readiness, user_message=user_message,
-                error=generation_error, attachments=attachments, name=name,
-                model_type=model_selection["model_type"],
-            )
-            if persisted:
-                return jsonify(_analysis_unavailable_stream_payload(user, thread_id)), 503
-            return jsonify({"error": "Failed to save your message", "retryable": True}), 500
-        _record_failed_chat_usage(session, generation_error, attachments=attachments)
-        raise
-
-    assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
-        assistant_reply, usage, actions,
-    )
-    assistant_reply, _decision_failure = _apply_option_decision_failure_state(
-        assistant_reply, actions,
-    )
-    usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
-    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-    credit_settlement = _settle_reserved_credits(
-        user,
-        reserved_credits=reserved_credits,
-        actual_credits=credits_charged,
-    )
-    if not credit_settlement["ok"]:
-        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
-    remaining = credit_settlement["remaining"]
-    credits_charged = credit_settlement["charged"]
-    _persist_credit_deduction(user_id, remaining)
-    undo_available = _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict)
-    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
-    _apply_rubric_action_to_session(session, actions)
-    chat_history.append(_assistant_chat_entry(
-        assistant_reply,
-        mutations=mutations,
-        undo={"available": True} if undo_available else None,
     ))
-    assistant_message_index = len(chat_history) - 1
-    if artifact_messages:
-        chat_history.extend(artifact_messages)
+    if refusal is not None:
+        return jsonify(refusal), 402
 
-    session["chat_history"] = chat_history
-    if undo_available:
-        session[PENDING_MUTATION_UNDO_KEY] = {
-            "message_index": assistant_message_index,
-            "snapshot": undo_snapshot,
-        }
-    else:
-        session.pop(PENDING_MUTATION_UNDO_KEY, None)
-    session["name"] = name
-    session["model_type"] = model_selection["model_type"]
-    session["timestamp"] = _iso_now()
-    session["status"] = "in_progress"
-    final_readiness_non_stream = _clamp_readiness_with_delta(
-        previous_readiness,
-        _compute_readiness(chat_history, session.get("strategy_objective")),
-    )
-    session["readiness"] = final_readiness_non_stream
-    _record_usage(
-        session,
-        usage,
-        credits_charged,
-        actions=actions,
+    turn_request = _TurnRequest(
+        route="conversation_start",
+        user_message=user_message,
         attachments=attachments,
+        chat_history=chat_history,
+        previous_readiness=previous_readiness,
+        readiness=readiness,
+        context_budget=context_budget,
+        model_selection=model_selection,
         idempotency_key=idempotency_key,
         request_fingerprint=request_fingerprint,
-        success=not bool(scoring_failure),
-        error_code=scoring_failure.get("code") if scoring_failure else None,
-        operation_type="score_next" if scoring_failure else None,
+        session_created=session_created,
+        name=name,
     )
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist conversation state"}), 500
-
-    if session_created:
-        _audit_ai_agent_event(
-            "session.created",
-            user=user,
-            details={
-                "thread_id": thread_id,
-                "name": name,
-                "model_type": model_selection["model_type"],
-                "stream": False,
-                "source": "conversation_start",
-            },
-        )
-
-    _start_base_actions = actions if isinstance(actions, list) else []
-
-    response_payload = {
-        "thread_id": thread_id,
-        "session_id": thread_id,
-        "reply": assistant_reply,
-        "message": assistant_reply,
-        "assistant_message_index": assistant_message_index,
-        "model_type": model_selection["model_type"],
-        "allowed_model_types": model_selection["allowed_model_types"],
-        "actions": _start_base_actions,
-        "mutations": mutations if isinstance(mutations, list) else [],
-        "tool_results": mutations if isinstance(mutations, list) else [],
-        "artifact_messages": artifact_messages,
-        "undo_available": undo_available,
-        "usage": _public_usage_payload(
-            usage,
-            model_type=model_selection["model_type"],
-            credits_charged=credits_charged,
-            credits_remaining=remaining,
-            user=user,
-        ),
-        "context_budget": context_budget,
-        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-        "readiness": {
-            "percent": final_readiness_non_stream["overall"]["percent"],
-            "categories": final_readiness_non_stream["categories"],
-            "items": final_readiness_non_stream.get("items", []),
-            "checklist_summary": final_readiness_non_stream.get("checklist_summary", {}),
-            "version": final_readiness_non_stream.get("version"),
-            "updated_at": _iso_now(),
-        },
-        "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness_non_stream) else "gathering_info",
-        "strategy_objective": session.get("strategy_objective") or "balanced",
-        "decision_kit": session.get("decision_kit"),
-        "decision_kit_family": session.get("decision_kit_family"),
-        "decision_kit_suggestion": session.get("decision_kit_suggestion"),
-        "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-        "organization_id": session.get("organization_id"),
-        "visibility": session.get("visibility") or "private",
-        "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-    }
-    if scoring_failure:
-        response_payload.update({
-            "success": False,
-            "failure_state": True,
-            "code": scoring_failure.get("code"),
-            "retryable": True,
-            "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
-            "message_saved": True,
-        })
-    _remember_conversation_payload(
-        session, idempotency_key, request_fingerprint, response_payload,
-    )
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist idempotency state"}), 500
-    return jsonify(response_payload), 200
+    if stream_requested:
+        return _stream_conversation_turn(turn, turn_request)
+    return _run_conversation_turn(turn, turn_request)
 
 
 @ai_agent_bp.route("/conversation/continue", methods=["POST"])
@@ -15634,8 +15710,11 @@ def conversation_continue():
     session["timestamp"] = _iso_now()
     session["status"] = "in_progress"
     session["readiness"] = readiness
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
+    turn = _conversation_turn(
+        user=user, user_id=user_id, thread_id=thread_id, session=session,
+        sessions=sessions, model_type=model_selection["model_type"],
+    )
+    if not turn.save():
         return jsonify({
             "error": "The conversation could not be saved. Your scoring request was not started. Try again.",
             "code": "conversation_persist_failed",
@@ -15644,389 +15723,31 @@ def conversation_continue():
             "action": {"type": "retry", "label": "Retry"},
         }), 500
     context_budget = get_context_budget(effective_plan_key(user, current_app.config))
-    preflight_token_hint = _preflight_token_hint_for_conversation(
+    refusal = turn.reserve(token_hint=_preflight_token_hint_for_conversation(
         user_message,
         chat_history=chat_history,
         attachments=attachments,
-    )
-    credit_reservation = _reserve_preflight_credits(
-        user,
-        model_selection["model_type"],
-        token_hint=preflight_token_hint,
-    )
-    if not credit_reservation["ok"]:
-        return jsonify(credit_reservation["payload"]), 402
-    reserved_credits = int(credit_reservation["reserved"] or 0)
-
-    if stream_requested:
-        @stream_with_context
-        def event_stream():
-            state = {}
-            credits_settled = False
-            try:
-                for payload in _stream_assistant_reply_events(
-                    user_message,
-                    chat_history,
-                    readiness,
-                    model_selection,
-                    context_budget=context_budget,
-                    session=session,
-                    user=user,
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    intake_context=session.get("intake_context"),
-                    view_context=session.get("view_context"),
-                    attachments=attachments,
-                    state=state,
-                ):
-                    yield _sse_payload(payload)
-                assistant_reply = str(state.get("reply") or "").strip()
-                usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-                actions = state.get("actions") if isinstance(state.get("actions"), list) else []
-                assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
-                    assistant_reply, usage, actions,
-                )
-                assistant_reply, _decision_failure = _apply_option_decision_failure_state(
-                    assistant_reply, actions,
-                )
-                mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
-                usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
-                undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
-                _apply_rubric_action_to_session(session, actions)
-
-                credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-                credit_settlement = _settle_reserved_credits(
-                    user,
-                    reserved_credits=reserved_credits,
-                    actual_credits=credits_charged,
-                )
-                credits_settled = True
-                if not credit_settlement["ok"]:
-                    yield _sse_payload({
-                        "type": "error",
-                        **(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)),
-                    })
-                    return
-                remaining = credit_settlement["remaining"]
-                credits_charged = credit_settlement["charged"]
-
-                undo_available = _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict)
-                final_chat_history = list(chat_history)
-                final_chat_history.append(_assistant_chat_entry(
-                    assistant_reply,
-                    mutations=mutations,
-                    undo={"available": True} if undo_available else None,
-                ))
-                assistant_message_index = len(final_chat_history) - 1
-                if artifact_messages:
-                    final_chat_history.extend(artifact_messages)
-                final_readiness = _clamp_readiness_with_delta(
-                    previous_readiness,
-                    _compute_readiness(final_chat_history, session.get("strategy_objective")),
-                )
-
-                session["chat_history"] = final_chat_history
-                if undo_available:
-                    session[PENDING_MUTATION_UNDO_KEY] = {
-                        "message_index": assistant_message_index,
-                        "snapshot": undo_snapshot,
-                    }
-                else:
-                    session.pop(PENDING_MUTATION_UNDO_KEY, None)
-                session["model_type"] = model_selection["model_type"]
-                session["timestamp"] = _iso_now()
-                session["status"] = "ready_to_analyze" if _is_ready_to_analyze(final_readiness) else "in_progress"
-                session["readiness"] = final_readiness
-                _record_usage(
-                    session,
-                    usage,
-                    credits_charged,
-                    actions=actions,
-                    attachments=attachments,
-                    idempotency_key=idempotency_key,
-                    request_fingerprint=request_fingerprint,
-                    success=not bool(scoring_failure),
-                    error_code=scoring_failure.get("code") if scoring_failure else None,
-                    operation_type="score_next" if scoring_failure else None,
-                )
-                sessions[thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
-                    return
-
-                _persist_credit_deduction(user_id, remaining)
-
-                if session_created:
-                    _audit_ai_agent_event(
-                        "session.created",
-                        user=user,
-                        details={
-                            "thread_id": thread_id,
-                            "name": session.get("name") or "Jaspen Intake",
-                            "model_type": model_selection["model_type"],
-                            "stream": True,
-                            "source": "conversation_continue",
-                        },
-                    )
-
-                _stream_cont_actions = actions if isinstance(actions, list) else []
-
-                done_payload = {
-                    "type": "done",
-                    "thread_id": thread_id,
-                    "session_id": thread_id,
-                    "reply": assistant_reply,
-                    "message": assistant_reply,
-                    "assistant_message_index": assistant_message_index,
-                    "model_type": model_selection["model_type"],
-                    "allowed_model_types": model_selection["allowed_model_types"],
-                    "actions": _stream_cont_actions,
-                    "mutations": mutations,
-                    "tool_results": mutations,
-                    "artifact_messages": artifact_messages,
-                    "undo_available": undo_available,
-                    "usage": _public_usage_payload(
-                        usage,
-                        model_type=model_selection["model_type"],
-                        credits_charged=credits_charged,
-                        credits_remaining=remaining,
-                        user=user,
-                    ),
-                    "context_budget": context_budget,
-                    "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-                    "readiness": {
-                        "percent": final_readiness["overall"]["percent"],
-                        "categories": final_readiness["categories"],
-                        "items": final_readiness.get("items", []),
-                        "checklist_summary": final_readiness.get("checklist_summary", {}),
-                        "version": final_readiness.get("version"),
-                        "updated_at": _iso_now(),
-                    },
-                    "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness) else "gathering_info",
-                    "strategy_objective": session.get("strategy_objective") or "balanced",
-                    "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-                    "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-                    "organization_id": session.get("organization_id"),
-                    "visibility": session.get("visibility") or "private",
-                    "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-                }
-                if scoring_failure:
-                    done_payload.update({
-                        "success": False,
-                        "failure_state": True,
-                        "code": scoring_failure.get("code"),
-                        "retryable": True,
-                        "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
-                        "message_saved": True,
-                    })
-                _remember_conversation_payload(
-                    session, idempotency_key, request_fingerprint, done_payload,
-                )
-                sessions[thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist idempotency state"})
-                    return
-                yield _sse_payload(done_payload)
-            except Exception as generation_error:
-                if not credits_settled:
-                    _release_reserved_credits(user, reserved_credits)
-                if isinstance(generation_error, ConversationProviderUnavailable):
-                    persisted = _persist_failed_conversation_turn(
-                        session=session,
-                        sessions=sessions,
-                        thread_id=thread_id,
-                        user_id=user_id,
-                        chat_history=chat_history,
-                        readiness=readiness,
-                        user_message=user_message,
-                        error=generation_error,
-                        attachments=attachments,
-                        model_type=model_selection["model_type"],
-                    )
-                    if not persisted:
-                        yield _sse_payload({"type": "error", "error": "Failed to save your message", "retryable": True})
-                        return
-                    current_app.logger.warning("conversation_continue providers unavailable; user message preserved")
-                    yield _sse_payload(_analysis_unavailable_stream_payload(user, thread_id))
-                    return
-                if not credits_settled:
-                    _record_failed_chat_usage(session, generation_error, attachments=attachments)
-                current_app.logger.exception("conversation_continue stream failed")
-                yield _sse_payload({"type": "error", "error": "Streaming failed"})
-                return
-
-        return Response(
-            event_stream(),
-            mimetype="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
-        )
-
-    try:
-        assistant_reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
-            user_message,
-            chat_history,
-            readiness,
-            model_selection,
-            context_budget=context_budget,
-            session=session,
-            user=user,
-            user_id=user_id,
-            thread_id=thread_id,
-            intake_context=session.get("intake_context"),
-            view_context=session.get("view_context"),
-            attachments=attachments,
-        )
-    except Exception as generation_error:
-        _release_reserved_credits(user, reserved_credits)
-        if isinstance(generation_error, ConversationProviderUnavailable):
-            persisted = _persist_failed_conversation_turn(
-                session=session, sessions=sessions, thread_id=thread_id, user_id=user_id,
-                chat_history=chat_history, readiness=readiness, user_message=user_message,
-                error=generation_error, attachments=attachments,
-                model_type=model_selection["model_type"],
-            )
-            if persisted:
-                return jsonify(_analysis_unavailable_stream_payload(user, thread_id)), 503
-            return jsonify({"error": "Failed to save your message", "retryable": True}), 500
-        _record_failed_chat_usage(session, generation_error, attachments=attachments)
-        raise
-
-    assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
-        assistant_reply, usage, actions,
-    )
-    assistant_reply, _decision_failure = _apply_option_decision_failure_state(
-        assistant_reply, actions,
-    )
-    usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
-    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-    credit_settlement = _settle_reserved_credits(
-        user,
-        reserved_credits=reserved_credits,
-        actual_credits=credits_charged,
-    )
-    if not credit_settlement["ok"]:
-        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
-    remaining = credit_settlement["remaining"]
-    credits_charged = credit_settlement["charged"]
-    _persist_credit_deduction(user_id, remaining)
-    undo_available = _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict)
-    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
-    _apply_rubric_action_to_session(session, actions)
-    chat_history.append(_assistant_chat_entry(
-        assistant_reply,
-        mutations=mutations,
-        undo={"available": True} if undo_available else None,
     ))
-    assistant_message_index = len(chat_history) - 1
-    if artifact_messages:
-        chat_history.extend(artifact_messages)
+    if refusal is not None:
+        return jsonify(refusal), 402
 
-    session["chat_history"] = chat_history
-    if undo_available:
-        session[PENDING_MUTATION_UNDO_KEY] = {
-            "message_index": assistant_message_index,
-            "snapshot": undo_snapshot,
-        }
-    else:
-        session.pop(PENDING_MUTATION_UNDO_KEY, None)
-    session["model_type"] = model_selection["model_type"]
-    session["timestamp"] = _iso_now()
-    final_readiness_non_stream = _clamp_readiness_with_delta(
-        previous_readiness,
-        _compute_readiness(chat_history, session.get("strategy_objective")),
-    )
-    session["status"] = "ready_to_analyze" if _is_ready_to_analyze(final_readiness_non_stream) else "in_progress"
-    session["readiness"] = final_readiness_non_stream
-    _record_usage(
-        session,
-        usage,
-        credits_charged,
-        actions=actions,
+    turn_request = _TurnRequest(
+        route="conversation_continue",
+        user_message=user_message,
         attachments=attachments,
+        chat_history=chat_history,
+        previous_readiness=previous_readiness,
+        readiness=readiness,
+        context_budget=context_budget,
+        model_selection=model_selection,
         idempotency_key=idempotency_key,
         request_fingerprint=request_fingerprint,
-        success=not bool(scoring_failure),
-        error_code=scoring_failure.get("code") if scoring_failure else None,
-        operation_type="score_next" if scoring_failure else None,
+        session_created=session_created,
+        name=None,
     )
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist conversation state"}), 500
-
-    if session_created:
-        _audit_ai_agent_event(
-            "session.created",
-            user=user,
-            details={
-                "thread_id": thread_id,
-                "name": session.get("name") or "Jaspen Intake",
-                "model_type": model_selection["model_type"],
-                "stream": False,
-                "source": "conversation_continue",
-            },
-        )
-
-    _cont_base_actions = actions if isinstance(actions, list) else []
-
-    response_payload = {
-        "thread_id": thread_id,
-        "session_id": thread_id,
-        "reply": assistant_reply,
-        "message": assistant_reply,
-        "assistant_message_index": assistant_message_index,
-        "model_type": model_selection["model_type"],
-        "allowed_model_types": model_selection["allowed_model_types"],
-        "actions": _cont_base_actions,
-        "mutations": mutations if isinstance(mutations, list) else [],
-        "tool_results": mutations if isinstance(mutations, list) else [],
-        "artifact_messages": artifact_messages,
-        "undo_available": undo_available,
-        "usage": _public_usage_payload(
-            usage,
-            model_type=model_selection["model_type"],
-            credits_charged=credits_charged,
-            credits_remaining=remaining,
-            user=user,
-        ),
-        "context_budget": context_budget,
-        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-        "readiness": {
-            "percent": final_readiness_non_stream["overall"]["percent"],
-            "categories": final_readiness_non_stream["categories"],
-            "items": final_readiness_non_stream.get("items", []),
-            "checklist_summary": final_readiness_non_stream.get("checklist_summary", {}),
-            "version": final_readiness_non_stream.get("version"),
-            "updated_at": _iso_now(),
-        },
-        "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness_non_stream) else "gathering_info",
-        "strategy_objective": session.get("strategy_objective") or "balanced",
-        "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-        "organization_id": session.get("organization_id"),
-        "visibility": session.get("visibility") or "private",
-        "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-    }
-    if scoring_failure:
-        response_payload.update({
-            "success": False,
-            "failure_state": True,
-            "code": scoring_failure.get("code"),
-            "retryable": True,
-            "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
-            "message_saved": True,
-        })
-    _remember_conversation_payload(
-        session, idempotency_key, request_fingerprint, response_payload,
-    )
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist idempotency state"}), 500
-    return jsonify(response_payload), 200
+    if stream_requested:
+        return _stream_conversation_turn(turn, turn_request)
+    return _run_conversation_turn(turn, turn_request)
 
 
 @ai_agent_bp.route("/uploads", methods=["POST"])
@@ -17543,277 +17264,86 @@ def conversation_regenerate():
         user_message,
         chat_history=regen_history,
     )
-    credit_reservation = _reserve_preflight_credits(
-        user,
-        model_selection["model_type"],
-        token_hint=preflight_token_hint,
+    turn = _conversation_turn(
+        user=user, user_id=user_id, thread_id=thread_id, session=session,
+        sessions=sessions, model_type=model_selection["model_type"],
+        session_key=session_key or thread_id,
     )
-    if not credit_reservation["ok"]:
-        return jsonify(credit_reservation["payload"]), 402
-    reserved_credits = int(credit_reservation["reserved"] or 0)
+    refusal = turn.reserve(token_hint=preflight_token_hint)
+    if refusal is not None:
+        return jsonify(refusal), 402
+
+    def finish(assistant_reply, usage, *, streaming):
+        return _finish_regenerated_turn(
+            turn,
+            reply=assistant_reply,
+            usage=usage,
+            chat_history=chat_history,
+            last_msg=last_msg,
+            old_response=old_response,
+            previous_readiness=previous_readiness,
+            context_budget=context_budget,
+            model_selection=model_selection,
+            idempotency_key=idempotency_key,
+            request_fingerprint=request_fingerprint,
+            streaming=streaming,
+        )
+
+    generation = dict(
+        context_budget=context_budget,
+        session=session,
+        user=user,
+        user_id=user_id,
+        thread_id=thread_id,
+        intake_context=session.get("intake_context"),
+        view_context=session.get("view_context"),
+        disable_mutations=True,
+    )
+
     if stream_requested:
         @stream_with_context
         def event_stream():
             state = {}
-            credits_settled = False
             try:
                 yield _sse_payload({"type": "tool_status", "status": "Generating an improved response..."})
                 for payload in _stream_assistant_reply_events(
-                    user_message,
-                    regen_history,
-                    readiness,
-                    model_selection,
-                    context_budget=context_budget,
-                    session=session,
-                    user=user,
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    intake_context=session.get("intake_context"),
-                    view_context=session.get("view_context"),
-                    state=state,
-                    disable_mutations=True,
+                    user_message, regen_history, readiness, model_selection,
+                    state=state, **generation,
                 ):
                     yield _sse_payload(payload)
 
                 yield _sse_payload({"type": "tool_status", "status": "Finalizing response..."})
-                assistant_reply = str(state.get("reply") or "").strip()
-                usage = state.get("usage") if isinstance(state.get("usage"), dict) else {
-                    "provider": "heuristic",
-                    "model": None,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "total_tokens": 0,
-                }
-
-                credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-                credit_settlement = _settle_reserved_credits(
-                    user,
-                    reserved_credits=reserved_credits,
-                    actual_credits=credits_charged,
+                done_payload, error = finish(
+                    str(state.get("reply") or "").strip(),
+                    state.get("usage") if isinstance(state.get("usage"), dict) else dict(_NO_USAGE),
+                    streaming=True,
                 )
-                credits_settled = True
-                if not credit_settlement["ok"]:
-                    yield _sse_payload({
-                        "type": "error",
-                        **(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)),
-                    })
-                    return
-                remaining = credit_settlement["remaining"]
-                credits_charged = credit_settlement["charged"]
-                _persist_credit_deduction(user_id, remaining)
-
-                alternatives = [old_response, *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else [])]
-                new_msg = _assistant_chat_entry(
-                    assistant_reply,
-                    regenerated=True,
-                    alternatives=alternatives,
-                )
-                chat_history[-1] = new_msg
-                assistant_message_index = len(chat_history) - 1
-                final_readiness = _clamp_readiness_with_delta(
-                    previous_readiness,
-                    _compute_readiness(chat_history, session.get("strategy_objective")),
-                )
-
-                session["chat_history"] = chat_history
-                session["timestamp"] = _iso_now()
-                session["readiness"] = final_readiness
-                _record_usage(
-                    session,
-                    usage,
-                    credits_charged,
-                    regenerated=True,
-                    idempotency_key=idempotency_key,
-                    request_fingerprint=request_fingerprint,
-                )
-                sessions[session_key or thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist regenerated response"})
-                    return
-
-                _audit_ai_agent_event(
-                    "message.regenerated",
-                    user=user,
-                    details={
-                        "thread_id": str(session.get("session_id") or session_key or thread_id),
-                        "message_index": assistant_message_index,
-                        "alternatives_count": len(new_msg.get("alternatives") or []),
-                    },
-                )
-
-                done_payload = {
-                    "type": "done",
-                    "thread_id": thread_id,
-                    "session_id": thread_id,
-                    "reply": assistant_reply,
-                    "message": assistant_reply,
-                    "assistant_message_index": assistant_message_index,
-                    "regenerated": True,
-                    "alternatives_count": len(new_msg.get("alternatives") or []),
-                    "model_type": model_selection["model_type"],
-                    "allowed_model_types": model_selection["allowed_model_types"],
-                    "mutations": [],
-                    "tool_results": [],
-                    "usage": _public_usage_payload(
-                        usage,
-                        model_type=model_selection["model_type"],
-                        credits_charged=credits_charged,
-                        credits_remaining=remaining,
-                        user=user,
-                    ),
-                    "context_budget": context_budget,
-                    "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-                    "readiness": {
-                        "percent": final_readiness["overall"]["percent"],
-                        "categories": final_readiness["categories"],
-                        "items": final_readiness.get("items", []),
-                        "checklist_summary": final_readiness.get("checklist_summary", {}),
-                        "version": final_readiness.get("version"),
-                        "updated_at": _iso_now(),
-                    },
-                    "strategy_objective": session.get("strategy_objective") or "balanced",
-                    "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-                    "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-                    "organization_id": session.get("organization_id"),
-                    "visibility": session.get("visibility") or "private",
-                }
-                _remember_conversation_payload(
-                    session, idempotency_key, request_fingerprint, done_payload,
-                )
-                sessions[session_key or thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist idempotency state"})
+                if error is not None:
+                    yield _sse_payload({"type": "error", **error[0]})
                     return
                 yield _sse_payload(done_payload)
             except Exception as generation_error:
-                if not credits_settled:
-                    _release_reserved_credits(user, reserved_credits)
+                if not turn.settled:
+                    turn.release_unsettled()
                     _record_failed_chat_usage(session, generation_error, regenerated=True)
                 current_app.logger.exception("conversation_regenerate stream failed")
                 yield _sse_payload({"type": "error", "error": "Streaming failed"})
                 return
 
-        return Response(
-            event_stream(),
-            mimetype="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
-        )
+        return Response(event_stream(), mimetype="text/event-stream", headers=dict(_SSE_HEADERS))
 
     try:
         assistant_reply, usage, _actions, _mutations, _undo_snapshot = _generate_assistant_reply(
-            user_message,
-            regen_history,
-            readiness,
-            model_selection,
-            context_budget=context_budget,
-            session=session,
-            user=user,
-            user_id=user_id,
-            thread_id=thread_id,
-            intake_context=session.get("intake_context"),
-            view_context=session.get("view_context"),
-            disable_mutations=True,
+            user_message, regen_history, readiness, model_selection, **generation,
         )
     except Exception as generation_error:
-        _release_reserved_credits(user, reserved_credits)
+        turn.release_unsettled()
         _record_failed_chat_usage(session, generation_error, regenerated=True)
         raise
 
-    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-    credit_settlement = _settle_reserved_credits(
-        user,
-        reserved_credits=reserved_credits,
-        actual_credits=credits_charged,
-    )
-    if not credit_settlement["ok"]:
-        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
-    remaining = credit_settlement["remaining"]
-    credits_charged = credit_settlement["charged"]
-    _persist_credit_deduction(user_id, remaining)
-
-    alternatives = [old_response, *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else [])]
-    new_msg = _assistant_chat_entry(
-        assistant_reply,
-        regenerated=True,
-        alternatives=alternatives,
-    )
-    chat_history[-1] = new_msg
-    assistant_message_index = len(chat_history) - 1
-
-    session["chat_history"] = chat_history
-    session["timestamp"] = _iso_now()
-    _record_usage(
-        session,
-        usage,
-        credits_charged,
-        regenerated=True,
-        idempotency_key=idempotency_key,
-        request_fingerprint=request_fingerprint,
-    )
-    final_readiness = _clamp_readiness_with_delta(
-        previous_readiness,
-        _compute_readiness(chat_history, session.get("strategy_objective")),
-    )
-    session["readiness"] = final_readiness
-    sessions[session_key or thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist regenerated response"}), 500
-
-    _audit_ai_agent_event(
-        "message.regenerated",
-        user=user,
-        details={
-            "thread_id": str(session.get("session_id") or session_key or thread_id),
-            "message_index": assistant_message_index,
-            "alternatives_count": len(new_msg.get("alternatives") or []),
-        },
-    )
-
-    response_payload = {
-        "thread_id": thread_id,
-        "session_id": thread_id,
-        "reply": assistant_reply,
-        "message": assistant_reply,
-        "assistant_message_index": assistant_message_index,
-        "regenerated": True,
-        "alternatives_count": len(new_msg.get("alternatives") or []),
-        "model_type": model_selection["model_type"],
-        "allowed_model_types": model_selection["allowed_model_types"],
-        "mutations": [],
-        "tool_results": [],
-        "usage": _public_usage_payload(
-            usage,
-            model_type=model_selection["model_type"],
-            credits_charged=credits_charged,
-            credits_remaining=remaining,
-            user=user,
-        ),
-        "context_budget": context_budget,
-        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-        "readiness": {
-            "percent": final_readiness["overall"]["percent"],
-            "categories": final_readiness["categories"],
-            "items": final_readiness.get("items", []),
-            "checklist_summary": final_readiness.get("checklist_summary", {}),
-            "version": final_readiness.get("version"),
-            "updated_at": _iso_now(),
-        },
-        "strategy_objective": session.get("strategy_objective") or "balanced",
-        "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-        "organization_id": session.get("organization_id"),
-        "visibility": session.get("visibility") or "private",
-    }
-    _remember_conversation_payload(
-        session, idempotency_key, request_fingerprint, response_payload,
-    )
-    sessions[session_key or thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist idempotency state"}), 500
+    response_payload, error = finish(assistant_reply, usage, streaming=False)
+    if error is not None:
+        return jsonify(error[0]), error[1]
     return jsonify(response_payload), 200
 
 

@@ -383,6 +383,28 @@ def resolve_session_for_actor(user, session_id, *, require_write=False,
     return row, membership
 
 
+def require_can_create_session(user, organization_id):
+    """Authorize creating a NEW project in an organization, before any work.
+
+    An existing project is authorized against its row (see
+    resolve_session_for_actor). A project that does not exist yet has no row
+    to check, so the same rule is applied to the membership directly: writing
+    organization work needs an editing role, and a viewer never writes.
+
+    Callers run this before reserving credits or calling a model, so a member
+    who cannot keep the result is refused at no cost instead of being charged
+    for a reply that the save then rejects.
+    """
+    if user is None or not organization_id:
+        return
+    membership = active_membership_for_user(organization_id, str(user.id))
+    if membership is None:
+        # Not a member: the save path decides, exactly as it did before.
+        return
+    if not can_edit_projects(normalize_org_role(membership.role)):
+        raise SessionForbidden('Your role on this project is read-only.')
+
+
 # --- Optimistic concurrency --------------------------------------------------
 
 def revision_required_for(row):
