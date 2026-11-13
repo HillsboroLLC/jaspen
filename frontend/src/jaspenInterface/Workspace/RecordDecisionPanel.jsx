@@ -267,14 +267,8 @@ export default function RecordDecisionPanel({ threadId, alternatives = [], selec
   const outcomes = Array.isArray(record.outcomes) ? record.outcomes : [];
   const lessons = Array.isArray(record.lessons_learned) ? record.lessons_learned : [];
   const hasOutcome = outcomes.length > 0;
-  const buildDecision = record.option_decision?.plan_decision === true;
   const decisionOverride = Boolean(record.option_decision?.override_info);
-  const recordedOptionName = record.option_decision?.option_name || selectedAlternative || 'this option';
-  const recordedLine = buildDecision
-    ? (decisionOverride
-      ? `Decision recorded: pursuing ${recordedOptionName} despite Jaspen's No-Bid`
-      : `Decision recorded: moving forward with ${recordedOptionName}`)
-    : `Decision recorded: ${record.final_decision}`;
+  const recordedLine = `Decision recorded: ${record.option_decision?.display_text || record.final_decision}`;
 
   // A Decision Record may exist as soon as scoring does. That is not a human
   // decision signal, so every surface stays silent until a decision exists.

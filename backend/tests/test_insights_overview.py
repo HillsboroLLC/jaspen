@@ -72,6 +72,60 @@ def test_cohort_and_time_to_plan_use_option_dates(client, db, app):
     assert _get(client, app, owner, "scope=mine&days=1")["activity"]["total_scored"]["value"] == 0
 
 
+def test_plan_rows_use_option_decision_names_not_a_migrated_parent_title(client, db, app):
+    owner = _user(db, "migrated-plans@example.com", "Owner"); org = _organization(db, owner)
+    options = [
+        ("adams-county-road-resurfacing", "adams-card"),
+        ("boulder-stormwater-upgrade", "boulder-card"),
+        ("denver-bike-lane-package", "denver-card"),
+    ]
+    record = _record(db, org, owner, "migrated-plans", [
+        _card(key, card_id=card_id) for key, card_id in options
+    ])
+    record.title = "Denver Bike Lane Package"
+    plans = {}
+    for key, card_id in options:
+        _decision(db, record, key, "pursue")
+        plans[card_id] = {
+            "created_at": "2026-10-02T12:00:00",
+            "tasks": [],
+            "decision_basis": {"scorecard_id": card_id},
+        }
+    _session(db, owner, org, "migrated-plans", plans)
+    db.session.commit()
+
+    rows = _get(client, app, owner)["activity"]["plans"]
+
+    assert {row["decision_name"] for row in rows} == {
+        "Adams County Road Resurfacing",
+        "Boulder Stormwater Upgrade",
+        "Denver Bike Lane Package",
+    }
+    assert {row["decision_title"] for row in rows} == {"Denver Bike Lane Package"}
+
+
+def test_single_plan_name_falls_back_to_its_associated_scorecard(client, db, app):
+    owner = _user(db, "single-plan@example.com", "Owner"); org = _organization(db, owner)
+    record = _record(db, org, owner, "single-plan", [
+        _card("launch-alpha", card_id="launch-card"),
+    ])
+    decision = _decision(db, record, "launch-alpha", "pursue")
+    decision.option_name = None
+    _session(db, owner, org, "single-plan", {
+        "launch-card": {
+            "created_at": "2026-10-02T12:00:00",
+            "tasks": [],
+            "decision_basis": {"scorecard_id": "launch-card"},
+        },
+    })
+    db.session.commit()
+
+    row = _get(client, app, owner)["activity"]["plans"][0]
+
+    assert row["decision_name"] == "Launch Alpha"
+    assert row["option_key"] == "launch-alpha"
+
+
 def test_attention_requires_stored_conditions_and_ignores_generated_dates(client, db, app):
     owner = _user(db, "attention@example.com", "Owner"); org = _organization(db, owner); due = (datetime.utcnow().date() + timedelta(days=7)).isoformat(); gates = [{"key": "security", "label": "Security", "status": "failed"}]
     rfp = _record(db, org, owner, "rfp", [_card("bid", card_id="bid-card", first=datetime.utcnow().isoformat(), gates=gates, attributes={"submission_due": {"value": due}})], kit="rfp_bid"); _decision(db, rfp, "bid", "pursue")

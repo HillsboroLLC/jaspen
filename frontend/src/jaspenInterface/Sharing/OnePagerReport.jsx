@@ -42,7 +42,7 @@ function Featured({ model, text, compact }) {
     <section className="op-section op-featured" aria-labelledby="op-featured">
       <div className="op-featured__top">
         <div className="op-kicker">{model.cardCount > 1 ? 'The strongest case' : 'The case'}</div>
-        <span className="op-verdict-pill">{f.verdict}{f.score !== null ? ` · ${f.score}/100` : ''}</span>
+        <span className="op-verdict-pill">{f.isRecommendation ? 'Jaspen recommendation · ' : ''}{f.verdict}{f.score !== null ? ` · ${f.score}/100` : ''}</span>
       </div>
       <h2 id="op-featured" className="op-h2 op-h2--quote">“{text.featured_question}”</h2>
 
@@ -121,6 +121,17 @@ function Strength({ model }) {
           <p className="op-body op-raise"><strong>To raise confidence, provide:</strong> {s.raiseConfidence.join(', ')}.</p>
         )}
       </div>
+    </section>
+  );
+}
+
+function RecordedDecision({ decision }) {
+  if (!decision?.display_text) return null;
+  return (
+    <section className="op-section" aria-labelledby="op-recorded-decision">
+      <h2 id="op-recorded-decision" className="op-h2">Decision recorded</h2>
+      <div className="op-rule" />
+      <p className="op-lead">{decision.display_text}</p>
     </section>
   );
 }
@@ -629,6 +640,8 @@ export default function OnePagerReport({
             </div>
           )}
         </section>
+
+        <RecordedDecision decision={model.recordedDecision} />
 
         {visibleOrder.filter((key) => key !== leadSection).map((key) => (
           <React.Fragment key={key}>{sections[key]}</React.Fragment>

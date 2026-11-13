@@ -169,6 +169,26 @@ it('passes saved data-source context into the Workspace report', async () => {
   expect(reportProps.snapshot.context.data_sources).toEqual(['jira']);
 });
 
+it('passes the canonical recorded decision into the Workspace report', async () => {
+  Jaspen.getScorecardForWorkspace.mockResolvedValue({
+    scorecard,
+    display_overrides: {},
+    recorded_decision: {
+      option_name: 'Launch Alpha',
+      display_text: 'moving forward with Launch Alpha',
+      disposition: 'pursue',
+    },
+  });
+  render(<JaspenWorkspace />);
+
+  await waitFor(() => expect(mockOnePagerReport).toHaveBeenCalled());
+  const reportProps = mockOnePagerReport.mock.calls.find(([props]) => props.artifactType === 'scorecard')?.[0];
+  expect(reportProps.snapshot.recorded_decision).toMatchObject({
+    option_name: 'Launch Alpha',
+    display_text: 'moving forward with Launch Alpha',
+  });
+});
+
 it('shows the failure band on the trade-off view as well as on a scorecard', () => {
   const source = require('fs').readFileSync(require('path').join(__dirname, 'JaspenWorkspace.jsx'), 'utf8');
   expect(source).toContain('{(isScorecard || isTradeoff) && failedPlanRequest && (');

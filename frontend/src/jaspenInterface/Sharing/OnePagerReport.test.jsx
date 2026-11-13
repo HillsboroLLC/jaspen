@@ -26,6 +26,27 @@ const renderEditor = (onSavePresentation, reportSnapshot = snapshot) => render(
   />,
 );
 
+test('labels the recommendation and recorded human decision as separate information', () => {
+  render(
+    <OnePagerReport
+      artifactType="scorecard"
+      snapshot={{
+        scorecard: {
+          ...snapshot.scorecard,
+          recommendation: { label: 'Bid with conditions' },
+        },
+        recorded_decision: { display_text: 'moving forward with Adams County' },
+      }}
+      title="Adams County"
+      showActions={false}
+    />,
+  );
+
+  expect(screen.getByText(/Jaspen recommendation · Bid with conditions/)).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Decision recorded' })).toBeInTheDocument();
+  expect(screen.getByText('moving forward with Adams County')).toBeInTheDocument();
+});
+
 test('a color too light for white text is flagged before saving, with the nearest readable shade', async () => {
   const onSave = jest.fn().mockResolvedValue(undefined);
   renderEditor(onSave);

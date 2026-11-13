@@ -304,14 +304,20 @@ def build_insights_v3(user, scope_context, filters=None):
             score = (basis or {}).get("jaspen_score") if basis else card.get("jaspen_score")
             evidence = (basis or {}).get("evidence_backed_pct") if basis else _evidence_pct(card)
             kind_key = str(record.decision_type or (record.record or {}).get("decision_kit") or "general")
+            option_name = state.get("option_name") or card.get("name") or "Option"
+            decision_name = (
+                str(current_decision.option_name or "").strip()
+                if current_decision is not None else ""
+            ) or option_name
             item = {
                 "id": f"{record.id}:{state['option_key']}", "record_id": str(record.id), "thread_id": str(record.thread_id),
                 "decision_title": record.title,
+                "decision_name": decision_name,
                 "decision_kind_key": kind_key,
                 # The kit's own display name, never its internal key.
                 "decision_kind": (get_decision_kit(kind_key) or {}).get("label") or ("General decision" if kind_key in {"", "general"} else kind_key.replace("_", " ").capitalize()),
                 "owner": {"id": str(record.user_id or "") or None, "name": names.get(str(record.user_id), "Former member")},
-                "option_key": state["option_key"], "option_name": state.get("option_name") or card.get("name") or "Option",
+                "option_key": state["option_key"], "option_name": option_name,
                 "state": state["state"], "state_source": state["state_source"], "state_since": state["state_since"], "still_evaluating": state["still_evaluating"],
                 "first_scored_at": state["first_scored_at"], "first_plan_at": state["first_plan_at"], "score": score, "score_band": (basis or {}).get("score_category") or card.get("score_category"),
                 "evidence_backed_pct": evidence, "basis_source": "plan_snapshot" if basis else "current",
