@@ -514,3 +514,191 @@ class FinancialCaseEventLedgerEntry(db.Model):
             "credit_ledger_entry_id",
         ),
     )
+
+
+class DomainEvent(db.Model):
+    """Append-only account-scoped business event for later consumers."""
+
+    __tablename__ = "domain_events"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    billing_account_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "billing_accounts.id",
+            name="fk_domain_events_billing_account_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    event_key = db.Column(db.String(255), nullable=False)
+    event_type = db.Column(db.String(120), nullable=False)
+    aggregate_type = db.Column(db.String(80), nullable=False)
+    aggregate_id = db.Column(db.String(255), nullable=False)
+    occurred_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    reference_ids_json = db.Column(
+        db.JSON, nullable=False, default=list, server_default=db.text("'[]'"),
+    )
+    request_fingerprint = db.Column(db.String(64), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "length(trim(event_key)) > 0 AND length(trim(event_type)) > 0 "
+            "AND length(trim(aggregate_type)) > 0 AND length(trim(aggregate_id)) > 0",
+            name="ck_domain_events_identity",
+        ),
+        db.CheckConstraint(
+            "length(request_fingerprint) = 64 "
+            "AND request_fingerprint = lower(request_fingerprint)",
+            name="ck_domain_events_fingerprint",
+        ),
+        db.UniqueConstraint("event_key", name="uq_domain_events_event_key"),
+        db.UniqueConstraint(
+            "id", "billing_account_id",
+            name="uq_domain_events_id_account",
+        ),
+        db.Index(
+            "ix_domain_events_account_created",
+            "billing_account_id", "created_at",
+        ),
+    )
+
+
+class CommunicationOutbox(db.Model):
+    """Account-scoped, deduplicated delivery obligation; no transport payload."""
+
+    __tablename__ = "communication_outbox"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    domain_event_id = db.Column(db.String(36), nullable=False)
+    billing_account_id = db.Column(db.String(36), nullable=False)
+    template_key = db.Column(db.String(120), nullable=False)
+    template_version = db.Column(db.String(64), nullable=False)
+    channel = db.Column(db.String(40), nullable=False)
+    locale = db.Column(db.String(35), nullable=False)
+    dedupe_key = db.Column(db.String(512), nullable=False)
+    state = db.Column(db.String(16), nullable=False, server_default="pending")
+    attempt_count = db.Column(db.Integer, nullable=False, server_default="0")
+    next_attempt_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    lease_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    delivered_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+
+    __table_args__ = (
+        db.ForeignKeyConstraint(
+            ["domain_event_id", "billing_account_id"],
+            ["domain_events.id", "domain_events.billing_account_id"],
+            name="fk_communication_outbox_event_account",
+            ondelete="RESTRICT",
+        ),
+        db.CheckConstraint(
+            "length(trim(template_key)) > 0 AND length(trim(template_version)) > 0 "
+            "AND length(trim(channel)) > 0 AND length(trim(locale)) > 0 "
+            "AND length(trim(dedupe_key)) > 0 "
+            "AND template_version NOT LIKE '%:%' AND channel NOT LIKE '%:%'",
+            name="ck_communication_outbox_identity",
+        ),
+        db.CheckConstraint(
+            "dedupe_key = 'message:' || domain_event_id || ':' || template_version "
+            "|| ':' || billing_account_id || ':' || channel",
+            name="ck_communication_outbox_dedupe_key",
+        ),
+        db.CheckConstraint(
+            "state IN ('pending', 'processing', 'retryable', 'delivered')",
+            name="ck_communication_outbox_state",
+        ),
+        db.CheckConstraint(
+            "attempt_count >= 0",
+            name="ck_communication_outbox_attempt_count",
+        ),
+        db.CheckConstraint(
+            "(state = 'processing' AND lease_expires_at IS NOT NULL) OR "
+            "(state <> 'processing' AND lease_expires_at IS NULL)",
+            name="ck_communication_outbox_lease",
+        ),
+        db.CheckConstraint(
+            "(state = 'retryable') OR next_attempt_at IS NULL",
+            name="ck_communication_outbox_next_attempt",
+        ),
+        db.CheckConstraint(
+            "(state = 'delivered' AND delivered_at IS NOT NULL) OR "
+            "(state <> 'delivered' AND delivered_at IS NULL)",
+            name="ck_communication_outbox_delivered",
+        ),
+        db.UniqueConstraint("dedupe_key", name="uq_communication_outbox_dedupe_key"),
+        db.UniqueConstraint(
+            "domain_event_id", "template_version", "billing_account_id", "channel",
+            name="uq_communication_outbox_event_template_recipient_channel",
+        ),
+        db.Index(
+            "ix_communication_outbox_state_next_attempt",
+            "state", "next_attempt_at", "created_at",
+        ),
+        db.Index("ix_communication_outbox_domain_event_id", "domain_event_id"),
+    )
+
+
+class CommunicationOutboxAttempt(db.Model):
+    """Auditable delivery attempt with one terminal result at most."""
+
+    __tablename__ = "communication_outbox_attempts"
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    outbox_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "communication_outbox.id",
+            name="fk_communication_outbox_attempts_outbox_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
+    attempt_number = db.Column(db.Integer, nullable=False)
+    started_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    lease_expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    completed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    outcome = db.Column(db.String(24), nullable=False, server_default="started")
+    provider_message_id = db.Column(db.String(255), nullable=True)
+    error_code = db.Column(db.String(120), nullable=True)
+    next_attempt_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    result_fingerprint = db.Column(db.String(64), nullable=True)
+
+    __table_args__ = (
+        db.CheckConstraint("attempt_number > 0", name="ck_communication_outbox_attempt_number"),
+        db.CheckConstraint(
+            "lease_expires_at > started_at",
+            name="ck_communication_outbox_attempt_lease",
+        ),
+        db.CheckConstraint(
+            "(outcome = 'started' AND completed_at IS NULL "
+            "AND provider_message_id IS NULL AND error_code IS NULL "
+            "AND next_attempt_at IS NULL AND result_fingerprint IS NULL) OR "
+            "(outcome = 'delivered' AND completed_at IS NOT NULL "
+            "AND error_code IS NULL AND next_attempt_at IS NULL "
+            "AND result_fingerprint IS NOT NULL AND length(result_fingerprint) = 64 "
+            "AND result_fingerprint = lower(result_fingerprint)) OR "
+            "(outcome = 'retryable_failure' AND completed_at IS NOT NULL "
+            "AND error_code IS NOT NULL AND length(trim(error_code)) > 0 "
+            "AND result_fingerprint IS NOT NULL AND length(result_fingerprint) = 64 "
+            "AND result_fingerprint = lower(result_fingerprint))",
+            name="ck_communication_outbox_attempt_result",
+        ),
+        db.CheckConstraint(
+            "completed_at IS NULL OR completed_at >= started_at",
+            name="ck_communication_outbox_attempt_completed_at",
+        ),
+        db.CheckConstraint(
+            "next_attempt_at IS NULL OR next_attempt_at >= completed_at",
+            name="ck_communication_outbox_attempt_next_at",
+        ),
+        db.UniqueConstraint(
+            "outbox_id", "attempt_number",
+            name="uq_communication_outbox_attempt_number",
+        ),
+        db.Index(
+            "ix_communication_outbox_attempts_outbox_started",
+            "outbox_id", "started_at",
+        ),
+    )

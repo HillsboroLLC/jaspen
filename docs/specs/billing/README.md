@@ -1,6 +1,6 @@
 # Billing Architecture Phase 1
 
-Status: **Phases 1–5.2 accepted and integrated but inactive; Phase 5.3 independently accepted and inactive, with integration into `develop` pending**
+Status: **Phases 1–5.2 accepted and integrated but inactive; Phases 5.3–5.4 independently accepted and inactive, with integration into `develop` pending**
 
 Base: `origin/main` at `88684284a33836106cad639d36e191271109c2c7`
 
@@ -67,12 +67,18 @@ immutable financial-transaction and source-attributed-line foundation was
 independently accepted and integrated into `develop`. Phase 5.3's inactive
 refund/dispute case foundation passed independent PostgreSQL 18.6 acceptance
 (129 passed, 0 failed, 0 skipped); integration into `develop` remains pending.
-It has no live runtime caller and is not connected to a webhook, browser
-confirmation, job, entitlement transition, credit movement, or billing
-activation. The
-phases 2–5 proposal continues to identify separately
-reviewable, reversible increments; no backfill, runtime activation, or cutover
-is bundled. The stop-class conflicts in
+Phase 5.4's inactive domain-event and transactional-outbox foundation also
+passed independent PostgreSQL 18.6 acceptance (Phase 5.1–5.4: 144 passed, 0
+failed, 0 skipped; billing foundations: 62 passed, 0 failed, 0 skipped). All
+five independent-review findings were remediated: concurrent downgrade
+protection, direct and cascading `TRUNCATE` protection, concurrency-test
+cleanup, the inactive-library importer guard, and database enforcement of the
+reference-only JSON and canonical deduplication-key contracts. Neither
+increment has a live runtime caller or is connected to a webhook, browser
+confirmation, delivery worker, provider integration, entitlement transition,
+credit movement, or billing activation. The phases 2–5 proposal continues to
+identify separately reviewable, reversible increments; no backfill, runtime
+activation, or cutover is bundled. The stop-class conflicts in
 [current-state-inventory.md](current-state-inventory.md#d20-newly-discovered-conflicts-and-stop-register)
 remain later implementation work. The accepted work through Phase 3 has not
 changed legacy billing behavior, customer data, deployment state, or PR #27.
@@ -157,6 +163,13 @@ realized margin were not accessed or verified.
   0 skipped), but integration into `develop` remains pending. Its inactive
   refund/dispute case recorder has no live runtime caller and remains
   disconnected from live sources and billing activation.
+- Phase 5.4 passed independent PostgreSQL 18.6 technical acceptance (Phase
+  5.1–5.4: 144 passed, 0 failed, 0 skipped; billing foundations: 62 passed, 0
+  failed, 0 skipped). Its immutable domain-event and transactional-outbox
+  foundation remains inactive and pending integration into `develop`; there is
+  no live caller, delivery worker, provider integration, or Phase 12 command
+  path. Phase 9 credit effects and the Phase 5.1/5.2 inbox activation gate
+  remain deferred under their approved contracts.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type

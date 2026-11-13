@@ -1,6 +1,6 @@
 # Phases 2–5 Additive-Foundation Implementation Proposal
 
-Status: **Phases 2.1–5.2 accepted and inactive; Phase 5.3 independently accepted and inactive, with integration into `develop` pending; Phase 5.4 remains planning only**
+Status: **Phases 2.1–5.2 accepted and inactive; Phases 5.3–5.4 independently accepted and inactive, with integration into `develop` pending**
 
 Founder architecture approval recorded: 2026-11-09
 
@@ -24,7 +24,7 @@ cutover.
 | Phase 5.1 | Independently verified, accepted, and integrated; not connected or activated | `b2d4f6a8c0e3`; accepted baseline `26734e84eaa1f40d4344692f9126f72a56fa133e` |
 | Phase 5.2 | Independently accepted and integrated into `develop`; inactive, not deployed or connected | `c3e5a7b9d1f4`; immutable financial transactions and source-attributed lines |
 | Phase 5.3 | Independently accepted on PostgreSQL 18.6 (129 passed, 0 failed, 0 skipped); integration into `develop` pending; inactive, not connected or activated | `d3e5a7b9c1f4`; cumulative refund/dispute cases and immutable case evidence |
-| Phase 5.4 | Not authorized for implementation | Domain events and transactional communication outbox |
+| Phase 5.4 | Independently accepted on PostgreSQL 18.6; integration into `develop` pending; inactive, not connected or activated | `e4b7c2d9a1f0`; immutable domain events, transactional communication outbox, and auditable delivery attempts |
 
 All accepted tables and links remain additive and inactive. Existing billing
 continues to be authoritative until a separately approved migration,
@@ -510,8 +510,10 @@ The approved increment boundary is Phase 5.3 for refund/dispute case
 foundations and Phase 5.4 for domain events and the transactional outbox.
 Phase 5.3 remains inactive and does not connect a live event source; its case
 recorder commits case state, immutable case version, and exact source-line
-attribution together. Phase 5.4 must add domain/outbox records atomically with
-the business transition before any delivery worker or event integration.
+attribution together. Phase 5.4 provides the separately callable domain-event
+and outbox transaction primitive required before any delivery worker or event
+integration; it has no live caller and does not itself commit, deliver, or
+contact a provider.
 
 ### Phase 5 transaction and ordering rules
 
@@ -736,6 +738,46 @@ cumulative partial-to-full changes, exact minor-unit boundaries,
 replay/concurrency, and proof that unrelated funding and source lines are
 untouched. No Phase 9 calculation or effect is activated by Phase 5.3.
 
+### Phase 5.4 implementation record — domain events and transactional outbox
+
+Status: **independently accepted on PostgreSQL 18.6; integration into `develop`
+pending; inactive.** The complete Phase 5.1–5.4 PostgreSQL suite passed with
+144 passed, 0 failed, and 0 skipped. The billing-foundation regression suite
+passed with 62 passed, 0 failed, and 0 skipped. The PostgreSQL migration chain,
+empty downgrade, and concurrency coverage under READ COMMITTED, REPEATABLE
+READ, and SERIALIZABLE also passed.
+
+Migration `e4b7c2d9a1f0` adds immutable, organization-account-scoped domain
+events, deduplicated communication obligations, and append-only delivery-attempt
+evidence. `app/billing_outbox.py` records the domain event and its outbox
+obligations within a caller-owned transaction, claims concurrently with
+PostgreSQL `FOR UPDATE SKIP LOCKED`, and records retry, delivery, and expired-
+lease outcomes without committing or contacting a provider. Stable event keys,
+request fingerprints, account-scoped foreign keys, and the canonical
+`message:<event>:<template-version>:<account>:<channel>` key provide replay,
+tenant-isolation, and duplicate-prevention boundaries. Reference JSON is
+restricted at the database boundary to an array of unique, nonempty identifier
+strings; it cannot become a financial, entitlement, or balance payload.
+
+All five findings from independent review were remediated before acceptance:
+the downgrade takes consistently ordered PostgreSQL exclusive locks before its
+empty-table checks; direct, cascading, and combined `TRUNCATE` operations are
+rejected for immutable Phase 5.4 evidence; concurrent-test sessions are closed
+or rolled back before schema teardown; the Phase 5.1 importer guard recognizes
+the new inactive library without allowing live callers; and the reference-only
+JSON and canonical deduplication-key formats are database-enforced. Regression
+coverage verifies atomic rollback, immutable evidence, idempotent replay,
+tenant isolation, retry and lease recovery, concurrent claims, migration
+upgrade/downgrade, and refusal to downgrade populated or concurrently populated
+evidence tables.
+
+Technical acceptance does not authorize integration, deployment, or
+activation. There is no route, webhook, delivery worker, provider adapter, or
+live runtime caller. Phase 5.1/5.2 inbox activation remains gated by
+T-INBOX-01..03. Phase 9 remains responsible for refund/dispute credit effects,
+and Phase 12 remains responsible for AI-operation integration; neither
+dependency is implemented or activated by Phase 5.4.
+
 ## Backward compatibility and protection of current customers
 
 1. All migrations are additive; existing columns, constraints, data, APIs, and
@@ -784,7 +826,7 @@ because no customer data is written.
 6. **Accepted and integrated, inactive:** Phase 5.1 minimal-data external event inbox.
 7. **Accepted and integrated, inactive:** Phase 5.2 immutable financial transactions and lines.
 8. **Independently accepted, pending integration into `develop`, and inactive:** Phase 5.3 refund/dispute cases (PostgreSQL 18.6: 129 passed, 0 failed, 0 skipped; no live runtime caller or billing activation).
-9. **Not authorized:** Phase 5.4 domain events and transactional outbox.
+9. **Independently accepted, pending integration into `develop`, and inactive:** Phase 5.4 immutable domain events and transactional outbox (PostgreSQL 18.6; Phase 5.1–5.4: 144 passed, 0 failed, 0 skipped; billing foundations: 62 passed, 0 failed, 0 skipped; no live caller, worker, provider integration, or billing activation).
 
 No authorization should cover more than one numbered increment by implication.
 Passing a schema migration does not authorize data creation or service wiring.

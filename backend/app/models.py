@@ -2849,6 +2849,9 @@ from .models_billing_phase4 import (  # noqa: E402,F401
     EntitlementInstance,
 )
 from .models_billing_phase5 import (  # noqa: E402,F401
+    CommunicationOutbox,
+    CommunicationOutboxAttempt,
+    DomainEvent,
     ExternalEventInbox,
     ExternalEventInboxConflict,
     FinancialCase,

@@ -329,8 +329,13 @@ def _insert_case_version_direct(
 
 def test_phase53_migration_is_linear_additive_and_model_consistent(sqlite_engine):
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == [REVISION]
+    heads = script.get_heads()
+    assert len(heads) == 1
     assert script.get_revision(REVISION).down_revision == PARENT
+    assert REVISION in {
+        revision.revision
+        for revision in script.iterate_revisions(heads[0], "base")
+    }
     assert set((
         "financial_cases", "financial_case_events", "financial_case_event_lines",
         "financial_case_event_ledger_entries", "financial_case_source_fences",

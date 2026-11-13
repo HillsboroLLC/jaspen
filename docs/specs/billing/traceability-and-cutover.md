@@ -222,8 +222,8 @@ Status: **Independently accepted on PostgreSQL 18.6; integration into `develop`
 pending; inactive.** Acceptance completed with 129 passed, 0 failed, and 0
 skipped. The recorder has no live runtime caller, and acceptance did not
 authorize deployment or billing activation. The authorized boundary remains
-case persistence and recording only. Phase 5.4 domain events/outbox and Phase 9
-credit effects remain out of scope.
+case persistence and recording only. At that acceptance boundary, Phase 5.4
+domain events/outbox and Phase 9 credit effects remained out of scope.
 
 | Requirement | Component/contract | Regression coverage |
 |---|---|---|
@@ -249,6 +249,37 @@ discounted mixed-line attribution, cumulative deltas, replay/concurrency, and
 isolation of unrelated funding. Phase 9 must link each resulting ledger effect
 to the immutable case version without rewriting its evidence, and establish
 DB-verifiable source/lot provenance atomically with that ledger-effect link.
+
+### Phase 5.4 implementation traceability
+
+Status: **Independently accepted on PostgreSQL 18.6; integration into `develop`
+pending; inactive.** The additive migration adds append-only
+account-scoped domain events, deduplicated outbox obligations, and auditable
+delivery attempts. No delivery worker, live route/webhook caller, or Phase 12
+integration is included. Recording and attempt-state changes remain
+caller-owned transactions; no function commits or contacts a provider.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| Record committed domain-event identity and minimal references atomically with account-scoped outbox obligations | Migration `e4b7c2d9a1f0`; references are stored once on `DomainEvent` and outbox rows link by event ID; `billing_outbox.record_domain_event()` | `test_event_and_outbox_are_atomic_immutable_idempotent_and_auditable`; `test_revision_extends_phase53_and_models_match_additive_schema`; SQLite and PostgreSQL variants of `test_phase52_to_phase54_migration_chain_and_empty_rollback` |
+| Stable event replay identity, conflict on changed facts, reference-only JSON, and canonical D13 delivery dedupe key | Unique `event_key`, request fingerprint over event and delivery facts, database-enforced unique nonempty string references, canonical `message:<event>:<template-version>:<account>:<channel>` key | `test_event_and_outbox_are_atomic_immutable_idempotent_and_auditable`; `test_database_enforces_reference_dedupe_and_account_contracts`; PostgreSQL direct-SQL variant; concurrent duplicate case in `test_postgres_outbox_skip_locked_claims_and_trigger_projection` |
+| Immutable event evidence, guarded outbox state projection, one terminal attempt result, retries, lease recovery, audit history, and safe downgrade | Migration row and `TRUNCATE` triggers; consistently ordered PostgreSQL exclusive downgrade locks; `CommunicationOutboxAttempt`; claim/result services | `test_event_and_outbox_are_atomic_immutable_idempotent_and_auditable`; `test_expired_claim_is_audited_and_cannot_complete_after_reclaim`; `test_postgres_truncate_cannot_remove_phase54_evidence`; `test_postgres_downgrade_waits_for_concurrent_insert_and_refuses` |
+| Concurrent delivery claims do not claim the same row | PostgreSQL `FOR UPDATE SKIP LOCKED`; no transport invocation | `test_postgres_outbox_skip_locked_claims_and_trigger_projection` |
+| Delivery failure cannot reverse a business transition; no delivery payload becomes financial or entitlement authority | Outbox stores references and template/channel metadata only; transaction ownership stays with the caller; no production caller or worker | `test_event_and_outbox_are_atomic_immutable_idempotent_and_auditable`; `test_outbox_service_has_no_live_runtime_callers` |
+
+Independent PostgreSQL 18.6 technical acceptance passed. The complete Phase
+5.1–5.4 suite completed with 144 passed, 0 failed, and 0 skipped; the billing-
+foundation regressions completed with 62 passed, 0 failed, and 0 skipped. The
+PostgreSQL migration chain and empty downgrade passed, including concurrent
+downgrade fencing, direct and cascading immutable-evidence protection,
+transaction rollback, idempotent replay, tenant isolation, retry/lease
+recovery, and concurrent claims. READ COMMITTED, REPEATABLE READ, and
+SERIALIZABLE variants passed. Technical acceptance did not authorize
+integration, deployment, a live caller, delivery worker, provider integration,
+or billing activation. The Phase 5.1/5.2 T-INBOX-01..03 hardening gate below is
+unchanged and remains a prerequisite to inbox activation; Phase 9 credit
+effects and Phase 12 AI-operation integration remain deferred under their
+approved contracts.
 
 ### Deferred Phase 5.1/5.2 activation gate — conflict evidence integrity
 

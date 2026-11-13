@@ -224,8 +224,13 @@ def _record(engine, header, lines):
 
 def test_revision_is_linear_additive_and_empty(sqlite_engine):
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["d3e5a7b9c1f4"]
+    heads = script.get_heads()
+    assert len(heads) == 1
     assert script.get_revision(REVISION).down_revision == PARENT
+    assert REVISION in {
+        revision.revision
+        for revision in script.iterate_revisions(heads[0], "base")
+    }
     inspector = sa.inspect(sqlite_engine)
     assert {"financial_transactions", "financial_lines"}.issubset(inspector.get_table_names())
     assert {column["name"] for column in inspector.get_columns("external_event_inbox")} == set(
