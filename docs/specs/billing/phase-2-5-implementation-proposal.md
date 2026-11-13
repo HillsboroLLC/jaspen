@@ -25,7 +25,8 @@ cutover.
 | Phase 5.2 | Independently accepted and integrated into `develop`; inactive, not deployed or connected | `c3e5a7b9d1f4`; immutable financial transactions and source-attributed lines |
 | Phase 5.3 | Independently accepted on PostgreSQL 18.6 (129 passed, 0 failed, 0 skipped); integration into `develop` pending; inactive, not connected or activated | `d3e5a7b9c1f4`; cumulative refund/dispute cases and immutable case evidence |
 | Phase 5.4 | Independently accepted on PostgreSQL 18.6; integration into `develop` pending; inactive, not connected or activated | `e4b7c2d9a1f0`; immutable domain events, transactional communication outbox, and auditable delivery attempts |
-| Phase 6 | Audit remediation and source-identity contract resolution implemented locally; independent re-review pending; inactive, not integrated, deployed, or activated | `f5c8d3e0b2a1`; immutable evidence binding free and paid subscription monthly periods to Phase 3 lots |
+| Phase 6 | Independently accepted; inactive, not integrated, deployed, or activated | `f5c8d3e0b2a1`; accepted checkpoint `ffe4ab0e09f4ca273748aabed6740017f7cc72f3`; immutable evidence binding free and paid subscription monthly periods to Phase 3 lots |
+| Phase 7 | Implemented locally and pending independent acceptance; inactive, not integrated, deployed, or activated | `a7d9e2f4b6c8`; immutable schedules, transition evidence, and paid-upgrade proration |
 
 All accepted tables and links remain additive and inactive. Existing billing
 continues to be authoritative until a separately approved migration,
@@ -787,9 +788,7 @@ dependency is implemented or activated by Phase 5.4.
 
 ### Phase 6 implementation record — free and subscription allocations
 
-Status: **audit remediation and final source-identity contract resolution
-implemented and locally verified on PostgreSQL 18.6; independent re-review
-pending; inactive.** The implementation adds one immutable
+Status: **independently accepted and inactive.** The implementation adds one immutable
 `recurring_credit_allocations` evidence row for each funded free,
 monthly-subscription, or annual monthly period. `app/billing_allocations.py`
 locks the organization billing account before dependent rows, derives calendar
@@ -826,12 +825,11 @@ changes under READ COMMITTED, REPEATABLE READ, and SERIALIZABLE passed. The
 approved Phase 5.2 distinction is preserved: external provider/catalog
 `source_type`/`source_id` evidence remains independent of the authoritative
 internal subscription and entitlement foreign keys, with provider flexibility
-and historical evidence compatibility. These results await the separately
-assigned independent re-review.
+and historical evidence compatibility. Independent acceptance is recorded at
+checkpoint `ffe4ab0e09f4ca273748aabed6740017f7cc72f3`.
 
 Phase 6 has no route, webhook, scheduler, worker, provider call, live runtime
-caller, legacy balance mutation, or billing activation. Phase 7 retains
-upgrade/downgrade/proration and schedule ownership. Phase 9 retains purchase,
+caller, legacy balance mutation, or billing activation. Phase 9 retains purchase,
 refund, and dispute credit effects. Phase 12 retains AI reservation and
 settlement integration. Phase 5.4 immutable evidence and outbox guarantees are
 unchanged.
@@ -885,7 +883,8 @@ because no customer data is written.
 7. **Accepted and integrated, inactive:** Phase 5.2 immutable financial transactions and lines.
 8. **Independently accepted, pending integration into `develop`, and inactive:** Phase 5.3 refund/dispute cases (PostgreSQL 18.6: 129 passed, 0 failed, 0 skipped; no live runtime caller or billing activation).
 9. **Independently accepted, pending integration into `develop`, and inactive:** Phase 5.4 immutable domain events and transactional outbox (PostgreSQL 18.6; Phase 5.1–5.4: 144 passed, 0 failed, 0 skipped; billing foundations: 62 passed, 0 failed, 0 skipped; no live caller, worker, provider integration, or billing activation).
-10. **Audit remediation and source-identity contract resolution implemented locally, pending independent re-review, and inactive:** Phase 6 free and subscription recurring allocations with atomic Phase 5.4 funding/expiration events and caller-supplied delivery obligations; external financial-line source identity remains separate from authoritative internal subscription/entitlement links (PostgreSQL 18.6 remediation verification: Phase 2–6 263 passed, 0 failed, 0 skipped; no live caller or billing activation).
+10. **Independently accepted and inactive:** Phase 6 free and subscription recurring allocations with atomic Phase 5.4 funding/expiration events and caller-supplied delivery obligations; external financial-line source identity remains separate from authoritative internal subscription/entitlement links (checkpoint `ffe4ab0e09f4ca273748aabed6740017f7cc72f3`; no live caller or billing activation).
+11. **Implemented locally, pending independent acceptance, and inactive:** Phase 7 immutable plan-change schedules and events, paid-upgrade proration, Free-to-paid activation, renewal-paid monthly/annual downgrades, period-end cancellation, and pre-end cancellation resumption. The caller owns the transaction and supplies every D12 delivery obligation. Additive PostgreSQL guards bind subscription-definition changes and recurring proration effects to Phase 7 evidence; there is no live caller, worker, provider integration, scheduler, deployment, or activation.
 
 No authorization should cover more than one numbered increment by implication.
 Passing a schema migration does not authorize data creation or service wiring.

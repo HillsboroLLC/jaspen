@@ -291,7 +291,7 @@ def _postgres_engine(validate_test_database_url, postgres_schema_url):
 def test_revision_extends_phase54_and_model_matches_schema(sqlite_engine):
     script = ScriptDirectory(MIGRATIONS_DIR)
     assert script.get_revision(REVISION).down_revision == PARENT
-    assert script.get_heads() == [REVISION]
+    assert script.get_heads() == ["a7d9e2f4b6c8"]
     inspector = sa.inspect(sqlite_engine)
     assert {
         column.name for column in RecurringCreditAllocation.__table__.columns

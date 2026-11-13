@@ -200,8 +200,11 @@ def _assert_triggers(engine):
             }
         else:
             names = set(connection.execute(sa.text("""
-                SELECT tgname FROM pg_trigger
-                WHERE NOT tgisinternal AND tgname LIKE 'trg_%'
+                SELECT t.tgname FROM pg_trigger t
+                JOIN pg_class c ON c.oid=t.tgrelid
+                JOIN pg_namespace n ON n.oid=c.relnamespace
+                WHERE NOT t.tgisinternal AND t.tgname LIKE 'trg_%'
+                  AND n.nspname=current_schema()
             """)).scalars())
             assert names == {
                 "trg_capacity_policy_versions_lifecycle",

@@ -95,7 +95,7 @@ def test_phase_4_tables_start_empty_and_do_not_replace_legacy_billing(db, test_u
 def test_phase_4_policy_has_no_live_runtime_importers():
     app_dir = Path(__file__).resolve().parents[1] / "app"
     allowed = {
-        "billing_allocations.py", "billing_entitlements.py", "models.py",
+        "billing_allocations.py", "billing_entitlements.py", "billing_plan_changes.py", "models.py",
         "models_billing_phase4.py",
     }
     importers = []

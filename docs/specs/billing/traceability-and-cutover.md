@@ -283,9 +283,7 @@ approved contracts.
 
 ### Phase 6 implementation traceability
 
-Status: **Audit remediation and final source-identity contract resolution
-implemented and locally verified on PostgreSQL 18.6; independent re-review
-pending; inactive.** Migration `f5c8d3e0b2a1` and the inactive
+Status: **Independently accepted and inactive.** Migration `f5c8d3e0b2a1` and the inactive
 `billing_allocations` service add no runtime caller, provider operation,
 scheduler, worker, deployment setting, or billing activation.
 
@@ -309,10 +307,39 @@ contract checks passed. The final contract resolution preserves external
 provider/catalog `source_type`/`source_id` evidence independently from the
 authoritative internal subscription and entitlement foreign keys, without a
 single-provider restriction or historical evidence rewrite. Independent
-re-review remains the acceptance gate. Integration, deployment, and activation
-remain separate gates. Phase 7 scheduling/proration, Phase 9
-purchases and case credit effects, and Phase 12 AI-operation integration remain
-deferred.
+Phase 6 independent acceptance is recorded at checkpoint
+`ffe4ab0e09f4ca273748aabed6740017f7cc72f3`. Integration, deployment, and
+activation remain separate gates. Phase 9 purchases and case credit effects,
+and Phase 12 AI-operation integration remain deferred.
+
+### Phase 7 implementation record — plan changes and upgrade proration
+
+Status: **implemented locally and verified for independent review; inactive.**
+Migration `a7d9e2f4b6c8` adds organization-owned immutable scheduled-change,
+transition-event, and paid-upgrade-allocation evidence. The inactive
+`billing_plan_changes` service implements D07/D08/D12/D13: exact integer UTC
+paid-upgrade proration, full-period Free-to-paid activation, one active schedule,
+explicit compatible supersession, cancellation precedence and resumption,
+renewal-paid monthly or annual downgrade, failed-renewal preservation, and
+idempotent replay. Caller-supplied delivery obligations, entitlement changes,
+Phase 3 ledger effects, Phase 4 projections, Phase 5 evidence, and Phase 6
+allocations commit or roll back in the caller-owned transaction.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| T-PLAN-01..05 paid activation and proration | D07 formula, paid-line authority, unchanged paid anchor, and a zero-capable separately evidenced proration lot | `test_paid_upgrade_uses_integer_utc_floor_and_replays_once`; `test_free_to_paid_opens_full_paid_period_without_proration`; migrated-schema direct guard test |
+| T-PLAN-06..12 renewal changes | D08 monthly/annual renewal gate, failed-payment preservation, cancellation at term end, and resume before term end | `test_downgrade_waits_for_payment_then_applies_and_funds`; `test_cancellation_supersedes_downgrade_and_history_is_retained`; migrated-schema downgrade test |
+| T-SCHEDULE-01..09 precedence and history | Partial unique one-active fence, immutable append-only transitions, confirmed supersession, and paid-upgrade/cancellation precedence | Schedule validation, replay, direct-SQL fence, and isolation-parameterized competing-command tests |
+| Atomic D12/D13 evidence | Canonical registry keys and fingerprints; domain event plus nonempty caller obligations; deferred subscription-definition and proration checks | Rollback tests; migrated-schema direct subscription/lot bypass rejection; concurrent upgrade replay |
+
+The implementation remains disconnected from routes, webhooks, provider APIs,
+workers, schedulers, and production configuration. Technical verification does
+not authorize integration, deployment, or activation. Local PostgreSQL 18.6
+verification passed 276 Phase 2–7 focused tests with 0 failures and 0 skips,
+including fully migrated service paths and READ COMMITTED, REPEATABLE READ, and
+SERIALIZABLE concurrency variants. The SQLite-focused run passed 160 tests; its
+9 skips are PostgreSQL-only Phase 5.3 tests and are covered by the PostgreSQL
+run. Empty upgrade/downgrade/re-upgrade and populated downgrade refusal passed.
 
 ### Deferred Phase 5.1/5.2 activation gate — conflict evidence integrity
 

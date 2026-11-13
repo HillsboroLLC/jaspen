@@ -2863,3 +2863,8 @@ from .models_billing_phase5 import (  # noqa: E402,F401
     FinancialTransaction,
 )
 from .models_billing_phase6 import RecurringCreditAllocation  # noqa: E402,F401
+from .models_billing_phase7 import (  # noqa: E402,F401
+    PlanChangeEvent,
+    ScheduledPlanChange,
+    UpgradeCreditAllocation,
+)
