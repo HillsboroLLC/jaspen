@@ -902,7 +902,10 @@ def test_each_route_persists_one_usage_event_and_one_ai_operation_audit(
     assert operation.charged_credits == TURN_TOKENS
 
 
-@pytest.mark.parametrize("case", ["start-viewer", "continue-viewer", "regenerate-outsider"])
+@pytest.mark.parametrize("case", [
+    "start-viewer", "continue-viewer", "regenerate-outsider",
+    "regenerate-viewer", "regenerate-creator-now-viewer",
+])
 @pytest.mark.parametrize("stream", [False, True], ids=["json", "stream"])
 def test_authorization_refusal_precedes_reservation_and_generation(
     client, app, db, solo, monkeypatch, case, stream,
@@ -925,6 +928,19 @@ def test_authorization_refusal_precedes_reservation_and_generation(
         _mk_org(actor, f"Other{uuid.uuid4().hex[:6]}")
         _settle_meter(actor)
         url, body, expected_status = REGENERATE_URL, {"thread_id": thread_id}, 404
+    elif case == "regenerate-viewer":
+        actor = _mk_user(f"viewer-{uuid.uuid4().hex[:8]}@example.test")
+        _add_member(org, actor, role="viewer")
+        _seed_team_thread(owner, org, thread_id, history=_TWO_TURNS)
+        url, body, expected_status = REGENERATE_URL, {"thread_id": thread_id}, 403
+    elif case == "regenerate-creator-now-viewer":
+        actor = _mk_user(f"demoted-{uuid.uuid4().hex[:8]}@example.test")
+        _add_member(org, actor)
+        _seed_team_thread(actor, org, thread_id, history=_TWO_TURNS)
+        membership = OrganizationMember.query.filter_by(organization_id=org.id, user_id=actor.id).one()
+        membership.role = "viewer"
+        _db.session.commit()
+        url, body, expected_status = REGENERATE_URL, {"thread_id": thread_id}, 403
     else:
         actor = _mk_user(f"viewer-{uuid.uuid4().hex[:8]}@example.test")
         _add_member(org, actor, role="viewer")
@@ -998,13 +1014,13 @@ def test_probe_successful_turn_after_an_internal_rollback_is_charged_its_usage(c
 
 
 # --------------------------------------------------------------------------
-# PROBES: regenerate does not follow the organization access model
+# Regenerate follows the organization access model (ORG-1, ORG-2; P1)
 #
-# conversation/continue resolves the organization's canonical project and
-# requires write access. conversation/regenerate looks only at projects stored
-# under the caller's own user id and checks no role. Both probes assert what
-# the approved model (app/session_access.py: can_write_session) implies.
-# Correcting them changes who may regenerate, so it needs approval.
+# conversation/regenerate resolves the organization's canonical project and
+# requires write access exactly as conversation/continue does
+# (app/session_access.py: can_write_session). These were strict-xfail probes
+# until P1 corrected them; they now pin the approved boundary: editors gain
+# regenerate on shared projects, viewers lose it even on work they created.
 # --------------------------------------------------------------------------
 
 _TWO_TURNS = [
@@ -1013,28 +1029,33 @@ _TWO_TURNS = [
 ]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DISCREPANCY (ORG-1): an editor can continue the organization's project "
-    "but gets 404 when regenerating its last reply."
-))
-def test_probe_an_editor_can_regenerate_on_the_organizations_project(client, app, db, solo, monkeypatch):
+@pytest.mark.parametrize("stream", [False, True], ids=["json", "stream"])
+def test_probe_an_editor_can_regenerate_on_the_organizations_project(client, app, db, solo, monkeypatch, stream):
     _script_generation(monkeypatch)
     owner, org = solo["user"], solo["org"]
     editor = _mk_user(f"editor-{uuid.uuid4().hex[:8]}@example.test")
     _add_member(org, editor)
     _seed_team_thread(owner, org, "t-org-regen", history=_TWO_TURNS)
+    owner_before, editor_before = _balance(owner), _balance(editor)
 
-    response = client.post(REGENERATE_URL, headers=_headers(app, editor), json={"thread_id": "t-org-regen"})
+    status, payload = _post_turn(
+        client, REGENERATE_URL, _headers(app, editor), {"thread_id": "t-org-regen"}, stream=stream,
+    )
 
-    assert response.status_code == 200, response.get_json()
-    assert UserSession.query.filter_by(session_id="t-org-regen").count() == 1
+    assert status == 200, payload
+    rows = UserSession.query.filter_by(session_id="t-org-regen").all()
+    assert len(rows) == 1, "the editor must not fork the organization's project"
+    row = rows[0]
+    assert row.user_id == owner.id and row.created_by_user_id == owner.id
+    assert row.last_edited_by_user_id == editor.id
+    history = row.payload["chat_history"]
+    assert [m["content"] for m in history] == ["Owner's question", REPLY]
+    assert history[-1]["alternatives"][0]["content"] == "First answer"
+    # Charged to the member who regenerates, never to the project's owner.
+    assert editor_before - _balance(editor) == TURN_TOKENS
+    assert _balance(owner) == owner_before
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "DISCREPANCY (ORG-2): a member whose role is now viewer is read-only "
-    "everywhere else, even on work they created, but can still regenerate "
-    "(and be charged for) a reply on a project they created."
-))
 def test_probe_a_viewer_cannot_regenerate_even_on_a_project_they_created(client, app, db, solo, monkeypatch):
     calls = []
     _script_generation(monkeypatch, calls=calls)
@@ -1050,10 +1071,15 @@ def test_probe_a_viewer_cannot_regenerate_even_on_a_project_they_created(client,
     blocked_continue = client.post(CONTINUE_URL, headers=headers, json={"thread_id": "t-demoted", "message": "More"})
     assert blocked_continue.status_code == 403  # the model, as continue applies it
 
+    before = _balance(member)
+
     response = client.post(REGENERATE_URL, headers=headers, json={"thread_id": "t-demoted"})
 
     assert response.status_code == 403
+    assert response.get_json()["code"] == "forbidden"
     assert calls == []
+    assert _balance(member) == before
+    assert _stored("t-demoted")["chat_history"] == _TWO_TURNS
 
 
 # --------------------------------------------------------------------------

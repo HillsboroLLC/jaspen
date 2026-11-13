@@ -3760,36 +3760,184 @@ def _is_mutation_tool(tool_name):
     return str(tool_name or "").strip() in _MUTATION_TOOLS
 
 
+def _canonical_project_scenarios(user_id, thread_id):
+    """The scenario data of the project a turn works on, read from the
+    organization's canonical row (the row continue and its tools write), so an
+    editor's turn on a shared project snapshots that project and not an empty
+    personal copy. Returns ``(row_id, data)``; ``row_id`` is None when the
+    project has no row yet and ``data`` is None when it has no scenario data."""
+    from app.models import UserSession
+    from ..session_access import canonical_row
+
+    user = User.query.get(str(user_id)) if user_id else None
+    row = canonical_row(user, str(thread_id), include_archived=True) if user else None
+    if row is None:
+        return None, None
+    current = (
+        db.session.query(UserSession.scenarios_json)
+        .filter(UserSession.id == row.id)
+        .scalar()
+    )
+    return row.id, (_clone_json_payload(current) if isinstance(current, dict) and current else None)
+
+
 def _capture_thread_mutation_snapshot(user_id, thread_id):
     if not user_id or not thread_id:
         return None
-    from .strategy import _load_scenarios
+    row_id, existing = _canonical_project_scenarios(user_id, thread_id)
+    if row_id is None:
+        from .strategy import _load_scenarios
 
-    all_data = _load_scenarios(user_id)
-    existing = all_data.get(str(thread_id))
+        existing = _load_scenarios(user_id).get(str(thread_id))
     return {
         "thread_id": str(thread_id),
+        "row_id": row_id,
         "thread_data": _clone_json_payload(existing) if isinstance(existing, dict) else None,
         "captured_at": _iso_now(),
     }
 
 
+def _committed_project_scenarios_row(conn, *, row_id, thread_id, organization_id, user_id):
+    """Read a project's COMMITTED scenario data on ``conn``.
+
+    Resolves the canonical row the same way session_access.canonical_row does
+    (the organization's oldest row, else the caller's own) when the turn
+    created the project and no row id was known at capture time.
+    Returns ``(found, data)``.
+    """
+    from sqlalchemy import select
+    from app.models import UserSession
+
+    table = UserSession.__table__
+    if row_id is None:
+        candidates = []
+        if organization_id:
+            candidates.append(
+                select(table.c.id)
+                .where(table.c.session_id == str(thread_id))
+                .where(table.c.organization_id == str(organization_id))
+                .order_by(table.c.created_at.asc(), table.c.id.asc())
+                .limit(1)
+            )
+        candidates.append(
+            select(table.c.id)
+            .where(table.c.session_id == str(thread_id))
+            .where(table.c.user_id == str(user_id))
+            .limit(1)
+        )
+        for query in candidates:
+            row_id = conn.execute(query).scalar()
+            if row_id is not None:
+                break
+    if row_id is None:
+        return False, None
+    current = conn.execute(
+        select(table.c.scenarios_json).where(table.c.id == row_id)
+    ).scalar()
+    if isinstance(current, str):
+        current = json.loads(current)
+    return True, (_clone_json_payload(current) if isinstance(current, dict) and current else None)
+
+
+def _complete_turn_undo_snapshot(undo_snapshot, *, user_id, organization_id):
+    """Record the project's scenario data as the turn left it.
+
+    Undo reverts exactly what the turn changed (before -> after). Knowing the
+    after-state lets undo keep every change made since by anyone else, and
+    refuse rather than overwrite when someone has since changed the same
+    thing the turn changed.
+
+    This is supplemental evidence and must never decide the turn's outcome. It
+    runs before the turn is settled, reads committed data on its OWN
+    connection (so it can neither abort nor roll back the turn's transaction
+    and its unsaved reservation) and never raises. Without the evidence the
+    turn simply does not offer Undo: restoring blind could overwrite a
+    colleague's newer work.
+    """
+    if not isinstance(undo_snapshot, dict):
+        return undo_snapshot
+    thread_id = str(undo_snapshot.get("thread_id") or "").strip()
+    if not thread_id:
+        return None
+    try:
+        with db.engine.connect() as conn:
+            found, after = _committed_project_scenarios_row(
+                conn,
+                row_id=undo_snapshot.get("row_id"),
+                thread_id=thread_id,
+                organization_id=organization_id,
+                user_id=user_id,
+            )
+    except Exception:
+        current_app.logger.warning(
+            "undo after-state unavailable for thread %s; Undo not offered for this turn",
+            thread_id, exc_info=True,
+        )
+        return None
+    if not found:
+        return None
+    completed = dict(undo_snapshot)
+    completed["thread_data_after"] = after
+    return completed
+
+
+_UNDO_MISSING = object()
+
+
+def _undo_conflicts(before, after, current):
+    """True when something the turn changed has been changed again since."""
+    if isinstance(before, dict) and isinstance(after, dict):
+        current_dict = current if isinstance(current, dict) else None
+        for key in set(before) | set(after):
+            was = before.get(key, _UNDO_MISSING)
+            became = after.get(key, _UNDO_MISSING)
+            if was == became:
+                continue
+            now = current_dict.get(key, _UNDO_MISSING) if current_dict is not None else _UNDO_MISSING
+            if isinstance(was, dict) and isinstance(became, dict) and isinstance(now, dict):
+                if _undo_conflicts(was, became, now):
+                    return True
+            elif now != became:
+                return True
+        return False
+    return current != after
+
+
 def _restore_thread_mutation_snapshot(user_id, undo_state):
+    """Revert one turn's scenario changes on the project's canonical row.
+
+    Writes exactly one project through the project-scoped scenario store,
+    committing together with any session change the caller has staged (one
+    compare-and-swap; a lost race rolls both back). Raises RevisionConflict,
+    with nothing written, when a change the turn made has been changed again
+    since. Records written before the after-state was kept restore the
+    snapshot whole, as before.
+    """
     if not user_id or not isinstance(undo_state, dict):
         return False
     thread_id = str(undo_state.get("thread_id") or "").strip()
     if not thread_id:
         return False
 
-    from .strategy import _load_scenarios, _save_project_scenarios
+    from ..scenarios_store import _apply_snapshot_delta, save_session_and_project_scenarios_data
+    from ..session_access import RevisionConflict
 
-    all_data = _load_scenarios(user_id)
-    snapshot_thread = undo_state.get("thread_data")
-    if isinstance(snapshot_thread, dict):
-        all_data[thread_id] = _clone_json_payload(snapshot_thread)
-    else:
-        all_data.pop(thread_id, None)
-    return _save_project_scenarios(user_id, all_data, thread_id)
+    def _as_data(value):
+        return _clone_json_payload(value) if isinstance(value, dict) else {}
+
+    before = _as_data(undo_state.get("thread_data"))
+    has_after = "thread_data_after" in undo_state
+    after = _as_data(undo_state.get("thread_data_after"))
+
+    def _revert(current):
+        if not has_after:
+            return before
+        if _undo_conflicts(before, after, current):
+            raise RevisionConflict(None, None, session_id=thread_id)
+        return _apply_snapshot_delta(after, before, current)
+
+    save_session_and_project_scenarios_data(user_id, thread_id, updater=_revert)
+    return True
 
 
 def _maybe_capture_turn_undo_snapshot(current_snapshot, *, tool_name, user_id, thread_id):
@@ -13628,6 +13776,27 @@ def _resolve_user_session(sessions, thread_id):
     return None, None
 
 
+def _authorized_thread_session_for_write(user, thread_id):
+    """The organization's canonical project for a write to an existing thread.
+
+    Loads exactly as conversation/continue does (the caller's own projects plus
+    the canonical organization row they may read) and authorizes through
+    session_access, the single access rule. Returns ``(sessions, key, session)``
+    with ``session`` None when the caller cannot see the thread; raises
+    SessionForbidden (403, read-only) for a member without an editing role.
+    """
+    sessions = load_sessions_for_thread(user, thread_id) or {}
+    session_key, session = _resolve_user_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return sessions, None, None
+    resolve_session_for_actor(
+        user,
+        str(session.get("session_id") or session_key or thread_id),
+        require_write=True,
+    )
+    return sessions, session_key, session
+
+
 def _session_chat_history(session):
     if not isinstance(session, dict):
         return []
@@ -14974,6 +15143,13 @@ def _finish_conversation_turn(turn, req, *, reply, usage, actions, mutations, un
     reply, usage, scoring_failure = _apply_scoring_failure_state(reply, usage, actions)
     reply, _decision_failure = _apply_option_decision_failure_state(reply, actions)
     usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
+    if _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict):
+        # Before anything is settled or charged; failure-safe by construction.
+        undo_snapshot = _complete_turn_undo_snapshot(
+            undo_snapshot,
+            user_id=user_id,
+            organization_id=session.get("organization_id"),
+        )
 
     def apply_artifacts():
         entries = _artifact_entries_from_actions(
@@ -17086,10 +17262,15 @@ def conversation_undo_mutations():
     if not thread_id:
         return jsonify({"error": "thread_id is required"}), 400
 
-    sessions = load_user_sessions(user_id) or {}
-    session_key, session = _resolve_user_session(sessions, thread_id)
+    # Undo changes the project, so it is a write: the organization's canonical
+    # project, any member with an editing role (including undoing a
+    # colleague's latest turn), never a viewer.
+    sessions, session_key, session = _authorized_thread_session_for_write(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
+    # The revision of the chat history this request read. Undo's write is
+    # accepted only against it, so a turn saved meanwhile is never erased.
+    loaded_revision = session.get("revision")
 
     chat_history = _session_chat_history(session)
     if not chat_history:
@@ -17118,9 +17299,6 @@ def conversation_undo_mutations():
             "code": "undo_not_available",
         }), 409
 
-    if not _restore_thread_mutation_snapshot(user_id, snapshot):
-        return jsonify({"error": "Failed to restore the previous project state"}), 500
-
     updated_chat_history = list(chat_history)
     updated_last_msg = dict(last_msg)
     updated_last_msg["undo"] = {
@@ -17134,8 +17312,38 @@ def conversation_undo_mutations():
     session["timestamp"] = _iso_now()
     session.pop(PENDING_MUTATION_UNDO_KEY, None)
     sessions[session_key or thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist undo state"}), 500
+    # One project, one transaction: the chat record (checked against the
+    # revision this request loaded, enforced by the row's compare-and-swap)
+    # and the restored scenario data commit together or not at all. Either
+    # conflict leaves both members' work and the undo record untouched.
+    staged = dict(session)
+    if loaded_revision is not None:
+        staged["base_revision"] = loaded_revision
+    try:
+        if not save_user_sessions(user_id, {session_key or thread_id: staged}, commit=False):
+            db.session.rollback()
+            return jsonify({"error": "Failed to persist undo state"}), 500
+        restored = _restore_thread_mutation_snapshot(user_id, snapshot)
+    except RevisionConflict as conflict:
+        db.session.rollback()
+        row = canonical_row(user, str(session.get("session_id") or session_key or thread_id))
+        body, status = RevisionConflict(
+            conflict.expected_revision,
+            int(row.revision or 1) if row is not None else None,
+            session_id=conflict.session_id,
+        ).to_response()
+        body["undo_available"] = True
+        return jsonify(body), status
+    except SessionAccessError:
+        db.session.rollback()
+        raise
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("conversation_undo_mutations restore failed")
+        restored = False
+    if not restored:
+        db.session.rollback()
+        return jsonify({"error": "Failed to restore the previous project state"}), 500
 
     _audit_ai_agent_event(
         "message.mutations_undone",
@@ -17190,8 +17398,11 @@ def conversation_regenerate():
     if not thread_id:
         return jsonify({"error": "thread_id is required"}), 400
 
-    sessions = load_user_sessions(user_id) or {}
-    session_key, session = _resolve_user_session(sessions, thread_id)
+    # Regenerating replaces the project's latest reply, so it is a write and
+    # follows exactly the rule continue follows: the organization's canonical
+    # project, any member with an editing role, never a viewer. Authorized
+    # here, before the cached replay, model resolution and the reservation.
+    sessions, session_key, session = _authorized_thread_session_for_write(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
 

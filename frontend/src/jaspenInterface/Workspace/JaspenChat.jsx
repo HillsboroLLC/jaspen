@@ -157,6 +157,39 @@ export function classifyInlineWbsSaveFailure(error, failMessage) {
   };
 }
 
+/**
+ * Whether a reply offers Regenerate and Undo changes. Both change the
+ * project, so both need write access: a member who can only read the project
+ * (a viewer, including one who created it) sees neither. The server refuses
+ * either way; hiding them keeps the interface honest about what will work.
+ */
+export function replyTurnControls(message, {
+  activeThreadId,
+  isLatestAssistant,
+  isStreamingReply,
+  busy,
+  regenerating,
+  undoingMutation,
+  canWriteProject,
+}) {
+  const canAct = Boolean(activeThreadId)
+    && Boolean(canWriteProject)
+    && isLatestAssistant
+    && !isStreamingReply
+    && !busy
+    && !regenerating
+    && !message?.streaming;
+  return {
+    canRegenerate: canAct
+      && !message?.hasMutations
+      && !(message?.text || '').includes('Applied changes:'),
+    canUndoMutation: canAct
+      && !undoingMutation
+      && Boolean(message?.hasMutations)
+      && Boolean(message?.canUndo),
+  };
+}
+
 export function InlineWbsSaveStatus({ state, message, onRetry, onUndo }) {
   if (state === 'saving') {
     return (
@@ -3822,23 +3855,15 @@ const renderMessageActions = (message, messageKey, idx, total) => {
   const feedbackKey = `${messageKey}:feedback`;
   const isFeedbackBusy = feedbackBusyKey === feedbackKey;
   const isFeedbackPromptOpen = feedbackPrompt?.key === feedbackKey;
-  const canRegenerate = Boolean(activeThreadId)
-    && isLatestAssistant
-    && !isStreamingReply
-    && !busy
-    && !regenerating
-    && !message?.streaming
-    && !message?.hasMutations
-    && !(message?.text || '').includes('Applied changes:');
-  const canUndoMutation = Boolean(activeThreadId)
-    && isLatestAssistant
-    && !isStreamingReply
-    && !busy
-    && !regenerating
-    && !undoingMutation
-    && !message?.streaming
-    && Boolean(message?.hasMutations)
-    && Boolean(message?.canUndo);
+  const { canRegenerate, canUndoMutation } = replyTurnControls(message, {
+    activeThreadId,
+    isLatestAssistant,
+    isStreamingReply,
+    busy,
+    regenerating,
+    undoingMutation,
+    canWriteProject: !effectiveIsViewer,
+  });
   const canRetryStream = Boolean(message?.streamError) && !isStreamingReply && !retryingStream && !busy;
   const canRetryScoreQueue = Boolean(message?.scoreQueueError) && Boolean(activeThreadId) && !scoreDrainingRef.current;
   return (
@@ -8243,6 +8268,19 @@ async function undoLastMutationTurn() {
 
     showToast(data?.message || 'Reverted the latest AI-applied changes.', 'success');
   } catch (undoError) {
+    if (undoError?.data?.code === 'revision_conflict') {
+      // Someone changed what this reply changed. Show the latest saved
+      // version and say so; Undo stays available, with no retry against the
+      // newer revision, which would overwrite their work.
+      showToast(REVISION_CONFLICT_MESSAGE, 'error');
+      try {
+        await refreshBundle(activeThreadId);
+        await refreshThreadWbs(activeThreadId);
+      } catch (refreshError) {
+        console.error('[undoLastMutationTurn] refresh after conflict failed', refreshError);
+      }
+      return;
+    }
     showToast(undoError?.message || 'We could not undo those changes right now.', 'error', {
       actionLabel: 'Retry',
       onAction: () => {
