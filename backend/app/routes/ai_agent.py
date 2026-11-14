@@ -15270,37 +15270,71 @@ Return concise plain text with:
 
 
 def _persist_thread_insight(user_id, thread_id, filename, insight_payload, summary_text):
-    sessions = load_user_sessions(user_id) or {}
-    session_key, session = _resolve_user_session(sessions, thread_id)
-    if not isinstance(session, dict):
-        session = _new_session(user_id, thread_id, f"Data Upload: {filename}")
-        session_key = thread_id
+    # P3 replaces this local retry with the project store's single-project entry.
+    for _attempt in range(3):
+        try:
+            _user, sessions, _row = _authorized_thread_scope(
+                user_id, thread_id, require_write=True
+            )
+            session_key, loaded_session = _resolve_user_session(sessions, thread_id)
+            if not isinstance(loaded_session, dict):
+                current_app.logger.warning(
+                    "[analyze_data] project %s could not be resolved for persistence",
+                    thread_id,
+                )
+                return None
 
-    insights = session.get("ai_insights")
-    if not isinstance(insights, list):
-        insights = []
+            loaded_revision = loaded_session.get("revision")
+            session = dict(loaded_session)
+            insights = session.get("ai_insights")
+            if not isinstance(insights, list):
+                insights = []
 
-    event = {
-        "id": f"ins_{uuid.uuid4().hex[:10]}",
-        "timestamp": _iso_now(),
-        "file_name": filename,
-        "summary": summary_text,
-        "insight": insight_payload,
-    }
-    insights = [event, *[item for item in insights if isinstance(item, dict)]][:20]
-    session["ai_insights"] = insights
+            event = {
+                "id": f"ins_{uuid.uuid4().hex[:10]}",
+                "timestamp": _iso_now(),
+                "file_name": filename,
+                "summary": summary_text,
+                "insight": insight_payload,
+            }
+            session["ai_insights"] = [
+                event,
+                *[item for item in insights if isinstance(item, dict)],
+            ][:20]
 
-    chat_history = _session_chat_history(session)
-    chat_history.append({
-        "role": "assistant",
-        "content": f"[AI Data Insights] {summary_text}",
-        "timestamp": _iso_now(),
-    })
-    session["chat_history"] = chat_history
-    session["timestamp"] = _iso_now()
-    sessions[session_key or thread_id] = session
-    save_user_sessions(user_id, sessions)
-    return event
+            chat_history = list(_session_chat_history(session))
+            chat_history.append({
+                "role": "assistant",
+                "content": f"[AI Data Insights] {summary_text}",
+                "timestamp": _iso_now(),
+            })
+            session["chat_history"] = chat_history
+            session["timestamp"] = _iso_now()
+            staged = dict(session)
+            if loaded_revision is not None:
+                staged["base_revision"] = loaded_revision
+            if not save_user_sessions(user_id, {session_key or thread_id: staged}):
+                current_app.logger.warning(
+                    "[analyze_data] failed to persist insight for project %s",
+                    thread_id,
+                )
+                return None
+            return event
+        except RevisionConflict:
+            db.session.rollback()
+        except SessionAccessError:
+            db.session.rollback()
+            current_app.logger.warning(
+                "[analyze_data] access lost before insight persistence for project %s",
+                thread_id,
+            )
+            return None
+
+    current_app.logger.warning(
+        "[analyze_data] insight persistence conflicted three times for project %s",
+        thread_id,
+    )
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -17959,7 +17993,6 @@ def analyze_data():
         thread_id = str(
             request.form.get("thread_id")
             or request.args.get("thread_id")
-            or request.headers.get("X-Session-ID")
             or ""
         ).strip() or None
         user_prompt = str(request.form.get("prompt") or request.form.get("instruction") or "").strip()
@@ -17969,6 +18002,14 @@ def analyze_data():
             return jsonify({"error": "file is required (multipart/form-data)"}), 400
         if not str(getattr(uploaded, "filename", "") or "").strip():
             return jsonify({"error": "Uploaded file must have a name."}), 400
+
+        if thread_id:
+            _scoped_user, scoped_sessions, _row = _authorized_thread_scope(
+                user_id, thread_id, require_write=True
+            )
+            _session_key, scoped_session = _resolve_user_session(scoped_sessions, thread_id)
+            if not isinstance(scoped_session, dict):
+                raise SessionNotFound()
 
         df, filename = _dataset_from_upload(uploaded)
         summary = _summarize_dataset(df)
@@ -18018,6 +18059,8 @@ def analyze_data():
         return jsonify({"error": str(ve)}), 400
     except RuntimeError as re_err:
         return jsonify({"error": str(re_err)}), 500
+    except SessionAccessError:
+        raise
     except Exception as e:
         current_app.logger.error("[analyze_data] %s", e)
         return jsonify({"error": "Failed to analyze uploaded data."}), 500
