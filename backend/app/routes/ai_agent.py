@@ -253,38 +253,10 @@ from app.session_access import (
 )
 
 
-def _authorized_thread_scope(user_id, thread_id, *, require_write=False,
-                             include_archived=False, allow_missing=False):
-    """Authorize this caller for one thread, then return its working set.
-
-    Returns ``(user, sessions, row)``. Authorization runs BEFORE the sessions
-    dict is assembled, so no handler downstream can build a response or a
-    prompt out of a row the caller may not read.
-
-    The returned dict is the caller's own sessions plus the organization's
-    canonical row for this thread, which keeps the existing
-    ``_resolve_user_session(sessions, thread_id)`` idiom working unchanged.
-
-    Raises SessionAccessError; the app-level handler renders it as
-    404 / 403 / 409 with a machine-readable ``code``.
-    """
-    user = User.query.get(str(user_id))
-    if user is None:
-        raise SessionNotFound()
-    try:
-        row, _membership = resolve_session_for_actor(
-            user, thread_id, require_write=require_write, include_archived=include_archived
-        )
-    except SessionNotFound as exc:
-        # allow_missing preserves endpoints that can still answer for a thread
-        # with no session row (e.g. usage assembled from UsageEvent rows).
-        # A FORBIDDEN or unreadable row is never softened -- only a genuinely
-        # absent one.
-        if not allow_missing or exc.denied:
-            raise
-        row = None
-    sessions = load_sessions_for_thread(user, thread_id, include_archived=include_archived)
-    return user, sessions, row
+# Moved unchanged to app.project_scope so the workspace routes use the same
+# helper; the name stays for every existing caller in this module.
+from app.project_scope import authorized_thread_scope as _authorized_thread_scope
+from app.project_scope import project_scenarios as _project_scenarios_for_row
 
 
 class TurnProject:
@@ -385,21 +357,7 @@ class TurnProject:
         row, so a later ``_save_project_scenarios`` applies only this request's
         change on top of the row (the store's delta merge), never a stale copy.
         """
-        out = ScenariosData()
-        row = self.row()
-        if row is None:
-            return out
-        data = row.scenarios_json if isinstance(row.scenarios_json, dict) else None
-        if data:
-            db_sid = str(row.session_id)
-            out[db_sid] = copy.deepcopy(data)
-            out.remember(db_sid, row)
-            row_payload = row.payload if isinstance(row.payload, dict) else {}
-            payload_sid = str(row_payload.get("session_id") or "").strip()
-            if payload_sid and payload_sid != db_sid:
-                out[payload_sid] = out[db_sid]
-                out.remember(payload_sid, row)
-        return out
+        return _project_scenarios_for_row(self.row())
 
 
 def _build_turn_project(user, thread_id):

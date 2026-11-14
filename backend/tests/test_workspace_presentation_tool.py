@@ -22,6 +22,13 @@ def _card(card_id, name='Workspace option'):
 
 
 def _save_card(user_id, card_id):
+    """A scorecard of this user's project (OD-6 A: a card never stands on its
+    own outside a project, so the project row is part of the fixture)."""
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    if THREAD_ID not in (load_user_sessions(user_id) or {}):
+        assert save_user_sessions(user_id, {THREAD_ID: {
+            'session_id': THREAD_ID, 'name': 'Workspace project', 'chat_history': [],
+        }})
     upsert_scorecard(
         user_id=user_id,
         thread_id=THREAD_ID,

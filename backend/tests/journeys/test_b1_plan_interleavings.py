@@ -76,6 +76,10 @@ def test_customer_builds_a_plan_while_working_in_another_project(
 ):
     strategy, _ = modules()
     _seed(test_user, db, 'journey-a')
+    # The customer's other projects exist (OD-6 A: a scenario save never
+    # creates a project; the workspace creates scenarios only after analysis).
+    seed_thread(test_user, 'journey-b')
+    seed_thread(test_user, 'journey-c')
     mock_accounting(monkeypatch)
 
     def hook():
