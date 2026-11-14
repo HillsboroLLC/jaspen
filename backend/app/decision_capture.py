@@ -299,19 +299,18 @@ def decision_facts(user, thread_id, *, today=None, session_row=None):
     if record is None:
         return None
     today = (today or date.today()).isoformat()
-    derived = option_dispositions(record, session=session_row)
+    # The record's own project and scorecards only. A thread id is unique per
+    # organization, not globally, so an id-only lookup could read another
+    # organization's same-id project.
+    from .decision_records import record_project_row, record_scorecard_rows
+    if session_row is None:
+        session_row = record_project_row(record)
+    derived = option_dispositions(
+        record, session=session_row, scorecard_rows=record_scorecard_rows(record, session_row),
+    )
     cards = _latest_cards_by_option(record)
 
-    scenarios = None
-    if session_row is not None:
-        scenarios = getattr(session_row, 'scenarios_json', None)
-    if scenarios is None:
-        from .models import UserSession
-        row = (
-            UserSession.query.filter_by(session_id=str(record.thread_id))
-            .order_by(UserSession.created_at.asc()).first()
-        )
-        scenarios = getattr(row, 'scenarios_json', None) if row is not None else None
+    scenarios = getattr(session_row, 'scenarios_json', None) if session_row is not None else None
     scenarios = scenarios if isinstance(scenarios, dict) else {}
     plans_by_card = scenarios.get('wbs_by_scorecard') if isinstance(scenarios.get('wbs_by_scorecard'), dict) else {}
 

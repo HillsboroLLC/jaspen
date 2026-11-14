@@ -317,11 +317,26 @@ def load_sessions_for_thread(user, thread_id, include_archived=False):
     sessions = load_user_sessions(str(user.id), include_archived=include_archived)
 
     sid = str(thread_id or '').strip()
-    if not sid or sid in sessions or is_personal_session_id(sid):
+    if not sid or is_personal_session_id(sid):
         return sessions
 
     row = canonical_row(user, sid, include_archived=include_archived)
-    if row is None or is_hidden_for(row, str(user.id)) or not can_read_session(row, user):
+    if row is None:
+        own_payload = sessions.get(sid)
+        if isinstance(own_payload, dict) and own_payload.get('organization_id'):
+            # A report-mode attribution row may still appear in the caller's
+            # personal list after org membership changes. It is not a
+            # canonical project for the caller's active org.
+            sessions.pop(sid, None)
+        return sessions
+
+    # The canonical row is the project for this id. A personal row the caller
+    # still holds under the same id (a fork written before saves resolved by
+    # organization) is never authoritative for it: left in place, it would be
+    # what the endpoint reads and then saves over the canonical row. The fork
+    # itself is not changed or deleted; it is only not used here.
+    if is_hidden_for(row, str(user.id)) or not can_read_session(row, user):
+        sessions.pop(sid, None)
         return sessions
 
     payload = _session_row_to_payload(row)
@@ -490,13 +505,25 @@ def save_user_sessions(user_id, sessions, session_ids_to_delete=None, *, commit=
 
             existing = canonical_row(actor, sid, include_archived=True) if actor else None
             if existing is None:
-                # Fall back to the strict personal lookup so behaviour is
-                # unchanged for callers without a resolvable user record.
-                existing = (
-                    UserSession.query
-                    .filter_by(user_id=user_id, session_id=sid)
-                    .first()
-                )
+                # Preserve the old fallback only when there is no actor
+                # record. For a known actor, canonical_row already returns
+                # their unbound legacy row; an org-bound row from another
+                # active org must not be overwritten as a fallback.
+                if actor is None:
+                    existing = (
+                        UserSession.query
+                        .filter_by(user_id=user_id, session_id=sid)
+                        .first()
+                    )
+                else:
+                    own = (
+                        UserSession.query
+                        .filter_by(user_id=user_id, session_id=sid)
+                        .first()
+                    )
+                    if own is not None and own.organization_id:
+                        raise SessionNotFound(denied=True)
+                    existing = own
 
             if existing is not None:
                 if actor is not None and not can_read_session(existing, actor):

@@ -15,6 +15,7 @@ import math
 import os
 import re
 import time
+import types
 import uuid
 from urllib.parse import unquote
 
@@ -29,7 +30,7 @@ except Exception:
 
 from app import db, limiter, mail, org_access
 from app.admin_audit import append_user_audit_event
-from app.models import BatchIdeaUpload, UsageEvent, User
+from app.models import BatchIdeaUpload, UsageEvent, User, UserSession
 from app.billing_config import (
     bootstrap_legacy_credits,
     consume_credits,
@@ -222,6 +223,7 @@ def _rate_limit_usage_count(rate_key, limit_item):
 # ─────────────────────────────────────────────────────────────────────────────
 
 from .sessions import (
+    _session_row_to_payload,
     load_user_sessions,
     load_sessions_for_thread,
     save_user_sessions,
@@ -229,16 +231,24 @@ from .sessions import (
     restore_user_session,
     hard_delete_user_session,
 )
+from app.orgs import active_membership_for_user, can_edit_projects
+from app.scenarios_store import ScenariosData
 from app.session_access import (
     RevisionConflict,
     SessionAccessError,
     require_can_create_session,
     SessionNotFound,
+    active_org_id_for_user,
     can_archive_session,
+    can_read_session,
+    can_write_session,
     canonical_row,
     check_revision,
     extract_base_revision,
+    is_attributed_to,
     is_hidden_for,
+    is_personal_session_id,
+    pin_active_organization,
     resolve_session_for_actor,
 )
 
@@ -275,6 +285,219 @@ def _authorized_thread_scope(user_id, thread_id, *, require_write=False,
         row = None
     sessions = load_sessions_for_thread(user, thread_id, include_archived=include_archived)
     return user, sessions, row
+
+
+class TurnProject:
+    """The one project an AI turn is authorized to act on.
+
+    This is the blueprint's ProjectContext for the turn. The route resolves it
+    through the project access seam (session_access) before anything is
+    reserved or generated; tools, decision capture and the prompt builders
+    inside the turn then act on THIS project instead of looking it up again
+    among the caller's own rows. That second lookup is what made a teammate's
+    tool find no project, or the wrong one.
+
+    The context carries identity and authorization. Project content is read
+    fresh from the canonical row on each access, because tools save during the
+    turn and a later tool must see the earlier one's change. Saves still go
+    through the store, which keeps its own revision and permission checks.
+    """
+
+    __slots__ = (
+        "user", "project_id", "organization_id", "role", "can_read", "can_write",
+        "revision", "exists", "row_id",
+    )
+
+    def __init__(self, *, user, project_id, organization_id, role, can_read, can_write,
+                 revision, exists, row_id=None):
+        self.user = user
+        self.project_id = str(project_id or "").strip()
+        self.organization_id = organization_id
+        self.role = role
+        self.can_read = bool(can_read)
+        self.can_write = bool(can_write)
+        self.revision = revision
+        self.exists = bool(exists)
+        # The canonical row authorized at turn entry. Later reads load THIS
+        # row, never "whatever row the member's active organization resolves
+        # to now", so a mid-turn organization switch cannot swap projects.
+        self.row_id = row_id
+
+    @property
+    def actor_user_id(self):
+        return str(self.user.id) if self.user is not None else None
+
+    def matches(self, thread_id):
+        return bool(self.project_id) and self.project_id == str(thread_id or "").strip()
+
+    def row(self):
+        """The canonical row as it is now, or None when there is no row yet or
+        this member can no longer read it."""
+        if self.user is None or not self.project_id or not self.can_read:
+            return None
+        if self.row_id is not None:
+            row = db.session.get(UserSession, self.row_id)
+            if (
+                row is None or row.archived_at is not None
+                or str(row.session_id) != self.project_id
+            ):
+                return None
+        else:
+            # No row at turn entry (a new conversation): the row this turn
+            # creates, in the organization the turn authorized, bound once.
+            query = UserSession.query.filter_by(session_id=self.project_id).filter(
+                UserSession.archived_at.is_(None),
+            )
+            if self.organization_id:
+                query = query.filter_by(organization_id=str(self.organization_id))
+            else:
+                query = query.filter(
+                    UserSession.organization_id.is_(None),
+                    UserSession.user_id == self.actor_user_id,
+                )
+            row = query.order_by(UserSession.created_at.asc(), UserSession.id.asc()).first()
+            if row is None:
+                return None
+            self.row_id = row.id
+        if is_hidden_for(row, self.actor_user_id):
+            return None
+        if not can_read_session(row, self.user):
+            return None
+        return row
+
+    def sessions(self):
+        """``{key: payload}`` holding exactly this project, or ``{}``.
+
+        Same shape the tool code always worked with, so the existing
+        ``_resolve_user_session(sessions, thread_id)`` idiom is unchanged, and a
+        save of this dictionary writes this one project only.
+        """
+        row = self.row()
+        if row is None:
+            return {}
+        payload = _session_row_to_payload(row)
+        return {str(payload.get("session_id") or row.session_id): payload}
+
+    def scenarios(self):
+        """This project's scorecard and plan data, in the store's snapshot form.
+
+        Mirrors ``scenarios_store.load_scenarios_data`` for the one canonical
+        row, so a later ``_save_project_scenarios`` applies only this request's
+        change on top of the row (the store's delta merge), never a stale copy.
+        """
+        out = ScenariosData()
+        row = self.row()
+        if row is None:
+            return out
+        data = row.scenarios_json if isinstance(row.scenarios_json, dict) else None
+        if data:
+            db_sid = str(row.session_id)
+            out[db_sid] = copy.deepcopy(data)
+            out.remember(db_sid, row)
+            row_payload = row.payload if isinstance(row.payload, dict) else {}
+            payload_sid = str(row_payload.get("session_id") or "").strip()
+            if payload_sid and payload_sid != db_sid:
+                out[payload_sid] = out[db_sid]
+                out.remember(payload_sid, row)
+        return out
+
+
+def _build_turn_project(user, thread_id):
+    """Resolve and authorize one project for an AI turn.
+
+    An existing project is authorized against its canonical row; a member who
+    cannot read it gets SessionNotFound (404, so ids cannot be probed). A
+    project that does not exist yet (the first turn of a new conversation) is
+    authorized against the member's organization role, as creation is.
+    """
+    if user is not None and not isinstance(user, User):
+        user = User.query.get(str(user))
+    project_id = str(thread_id or "").strip()
+    if user is None or not project_id:
+        raise SessionNotFound()
+
+    row = canonical_row(user, project_id)
+    if row is None:
+        organization_id = active_org_id_for_user(user)
+        membership = (
+            active_membership_for_user(organization_id, str(user.id))
+            if organization_id and not is_personal_session_id(project_id) else None
+        )
+        role = normalize_org_role(membership.role) if membership is not None else None
+        return TurnProject(
+            user=user, project_id=project_id, organization_id=organization_id, role=role,
+            can_read=True,
+            can_write=(can_edit_projects(role) if membership is not None else True),
+            revision=None, exists=False,
+        )
+
+    row, membership = resolve_session_for_actor(user, project_id)
+    role = normalize_org_role(membership.role) if membership is not None else (
+        "owner" if is_attributed_to(row, str(user.id)) else None
+    )
+    return TurnProject(
+        user=user, project_id=project_id, organization_id=row.organization_id, role=role,
+        can_read=True, can_write=can_write_session(row, user, membership=membership),
+        revision=int(row.revision or 1), exists=True, row_id=row.id,
+    )
+
+
+def _authorize_turn_project(user, thread_id):
+    """Build the turn's project and hold its organization for the request.
+
+    Called by the turn routes once they have authorized the project, before
+    anything is reserved or generated.
+    """
+    project = _build_turn_project(user, thread_id)
+    pin_active_organization(project.actor_user_id, project.organization_id)
+    return project
+
+
+def _turn_project(user, thread_id, project=None):
+    """The turn's project: the one the route authorized, or (for callers that
+    run a tool outside a turn) the same project resolved through the same
+    access seam. Never a lookup among the caller's personal rows."""
+    if isinstance(project, TurnProject) and project.matches(thread_id):
+        return project
+    return _build_turn_project(user, thread_id)
+
+
+def _scorecard_project(user_id, thread_id, project=None):
+    """The project whose scorecards a read may use, failing closed.
+
+    A member who may not read the project gets a project with no readable row,
+    so scorecard selection returns nothing rather than falling back to an
+    unscoped lookup.
+    """
+    try:
+        return _turn_project(user_id, thread_id, project)
+    except SessionAccessError:
+        return TurnProject(
+            user=None, project_id=thread_id, organization_id=None, role=None,
+            can_read=False, can_write=False, revision=None, exists=True,
+        )
+
+
+def _project_sessions(user_id, thread_id, project=None):
+    """``{key: payload}`` for exactly the turn's project (see TurnProject).
+
+    A member who may not read the project gets nothing, exactly as a project
+    missing from their own rows used to give nothing.
+    """
+    try:
+        return _turn_project(user_id, thread_id, project).sessions()
+    except SessionAccessError:
+        return {}
+
+
+def _project_scenarios(user_id, thread_id, project=None):
+    """Scorecard and plan data for exactly the turn's project (or none)."""
+    try:
+        return _turn_project(user_id, thread_id, project).scenarios()
+    except SessionAccessError:
+        return ScenariosData()
+
+
 from app.idea_ledger import (
     distill_session_to_ledger_row,
     mark_ledger_archived,
@@ -1363,7 +1586,7 @@ def _rubric_card(rubric, *, kit=None):
     }
 
 
-def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
+def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message, project=None):
     """Persist and render the exact application rubric before approval."""
     if not isinstance(session, dict) or not user_id or not thread_id:
         return None
@@ -1403,7 +1626,7 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
     presented_at = _iso_now()
     rubric = {**rubric, "presented_at": presented_at}
     session["scoring_rubric"] = rubric
-    sessions = load_user_sessions(user_id) or {}
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     key, durable = _resolve_user_session(sessions, thread_id)
     if isinstance(durable, dict):
         durable["scoring_rubric"] = rubric
@@ -2562,11 +2785,11 @@ def _thread_session_record(sessions, thread_id):
     return None
 
 
-def _thread_scorecard_summary(user_id, thread_id):
+def _thread_scorecard_summary(user_id, thread_id, project=None):
     if not user_id or not thread_id:
         return {"has_scorecard": False, "scenario_count": 0, "low_components": []}
 
-    session = _thread_session_record(load_user_sessions(user_id), thread_id)
+    session = _thread_session_record(_project_sessions(user_id, thread_id, project), thread_id)
     if not isinstance(session, dict):
         return {"has_scorecard": False, "scenario_count": 0, "low_components": []}
 
@@ -2600,8 +2823,7 @@ def _thread_scorecard_summary(user_id, thread_id):
 
     scenario_count = 0
     try:
-        from .strategy import _load_scenarios
-        all_data = _load_scenarios(user_id) if user_id else {}
+        all_data = _project_scenarios(user_id, thread_id, project) if user_id else {}
         thread_entry = all_data.get(thread_id) if isinstance(all_data, dict) else {}
         scenarios = thread_entry.get("scenarios") if isinstance(thread_entry, dict) else []
         if isinstance(scenarios, list):
@@ -2616,8 +2838,8 @@ def _thread_scorecard_summary(user_id, thread_id):
     }
 
 
-def _scenario_modeling_prompt_suffix(user_id, thread_id):
-    summary = _thread_scorecard_summary(user_id, thread_id)
+def _scenario_modeling_prompt_suffix(user_id, thread_id, project=None):
+    summary = _thread_scorecard_summary(user_id, thread_id, project=project)
     if not summary.get("has_scorecard"):
         return ""
 
@@ -3588,11 +3810,11 @@ def _successful_scoring_action(executed_actions):
     return False
 
 
-def _criteria_card_after_scoring(user_id, thread_id):
+def _criteria_card_after_scoring(user_id, thread_id, project=None):
     """Show the criteria behind the first scoring once, as the rubric card."""
     if not user_id or not thread_id:
         return None
-    sessions = load_user_sessions(user_id) or {}
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
         return None
@@ -4139,7 +4361,7 @@ def _readiness_phase_prompt_suffix(readiness):
     )
 
 
-def _organizational_memory_prompt_suffix(user_id, thread_id):
+def _organizational_memory_prompt_suffix(user_id, thread_id, project=None):
     """PHASE 7. Prior organizational decisions relevant to this one.
 
     This is the only cross-thread context channel. Raw recent conversations and
@@ -4156,7 +4378,7 @@ def _organizational_memory_prompt_suffix(user_id, thread_id):
         if user is None or not thread_id:
             return ""
 
-        sessions = load_sessions_for_thread(user, thread_id)
+        sessions = _project_sessions(user, thread_id, project)
         _key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return ""
@@ -4175,9 +4397,9 @@ def _organizational_memory_prompt_suffix(user_id, thread_id):
         return ""
 
 
-def _decision_kit_prompt_suffix(user_id, thread_id):
+def _decision_kit_prompt_suffix(user_id, thread_id, project=None):
     try:
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         _key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return ""
@@ -4229,7 +4451,7 @@ def _decision_kit_prompt_suffix(user_id, thread_id):
         return ""
 
 
-def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id, chat_history=None, readiness=None, data_context_connector_ids=None):
+def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id, chat_history=None, readiness=None, data_context_connector_ids=None, project=None):
     return (
         f"{_SYSTEM_PROMPT_PREFIX}"
         f"{_original_intake_prompt_suffix(chat_history)}"
@@ -4239,16 +4461,16 @@ def _build_agent_system_prompt(*, context_summary_text, intake_context, view_con
         f"{_connector_context_prompt_suffix(connector_context_snapshot)}"
         f"{_jira_portfolio_prompt_suffix(user_id, data_context_connector_ids)}"
         f"{_cross_session_memory_prompt_suffix(user_id, thread_id)}"
-        f"{_organizational_memory_prompt_suffix(user_id, thread_id)}"
-        f"{_batch_promotion_prompt_suffix(user_id, thread_id)}"
-        f"{_scenario_modeling_prompt_suffix(user_id, thread_id)}"
+        f"{_organizational_memory_prompt_suffix(user_id, thread_id, project=project)}"
+        f"{_batch_promotion_prompt_suffix(user_id, thread_id, project=project)}"
+        f"{_scenario_modeling_prompt_suffix(user_id, thread_id, project=project)}"
         f"{_monitoring_prompt_suffix(user_id)}"
         f"{_readiness_phase_prompt_suffix(readiness)}"
-        f"{_decision_kit_prompt_suffix(user_id, thread_id)}"
+        f"{_decision_kit_prompt_suffix(user_id, thread_id, project=project)}"
     )
 
 
-def _scorecard_content_prompt_suffix(session, view_context, *, user_id=None, thread_id=None):
+def _scorecard_content_prompt_suffix(session, view_context, *, user_id=None, thread_id=None, project=None):
     """Inject every scorecard the user has generated in this thread (compact
     form) so the chat agent can answer comparison questions like 'which of
     these are duplicates?' without needing to re-score. Scorecards are
@@ -4260,7 +4482,12 @@ def _scorecard_content_prompt_suffix(session, view_context, *, user_id=None, thr
     enough for the model to detect near-duplicates and answer ranking
     questions, without exploding the context.
     """
-    snapshots = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+    if user_id is not None and thread_id:
+        try:
+            project = _turn_project(user_id, thread_id, project)
+        except SessionAccessError:
+            return ""
+    snapshots = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=project)
     if not snapshots:
         return ""
 
@@ -4322,7 +4549,7 @@ def _scorecard_content_prompt_suffix(session, view_context, *, user_id=None, thr
     )
 
 
-def _wbs_content_prompt_suffix(user_id, thread_id, active_scorecard_id=None):
+def _wbs_content_prompt_suffix(user_id, thread_id, active_scorecard_id=None, project=None):
     """Inject every option-scoped execution plan so chat can address the plan
     the customer names, even when another option is open in the view.
 
@@ -4334,18 +4561,15 @@ def _wbs_content_prompt_suffix(user_id, thread_id, active_scorecard_id=None):
     """
     try:
         from ..decision_records import execution_option_key
-        from .sessions import load_user_sessions
-        from .strategy import _load_scenarios
-
-        all_data = _load_scenarios(user_id)
-        sessions = load_user_sessions(user_id) or {}
+        all_data = _project_scenarios(user_id, thread_id, project)
+        sessions = _project_sessions(user_id, thread_id, project) or {}
     except Exception:
         return ""
     td = all_data.get(thread_id) if isinstance(all_data, dict) else None
     if not isinstance(td, dict):
         return ""
     _session_key, session = _resolve_user_session(sessions, thread_id)
-    cards = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+    cards = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=project)
     open_scorecard_id = (
         str(active_scorecard_id or "").strip()
         or str(td.get("active_execution_scorecard_id") or "").strip()
@@ -4365,7 +4589,7 @@ def _wbs_content_prompt_suffix(user_id, thread_id, active_scorecard_id=None):
             continue
         resolved_id, project_wbs = _resolve_option_plan(
             user_id, thread_id, cards, option_key, open_scorecard_id,
-            thread_data=td,
+            thread_data=td, project=project,
         )
         if resolved_id != scorecard_id or not isinstance(project_wbs, dict):
             continue
@@ -4456,7 +4680,7 @@ def _user_turn_count(session):
     return sum(1 for turn in (history or []) if isinstance(turn, dict) and turn.get("role") == "user")
 
 
-def _decision_facts_prompt_suffix(user_id, thread_id):
+def _decision_facts_prompt_suffix(user_id, thread_id, project=None):
     """Stored decision state for this session only: facts, never wording."""
     if not user_id or not thread_id:
         return ""
@@ -4466,7 +4690,14 @@ def _decision_facts_prompt_suffix(user_id, thread_id):
         user = User.query.get(user_id)
         if user is None:
             return ""
-        facts = decision_facts(user, thread_id)
+        try:
+            project = _turn_project(user, thread_id, project)
+        except SessionAccessError:
+            return ""
+        session_row = project.row()
+        if project.exists and session_row is None:
+            return ""
+        facts = decision_facts(user, thread_id, session_row=session_row)
         turn = getattr(g, "turn_capture", None) if has_request_context() else None
         if isinstance(turn, dict) and turn.get("thread_id") == str(thread_id) and turn.get("summary") is not None:
             # What the capture step saved (or could not save) from this message.
@@ -4484,9 +4715,18 @@ def _decision_facts_prompt_suffix(user_id, thread_id):
         return ""
 
 
-def _collect_session_scorecards(session, *, user_id=None, thread_id=None):
+def _collect_session_scorecards(session, *, user_id=None, thread_id=None, project=None,
+                                own_rows_only=False):
     """Return every scorecard payload in this thread: baseline + every
-    scenario-derived snapshot. Order: oldest → newest. De-duped by id."""
+    scenario-derived snapshot. Order: oldest → newest. De-duped by id.
+
+    With the turn's ``project``, indexed scorecards come from that canonical
+    project only (scorecards.project_scorecard_query): never from a same-id
+    project in another organization, and never through an unscoped lookup.
+    An existing project this member can no longer read contributes nothing; a
+    project with no row yet has no indexed scorecards. ``own_rows_only`` keeps
+    this member's own rows, for code that rewrites a card under its author.
+    """
     if not isinstance(session, dict):
         return []
     out = []
@@ -4516,10 +4756,28 @@ def _collect_session_scorecards(session, *, user_id=None, thread_id=None):
             inner = scen.get("result") or scen.get("scorecard") or scen.get("analysis_result")
             if isinstance(inner, dict):
                 _push(inner)
-    if user_id is not None and thread_id:
-        legacy = {"result": {**out[0], "scorecard_snapshots": out[1:]}} if out else {}
-        return collect_peer_scorecards(user_id, thread_id, legacy_session=legacy)
-    return out
+    if user_id is None or not thread_id:
+        # No index lookup at all: only the cards carried by this session.
+        return out
+    project_row = None
+    if isinstance(project, TurnProject):
+        project_row = project.row()
+        if project_row is None:
+            if project.exists or not project.can_read:
+                # An existing project this member cannot read: nothing.
+                return []
+            # No project row yet: this member's own rows in the project's
+            # organization (or, for personal work, with no organization).
+            project_row = types.SimpleNamespace(
+                session_id=str(thread_id), user_id=str(user_id),
+                organization_id=project.organization_id,
+            )
+            own_rows_only = True
+    legacy = {"result": {**out[0], "scorecard_snapshots": out[1:]}} if out else {}
+    return collect_peer_scorecards(
+        user_id, thread_id, legacy_session=legacy, project_row=project_row,
+        own_rows_only=own_rows_only,
+    )
 
 
 def _normalized_option_identity(value):
@@ -4567,7 +4825,7 @@ def _requested_name_matches_scorecard(session, scorecard, requested_name):
     }
 
 
-def _resolve_rescore_target(user_id, thread_id, session, scorecard_id, requested_name):
+def _resolve_rescore_target(user_id, thread_id, session, scorecard_id, requested_name, project=None):
     """Return the exact card eligible for an in-place re-score, or an error.
 
     A model-supplied scorecard id is never sufficient proof of identity. The
@@ -4579,7 +4837,7 @@ def _resolve_rescore_target(user_id, thread_id, session, scorecard_id, requested
     cards = _collect_session_scorecards(
         session,
         user_id=user_id,
-        thread_id=thread_id,
+        thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project), own_rows_only=True,
     )
     target = next(
         (
@@ -5283,7 +5541,7 @@ def _execute_local_tool(tool_name, tool_input, **kwargs):
     return result
 
 
-def _execute_local_tool_inner(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn, view_context=None, user_message="", session=None):
+def _execute_local_tool_inner(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn, view_context=None, user_message="", session=None, project=None):
     if tool_name in {"get_readiness_snapshot", "get_data_contract"}:
         return _anthropic_tool_output(tool_name, readiness), mutations_this_turn
     if tool_name == "query_connector_data":
@@ -5311,9 +5569,10 @@ def _execute_local_tool_inner(tool_name, tool_input, *, readiness, user, user_id
         and rubric_is_scoring_authorized(session["scoring_rubric"])
     ):
         try:
-            sessions = load_user_sessions(user_id) or {}
+            project = _turn_project(user or user_id, thread_id, project)
+            sessions = project.sessions()
             session_key, durable_session = _resolve_user_session(sessions, thread_id)
-            if isinstance(durable_session, dict):
+            if isinstance(durable_session, dict) and project.can_write:
                 durable_session["scoring_rubric"] = session["scoring_rubric"]
                 if session.get("scoring_intent"):
                     durable_session["scoring_intent"] = session["scoring_intent"]
@@ -5344,7 +5603,7 @@ def _execute_local_tool_inner(tool_name, tool_input, *, readiness, user, user_id
                 user_id=user_id,
                 thread_id=thread_id,
                 view_context=view_context,
-                user_message=user_message,
+                user_message=user_message, project=project,
             )
         except Exception as exc:
             if tool_name != "generate_scorecard":
@@ -7370,7 +7629,7 @@ def _trigger_post_mutation_sync(user_id, thread_id, project_wbs):
 
 
 
-def _thread_user_corpus(user_id, thread_id, *, max_chars=20000):
+def _thread_user_corpus(user_id, thread_id, *, max_chars=20000, project=None):
     """The user's own words in this thread, newest-last, for evidence capture.
 
     Only `user` turns are included. Quoting the assistant back would let the
@@ -7378,7 +7637,7 @@ def _thread_user_corpus(user_id, thread_id, *, max_chars=20000):
     the circularity the verification step exists to prevent.
     """
     try:
-        sessions = load_user_sessions(str(user_id)) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         session = sessions.get(thread_id)
         if not isinstance(session, dict):
             return ""
@@ -7554,8 +7813,8 @@ def _capture_source(stored_session, user_message):
     return ("choice" if choice else "conversation"), choice
 
 
-def _load_capture_session(user_id, thread_id):
-    sessions = load_user_sessions(user_id) or {}
+def _load_capture_session(user_id, thread_id, project=None):
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     session_key, stored_session = _resolve_user_session(sessions, thread_id)
     return sessions, session_key, stored_session
 
@@ -7599,7 +7858,7 @@ def _normalize_decision_conditions(raw_conditions, user_message):
     return conditions
 
 
-def _execute_record_option_decision(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message):
+def _execute_record_option_decision(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, project=None):
     from ..decision_records import (
         create_or_refresh_record,
         execution_option_key,
@@ -7630,13 +7889,13 @@ def _execute_record_option_decision(tool_input, *, user, user_id, thread_id, vie
             continue
         entry["conditions"] = normalized
 
-    sessions, session_key, stored_session = _load_capture_session(user_id, thread_id)
+    sessions, session_key, stored_session = _load_capture_session(user_id, thread_id, project=project)
     if not isinstance(stored_session, dict):
         return _tool_error(
             "No open decision context was found for this conversation.",
             code="decision_context_required",
         )
-    cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id)
+    cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
     active_scorecard_id = (
         view_active_scorecard_id
         or str(stored_session.get("active_evaluation_scorecard_id") or "").strip()
@@ -7736,7 +7995,9 @@ def _execute_record_option_decision(tool_input, *, user, user_id, thread_id, vie
             metadata["conditional"] = True
         if record is None:
             try:
-                record, _created = create_or_refresh_record(user, thread_id)
+                record, _created = create_or_refresh_record(
+                    user, thread_id, session_row=_scorecard_project(user, thread_id, project).row(),
+                )
             except LookupError:
                 return _tool_error(
                     "No decision record is available for this conversation. Nothing was recorded.",
@@ -7823,11 +8084,11 @@ def _execute_record_option_decision(tool_input, *, user, user_id, thread_id, vie
     })
 
 
-def _capture_record_and_option(tool_input, *, user, user_id, thread_id):
+def _capture_record_and_option(tool_input, *, user, user_id, thread_id, project=None):
     """The thread's record plus an optional resolved option (strict matching)."""
     from ..decision_records import create_or_refresh_record, execution_option_key
 
-    sessions, session_key, stored_session = _load_capture_session(user_id, thread_id)
+    sessions, session_key, stored_session = _load_capture_session(user_id, thread_id, project=project)
     if not isinstance(stored_session, dict):
         return None, None, None, None, _tool_error(
             "No open decision context was found for this conversation.",
@@ -7837,7 +8098,7 @@ def _capture_record_and_option(tool_input, *, user, user_id, thread_id):
     option_name = str(tool_input.get("option_name") or "").strip()
     scorecard = None
     if option_key or option_name:
-        cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id)
+        cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
         scorecard, failure = _resolve_option_card(
             cards, option_key=option_key, option_name=option_name, allow_fallback=False,
         )
@@ -7847,7 +8108,9 @@ def _capture_record_and_option(tool_input, *, user, user_id, thread_id):
                 code=failure["code"],
             ) | {"non_blocking": True, "option_names": failure.get("option_names") or []}
     try:
-        record, _created = create_or_refresh_record(user, thread_id)
+        record, _created = create_or_refresh_record(
+            user, thread_id, session_row=_scorecard_project(user, thread_id, project).row(),
+        )
     except LookupError:
         return None, None, stored_session, None, _tool_error(
             "No decision record is available for this conversation.",
@@ -7859,6 +8122,7 @@ def _capture_record_and_option(tool_input, *, user, user_id, thread_id):
 
 def _resolve_option_plan(
     user_id, thread_id, cards, option_key, active_scorecard_id, *, thread_data=None,
+    project=None,
 ):
     """Return ``(scorecard_id, plan)`` for an explicit option or the open plan.
 
@@ -7866,11 +8130,11 @@ def _resolve_option_plan(
     shared by decision capture, prompt context, and the main chat plan tools.
     """
     from ..decision_records import execution_option_key
-    from .strategy import _load_scenarios, _resolve_thread_wbs
+    from .strategy import _resolve_thread_wbs
 
     td = thread_data
     if td is None:
-        all_data = _load_scenarios(user_id)
+        all_data = _project_scenarios(user_id, thread_id, project)
         td = all_data.get(thread_id) if isinstance(all_data, dict) else None
     if not isinstance(td, dict):
         return None, None
@@ -7889,20 +8153,20 @@ def _resolve_option_plan(
     return scorecard_id, _resolve_thread_wbs(td, scorecard_id)
 
 
-def _resolve_explicit_option_plan(user_id, thread_id, td, option_key):
+def _resolve_explicit_option_plan(user_id, thread_id, td, option_key, project=None):
     """Resolve a chat tool's explicit option key without cross-option fallback."""
     from ..decision_records import execution_option_key
 
-    sessions = load_user_sessions(user_id) or {}
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     _session_key, session = _resolve_user_session(sessions, thread_id)
-    cards = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+    cards = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
     if not any(execution_option_key(card) == option_key for card in cards):
         return None, None, _tool_error(
             "That option is not part of this session. Nothing changed.",
             code="option_not_found",
         )
     scorecard_id, plan = _resolve_option_plan(
-        user_id, thread_id, cards, option_key, None, thread_data=td,
+        user_id, thread_id, cards, option_key, None, thread_data=td, project=project,
     )
     if not isinstance(plan, dict):
         return None, None, _tool_error(
@@ -7948,7 +8212,7 @@ def _commit_plan_task(user_id, thread_id, scorecard_id, plan, task_id, apply):
     }, None
 
 
-def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key):
+def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key, project=None):
     from ..decision_capture import normalize_iso_date
     from ..decision_records import (
         DECISION_SIGNAL_KINDS,
@@ -8003,7 +8267,7 @@ def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, vi
         return _tool_error("content is required. Nothing was recorded.", code="content_required")
 
     record, _scorecard, stored_session, option_key, failure = _capture_record_and_option(
-        tool_input, user=user, user_id=user_id, thread_id=thread_id,
+        tool_input, user=user, user_id=user_id, thread_id=thread_id, project=project,
     )
     if failure:
         return failure
@@ -8088,11 +8352,12 @@ def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, vi
         elif not is_tool_allowed(plan_key, "wbs_write", "write"):
             payload["task_commitment"] = {"status": "not_recorded", "code": "tool_not_allowed"}
         else:
-            sessions = load_user_sessions(user_id) or {}
+            sessions = _project_sessions(user_id, thread_id, project) or {}
             _key, live = _resolve_user_session(sessions, thread_id)
-            cards = _collect_session_scorecards(live, user_id=user_id, thread_id=thread_id)
+            cards = _collect_session_scorecards(live, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
             scorecard_id, plan = _resolve_option_plan(
                 user_id, thread_id, cards, option_key, view_active_scorecard_id,
+                project=project,
             )
             if not isinstance(plan, dict):
                 payload["task_commitment"] = {"status": "not_recorded", "code": "no_plan"}
@@ -8124,7 +8389,7 @@ def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, vi
     return _tool_success(payload)
 
 
-def _execute_confirm_task_commitment(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key):
+def _execute_confirm_task_commitment(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key, project=None):
     from ..decision_records import execution_option_key
     from ..task_history import confirm_task_commitment
 
@@ -8139,13 +8404,15 @@ def _execute_confirm_task_commitment(tool_input, *, user, user_id, thread_id, vi
     task_id = str(tool_input.get("task_id") or "").strip()
     if not task_id:
         return _tool_error("task_id is required. Nothing was recorded.", code="task_not_found")
-    sessions = load_user_sessions(user_id) or {}
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     _key, live = _resolve_user_session(sessions, thread_id)
-    cards = _collect_session_scorecards(live, user_id=user_id, thread_id=thread_id) if isinstance(live, dict) else []
+    cards = _collect_session_scorecards(live, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project)) if isinstance(live, dict) else []
     option_key = str(tool_input.get("option_key") or "").strip() or None
     if option_key and not any(execution_option_key(card) == option_key for card in cards):
         return _tool_error("That option is not part of this session. Nothing was recorded.", code="decision_option_required")
-    scorecard_id, plan = _resolve_option_plan(user_id, thread_id, cards, option_key, view_active_scorecard_id)
+    scorecard_id, plan = _resolve_option_plan(
+        user_id, thread_id, cards, option_key, view_active_scorecard_id, project=project,
+    )
     if not isinstance(plan, dict):
         return _tool_error("There is no execution plan for that option. Nothing was recorded.", code="no_plan")
     outcome, error = _commit_plan_task(
@@ -8292,11 +8559,19 @@ def _execute_record_lesson(tool_input, *, user, user_id, thread_id, user_message
     })
 
 
-def _execute_decision_capture_tool(tool_name, tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key):
+def _execute_decision_capture_tool(tool_name, tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key, project=None):
+    # A capture writes the turn's project and its decision records: editing
+    # role required, checked before anything is written.
+    try:
+        project = _turn_project(user, thread_id, project)
+    except SessionAccessError:
+        return _tool_error("Thread not found.", code="thread_not_found")
+    if not project.can_write:
+        return _tool_error("Your role on this project is read-only.", code="project_read_only")
     try:
         return _dispatch_decision_capture_tool(
             tool_name, tool_input, user=user, user_id=user_id, thread_id=thread_id,
-            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key,
+            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key, project=project,
         )
     except Exception as exc:
         # A capture write must never fail the turn. Anything already committed
@@ -8308,21 +8583,21 @@ def _execute_decision_capture_tool(tool_name, tool_input, *, user, user_id, thre
         ) | {"failure_state": True, "error_type": type(exc).__name__}
 
 
-def _dispatch_decision_capture_tool(tool_name, tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key):
+def _dispatch_decision_capture_tool(tool_name, tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key, project=None):
     if tool_name == "record_option_decision":
         return _execute_record_option_decision(
             tool_input, user=user, user_id=user_id, thread_id=thread_id,
-            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message,
+            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, project=project,
         )
     if tool_name == "record_decision_context":
         return _execute_record_decision_context(
             tool_input, user=user, user_id=user_id, thread_id=thread_id,
-            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key,
+            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key, project=project,
         )
     if tool_name == "confirm_task_commitment":
         return _execute_confirm_task_commitment(
             tool_input, user=user, user_id=user_id, thread_id=thread_id,
-            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key,
+            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key, project=project,
         )
     if tool_name == "record_outcome":
         return _execute_record_outcome(
@@ -8549,7 +8824,7 @@ def _capture_signal_exists(record, *, kind, option_key, quote, content=None):
     return False
 
 
-def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=None):
+def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=None, project=None):
     """Run the capture step for this turn. Returns {actions, summary, usage}."""
     from ..decision_capture import decision_facts, find_thread_record
     from ..decision_records import current_option_decision
@@ -8560,18 +8835,19 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
     api_key = _anthropic_api_key()
     if not api_key:
         return empty
-    _sessions, _key, stored_session = _load_capture_session(user_id, thread_id)
+    _sessions, _key, stored_session = _load_capture_session(user_id, thread_id, project=project)
     if not isinstance(stored_session, dict):
         return empty
-    cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id)
+    cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id, project=project)
     options = _capture_pass_options(cards)
     if not options:
         return empty
 
     messages_list = _capture_recent_user_messages(stored_session, user_message)
     by_number = {item["number"]: item for item in messages_list}
-    facts = decision_facts(user, thread_id) or {}
-    plan_context = _wbs_content_prompt_suffix(user_id, thread_id, None)
+    capture_row = project.row() if isinstance(project, TurnProject) else None
+    facts = decision_facts(user, thread_id, session_row=capture_row) or {}
+    plan_context = _wbs_content_prompt_suffix(user_id, thread_id, None, project)
     today = datetime.utcnow().date()
     context = {
         "today": today.isoformat(),
@@ -8672,7 +8948,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
     def run(tool_name, tool_input, message):
         result = _execute_decision_capture_tool(
             tool_name, tool_input, user=user, user_id=user_id, thread_id=thread_id,
-            view_active_scorecard_id=view_active, user_message=message["text"], plan_key=plan_key,
+            view_active_scorecard_id=view_active, user_message=message["text"], plan_key=plan_key, project=project,
         )
         actions.append({"tool": tool_name, "input": tool_input, "result": result, "capture_pass": True})
         return result
@@ -8897,7 +9173,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         if stated_at is None:
             return True
         _scorecard_id, plan = _resolve_option_plan(
-            user_id, thread_id, cards, str(item.get("option_key") or "").strip() or None, view_active,
+            user_id, thread_id, cards, str(item.get("option_key") or "").strip() or None, view_active, project=project,
         )
         if not isinstance(plan, dict):
             return False
@@ -9028,11 +9304,20 @@ def _capture_entry_exists(record, option_key, bucket, quote, message_text=""):
     return False
 
 
-def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None, user_message=""):
+def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None, user_message="", project=None):
     if not user:
         return _tool_error("User context missing.")
     if not thread_id:
         return _tool_error("thread_id is required for mutation tools.", code="missing_thread")
+    # Every tool here changes the turn's project, so it needs an editing role
+    # on THAT project. The turn's routes already refuse a read-only member
+    # before anything is reserved; this keeps the rule for any other caller.
+    try:
+        project = _turn_project(user, thread_id, project)
+    except SessionAccessError:
+        return _tool_error("Thread not found.", code="thread_not_found")
+    if not project.can_write:
+        return _tool_error("Your role on this project is read-only.", code="project_read_only")
 
     # Freeze the intake baseline before the agent begins scoring
     # (docs/DECISION_IMPACT_REPORT_SPEC.md §3.4). This is the agent's single
@@ -9063,7 +9348,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         _normalize_scorecard_payload,
         _generate_ai_wbs_suggestion,
         get_llm_client,
-        _load_scenarios,
         _materialize_ai_wbs,
         InvalidTaskDate,
         _normalize_project_wbs,
@@ -9084,7 +9368,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         return _execute_decision_capture_tool(
             tool_name, tool_input, user=user, user_id=user_id, thread_id=thread_id,
             view_active_scorecard_id=view_active_scorecard_id, user_message=user_message,
-            plan_key=plan_key,
+            plan_key=plan_key, project=project,
         )
 
     if tool_name == "approve_presented_rubric":
@@ -9094,7 +9378,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "Quote the user's approval exactly from their latest message, then ask them to approve the shown rubric if needed.",
                 code="rubric_approval_quote_required",
             )
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         session_key, session = _resolve_user_session(sessions, thread_id)
         rubric = session.get("scoring_rubric") if isinstance(session, dict) else None
         if (
@@ -9126,7 +9410,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         }
 
     if tool_name == "show_scoring_rubric":
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         _session_key, stored_session = _resolve_user_session(sessions, thread_id)
         if not isinstance(stored_session, dict):
             return _tool_error(
@@ -9137,7 +9421,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             stored_session,
             user_id=user_id,
             thread_id=thread_id,
-            user_message=user_message,
+            user_message=user_message, project=project,
         )
         rubric = stored_session.get("scoring_rubric")
         if not rendered or not isinstance(rubric, dict):
@@ -9251,7 +9535,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         for c in criteria:
             c["weight"] = 0.0 if c.get("gate") else round(c["weight"] / total, 4)
 
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         _key, _sess = _resolve_user_session(sessions, thread_id)
         active_kit = (
             get_decision_kit(_sess.get("decision_kit"), _sess.get("decision_kit_version"))
@@ -9359,14 +9643,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         fields = tool_input.get("fields")
         if not option or not isinstance(fields, list):
             return _tool_error("Provide an option and its structured fields.", code="invalid_option_attributes")
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         session_key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return _tool_error("Thread not found.", code="thread_not_found")
         kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version")) if session.get("decision_kit") else None
         explicit_target_id = str(tool_input.get("scorecard_id") or "").strip()
         session_scorecards = _collect_session_scorecards(
-            session, user_id=user_id, thread_id=thread_id,
+            session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project), own_rows_only=True,
         )
         scorecards_by_id = {
             str(card.get("id") or card.get("analysis_id") or "").strip(): card
@@ -9418,7 +9702,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         )
         if target_attributes:
             store_option_attributes(session, option_key, target_attributes, option)
-        corpus = _thread_user_corpus(user_id, thread_id)
+        corpus = _thread_user_corpus(user_id, thread_id, project=project)
         known_names = [
             str(item.get("display_name") or "").strip()
             for item in (session.get("option_registry") or {}).values()
@@ -9567,7 +9851,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # keeps option facts attached even when the agent queues only names.
         _queue_session = {}
         try:
-            _queue_sessions = load_user_sessions(user_id) or {}
+            _queue_sessions = _project_sessions(user_id, thread_id, project) or {}
             _queue_key, _queue_session = _resolve_user_session(_queue_sessions, thread_id)
             if not isinstance(_queue_session, dict):
                 _queue_session = {}
@@ -9575,7 +9859,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             _queue_session = {}
         queue = []
         seen = set()
-        queue_corpus = _thread_user_corpus(user_id, thread_id)
+        queue_corpus = _thread_user_corpus(user_id, thread_id, project=project)
         queue_names = [
             str(candidate.get("name") or candidate.get("idea") or candidate.get("label")
                 or candidate.get("title") or candidate.get("option") or "").strip()
@@ -9710,7 +9994,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # Canonical option facts must exist durably before any queued score runs.
         persisted_queue = False
         try:
-            sessions = load_user_sessions(user_id) or {}
+            sessions = _project_sessions(user_id, thread_id, project) or {}
             _key, _sess = _resolve_user_session(sessions, thread_id)
             if isinstance(_sess, dict):
                 _sess["scorecard_queue"] = queue
@@ -9765,7 +10049,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             )
         requested_name = _compact_scorecard_title(requested_name or "Untitled Idea")
 
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         session_key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return _tool_error("Thread not found.", code="thread_not_found")
@@ -9788,6 +10072,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 session,
                 rescore_id,
                 requested_name,
+                project=project,
             )
             if rescore_error:
                 return rescore_error
@@ -9800,13 +10085,22 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         else:
             evaluation_id = evaluation_id_for_new_scorecard(session, user_id=user_id)
         if not rescore_id:
-            legacy_thread_data = (_load_scenarios(user_id) or {}).get(thread_id) or {}
-            current_peers = collect_peer_scorecards(
-                user_id,
-                thread_id,
-                legacy_session=session,
-                legacy_thread_data=legacy_thread_data,
-            )
+            legacy_thread_data = (_project_scenarios(user_id, thread_id, project) or {}).get(thread_id) or {}
+            peer_project_row = _scorecard_project(user_id, thread_id, project).row()
+            if peer_project_row is not None:
+                current_peers = collect_peer_scorecards(
+                    user_id,
+                    thread_id,
+                    legacy_session=session,
+                    legacy_thread_data=legacy_thread_data,
+                    project_row=peer_project_row,
+                    own_rows_only=True,
+                )
+            else:
+                # No readable project row yet: only this session's own cards,
+                # never an unscoped index lookup by user and thread id.
+                from ..scorecards import _legacy_scorecards
+                current_peers = list(_legacy_scorecards(session, legacy_thread_data, thread_id))
             view_limit = scorecard_limit_for(user, plan_key)
             if len(current_peers) >= view_limit:
                 return _tool_error(
@@ -9818,9 +10112,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         decision_kit = session.get("decision_kit")
         decision_kit_version = session.get("decision_kit_version")
         kit = get_decision_kit(decision_kit, decision_kit_version) if decision_kit else None
-        evidence_corpus = _thread_user_corpus(user_id, thread_id)
+        evidence_corpus = _thread_user_corpus(user_id, thread_id, project=project)
         existing_scorecards = _collect_session_scorecards(
-            session, user_id=user_id, thread_id=thread_id,
+            session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project), own_rows_only=True,
         )
         known_option_names = [
             str(item.get("name") or "").strip()
@@ -10363,7 +10657,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         })
 
     if tool_name == "generate_tradeoff_comparison":
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         _session_key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return _tool_error("Thread not found.", code="thread_not_found")
@@ -10374,7 +10668,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             if str(item).strip()
         ]
         selected_ids = set(scorecard_ids)
-        snapshots = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+        snapshots = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
         if selected_ids:
             snapshots = [
                 snap for snap in snapshots
@@ -10486,7 +10780,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             return _tool_error("new_name is required.", code="invalid_name")
         next_name = next_name[:180]
 
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         target_key = None
         target_session = None
         if thread_id in sessions and isinstance(sessions.get(thread_id), dict):
@@ -10521,7 +10815,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not save_user_sessions(user_id, sessions):
             return _tool_error("Failed to persist thread rename.", code="persist_failed")
 
-        all_data = _load_scenarios(user_id) or {}
+        all_data = _project_scenarios(user_id, thread_id, project) or {}
         if thread_id in all_data and isinstance(all_data.get(thread_id), dict):
             td = all_data[thread_id]
             td["name"] = next_name
@@ -10889,7 +11183,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             from ..decision_records import execution_option_key as _plan_option_key
 
             named_cards = [
-                card for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+                card for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
                 if _plan_option_key(card) == named_option_key
             ]
             if not named_cards:
@@ -10900,7 +11194,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             scorecard = named_cards[-1]
             target_idea_id = str(scorecard.get("id") or scorecard.get("analysis_id") or "").strip() or None
         if target_idea_id and scorecard is None:
-            for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id):
+            for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project)):
                 cid = str(card.get("id") or card.get("analysis_id") or "")
                 if cid and cid == target_idea_id:
                     scorecard = card
@@ -11204,7 +11498,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not new_start_date or _parse_wbs_start_date(new_start_date) is None:
             return _tool_error("start_date must be a valid ISO date (YYYY-MM-DD).", code="invalid_start_date")
 
-        all_data = _load_scenarios(user_id)
+        all_data = _project_scenarios(user_id, thread_id, project)
         td = all_data.get(thread_id) if isinstance(all_data, dict) else None
         if not isinstance(td, dict):
             return _tool_error("No execution plan found for this thread yet.", code="no_plan")
@@ -11218,7 +11512,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         option_key = str(tool_input.get("option_key") or "").strip()
         if option_key:
             active_scorecard_id, resolved_wbs, target_error = _resolve_explicit_option_plan(
-                user_id, thread_id, td, option_key,
+                user_id, thread_id, td, option_key, project=project,
             )
             if target_error:
                 return target_error
@@ -11274,9 +11568,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not is_tool_allowed(plan_key, "wbs_write", "write"):
             return _tool_error("WBS write actions are not allowed on your current plan.", code="tool_not_allowed")
 
-        from .strategy import _load_scenarios, _thread_entry
+        from .strategy import _thread_entry
 
-        all_data = _load_scenarios(user_id)
+        all_data = _project_scenarios(user_id, thread_id, project)
         if thread_id not in all_data or not isinstance(all_data.get(thread_id), dict):
             all_data[thread_id] = _thread_entry()
         td = all_data[thread_id]
@@ -11292,7 +11586,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         option_key = str(tool_input.get("option_key") or "").strip()
         if option_key:
             active_scorecard_id, resolved_wbs, target_error = _resolve_explicit_option_plan(
-                user_id, thread_id, td, option_key,
+                user_id, thread_id, td, option_key, project=project,
             )
             if target_error:
                 return target_error
@@ -11595,6 +11889,7 @@ def _generate_assistant_reply_anthropic(
     attachments=None,
     disable_mutations=False,
     allow_failover=False,
+    project=None,
 ):
     fallback_reply = ""
     api_key = _anthropic_api_key()
@@ -11631,12 +11926,12 @@ def _generate_assistant_reply_anthropic(
         thread_id=thread_id,
         chat_history=chat_history,
         readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
+        data_context_connector_ids=(session or {}).get("data_context_connector_ids"), project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
+    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id, project=project)
     _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id)
+    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc, project)
+    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id, project=project)
     user_content = _anthropic_user_message_content(user_message, attachments=attachments)
     if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
         messages[-1] = {**messages[-1], "content": user_content}
@@ -11721,7 +12016,7 @@ def _generate_assistant_reply_anthropic(
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
                     user_message=user_message,
-                    session=session,
+                    session=session, project=project,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -11825,6 +12120,7 @@ def _stream_assistant_reply_events_anthropic(
     attachments=None,
     disable_mutations=False,
     allow_failover=False,
+    project=None,
 ):
     state = state if isinstance(state, dict) else {}
     fallback_reply = ""
@@ -11872,12 +12168,12 @@ def _stream_assistant_reply_events_anthropic(
         thread_id=thread_id,
         chat_history=chat_history,
         readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
+        data_context_connector_ids=(session or {}).get("data_context_connector_ids"), project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
+    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id, project=project)
     _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id)
+    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc, project)
+    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id, project=project)
     user_content = _anthropic_user_message_content(user_message, attachments=attachments)
     if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
         messages[-1] = {**messages[-1], "content": user_content}
@@ -12008,7 +12304,7 @@ def _stream_assistant_reply_events_anthropic(
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
                     user_message=user_message,
-                    session=session,
+                    session=session, project=project,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -12127,6 +12423,7 @@ def _generate_assistant_reply_gemini(
     attachments=None,
     disable_mutations=False,
     allow_failover=False,
+    project=None,
 ):
     if not _gemini_api_key():
         raise RuntimeError("GEMINI_API_KEY not configured")
@@ -12149,12 +12446,12 @@ def _generate_assistant_reply_gemini(
         thread_id=thread_id,
         chat_history=chat_history,
         readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
+        data_context_connector_ids=(session or {}).get("data_context_connector_ids"), project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
+    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id, project=project)
     active_exec_id = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, active_exec_id)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id)
+    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, active_exec_id, project)
+    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id, project=project)
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
@@ -12260,7 +12557,7 @@ def _generate_assistant_reply_gemini(
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
                     user_message=user_message,
-                    session=session,
+                    session=session, project=project,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -12327,6 +12624,7 @@ def _stream_assistant_reply_events_gemini(
     attachments=None,
     disable_mutations=False,
     allow_failover=False,
+    project=None,
 ):
     if not _gemini_api_key():
         raise RuntimeError("GEMINI_API_KEY not configured")
@@ -12358,12 +12656,12 @@ def _stream_assistant_reply_events_gemini(
         thread_id=thread_id,
         chat_history=chat_history,
         readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
+        data_context_connector_ids=(session or {}).get("data_context_connector_ids"), project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
+    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id, project=project)
     active_exec_id = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, active_exec_id)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id)
+    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, active_exec_id, project)
+    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id, project=project)
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
@@ -12511,7 +12809,7 @@ def _stream_assistant_reply_events_gemini(
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
                     user_message=user_message,
-                    session=session,
+                    session=session, project=project,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -12664,10 +12962,10 @@ def _numeric_claim_supported(sentence, claim, sources):
     return False
 
 
-def _canonical_gate_results(session=None, actions=None, user_id=None, thread_id=None):
+def _canonical_gate_results(session=None, actions=None, user_id=None, thread_id=None, project=None):
     cards = []
     try:
-        cards.extend(_collect_session_scorecards(session or {}, user_id=user_id, thread_id=thread_id))
+        cards.extend(_collect_session_scorecards(session or {}, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project)))
     except Exception:
         pass
     for action in actions or []:
@@ -12683,8 +12981,8 @@ def _canonical_gate_results(session=None, actions=None, user_id=None, thread_id=
     return gates
 
 
-def _sanitize_gate_narration(text, *, session=None, actions=None, user_id=None, thread_id=None):
-    gates = _canonical_gate_results(session, actions, user_id, thread_id)
+def _sanitize_gate_narration(text, *, session=None, actions=None, user_id=None, thread_id=None, project=None):
+    gates = _canonical_gate_results(session, actions, user_id, thread_id, project=project)
     claim_re = re.compile(
         r"\b(?:gate|mandatory requirement)\b.*\b(?:passes?|passed|fails?|failed|met|not met|unknown)\b"
         r"|\b(?:passes?|passed|fails?|failed)\b.*\b(?:gate|mandatory requirement)\b",
@@ -12730,7 +13028,7 @@ def _sanitize_gate_narration(text, *, session=None, actions=None, user_id=None, 
     return "\n".join(out_lines).strip()
 
 
-def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, user_id=None, thread_id=None, actions=None):
+def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, user_id=None, thread_id=None, actions=None, project=None):
     """Remove prose sentences containing numbers absent from canonical inputs.
 
     Criterion judgments and scorecard arithmetic are rendered from artifacts.
@@ -12740,7 +13038,7 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
     text = str(reply or "").strip()
     if not text:
         return text
-    sources = [str(user_message or ""), _thread_user_corpus(user_id, thread_id)]
+    sources = [str(user_message or ""), _thread_user_corpus(user_id, thread_id, project=project)]
     # Persisted rubrics are application-owned state. Render their normalized
     # weights in the same percent form shown to users so the prose guard keeps
     # those exact values while continuing to reject provider arithmetic.
@@ -12765,7 +13063,7 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
             sources.append(json.dumps(result, default=str))
     try:
         cards = _collect_session_scorecards(
-            session or {}, user_id=user_id, thread_id=thread_id
+            session or {}, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project),
         )
         sources.append(json.dumps(cards, default=str))
     except Exception:
@@ -12844,18 +13142,19 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
     cleaned = text if not removed else (cleaned_text or "Open the scorecard for Jaspen’s verified calculations.")
     return _sanitize_gate_narration(
         cleaned, session=session, actions=actions, user_id=user_id, thread_id=thread_id,
+        project=project,
     )
 
 
 
-def _begin_turn_capture(*, user, user_id, thread_id, user_message, view_context, disable_mutations):
+def _begin_turn_capture(*, user, user_id, thread_id, user_message, view_context, disable_mutations, project=None):
     """Run the capture step before the reply and publish its summary for the prompt."""
     if disable_mutations or not thread_id or user is None:
         return None
     try:
         capture = _run_turn_capture(
             user=user, user_id=user_id, thread_id=thread_id,
-            user_message=user_message, view_context=view_context,
+            user_message=user_message, view_context=view_context, project=project,
         )
     except Exception:  # noqa: BLE001 - capture never blocks the reply
         db.session.rollback()
@@ -12923,17 +13222,18 @@ def _generate_assistant_reply(
     view_context=None,
     attachments=None,
     disable_mutations=False,
+    project=None,
 ):
     capture = _begin_turn_capture(
         user=user, user_id=user_id, thread_id=thread_id, user_message=user_message,
-        view_context=view_context, disable_mutations=disable_mutations,
+        view_context=view_context, disable_mutations=disable_mutations, project=project,
     )
     try:
         reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply_core(
             user_message, chat_history, readiness, model_selection,
             context_budget=context_budget, session=session, user=user, user_id=user_id,
             thread_id=thread_id, intake_context=intake_context, view_context=view_context,
-            attachments=attachments, disable_mutations=disable_mutations,
+            attachments=attachments, disable_mutations=disable_mutations, project=project,
         )
     finally:
         _end_turn_capture()
@@ -12960,10 +13260,11 @@ def _stream_assistant_reply_events(
     state=None,
     attachments=None,
     disable_mutations=False,
+    project=None,
 ):
     capture = _begin_turn_capture(
         user=user, user_id=user_id, thread_id=thread_id, user_message=user_message,
-        view_context=view_context, disable_mutations=disable_mutations,
+        view_context=view_context, disable_mutations=disable_mutations, project=project,
     )
     try:
         yield from _stream_assistant_reply_events_core(
@@ -12971,7 +13272,7 @@ def _stream_assistant_reply_events(
             session=session, user=user, user_id=user_id, thread_id=thread_id,
             intake_context=intake_context, view_context=view_context,
             context_budget=context_budget, state=state, attachments=attachments,
-            disable_mutations=disable_mutations,
+            disable_mutations=disable_mutations, project=project,
         )
     finally:
         _end_turn_capture()
@@ -12994,6 +13295,7 @@ def _generate_assistant_reply_core(
     view_context=None,
     attachments=None,
     disable_mutations=False,
+    project=None,
 ):
     if isinstance(session, dict):
         session.pop("_fact_update_failure", None)
@@ -13035,7 +13337,7 @@ def _generate_assistant_reply_core(
             intake_context=intake_context,
             view_context=view_context,
             attachments=attachments,
-            disable_mutations=disable_mutations,
+            disable_mutations=disable_mutations, project=project,
         )
         reply, usage, actions, mutations, undo_snapshot = result
         usage = attach_governance(
@@ -13046,7 +13348,7 @@ def _generate_assistant_reply_core(
         )
         reply = _sanitize_assistant_numeric_claims(
             reply, user_message=user_message, session=session,
-            user_id=user_id, thread_id=thread_id, actions=actions,
+            user_id=user_id, thread_id=thread_id, actions=actions, project=project,
         )
         return reply, usage, actions, mutations, undo_snapshot
     objective = normalize_strategy_objective(
@@ -13081,7 +13383,7 @@ def _generate_assistant_reply_core(
                     view_context=view_context,
                     attachments=attachments,
                     disable_mutations=disable_mutations,
-                    allow_failover=True,
+                    allow_failover=True, project=project,
                 )
             else:
                 result = _generate_assistant_reply_anthropic(
@@ -13098,7 +13400,7 @@ def _generate_assistant_reply_core(
                     view_context=view_context,
                     attachments=attachments,
                     disable_mutations=disable_mutations,
-                    allow_failover=True,
+                    allow_failover=True, project=project,
                 )
 
             reply, usage, actions, mutations, undo_snapshot = result
@@ -13126,7 +13428,7 @@ def _generate_assistant_reply_core(
                 )
             reply = _sanitize_assistant_numeric_claims(
                 reply, user_message=user_message, session=session,
-                user_id=user_id, thread_id=thread_id, actions=actions,
+                user_id=user_id, thread_id=thread_id, actions=actions, project=project,
             )
             return reply, usage, actions, mutations, undo_snapshot
         except Exception as exc:
@@ -13191,6 +13493,7 @@ def _stream_assistant_reply_events_core(
     state=None,
     attachments=None,
     disable_mutations=False,
+    project=None,
 ):
     if isinstance(session, dict):
         session.pop("_fact_update_failure", None)
@@ -13233,13 +13536,13 @@ def _stream_assistant_reply_events_core(
             context_budget=context_budget,
             state=state,
             attachments=attachments,
-            disable_mutations=disable_mutations,
+            disable_mutations=disable_mutations, project=project,
         ))
         if isinstance(state, dict):
             original_reply = str(state.get("reply") or "")
             state["reply"] = _sanitize_assistant_numeric_claims(
                 original_reply, user_message=user_message, session=session,
-                user_id=user_id, thread_id=thread_id, actions=state.get("actions"),
+                user_id=user_id, thread_id=thread_id, actions=state.get("actions"), project=project,
             )
             if state["reply"] == original_reply:
                 for payload in buffered:
@@ -13288,7 +13591,7 @@ def _stream_assistant_reply_events_core(
                     state=state,
                     attachments=attachments,
                     disable_mutations=disable_mutations,
-                    allow_failover=True,
+                    allow_failover=True, project=project,
                 )
             else:
                 generator = _stream_assistant_reply_events_anthropic(
@@ -13306,14 +13609,14 @@ def _stream_assistant_reply_events_core(
                     state=state,
                     attachments=attachments,
                     disable_mutations=disable_mutations,
-                    allow_failover=True,
+                    allow_failover=True, project=project,
                 )
             buffered = list(generator)
             if isinstance(state, dict):
                 original_reply = str(state.get("reply") or "")
                 state["reply"] = _sanitize_assistant_numeric_claims(
                     original_reply, user_message=user_message, session=session,
-                    user_id=user_id, thread_id=thread_id, actions=state.get("actions"),
+                    user_id=user_id, thread_id=thread_id, actions=state.get("actions"), project=project,
                 )
             for payload in buffered:
                 yielded_any = yielded_any or (payload.get("type") == "delta" and bool(payload.get("text")))
@@ -14680,10 +14983,10 @@ def _batch_idea_summary_text(idea):
     return "\n".join(lines)
 
 
-def _batch_promotion_prompt_suffix(user_id, thread_id):
+def _batch_promotion_prompt_suffix(user_id, thread_id, project=None):
     if not user_id or not thread_id:
         return ""
-    sessions = load_user_sessions(user_id) or {}
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     _key, session = _resolve_user_session(sessions, thread_id)
     batch_ctx = session.get("batch_promotion") if isinstance(session, dict) and isinstance(session.get("batch_promotion"), dict) else {}
     if not batch_ctx:
@@ -15092,11 +15395,13 @@ class _TurnRequest:
         "route", "user_message", "attachments", "chat_history",
         "previous_readiness", "readiness", "context_budget", "model_selection",
         "idempotency_key", "request_fingerprint", "session_created", "name",
+        "project",
     )
 
     def __init__(self, *, route, user_message, attachments, chat_history,
                  previous_readiness, readiness, context_budget, model_selection,
-                 idempotency_key, request_fingerprint, session_created, name=None):
+                 idempotency_key, request_fingerprint, session_created, name=None,
+                 project=None):
         self.route = route                      # "conversation_start" | "conversation_continue"
         self.user_message = user_message
         self.attachments = attachments
@@ -15109,6 +15414,7 @@ class _TurnRequest:
         self.request_fingerprint = request_fingerprint
         self.session_created = session_created
         self.name = name                        # conversation/start only
+        self.project = project                  # TurnProject authorized by the route
 
 
 def _turn_readiness_payload(final_readiness):
@@ -15325,6 +15631,7 @@ def _turn_generation_kwargs(turn, req):
         intake_context=turn.session.get("intake_context"),
         view_context=turn.session.get("view_context"),
         attachments=req.attachments,
+        project=req.project,
     )
 
 
@@ -15556,12 +15863,49 @@ def conversation_start():
             view_context_raw[key] = data.get(key)
 
     sessions = load_user_sessions(user_id)
-    existing_session = sessions.get(thread_id)
+    # Resolve the project this id names BEFORE choosing what to save. The
+    # canonical row is the project; a personal row the caller holds under the
+    # same id (a legacy fork) is never used for it. `start` re-opens only the
+    # caller's own canonical thread (the homepage handoff retries the same id);
+    # any other existing project is authorized (404 unreadable, 403 read-only)
+    # and then refused before anything is saved, reserved or generated, so
+    # existing work continues through conversation/continue.
+    existing_row = canonical_row(user, thread_id)
+    existing_session = None
+    own_session = sessions.get(thread_id)
+    if (
+        existing_row is None
+        and isinstance(own_session, dict)
+        and own_session.get("organization_id")
+    ):
+        # A report-mode attribution row may remain in the caller's personal
+        # list after they switch orgs or leave one. It is not the active
+        # project's canonical row and must never be reused for a new thread.
+        return jsonify({"error": "Thread not found", "code": "not_found"}), 404
+    if existing_row is not None:
+        resolve_session_for_actor(user, thread_id, require_write=True)
+        if not is_attributed_to(existing_row, str(user_id)):
+            return jsonify({
+                "error": "This project already exists. Open it to continue.",
+                "code": "thread_exists",
+                "thread_id": thread_id,
+            }), 409
+        existing_session = _session_row_to_payload(existing_row)
+        sessions[str(existing_session.get("session_id") or thread_id)] = existing_session
+    else:
+        # No project has this id here; a personal row under it (only possible
+        # while hidden or archived) is not re-used for a new project.
+        sessions.pop(thread_id, None)
     session_created = not isinstance(existing_session, dict)
     if session_created:
         # A new thread has no row for the save to authorize against, so check
         # the role here, before anything is reserved or generated.
         require_can_create_session(user, active_org_id)
+    # The project this turn's tools and context act on, authorized here,
+    # before anything is reserved or generated.
+    turn_project = _authorize_turn_project(user, thread_id)
+    if turn_project.exists:
+        resolve_session_for_actor(user, thread_id, require_write=True)
     session = existing_session or _new_session(
         user_id,
         thread_id,
@@ -15704,6 +16048,7 @@ def conversation_start():
         request_fingerprint=request_fingerprint,
         session_created=session_created,
         name=name,
+        project=turn_project,
     )
     if stream_requested:
         return _stream_conversation_turn(turn, turn_request)
@@ -15755,9 +16100,13 @@ def conversation_continue():
     # new thread has no row yet, so a miss here is normal and not a refusal.
     sessions = load_sessions_for_thread(user, thread_id)
     session = sessions.get(thread_id)
+    turn_project = None
     if session is not None:
         # Write access is required to add a turn; viewers are read-only.
         resolve_session_for_actor(user, thread_id, require_write=True)
+        # The project this turn's tools and context act on: the organization's
+        # canonical row just authorized, never a lookup among the caller's rows.
+        turn_project = _authorize_turn_project(user, thread_id)
     fallback_model_type = (session or {}).get("model_type")
     model_selection, model_error = _resolve_model_selection(
         user,
@@ -15920,6 +16269,7 @@ def conversation_continue():
         request_fingerprint=request_fingerprint,
         session_created=session_created,
         name=None,
+        project=turn_project,
     )
     if stream_requested:
         return _stream_conversation_turn(turn, turn_request)
@@ -17405,6 +17755,9 @@ def conversation_regenerate():
     sessions, session_key, session = _authorized_thread_session_for_write(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
+    # The project this regenerated reply's context comes from, held to the
+    # organization authorized here for the rest of the request.
+    turn_project = _authorize_turn_project(user, thread_id)
 
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
     try:
@@ -17509,6 +17862,7 @@ def conversation_regenerate():
         intake_context=session.get("intake_context"),
         view_context=session.get("view_context"),
         disable_mutations=True,
+        project=turn_project,
     )
 
     if stream_requested:

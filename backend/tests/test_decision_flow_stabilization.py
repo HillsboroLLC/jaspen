@@ -340,7 +340,9 @@ def test_agent_reads_seven_canonical_cards_and_current_rescore(app, db, test_use
 
 def test_queue_keeps_seven_and_never_leaks_continuation(app, db, test_user, monkeypatch):
     _, agent = modules()
-    monkeypatch.setattr(agent, 'load_user_sessions', lambda uid: {'seven': {'session_id': 'seven'}})
+    # P2a: tools read the turn's project through _project_sessions, not the
+    # caller's personal session list.
+    monkeypatch.setattr(agent, '_project_sessions', lambda *_a, **_k: {'seven': {'session_id': 'seven'}})
     saved = []
     monkeypatch.setattr(agent, 'save_user_sessions', lambda uid, sessions: saved.append(sessions) or True)
     result = agent._execute_mutation_tool('queue_scorecards', {'ideas': [{'name': f'Option {i}'} for i in range(7)]}, user=test_user, user_id=test_user.id, thread_id='seven')

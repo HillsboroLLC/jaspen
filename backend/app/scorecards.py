@@ -151,8 +151,56 @@ def upsert_scorecard(
     return row
 
 
-def list_scorecard_rows(user_id, *, thread_id=None, include_archived=False):
-    query = Scorecard.query.filter_by(user_id=str(user_id))
+def project_scorecard_query(project_row, *, thread_id=None, author_user_id=None):
+    """Scorecard index rows for exactly one canonical project.
+
+    A thread id is unique per organization, not globally, so the project is
+    identified by its canonical ``UserSession`` row, never by the id alone:
+
+    * An organization project: rows filed under that organization, plus the
+      project owner's rows that predate any organization binding. Those legacy
+      rows can only be this project's, because one user cannot hold two
+      project rows with the same id (``user_sessions`` is unique on
+      ``user_id, session_id``).
+    * A personal project (no organization): the owner's rows that carry no
+      organization. Rows filed under any organization never belong to it.
+
+    ``author_user_id`` narrows the rows to one member's own scorecards, for
+    code that rewrites a card under its author.
+    """
+    sid = str(thread_id or project_row.session_id)
+    owner_user_id = str(project_row.user_id)
+    query = Scorecard.query.filter_by(thread_id=sid)
+    if project_row.organization_id:
+        query = query.filter(db.or_(
+            Scorecard.organization_id == str(project_row.organization_id),
+            db.and_(Scorecard.organization_id.is_(None), Scorecard.user_id == owner_user_id),
+        ))
+    else:
+        query = query.filter(
+            Scorecard.organization_id.is_(None), Scorecard.user_id == owner_user_id,
+        )
+    if author_user_id is not None:
+        query = query.filter(Scorecard.user_id == str(author_user_id))
+    return query
+
+
+def list_scorecard_rows(user_id, *, thread_id=None, include_archived=False, project_row=None,
+                        own_rows_only=False):
+    """Scorecards for this user, or, with ``project_row``, for one project.
+
+    ``project_row`` is the authorized canonical project row: the rows come from
+    that project only (see project_scorecard_query), so a same-id project in
+    another organization never contributes and a teammate sees the project's
+    scorecards. ``own_rows_only`` keeps only this user's rows of the project.
+    """
+    if project_row is not None:
+        query = project_scorecard_query(
+            project_row, thread_id=thread_id,
+            author_user_id=str(user_id) if own_rows_only else None,
+        )
+    else:
+        query = Scorecard.query.filter_by(user_id=str(user_id))
     if thread_id is not None:
         query = query.filter_by(thread_id=str(thread_id))
     if not include_archived:
@@ -272,9 +320,13 @@ def _legacy_scorecards(session, thread_data, thread_id):
     return peers
 
 
-def collect_peer_scorecards(user_id, thread_id, *, legacy_session=None, legacy_thread_data=None):
+def collect_peer_scorecards(user_id, thread_id, *, legacy_session=None, legacy_thread_data=None,
+                            project_row=None, own_rows_only=False):
     """Return native peers plus non-duplicated legacy fallback, honoring tombstones."""
-    rows = list_scorecard_rows(user_id, thread_id=thread_id, include_archived=True)
+    rows = list_scorecard_rows(
+        user_id, thread_id=thread_id, include_archived=True, project_row=project_row,
+        own_rows_only=own_rows_only,
+    )
     archived_ids = {row.id for row in rows if row.archived_at is not None}
     peers = [row.to_peer_dict() for row in rows if row.archived_at is None]
     seen = {str(item.get('id')) for item in peers}

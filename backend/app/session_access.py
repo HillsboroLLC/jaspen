@@ -120,14 +120,49 @@ class RevisionConflict(SessionAccessError):
 
 # --- Organization context ----------------------------------------------------
 
+_UNPINNED = object()
+
+
+def pin_active_organization(user_id, organization_id):
+    """Hold this user's organization fixed for the rest of the request.
+
+    An AI turn authorizes one project in one organization, then spends seconds
+    generating, running tools and saving. If the member switches organization
+    in another tab meanwhile, every later resolution in this request would
+    otherwise follow the new organization and could reach a same-id project
+    there. Pinning keeps the authorized organization authoritative until the
+    request ends. Outside a request it does nothing.
+    """
+    from flask import g, has_request_context
+    if not has_request_context() or not user_id:
+        return
+    pins = getattr(g, 'pinned_active_organizations', None)
+    if pins is None:
+        pins = {}
+        g.pinned_active_organizations = pins
+    pins[str(user_id)] = organization_id or None
+
+
+def _pinned_organization(user):
+    from flask import g, has_request_context
+    if not has_request_context():
+        return _UNPINNED
+    pins = getattr(g, 'pinned_active_organizations', None) or {}
+    return pins.get(str(user.id), _UNPINNED)
+
+
 def active_org_id_for_user(user):
     """The org that owns work this user creates right now.
 
     Deliberately does NOT call resolve_active_org_for_user(), which commits.
-    Read paths must not write.
+    Read paths must not write. Inside an AI turn this is the organization the
+    turn authorized (see pin_active_organization).
     """
     if user is None:
         return None
+    pinned = _pinned_organization(user)
+    if pinned is not _UNPINNED:
+        return pinned
     return getattr(user, 'active_organization_id', None) or None
 
 
@@ -152,7 +187,15 @@ def canonical_row(user, session_id, *, include_archived=False):
       1. Personal-scope ids resolve to the caller's own row and stop.
       2. The organization-owned row, oldest created_at first, so a historical
          fork can never displace the original.
-      3. The caller's own row, for work that predates an org binding.
+      3. The caller's own row, for work outside the active organization:
+         - an unbound legacy row (work that predates an org binding) is
+           returned as is;
+         - an organization-bound row stands only for ITS organization's
+           canonical row (the oldest there for this id). When the caller's row
+           is that canonical row, legacy access is unchanged; when it is a
+           historical fork, the original is returned instead, so the fork can
+           never substitute for a project the caller may not be authorized
+           to use. Authorization then decides, as always.
 
     Returns the row or None. Performs NO authorization -- callers must use
     resolve_session_for_actor().
@@ -183,7 +226,13 @@ def canonical_row(user, session_id, *, include_archived=False):
         if row is not None:
             return row
 
-    return own
+    if own is None or not own.organization_id:
+        return own
+    return _visible(
+        UserSession.query.filter_by(organization_id=str(own.organization_id), session_id=sid)
+    ).order_by(
+        UserSession.created_at.asc(), UserSession.id.asc()
+    ).first() or own
 
 
 # --- Predicates --------------------------------------------------------------

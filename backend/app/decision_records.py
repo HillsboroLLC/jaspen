@@ -159,7 +159,57 @@ def _load_thread_sources(user_id, thread_id):
     return session, thread_data
 
 
-def _collect_peer_scorecards(session, thread_data, *, user_id=None, thread_id=None):
+def _project_thread_sources(session_row):
+    """The session payload and scenario data of ONE canonical project row.
+
+    Unlike ``_load_thread_sources`` (which reads a user's own rows by thread id
+    and so cannot tell same-id projects in different organizations apart),
+    this reads exactly the project the caller resolved and authorized.
+    """
+    from .routes.sessions import _session_row_to_payload
+
+    session = _session_row_to_payload(session_row)
+    data = session_row.scenarios_json if isinstance(session_row.scenarios_json, dict) else {}
+    return session, json.loads(json.dumps(data, default=str))
+
+
+def record_project_row(record):
+    """The canonical project row a Decision Record belongs to, or None.
+
+    Matched on the record's own organization (or, for a personal record, its
+    attributed user with no organization), never on the thread id alone.
+    """
+    from .models import UserSession
+
+    query = UserSession.query.filter_by(session_id=str(record.thread_id))
+    if record.organization_id:
+        query = query.filter_by(organization_id=str(record.organization_id))
+    else:
+        query = query.filter(
+            UserSession.organization_id.is_(None), UserSession.user_id == str(record.user_id),
+        )
+    return query.order_by(UserSession.created_at.asc(), UserSession.id.asc()).first()
+
+
+def record_scorecard_rows(record, session_row=None):
+    """Scorecard index rows of the record's own project only."""
+    from .models import Scorecard
+    from .scorecards import project_scorecard_query
+
+    row = session_row if session_row is not None else record_project_row(record)
+    if row is not None:
+        return project_scorecard_query(row, thread_id=record.thread_id).all()
+    # The project row is gone: the record's own organization, or for a
+    # personal record its user's rows that carry no organization.
+    query = Scorecard.query.filter_by(thread_id=str(record.thread_id))
+    if record.organization_id:
+        return query.filter_by(organization_id=str(record.organization_id)).all()
+    return query.filter(
+        Scorecard.organization_id.is_(None), Scorecard.user_id == str(record.user_id),
+    ).all()
+
+
+def _collect_peer_scorecards(session, thread_data, *, user_id=None, thread_id=None, project_row=None):
     """Every scored artifact for the thread as a FLAT PEER LIST.
 
     Deliberately erases the legacy baseline/variant hierarchy: the session's
@@ -232,6 +282,7 @@ def _collect_peer_scorecards(session, thread_data, *, user_id=None, thread_id=No
             thread_id,
             legacy_session=session,
             legacy_thread_data=thread_data,
+            project_row=project_row,
         ):
             _add(peer)
         return cards
@@ -292,7 +343,7 @@ def _summarize_evidence(cards):
     }
 
 
-def assemble_record_payload(user_id, thread_id, *, actor_user_id=None):
+def assemble_record_payload(user_id, thread_id, *, actor_user_id=None, session_row=None):
     """Derive the canonical Decision Record payload for a thread.
 
     `user_id` is the ATTRIBUTION identity -- the project's creator -- and is
@@ -304,16 +355,18 @@ def assemble_record_payload(user_id, thread_id, *, actor_user_id=None):
     queryable columns. Raises LookupError when the thread has no analyzable
     content at all.
     """
-    session, thread_data = _load_thread_sources(user_id, thread_id)
-    if session is None and not thread_data:
+    # The record is assembled from the ONE canonical project the caller
+    # resolved, never from rows looked up by user and thread id: the same user
+    # can have scored same-id projects in more than one organization.
+    if session_row is None:
         raise LookupError(f'No conversation or analysis found for thread {thread_id}')
-
-    session = session if isinstance(session, dict) else {}
+    session, thread_data = _project_thread_sources(session_row)
     cards = _collect_peer_scorecards(
         session,
         thread_data,
         user_id=user_id,
         thread_id=thread_id,
+        project_row=session_row,
     )
 
     rubric = session.get('scoring_rubric') if isinstance(session.get('scoring_rubric'), dict) else None
@@ -527,12 +580,12 @@ def _with_first_scored_times(payload, *, existing_payload=None, session_row=None
             preserved[key] = (card.get('first_scored_at'), card.get('first_scored_source'))
 
     thread_id = str(payload.get('source', {}).get('thread_id') or getattr(session_row, 'session_id', '') or '')
-    query = Scorecard.query.filter_by(thread_id=thread_id)
-    if session_row is not None and getattr(session_row, 'organization_id', None):
-        query = query.filter_by(organization_id=str(session_row.organization_id))
-    elif session_row is not None:
-        query = query.filter_by(user_id=str(session_row.user_id))
-    rows = query.order_by(Scorecard.created_at.asc(), Scorecard.id.asc()).all() if thread_id else []
+    rows = []
+    if thread_id and session_row is not None:
+        from .scorecards import project_scorecard_query
+        rows = project_scorecard_query(session_row, thread_id=thread_id).order_by(
+            Scorecard.created_at.asc(), Scorecard.id.asc(),
+        ).all()
     earliest = {}
     for row in rows:
         data = row.data if isinstance(row.data, dict) else {}
@@ -573,15 +626,27 @@ def _with_first_scored_times(payload, *, existing_payload=None, session_row=None
     return payload
 
 
-def create_or_refresh_record(user, thread_id):
+def create_or_refresh_record(user, thread_id, *, session_row=None):
     """One active record per thread. Creating twice refreshes the DERIVED
     analysis fields and never touches human-owned fields (final decision,
-    outcomes, lessons, consent, advanced status)."""
-    session_row, organization_id, attribution_user_id = canonical_context(user, thread_id)
+    outcomes, lessons, consent, advanced status).
+
+    ``session_row`` is the project the caller already authorized (an AI turn's
+    project). When given, the record is filed under THAT project's
+    organization, whatever organization the member has active right now.
+    """
+    if session_row is not None and str(session_row.session_id) == str(thread_id):
+        attribution_user_id = str(session_row.created_by_user_id or session_row.user_id or user.id)
+        from .models import User
+        if not User.query.get(attribution_user_id):
+            attribution_user_id = str(user.id)
+        organization_id = session_row.organization_id
+    else:
+        session_row, organization_id, attribution_user_id = canonical_context(user, thread_id)
     attribution_user_id = attribution_user_id or str(user.id)
 
     payload, promoted = assemble_record_payload(
-        attribution_user_id, thread_id, actor_user_id=user.id
+        attribution_user_id, thread_id, actor_user_id=user.id, session_row=session_row,
     )
 
     existing = _find_existing_record(organization_id, attribution_user_id, thread_id)
@@ -1039,7 +1104,7 @@ def option_dispositions(
     decision_signal_rows=None,
 ):
     """Return the deterministic option-state read model and reconciliation."""
-    from .models import Scorecard
+    from .models import UserSession
 
     payload = record.record if isinstance(record.record, dict) else {}
     cards = [card for card in (payload.get('scorecards') or []) if isinstance(card, dict)]
@@ -1049,21 +1114,19 @@ def option_dispositions(
         if key:
             option_cards.setdefault(key, []).append(card)
 
+    if session is None:
+        session = record_project_row(record)
     rows = scorecard_rows
     if rows is None:
-        rows = Scorecard.query.filter_by(thread_id=str(record.thread_id)).all()
+        rows = record_scorecard_rows(
+            record, session_row=session if isinstance(session, UserSession) else None,
+        )
     rows_by_option = {}
     for row in rows or []:
         data = row.data if isinstance(row.data, dict) else {}
         key = str(data.get('option_key') or f'scorecard:{row.id}').strip()
         rows_by_option.setdefault(key, []).append(row)
 
-    if session is None:
-        from .models import UserSession
-        session = (
-            UserSession.query.filter_by(session_id=str(record.thread_id))
-            .order_by(UserSession.created_at.asc()).first()
-        )
     scenarios = (
         session.scenarios_json if hasattr(session, 'scenarios_json')
         else session.get('scenarios_json') if isinstance(session, dict) else {}

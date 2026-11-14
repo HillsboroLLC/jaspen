@@ -862,6 +862,12 @@ def test_generation_receives_the_exact_route_arguments(
     else:
         expected_keys.add("attachments")
         assert kwargs["attachments"] == []
+    # P2a: every turn route hands generation the project it authorized, so
+    # tools and context inside the turn act on exactly that project.
+    expected_keys.add("project")
+    assert kwargs["project"].project_id == thread_id
+    assert kwargs["project"].actor_user_id == str(solo["user"].id)
+    assert kwargs["project"].can_write is True
     if stream:
         expected_keys.add("state")
         assert isinstance(kwargs["state"], dict)
