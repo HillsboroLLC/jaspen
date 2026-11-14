@@ -5,7 +5,8 @@ from datetime import datetime
 
 from app.connector_runtime import request_json_with_backoff
 from app.connector_store import get_connector_settings, get_thread_sync_profile
-from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
+from app.project_scope import scenarios_for_thread
+from app.scenarios_store import save_project_scenarios_data
 
 logger = logging.getLogger(__name__)
 
@@ -449,7 +450,7 @@ def apply_jira_webhook_to_wbs(user_id, issue, enforce_thread_id=None, enforce_ta
     if mode not in ("import", "two_way"):
         return {"success": False, "ignored": True, "reason": "thread_sync_is_push_only"}
 
-    scenarios = load_scenarios_data(user_id)
+    scenarios = scenarios_for_thread(user_id, thread_id)
     thread_data = scenarios.get(thread_id)
     if not isinstance(thread_data, dict):
         return {"success": False, "ignored": True, "reason": "thread_not_found"}

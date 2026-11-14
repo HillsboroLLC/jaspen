@@ -570,6 +570,39 @@ it('shows execution sync ownership and authorization warnings on the connector p
 });
 
 
+it('shows the approved read-only owner pause beside the departed-owner pause', async () => {
+  authFetch.mockImplementation((url) => {
+    if (String(url).includes('/api/v1/connectors/status')) return Promise.resolve(response({ connectors: [{
+      id:'jira_sync', label:'Jira', implementation_status:'implemented',
+      lifecycle_status:'connected', connected:true,
+      settings:{ jira_base_url:'https://acme.atlassian.net', jira_email:'owner@acme.test', jira_api_token:'__saved__' },
+      jira:{ data_project_scope:'all' },
+    }] }));
+    if (String(url).includes('/api/v1/ai-agent/threads')) return Promise.resolve(response({ success:true, sessions:[
+      { session_id:'thread-1', name:'Road decision' }, { session_id:'thread-2', name:'Hiring decision' },
+    ] }));
+    if (String(url).includes('/api/v1/pm-sync/bindings')) return Promise.resolve(response({ bindings:[
+      { id:'binding-1', thread_id:'thread-1', plan_key:'score-1', connector_id:'jira_sync',
+        external_container_id:'JPT', status:'paused', pause_reason:'sync_owner_read_only', sync_warning_code:'sync_owner_read_only',
+        sync_owner:{ name:'Avery', available:true } },
+      { id:'binding-2', thread_id:'thread-2', plan_key:'score-2', connector_id:'jira_sync',
+        external_container_id:'JST', status:'paused', pause_reason:'sync_owner_left_organization',
+        sync_owner:{ name:'Former teammate', available:true } },
+    ] }));
+    if (String(url).includes('/api/v1/connectors/jira/projects')) return Promise.resolve(response({ success:true, projects:[] }));
+    if (String(url).includes('/audit')) return Promise.resolve(response({ events:[] }));
+    if (String(url).includes('/health')) return Promise.resolve(response({ live_status:{ status:'healthy', message:'Connection successful' } }));
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  render(<MemoryRouter initialEntries={['/connectors-manage']}><ConnectorsManage /></MemoryRouter>);
+  expect(await screen.findByText('Synced by Avery with their Jira account')).toBeInTheDocument();
+  const alerts = screen.getAllByRole('alert').map((node) => node.textContent);
+  expect(alerts).toEqual([
+    'Jira sync is paused because the person who connected it no longer has permission to make changes to this project.',
+    'Sync is paused because the person who connected Jira no longer has access.',
+  ]);
+});
+
 it('shows connection fields immediately for Jira, Smartsheet, Salesforce, and Snowflake', async () => {
   mockUser = { subscription_plan: 'business', active_organization_plan_key: 'business' };
   const connectors = [

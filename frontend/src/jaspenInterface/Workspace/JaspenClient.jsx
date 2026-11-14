@@ -259,6 +259,7 @@ export const endpoints = {
   pmSyncNow: (bindingId) => `${API_BASE}/api/v1/pm-sync/bindings/${encodeURIComponent(bindingId)}/sync`,
   pmSyncRecreateMissing: (bindingId) => `${API_BASE}/api/v1/pm-sync/bindings/${encodeURIComponent(bindingId)}/recreate-missing`,
   pmSyncUnlink: (bindingId) => `${API_BASE}/api/v1/pm-sync/bindings/${encodeURIComponent(bindingId)}/unlink`,
+  pmSyncResume: (bindingId) => `${API_BASE}/api/v1/pm-sync/bindings/${encodeURIComponent(bindingId)}/resume`,
   pmSyncPreview: (threadId, planKey, groupUnderEpics = true) => `${API_BASE}/api/v1/pm-sync/preview?thread_id=${encodeURIComponent(threadId)}&plan_key=${encodeURIComponent(planKey || '')}&group_under_epics=${groupUnderEpics ? 'true' : 'false'}`,
   jiraProjects: `${API_BASE}/api/v1/pm-sync/jira/projects`,
   jiraTestConnection: `${API_BASE}/api/v1/pm-sync/jira/test-connection`,
@@ -1742,6 +1743,9 @@ async convoContinue({ session_id, user_message, conversation_history, model_type
 
   unlinkPmBinding: async (bindingId) =>
     postJSON(endpoints.pmSyncUnlink(bindingId), {}, { withSid: true }),
+
+  resumePmBinding: async (bindingId) =>
+    postJSON(endpoints.pmSyncResume(bindingId), {}, { withSid: true }),
 
   updatePmSyncBinding: async (bindingId, payload) =>
     patchJSON(endpoints.pmSyncBinding(bindingId), payload, { withSid: true }),

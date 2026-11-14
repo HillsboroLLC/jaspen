@@ -37,6 +37,7 @@ from app.connector_store import (
     update_thread_sync_profile,
 )
 from app.jira_sync import (
+    _normalize_jira_base_url,
     apply_jira_webhook_to_wbs,
     import_tasks_from_jira,
     jira_check_connection,
@@ -2538,8 +2539,17 @@ def sync_thread_to_jira(thread_id):
             "error": "Choose a Jira destination for this execution plan before syncing.",
             "code": "PM_SYNC_BINDING_REQUIRED",
         }), 409
+    from app.pm_sync.access import BindingPaused
     try:
         return jsonify(push_binding(bindings[0], trigger="legacy_sync_alias")), 200
+    except BindingPaused as exc:
+        db.session.rollback()
+        return jsonify({
+            "error": "This Jira sync is paused.",
+            "code": "PM_SYNC_PAUSED",
+            "pause_reason": exc.reason,
+            "binding": bindings[0].to_dict(),
+        }), 409
     except Exception as exc:
         return jsonify({"error": str(exc), "code": "PM_SYNC_FAILED"}), 502
 
@@ -2651,6 +2661,66 @@ def import_thread_from_pm_tool(thread_id, connector_id):
     }), 200
 
 
+def _ignored_webhook_event(reason):
+    return jsonify({"success": False, "ignored": True, "reason": reason}), 200
+
+
+def _refuse_webhook_event(connector_id, user_id, thread_id, reason):
+    """Refuse an inbound event without writing anything (H-2e-2b)."""
+    current_app.logger.warning(
+        "Webhook event refused connector=%s member=%s thread=%s reason=%s",
+        connector_id, user_id, thread_id, reason,
+    )
+    return _ignored_webhook_event(reason)
+
+
+def _url_host(value):
+    from urllib.parse import urlparse
+
+    try:
+        return (urlparse(_text(value)).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _authorize_webhook_event(connector_id, user_id, thread_id, task_id, external_id, source_url=None):
+    """Return ``(linked_task_id, refusal)`` for one inbound webhook event.
+
+    The shared secret proves only that the sender holds Jaspen's webhook
+    secret. The member and project named in the payload are trusted only when
+    (1) that member may edit the project now, and (2) Jaspen itself recorded
+    this external item for that member, project and task (the member's thread
+    sync profile, written by Jaspen's own sync and import). For Jira the event
+    must also come from the Jira site that member connected. Labels alone never
+    authorize a write.
+    """
+    from app.session_access import SessionForbidden, SessionNotFound
+
+    try:
+        authorized_thread_scope(user_id, thread_id, require_write=True)
+    except SessionForbidden:
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "not_authorized")
+    except SessionNotFound:
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "thread_not_found")
+
+    target = _text(external_id)
+    profile = get_thread_sync_profile(user_id, thread_id)
+    ext_map = profile.get("wbs_task_external_ids") if isinstance(profile.get("wbs_task_external_ids"), dict) else {}
+    linked = sorted(_text(tid) for tid, ext in ext_map.items() if target and _text(ext) == target)
+    claimed = _text(task_id)
+    if len(linked) != 1 or (claimed and claimed != linked[0]):
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "link_not_recorded")
+
+    if connector_id == "jira_sync":
+        settings = get_connector_settings(user_id, "jira_sync")
+        connected_host = _url_host(
+            _normalize_jira_base_url(settings.get("jira_base_url") or os.getenv("JIRA_BASE_URL"))
+        )
+        if not connected_host or _url_host(source_url) != connected_host:
+            return None, _refuse_webhook_event(connector_id, user_id, thread_id, "link_not_recorded")
+    return linked[0], None
+
+
 @connectors_bp.route("/jira/webhook", methods=["POST"])
 @limiter.limit("60 per minute")
 def jira_webhook():
@@ -2686,11 +2756,19 @@ def jira_webhook():
         if not task_id and resolved_task_id:
             task_id = resolved_task_id
 
+    if not thread_id:
+        return _ignored_webhook_event("missing_thread_label")
+    task_id, refusal = _authorize_webhook_event(
+        "jira_sync", user_id, thread_id, task_id, issue_key, source_url=issue.get("self"),
+    )
+    if refusal:
+        return refusal
+
     result = apply_jira_webhook_to_wbs(
         user_id=user_id,
         issue=issue,
-        enforce_thread_id=thread_id or None,
-        enforce_task_id=task_id or None,
+        enforce_thread_id=thread_id,
+        enforce_task_id=task_id,
     )
     status = "success" if result.get("success") else "skipped" if result.get("ignored") else "failed"
     mark_connector_sync_result(user_id, "jira_sync", status, error_message=result.get("reason") or "")
@@ -2754,11 +2832,17 @@ def smartsheet_webhook():
         if not task_id and resolved_task_id:
             task_id = resolved_task_id
 
+    if not thread_id:
+        return _ignored_webhook_event("missing_thread_reference")
+    task_id, refusal = _authorize_webhook_event("smartsheet_sync", user_id, thread_id, task_id, row_id)
+    if refusal:
+        return refusal
+
     result = apply_smartsheet_webhook_to_wbs(
         user_id=user_id,
         payload=payload,
-        enforce_thread_id=thread_id or None,
-        enforce_task_id=task_id or None,
+        enforce_thread_id=thread_id,
+        enforce_task_id=task_id,
     )
     status = "success" if result.get("success") else "skipped" if result.get("ignored") else "failed"
     mark_connector_sync_result(user_id, "smartsheet_sync", status, error_message=result.get("reason") or "")

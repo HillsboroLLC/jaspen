@@ -8,6 +8,19 @@ from app import db
 from app.models import OrganizationMember, User
 
 
+class BindingPaused(PermissionError):
+    """A binding that may not sync now. ``reason`` is its stored pause reason.
+
+    Subclasses PermissionError so existing callers that catch the owner check
+    keep working; routes turn it into one structured 409 that carries the
+    binding, so the interface shows the approved sentence for the reason.
+    """
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
 def binding_owner_payload(binding):
     owner = User.query.get(str(binding.user_id))
     if owner is None:
@@ -33,6 +46,13 @@ def binding_owner_pause_reason(binding):
         ).first()
         if membership is None:
             return "sync_owner_left_organization"
+    # Current role decides (H-2e-2b): an owner who may no longer edit the
+    # project cannot keep syncing it. A missing project is not a pause reason.
+    from app.session_access import can_write_session, canonical_row
+
+    row = canonical_row(owner, binding.thread_id, include_archived=True)
+    if row is not None and not can_write_session(row, owner):
+        return "sync_owner_read_only"
     return None
 
 
@@ -62,7 +82,46 @@ def enforce_binding_owner(binding, *, actor_user_id=None):
     if reason:
         mark_binding(binding, status="paused", warning_code=reason, pause_reason=reason)
         db.session.commit()
-        raise PermissionError(reason)
+        raise BindingPaused(reason)
+    return binding
+
+
+def ensure_not_paused(binding):
+    """A paused binding never syncs or reactivates itself; only resume does."""
+    if binding.status == "paused":
+        raise BindingPaused((binding.config or {}).get("pause_reason") or "paused")
+    return binding
+
+
+def _owner_connection_ok(binding):
+    """The owner's connection as every sync checks it (no external call)."""
+    from app.pm_sync.provider import get_provider
+
+    try:
+        get_provider(binding.connector_id).assert_connected(binding.user_id, binding.external_container_id)
+    except ValueError:
+        return False
+    return True
+
+
+def resume_binding(binding, *, actor_user_id):
+    """Explicit resume by the binding's owner, only once nothing still blocks it.
+
+    Checks what is true now, never only the stored reason: the owner check
+    (membership, current editing role) and the owner's Jira connection. A
+    blocker found here is stored as the pause reason, so status and reason
+    stay consistent and the interface shows the right sentence.
+    """
+    enforce_binding_owner(binding, actor_user_id=actor_user_id)
+    if binding.status != "paused":
+        return binding
+    if not _owner_connection_ok(binding):
+        mark_binding(binding, status="paused", warning_code="credential_disconnected",
+                     pause_reason="credential_disconnected")
+        db.session.commit()
+        raise BindingPaused("credential_disconnected")
+    mark_binding(binding, status="active")
+    db.session.commit()
     return binding
 
 
@@ -86,6 +145,13 @@ def resume_personal_bindings(user_id, connector_id):
     resumed = []
     for binding in rows:
         if (binding.config or {}).get("pause_reason") != "credential_disconnected":
+            continue
+        # Reconnecting restores the credential only. If the owner may still
+        # not sync this plan (role, membership), it stays paused for that
+        # reason instead.
+        owner_reason = binding_owner_pause_reason(binding)
+        if owner_reason:
+            mark_binding(binding, status="paused", warning_code=owner_reason, pause_reason=owner_reason)
             continue
         mark_binding(binding, status="active")
         resumed.append(binding)

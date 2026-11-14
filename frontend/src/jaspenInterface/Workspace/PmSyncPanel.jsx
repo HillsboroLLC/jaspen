@@ -49,6 +49,9 @@ export function syncWarningMessage(binding) {
   if (code === 'authorization_expired' || binding?.status === 'reconnect_required') {
     return `Jira needs to be reconnected by ${owner} before this plan can sync.`;
   }
+  if (code === 'sync_owner_read_only') {
+    return 'Jira sync is paused because the person who connected it no longer has permission to make changes to this project.';
+  }
   if (code === 'sync_owner_left_organization' || code === 'sync_owner_unavailable') {
     return 'Sync is paused because the person who connected Jira no longer has access.';
   }
@@ -96,6 +99,13 @@ function connectionDraft(info = {}) {
 
 function isReconnectError(error) {
   return error?.status === 401 || error?.status === 403 || error?.data?.code === 'JIRA_RECONNECT_REQUIRED';
+}
+
+// A paused binding is answered with code PM_SYNC_PAUSED and the binding
+// itself; its pause reason selects the approved sentence (syncWarningMessage),
+// so a reason code is never shown as text.
+export function isPausedError(error) {
+  return error?.data?.code === 'PM_SYNC_PAUSED';
 }
 
 function friendlyJiraError(error, fallback) {
@@ -192,6 +202,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     openedSync.current = binding.id;
     Jaspen.syncPmBinding(binding.id).then(applySyncResult)
       .catch((e) => {
+        if (showPaused(e)) return;
         if (isReconnectError(e)) {
           setConnectionInfo(e?.data?.connection || null);
           setBinding((current) => ({ ...(current || {}), ...(e?.data?.binding || {}), status:'reconnect_required' }));
@@ -266,7 +277,16 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
       setConnect(null);
       setGuidance('');
       if (binding) {
-        const restored = await Jaspen.updatePmSyncBinding(binding.id, { status:'active' });
+        let restored;
+        try {
+          restored = await Jaspen.updatePmSyncBinding(binding.id, { status:'active' });
+        } catch (e) {
+          // Reconnecting restores the credential only; a remaining pause shows its approved sentence.
+          if (!showPaused(e)) throw e;
+          setOpen(false);
+          openedSync.current = '';
+          return;
+        }
         setBinding(restored?.binding || { ...binding, status:'active' });
         setOpen(false);
         openedSync.current = '';
@@ -323,6 +343,13 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     finally { setBusy(false); }
   };
 
+  const showPaused = (e) => {
+    if (!isPausedError(e)) return false;
+    setBinding((current) => ({ ...(current || {}), ...(e?.data?.binding || {}), status:'paused' }));
+    setError('');
+    return true;
+  };
+
   const syncNow = async () => {
     setBusy(true); setError(''); setSyncNotice('');
     try {
@@ -330,6 +357,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
       await applySyncResult(data);
       if (data?.result?.errors?.length && data?.result?.binding?.status !== 'links_missing') setError(`${data.result.failed} item(s) failed. Retry will continue from saved links.`);
     } catch (e) {
+      if (showPaused(e)) return;
       if (isReconnectError(e)) {
         setConnectionInfo(e?.data?.connection || null);
         setBinding((current) => ({ ...(current || {}), ...(e?.data?.binding || {}), status:'reconnect_required' }));
@@ -345,7 +373,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
       const data = await Jaspen.recreateMissingPmLinks(binding.id);
       await applySyncResult(data);
       if (data?.result?.errors?.length) setError(`${data.result.failed} item(s) failed. Retry will continue from saved links.`);
-    } catch (e) { setError(friendlyJiraError(e, 'The missing Jira issues could not be recreated.')); }
+    } catch (e) { if (!showPaused(e)) setError(friendlyJiraError(e, 'The missing Jira issues could not be recreated.')); }
     finally { setBusy(false); }
   };
 
@@ -355,7 +383,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
       const data = await Jaspen.unlinkPmBinding(binding.id);
       setBinding(data?.binding || { ...binding, status:'disconnected' });
       setLogs(data?.logs || logs);
-    } catch (e) { setError(String(e?.data?.error || e?.message || e || 'The plan could not be unlinked.')); }
+    } catch (e) { if (!showPaused(e)) setError(String(e?.data?.error || e?.message || e || 'The plan could not be unlinked.')); }
     finally { setBusy(false); }
   };
 
@@ -364,7 +392,17 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     try {
       const data = await Jaspen.updatePmSyncBinding(binding.id, { mode: enabled ? 'two_way' : 'push_only' });
       setBinding(data?.binding || { ...binding, mode: enabled ? 'two_way' : 'push_only' });
-    } catch (e) { setError(String(e?.message || e || 'Could not change sync mode.')); }
+    } catch (e) { if (!showPaused(e)) setError(String(e?.message || e || 'Could not change sync mode.')); }
+    finally { setBusy(false); }
+  };
+
+  const resumeSync = async () => {
+    setBusy(true); setError(''); setSyncNotice('');
+    try {
+      const data = await Jaspen.resumePmBinding(binding.id);
+      setBinding(data?.binding || binding);
+      if (data?.logs) setLogs(data.logs);
+    } catch (e) { if (!showPaused(e)) setError(friendlyJiraError(e, 'Sync failed.')); }
     finally { setBusy(false); }
   };
 
@@ -380,6 +418,7 @@ export default function PmSyncPanel({ threadId, planKey, taskCount = 0, compact 
     {!['links_missing', 'disconnected'].includes(binding.status) && <button type="button" onClick={syncNow} disabled={busy} style={buttonStyle}>{busy ? 'Syncing…' : 'Sync now'}</button>}
     {binding.status === 'links_missing' && <button type="button" onClick={recreateMissing} disabled={busy} style={{ ...buttonStyle, background:COLOR.rose, borderColor:COLOR.rose, color:'#fff' }}>{busy ? 'Recreating…' : `Recreate in ${binding.external_container_id}`}</button>}
     {binding.status === 'links_missing' && <button type="button" onClick={unlinkPlan} disabled={busy} style={buttonStyle}>Unlink this plan</button>}
+    {binding.status === 'paused' && binding.pause_reason !== 'credential_disconnected' && <button type="button" onClick={resumeSync} disabled={busy} style={buttonStyle}>Resume sync</button>}
     {(binding.status === 'reconnect_required' || binding.pause_reason === 'credential_disconnected') && <button type="button" onClick={reconnectBinding} disabled={busy} style={buttonStyle}>Reconnect Jira</button>}
     {binding.external_container_url && <a href={binding.external_container_url} target="_blank" rel="noreferrer" style={{ ...buttonStyle, textDecoration: 'none' }}>View in Jira</a>}
     {error && <span role="alert" style={{ color: '#b91c1c', fontSize: 11.5 }}>{error}</span>}

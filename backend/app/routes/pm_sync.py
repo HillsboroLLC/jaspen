@@ -11,6 +11,7 @@ from app.pm_sync.service import (
     MODES, POLICIES, STATUSES, create_binding, get_plan, preview, push_binding,
     recreate_missing_links, unlink_binding,
 )
+from app.pm_sync.access import BindingPaused
 from app.project_scope import authorized_thread_scope
 from app.session_access import SessionAccessError
 
@@ -27,6 +28,19 @@ def _owned(binding_id, user_id):
 
 def _error(exc, status=400):
     return jsonify({"error": str(exc), "code": "PM_SYNC_ERROR"}), status
+
+
+def _paused(binding, exc):
+    """One answer for a binding that may not sync now. The interface shows the
+    approved sentence for ``pause_reason``; the reason code is never the text."""
+    db.session.rollback()
+    db.session.refresh(binding)
+    return jsonify({
+        "error": "This Jira sync is paused.",
+        "code": "PM_SYNC_PAUSED",
+        "pause_reason": exc.reason,
+        "binding": binding.to_dict(),
+    }), 409
 
 
 def _jira_auth_failure(value):
@@ -233,8 +247,25 @@ def update_binding(binding_id):
     binding = _owned(binding_id, user.id) if user else None
     if not binding:
         return _error("Binding not found", 404)
+    from app.pm_sync.access import enforce_binding_owner, resume_binding
+    try:
+        enforce_binding_owner(binding)
+    except BindingPaused as exc:
+        return _paused(binding, exc)
     data = request.get_json(silent=True) or {}
     status = str(data.get("status") or "").strip().lower()
+    if status and status != "paused" and binding.status == "paused":
+        if status != "active":
+            # R1: a paused binding leaves "paused" only through the checked
+            # resume. No other status may be written over it.
+            return _paused(binding, BindingPaused((binding.config or {}).get("pause_reason") or "paused"))
+        # Setting a paused binding active is a resume: same checks, and the
+        # pause reason is cleared, exactly as POST .../resume.
+        try:
+            resume_binding(binding, actor_user_id=user.id)
+        except BindingPaused as exc:
+            return _paused(binding, exc)
+        status = ""
     policy = str(data.get("conflict_policy") or "").strip().lower()
     mode = str(data.get("mode") or "").strip().lower()
     if status:
@@ -274,6 +305,8 @@ def sync_binding(binding_id):
         if _result_has_auth_failure(result):
             return _reconnect_response(user, binding)
         return jsonify({"binding": binding.to_dict(), "result": result, "logs": list_logs(binding)})
+    except BindingPaused as exc:
+        return _paused(binding, exc)
     except Exception as exc:
         db.session.rollback()
         if _jira_auth_failure(exc):
@@ -293,11 +326,31 @@ def recreate_missing_binding_issues(binding_id):
         if _result_has_auth_failure(result):
             return _reconnect_response(user, binding)
         return jsonify({"binding": binding.to_dict(), "result": result, "logs": list_logs(binding)})
+    except BindingPaused as exc:
+        return _paused(binding, exc)
     except Exception as exc:
         db.session.rollback()
         if _jira_auth_failure(exc):
             return _reconnect_response(user, binding)
         return _error(exc, 502)
+
+
+@pm_sync_bp.route("/bindings/<binding_id>/resume", methods=["POST"])
+@jwt_required()
+def resume_plan_binding(binding_id):
+    """Explicitly resume a paused binding. Only its owner, and only once the
+    reason it paused no longer applies (current editing role, membership)."""
+    from app.pm_sync.access import resume_binding
+
+    user = _user()
+    binding = _owned(binding_id, user.id) if user else None
+    if not binding:
+        return _error("Binding not found", 404)
+    try:
+        resume_binding(binding, actor_user_id=user.id)
+    except BindingPaused as exc:
+        return _paused(binding, exc)
+    return jsonify({"binding": binding.to_dict(), "logs": list_logs(binding)})
 
 
 @pm_sync_bp.route("/bindings/<binding_id>/unlink", methods=["POST"])
@@ -310,6 +363,8 @@ def unlink_plan_binding(binding_id):
     try:
         unlink_binding(binding)
         return jsonify({"binding": binding.to_dict(), "logs": list_logs(binding)})
+    except BindingPaused as exc:
+        return _paused(binding, exc)
     except Exception as exc:
         db.session.rollback()
         return _error(exc)

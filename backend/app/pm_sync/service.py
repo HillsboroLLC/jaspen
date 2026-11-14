@@ -418,11 +418,10 @@ def ensure_task_parent(
 
 
 def push_binding(binding, plan=None, trigger="send", only_task_ids=None):
-    from app.pm_sync.access import enforce_binding_owner
+    from app.pm_sync.access import enforce_binding_owner, ensure_not_paused
 
     enforce_binding_owner(binding)
-    if binding.status == "paused":
-        raise ValueError("This Jira sync is paused.")
+    ensure_not_paused(binding)
     if plan is None:
         plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key)
     config = jira_adapter.assert_connected(binding.user_id, binding.external_container_id)
@@ -652,9 +651,10 @@ def push_binding(binding, plan=None, trigger="send", only_task_ids=None):
 
 def recreate_missing_links(binding):
     """Drop only dead Jira mappings, then create replacements with this binding's settings."""
-    from app.pm_sync.access import enforce_binding_owner
+    from app.pm_sync.access import enforce_binding_owner, ensure_not_paused
 
     enforce_binding_owner(binding)
+    ensure_not_paused(binding)
     missing = PmSyncLink.query.filter_by(binding_id=binding.id, state="missing_external").all()
     if not missing:
         raise ValueError("This plan has no missing Jira issues to recreate.")

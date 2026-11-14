@@ -108,9 +108,10 @@ def _log(binding, trigger, result):
 
 
 def reconcile_binding(binding, trigger="sync_now"):
-    from app.pm_sync.access import enforce_binding_owner, mark_binding
+    from app.pm_sync.access import enforce_binding_owner, ensure_not_paused, mark_binding
 
     enforce_binding_owner(binding)
+    ensure_not_paused(binding)
     if binding.mode == "push_only":
         return push_binding(binding, trigger=trigger)
     plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key)

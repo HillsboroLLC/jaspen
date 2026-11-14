@@ -1810,6 +1810,9 @@ export default function ConnectorsManage() {
                             {['sync_owner_left_organization', 'sync_owner_unavailable'].includes(binding.pause_reason || binding.sync_warning_code) && (
                               <span role="alert">Sync is paused because the person who connected Jira no longer has access.</span>
                             )}
+                            {(binding.pause_reason || binding.sync_warning_code) === 'sync_owner_read_only' && (
+                              <span role="alert">Jira sync is paused because the person who connected it no longer has permission to make changes to this project.</span>
+                            )}
                             {binding.sync_warning_code === 'sync_failed' && (
                               <span role="alert">Jira sync needs attention. Open the plan to retry.</span>
                             )}
