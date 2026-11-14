@@ -5,7 +5,8 @@ from app import db
 from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync import jira_adapter
-from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
+from app.project_scope import authorized_thread_scope, scenarios_for_thread
+from app.scenarios_store import save_project_scenarios_data
 from sqlalchemy.orm.attributes import flag_modified
 
 MODES = {"two_way", "push_only"}
@@ -19,7 +20,7 @@ def _now():
 
 
 def get_plan(user_id, thread_id, plan_key):
-    thread = load_scenarios_data(user_id).get(thread_id)
+    thread = scenarios_for_thread(user_id, thread_id).get(thread_id)
     if not isinstance(thread, dict):
         raise LookupError("Thread not found.")
     by_scorecard = thread.get("wbs_by_scorecard") if isinstance(thread.get("wbs_by_scorecard"), dict) else {}
@@ -150,7 +151,15 @@ def create_binding(user, payload):
         raise ValueError("Choose a sync mode before sending.")
     if policy not in POLICIES:
         raise ValueError("Choose a conflict policy before sending.")
+    _scope_user, _sessions, project_row = authorized_thread_scope(
+        user.id, thread_id, require_write=True,
+    )
     plan, plan_key = get_plan(user.id, thread_id, requested_plan_key)
+    binding = PmSyncBinding.query.filter_by(
+        thread_id=thread_id, plan_key=plan_key, connector_id=connector_id,
+    ).first()
+    if binding:
+        raise ValueError("This execution plan is already bound to Jira.")
     jira = jira_adapter.assert_connected(user.id, project_key)
     config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
     try:
@@ -164,12 +173,12 @@ def create_binding(user, payload):
         "status_map": config.get("status_map") if isinstance(config.get("status_map"), dict) else {},
         "start_date_field_id": str(config.get("start_date_field_id") or start_date_field_id or ""),
     }
-    binding = PmSyncBinding.query.filter_by(thread_id=thread_id, plan_key=plan_key, connector_id=connector_id).first()
-    if binding:
-        raise ValueError("This execution plan is already bound to Jira.")
     binding = PmSyncBinding(
         user_id=user.id,
-        organization_id=getattr(user, "active_organization_id", None),
+        organization_id=(
+            getattr(project_row, "organization_id", None)
+            or getattr(user, "active_organization_id", None)
+        ),
         thread_id=thread_id,
         plan_key=plan_key,
         connector_id=connector_id,

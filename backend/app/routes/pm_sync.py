@@ -11,6 +11,8 @@ from app.pm_sync.service import (
     MODES, POLICIES, STATUSES, create_binding, get_plan, preview, push_binding,
     recreate_missing_links, unlink_binding,
 )
+from app.project_scope import authorized_thread_scope
+from app.session_access import SessionAccessError
 
 pm_sync_bp = Blueprint("pm_sync", __name__)
 
@@ -152,8 +154,11 @@ def binding_preview():
         thread_id = str(request.args.get("thread_id") or "").strip()
         plan_key = str(request.args.get("plan_key") or "").strip()
         group = str(request.args.get("group_under_epics") or "true").lower() not in {"0", "false", "no"}
+        authorized_thread_scope(user.id, thread_id)
         plan, resolved = get_plan(user.id, thread_id, plan_key)
         return jsonify({"thread_id": thread_id, "plan_key": resolved, "preview": preview(plan, group)})
+    except SessionAccessError:
+        raise
     except LookupError as exc:
         return _error(exc, 404)
     except Exception as exc:
@@ -172,6 +177,8 @@ def create_and_send_binding():
         if _result_has_auth_failure(result):
             return _reconnect_response(user, binding)
         return jsonify({"binding": binding.to_dict(), "result": result}), 201 if result.get("success") else 207
+    except SessionAccessError:
+        raise
     except LookupError as exc:
         return _error(exc, 404)
     except Exception as exc:

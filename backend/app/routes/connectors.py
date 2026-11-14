@@ -44,7 +44,8 @@ from app.jira_sync import (
 )
 from app.jira_portfolio import classify_refresh_error, list_accessible_projects, portfolio_context_text, refresh_portfolio
 from app.models import ConnectorSyncLog, User
-from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
+from app.project_scope import authorized_thread_scope, scenarios_for_thread
+from app.scenarios_store import save_project_scenarios_data
 from app.safe_redirect import safe_internal_path
 from app.salesforce_sync import (
     BadSignature as SalesforceBadSignature,
@@ -656,7 +657,7 @@ def _apply_field_update(updates, payload, persisted, field):
 
 
 def _load_thread_wbs(user_id, thread_id):
-    scenarios = load_scenarios_data(user_id)
+    scenarios = scenarios_for_thread(user_id, thread_id)
     thread = scenarios.get(thread_id)
     if not isinstance(thread, dict):
         return None, None, None
@@ -769,6 +770,7 @@ def _find_thread_task_by_external_id(user_id, connector_id, external_id):
 
 
 def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
+    authorized_thread_scope(user.id, thread_id, require_write=True)
     connector_id = str(connector_id or "").strip().lower()
     if connector_id not in EXECUTION_PM_CONNECTOR_IDS:
         return jsonify(_error_payload(
@@ -2558,6 +2560,7 @@ def import_thread_from_pm_tool(thread_id, connector_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
 
+    authorized_thread_scope(user.id, thread_id, require_write=True)
     connector_id = str(connector_id or "").strip().lower()
     if connector_id not in EXECUTION_PM_CONNECTOR_IDS:
         return jsonify(_error_payload(

@@ -12,7 +12,8 @@ from app.pm_sync.service import (
     _consume_binding_note, _sync_phases, ensure_start_date_field,
     ensure_task_parent, get_plan, push_binding,
 )
-from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
+from app.project_scope import scenarios_for_thread
+from app.scenarios_store import save_project_scenarios_data
 from app.task_history import mark_task_pm_synced, record_task_changes
 
 FIELDS = ("title", "description", "owner", "owner_email", "status", "start_date", "due_date")
@@ -73,7 +74,7 @@ def resolve_conflict(policy, local_time=None, remote_time=None):
 
 
 def _save_plan(binding, plan):
-    data = load_scenarios_data(binding.user_id)
+    data = scenarios_for_thread(binding.user_id, binding.thread_id)
     thread = data.get(binding.thread_id)
     if not isinstance(thread, dict):
         raise LookupError("Thread not found.")
