@@ -341,6 +341,53 @@ SERIALIZABLE concurrency variants. The SQLite-focused run passed 160 tests; its
 9 skips are PostgreSQL-only Phase 5.3 tests and are covered by the PostgreSQL
 run. Empty upgrade/downgrade/re-upgrade and populated downgrade refusal passed.
 
+### Phase 8 implementation record — seat commitments and occupancy
+
+Status: **implemented locally for independent audit; inactive; not accepted.**
+Migration `b8c2d4e6f8a1` adds organization-owned immutable seat-commitment
+intervals, D09 seat-change commands, append-only transition events, and a
+concurrency-only per-subscription fence (the Phase 5.3 fence pattern). The
+inactive `billing_seats` service implements D09/D12/D13: paid commitment kept
+separate from occupancy projected from active membership; changes authorized
+only by an active `billing_owner` or `billing_admin` grant; paid increases from
+matching seat-payment evidence; reductions scheduled at the current paid term
+end, blocked when paid occupancy exceeds the target, re-evaluated by an
+authorized admin, preserved on failed renewal, applied after a paid renewal
+only when occupancy fits, and cancellable or supersedable with history kept.
+No member, role, project, or saved work is changed, and no credit is touched.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| T-SEAT-01 commitment vs occupancy | `seat_commitments` intervals; `seat_occupancy()` read of active paid-role membership (existing `build_seat_usage` definition) | `test_commitment_and_occupancy_are_separate_projections`; SQL/Python role-list parity test |
+| T-SEAT-02 paid increase | Seat-line payment evidence, delta semantics, one increase per paid line, D08-style supersession of an active reduction | Paid-evidence, replay/conflict, and concurrent-increase tests (three isolation levels) |
+| T-SEAT-03..04 reduction and blocked occupancy | Renewal-term target, occupancy decision recorded with evidence, database occupancy recheck | Monthly/annual/month-end tests; blocked/resolve tests; direct-insert occupancy guard test |
+| T-SEAT-05..06 payment failure and later success | `awaiting_payment` keeps the commitment; later paid renewal applies only if occupancy fits | Failed-renewal and later-success tests, including incompatible occupancy |
+| T-SEAT-07 cancel/supersede | One active reduction per subscription; confirmed supersession; append-only history | Cancellation/supersession test; competing-reduction race test |
+| T-SEAT-08..09 no member or work deletion | Service never writes membership, roles, projects, saved work, credits, or legacy seat fields | Lifecycle snapshot test; static write check |
+| T-SEAT-10 audited idempotent notices | Every transition records a D12 event with caller obligations; `seat_change_approaching` once per renewal | Notice idempotency test; rollback-on-failure test |
+| Permissions and tenant isolation | Explicit billing grant checked in the service and in database guards; organization-scoped command keys | Permission matrix; cross-organization test; database guard bypass tests |
+
+Audit remediation (round 1): each payment line authorizes at most one seat
+effect, and evidence must match account, subscription, kind and currency; the
+requesting user is persisted and must hold the cited grant on this account,
+valid at the request and not ended since; occupancy decisions lock the
+organization and its member rows, run only under READ COMMITTED on PostgreSQL
+(snapshot isolation fails closed), and are rechecked by the database; SQLite
+append-only triggers cover every Phase 8 table. Round 2 (founder-approved
+2026-11-14): a versioned seat-funding attribution records, once per paid line,
+the seats it supports for one paid term, without reinterpreting the line's
+quantity. Included seats come only from the approved plan definition's
+`capabilities.included_seats` (fail closed when absent); purchased seats are
+separate. Openings, increases and reductions need exact funding; a blocked
+renewal keeps the last commitment and records the term's funding as unresolved
+until adequate evidence; only a billing owner may authorize paid increases.
+
+Contract exceptions (D09) are deferred to Phase 11, which owns executed-contract
+authority (STOP-15). The implementation remains disconnected from routes,
+webhooks, provider APIs, workers, schedulers, and production configuration.
+Local verification is not acceptance and does not authorize integration,
+deployment, or activation.
+
 ### Deferred Phase 5.1/5.2 activation gate — conflict evidence integrity
 
 Status: **Deferred — required before inbox activation.** These PostgreSQL

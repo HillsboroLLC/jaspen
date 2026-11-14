@@ -215,6 +215,12 @@ realized margin were not accessed or verified.
   proration, replay, rollback, tenant isolation, and concurrent commands are
   covered without introducing a live caller. Phase 9 purchase/refund/dispute
   credit effects and Phase 12 AI-operation integration remain deferred.
+- Phase 8 seat commitments and occupancy are implemented locally and pending
+  independent audit. The additive migration records immutable commitment
+  intervals, D09 seat-change history, and a concurrency-only fence. Paid
+  commitment stays separate from membership occupancy; reductions never remove
+  members or work; contract exceptions remain deferred to Phase 11. There is no
+  live caller.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type

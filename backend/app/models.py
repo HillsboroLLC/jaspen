@@ -2868,3 +2868,12 @@ from .models_billing_phase7 import (  # noqa: E402,F401
     ScheduledPlanChange,
     UpgradeCreditAllocation,
 )
+from .models_billing_phase8 import (  # noqa: E402,F401
+    SeatChange,
+    SeatChangeEvent,
+    SeatCommitment,
+    SeatCommitmentFence,
+    SeatFundingAttribution,
+    SeatFundingUse,
+    SeatTermFunding,
+)
