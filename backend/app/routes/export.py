@@ -12,8 +12,8 @@ from app.orgs import active_membership_for_user, resolve_active_org_for_user
 
 from .ai_agent import _normalize_analysis_history
 from .reports import _markdown_to_pdf_bytes, _safe_text
-from .sessions import load_user_sessions
-from .strategy import _load_scenarios, _resolve_thread_wbs, _scorecard_snapshot_state
+from app.project_scope import authorized_export_scope, scenarios_for_thread
+from .strategy import _resolve_thread_wbs, _scorecard_snapshot_state
 
 export_bp = Blueprint("export", __name__)
 
@@ -41,6 +41,50 @@ def _resolve_thread_session(sessions, thread_id):
         if str(candidate.get("session_id") or "").strip() == tid:
             return candidate
     return None
+
+
+def _export_project(user, thread_id):
+    """The organization's project for an export, after the access check.
+
+    Returns ``(session, project_row, thread_data)``: the project's session
+    payload, its canonical row, and its scorecard and plan data, all from
+    that one row whoever on the team created it. Raises SessionAccessError
+    (404 for an unknown or unreadable project) before anything of the
+    project is read. ``session`` is None for a
+    project this member has hidden from their history (404, as before).
+    """
+    _user, sessions, row = authorized_export_scope(user.id, thread_id)
+    session = _resolve_thread_session(sessions, thread_id)
+    scenario_data = scenarios_for_thread(user, thread_id)
+    thread_data = scenario_data.get(thread_id) if isinstance(scenario_data, dict) else None
+    return session, row, thread_data if isinstance(thread_data, dict) else {}
+
+
+def _project_peer_scorecards(session, thread_id, user_id, project_row, thread_data):
+    """Every scorecard of the project, whoever on the team scored it.
+
+    A caller that already authorized the project passes its canonical row and
+    scenario data. Otherwise they are resolved here, for this member, through
+    the same read check; without a readable project there are no cards (as in
+    strategy._thread_peer_scorecards), never the caller's own rows instead.
+    """
+    from app.project_scope import readable_project_row
+    from app.scorecards import collect_peer_scorecards
+
+    if project_row is None:
+        member = User.query.get(str(user_id))
+        project_row = readable_project_row(member, thread_id)
+        if project_row is None:
+            return []
+        scenario_data = scenarios_for_thread(member, thread_id)
+        thread_data = scenario_data.get(thread_id) if isinstance(scenario_data, dict) else None
+    return collect_peer_scorecards(
+        user_id,
+        thread_id,
+        legacy_session=session,
+        legacy_thread_data=thread_data if isinstance(thread_data, dict) else {},
+        project_row=project_row,
+    )
 
 
 def _resolve_export_context(user, session):
@@ -106,21 +150,21 @@ def _format_label(key):
     return token.title() if token else "Item"
 
 
-def _scorecard_record_for_export(session, thread_id, scorecard_id=None, user_id=None):
+def _scorecard_record_for_export(session, thread_id, scorecard_id=None, user_id=None,
+                                 project_row=None, thread_data=None):
+    """One scorecard of the project, shaped for export.
+
+    With ``user_id`` the scorecards are the project's, whoever on the team
+    scored them: from ``project_row`` and ``thread_data`` when the caller
+    already authorized the project, else resolved for that member. Without
+    ``user_id`` only the session's own legacy result is used.
+    """
     analyses = _normalize_analysis_history(session, thread_id)
     scorecard_id = str(scorecard_id or "").strip()
     selected = None
 
     if user_id is not None:
-        from app.scenarios_store import load_scenarios_data
-        from app.scorecards import collect_peer_scorecards
-        thread_data = (load_scenarios_data(user_id) or {}).get(thread_id) or {}
-        peers = collect_peer_scorecards(
-            user_id,
-            thread_id,
-            legacy_session=session,
-            legacy_thread_data=thread_data,
-        )
+        peers = _project_peer_scorecards(session, thread_id, user_id, project_row, thread_data)
         chosen = None
         if scorecard_id:
             chosen = next((
@@ -233,6 +277,8 @@ def _scorecard_record_for_export(session, thread_id, scorecard_id=None, user_id=
             thread_id,
             selected_scorecard_id=scorecard_id,
             user_id=user_id,
+            project_row=project_row,
+            thread_data=thread_data,
         ),
         # Full content for rich exports (Excel/Word): the per-criterion grid, the
         # written summary, and the rubric (for ordering/labels).
@@ -437,19 +483,13 @@ def _pack_layout_rows(placed):
     return rows
 
 
-def _scorecard_variants_for_export(session, thread_id, selected_scorecard_id=None, user_id=None):
+def _scorecard_variants_for_export(session, thread_id, selected_scorecard_id=None, user_id=None,
+                                   project_row=None, thread_data=None):
     if not isinstance(session, dict):
         return []
 
     if user_id is not None:
-        from app.scenarios_store import load_scenarios_data
-        from app.scorecards import collect_peer_scorecards
-        snapshots = collect_peer_scorecards(
-            user_id,
-            thread_id,
-            legacy_session=session,
-            legacy_thread_data=(load_scenarios_data(user_id) or {}).get(thread_id) or {},
-        )
+        snapshots = _project_peer_scorecards(session, thread_id, user_id, project_row, thread_data)
         snapshot_state = {'selected_id': selected_scorecard_id}
     else:
         result_blob = session.get("result") if isinstance(session.get("result"), dict) else {}
@@ -1804,15 +1844,14 @@ def export_scorecard_xlsx(thread_id):
     user = User.query.filter_by(id=str(get_jwt_identity())).first()
     if not user:
         return jsonify({"error": "User not found"}), 404
-    sessions = load_user_sessions(user.id) or {}
-    session = _resolve_thread_session(sessions, thread_id)
+    session, project_row, thread_data = _export_project(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
     plan_key, org, _membership = _resolve_export_context(user, session)
     access_error = _require_export_plan(plan_key, "xlsx")
     if access_error:
         return access_error
-    scorecard, error_response = _scorecard_record_for_export(session, thread_id, scorecard_id=request.args.get("scorecard_id"), user_id=user.id)
+    scorecard, error_response = _scorecard_record_for_export(session, thread_id, scorecard_id=request.args.get("scorecard_id"), user_id=user.id, project_row=project_row, thread_data=thread_data)
     if error_response:
         return error_response
     try:
@@ -1829,15 +1868,14 @@ def export_scorecard_docx(thread_id):
     user = User.query.filter_by(id=str(get_jwt_identity())).first()
     if not user:
         return jsonify({"error": "User not found"}), 404
-    sessions = load_user_sessions(user.id) or {}
-    session = _resolve_thread_session(sessions, thread_id)
+    session, project_row, thread_data = _export_project(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
     plan_key, org, _membership = _resolve_export_context(user, session)
     access_error = _require_export_plan(plan_key, "docx")
     if access_error:
         return access_error
-    scorecard, error_response = _scorecard_record_for_export(session, thread_id, scorecard_id=request.args.get("scorecard_id"), user_id=user.id)
+    scorecard, error_response = _scorecard_record_for_export(session, thread_id, scorecard_id=request.args.get("scorecard_id"), user_id=user.id, project_row=project_row, thread_data=thread_data)
     if error_response:
         return error_response
     try:
@@ -1855,8 +1893,7 @@ def export_scorecard_pdf(thread_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    sessions = load_user_sessions(user.id) or {}
-    session = _resolve_thread_session(sessions, thread_id)
+    session, project_row, thread_data = _export_project(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
 
@@ -1870,6 +1907,8 @@ def export_scorecard_pdf(thread_id):
         thread_id,
         scorecard_id=request.args.get("scorecard_id"),
         user_id=user.id,
+        project_row=project_row,
+        thread_data=thread_data,
     )
     if error_response:
         return error_response
@@ -1886,8 +1925,7 @@ def export_scorecard_pptx(thread_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    sessions = load_user_sessions(user.id) or {}
-    session = _resolve_thread_session(sessions, thread_id)
+    session, project_row, thread_data = _export_project(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
 
@@ -1901,6 +1939,8 @@ def export_scorecard_pptx(thread_id):
         thread_id,
         scorecard_id=request.args.get("scorecard_id"),
         user_id=user.id,
+        project_row=project_row,
+        thread_data=thread_data,
     )
     if error_response:
         return error_response
@@ -1921,8 +1961,7 @@ def export_wbs_csv(thread_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    sessions = load_user_sessions(user.id) or {}
-    session = _resolve_thread_session(sessions, thread_id)
+    session, project_row, thread_data = _export_project(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
 
@@ -1931,8 +1970,6 @@ def export_wbs_csv(thread_id):
     if access_error:
         return access_error
 
-    scenario_data = _load_scenarios(user.id) or {}
-    thread_data = scenario_data.get(thread_id) if isinstance(scenario_data, dict) else {}
     project_wbs = _resolve_thread_wbs(thread_data, request.args.get("scorecard_id"))
     if not isinstance(project_wbs, dict):
         return jsonify({"error": "No execution plan is available for this thread."}), 404
@@ -1953,8 +1990,7 @@ def export_wbs_xlsx(thread_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    sessions = load_user_sessions(user.id) or {}
-    session = _resolve_thread_session(sessions, thread_id)
+    session, project_row, thread_data = _export_project(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
 
@@ -1963,8 +1999,6 @@ def export_wbs_xlsx(thread_id):
     if access_error:
         return access_error
 
-    scenario_data = _load_scenarios(user.id) or {}
-    thread_data = scenario_data.get(thread_id) if isinstance(scenario_data, dict) else {}
     project_wbs = _resolve_thread_wbs(thread_data, request.args.get("scorecard_id"))
     if not isinstance(project_wbs, dict):
         return jsonify({"error": "No execution plan is available for this thread."}), 404
@@ -1992,8 +2026,7 @@ def export_conversation_markdown(thread_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    sessions = load_user_sessions(user.id) or {}
-    session = _resolve_thread_session(sessions, thread_id)
+    session, project_row, thread_data = _export_project(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
 
@@ -2011,8 +2044,7 @@ def export_conversation_pdf(thread_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    sessions = load_user_sessions(user.id) or {}
-    session = _resolve_thread_session(sessions, thread_id)
+    session, project_row, thread_data = _export_project(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
 

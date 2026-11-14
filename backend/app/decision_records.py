@@ -130,20 +130,21 @@ def canonical_context(actor, thread_id):
 
 
 def _load_thread_sources(user_id, thread_id):
-    """Read-only view over the two existing stores for one thread.
+    """Read-only view of one project's session payload and scenario data.
 
-    `user_id` is the ATTRIBUTION identity (the project's creator), not
-    necessarily the caller. Reading under a stable identity is what makes the
-    assembled record identical no matter which member triggers a refresh --
-    otherwise a collaborator would derive a record missing the owner's
-    scorecards and scenario data.
+    The project is the organization's canonical row for ``thread_id`` as
+    ``user_id`` (the member asking) resolves it, so a teammate reads the
+    project the owner reads. When that member may not read the project, or
+    no project has this id, the result is ``(None, {})``. Nothing is written.
     """
     # Local imports: routes modules import broadly at module load; deferring
     # avoids import cycles (same pattern strategy.py uses toward ai_agent).
-    from .routes.sessions import load_user_sessions
-    from .routes.strategy import _load_scenarios
+    from .models import User
+    from .project_scope import scenarios_for_thread
+    from .routes.sessions import load_sessions_for_thread
 
-    sessions = load_user_sessions(user_id) or {}
+    member = User.query.get(str(user_id)) if user_id is not None else None
+    sessions = load_sessions_for_thread(member, thread_id) or {}
     session = None
     for key, value in (sessions.items() if isinstance(sessions, dict) else []):
         if not isinstance(value, dict):
@@ -152,7 +153,7 @@ def _load_thread_sources(user_id, thread_id):
             session = value
             break
 
-    all_scenarios = _load_scenarios(user_id) or {}
+    all_scenarios = scenarios_for_thread(member, thread_id) or {}
     thread_data = all_scenarios.get(thread_id)
     if not isinstance(thread_data, dict):
         thread_data = {}

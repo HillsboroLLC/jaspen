@@ -427,6 +427,14 @@ def _thread_sources(user_id, thread_id):
     return _load_thread_sources(user_id, thread_id)
 
 
+def _thread_project_row(user_id, thread_id):
+    # The scorecards counted for a thread are its project's, whoever on the
+    # team scored them, read from the same canonical row as _thread_sources.
+    # Without a readable project there are no cards.
+    from .project_scope import readable_project_row
+    return readable_project_row(user_id, thread_id)
+
+
 def get_baseline(user_id, thread_id, epoch=1):
     return (
         DecisionBaseline.query
@@ -455,6 +463,7 @@ def analysis_has_started(user_id, thread_id, session=None, thread_data=None):
         session, thread_data = _thread_sources(user_id, thread_id)
     return bool(_collect_peer_scorecards(
         session or {}, thread_data or {}, user_id=user_id, thread_id=thread_id,
+        project_row=_thread_project_row(user_id, thread_id),
     ))
 
 
@@ -662,7 +671,10 @@ def current_measures(user_id, thread_id):
 
     session, thread_data = _thread_sources(user_id, thread_id)
     session = session if isinstance(session, dict) else {}
-    cards = _collect_peer_scorecards(session, thread_data, user_id=user_id, thread_id=thread_id)
+    cards = _collect_peer_scorecards(
+        session, thread_data, user_id=user_id, thread_id=thread_id,
+        project_row=_thread_project_row(user_id, thread_id),
+    )
 
     rubric = session.get('scoring_rubric') if isinstance(session.get('scoring_rubric'), dict) else {}
     criteria = [c for c in (rubric.get('criteria') or []) if isinstance(c, dict)]

@@ -58,6 +58,23 @@ def authorized_thread_scope(user_id, thread_id, *, require_write=False,
     return user, sessions, row
 
 
+def authorized_export_scope(user_id, thread_id):
+    """Authorize this member to export one project or generate a report of
+    it, then return ``(user, sessions, row)`` as ``authorized_thread_scope``.
+
+    OD-7, option A (approved Nov 14, 2026): exports and reports follow read
+    access. Every role that may read the project may export it, a viewer
+    included; plan entitlement is checked by each route afterwards,
+    unchanged. Raises SessionNotFound (404) for an unknown project or one the
+    member may not read, before anything of the project is read.
+
+    Only exports and reports use this. Share links and emailed assets follow
+    read access through ``authorized_thread_scope`` directly (spec 2.3), so a
+    future change to export permission cannot change who may share or email.
+    """
+    return authorized_thread_scope(user_id, thread_id)
+
+
 def readable_project_row(user, thread_id, *, include_archived=False):
     """The canonical row for this thread when this member may read it, else None.
 
