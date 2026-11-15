@@ -87,11 +87,15 @@ def _prepare(user, body):
 
     session = row.payload if isinstance(row.payload, dict) else {}
     thread_data = row.scenarios_json if isinstance(row.scenarios_json, dict) else {}
+    # The project's scorecards, whoever on the team scored them (P2c): the
+    # caller's id plus the authorized project row, the same call share links
+    # make in sharing._load_thread_cards. Each card keeps its own author.
     cards = collect_peer_scorecards(
-        row.user_id,
+        user.id,
         thread_id,
         legacy_session=session,
         legacy_thread_data=thread_data,
+        project_row=row,
     ) or []
     scorecard_id = str(body.get('scorecard_id') or '').strip() or None
     artifact_type = ARTIFACT_SCORECARD if scorecard_id else ARTIFACT_TRADEOFF

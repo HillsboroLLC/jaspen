@@ -1,5 +1,6 @@
 from app import db as app_db
 from app.decision_records import accept_exposure
+from app.models import UserSession
 from app.models_decision_record import DecisionRecord
 
 
@@ -130,9 +131,17 @@ def test_endpoint_ignores_client_authorship_and_numeric_claims(
     client, db, test_user, auth_headers, monkeypatch,
 ):
     record = _record(test_user)
+    # H-2e-3 (F4): the route authorizes the project through the access seam
+    # before any write, so the thread must exist as the member's own project.
+    app_db.session.add(UserSession(
+        user_id=test_user.id, created_by_user_id=test_user.id,
+        session_id='acceptance-thread', name='Warehouse decision',
+        payload={}, scenarios_json={},
+    ))
+    app_db.session.commit()
     monkeypatch.setattr(
         'app.routes.decision_records.create_or_refresh_record',
-        lambda user, thread_id: (record, False),
+        lambda user, thread_id, **_kwargs: (record, False),
     )
 
     response = client.post(

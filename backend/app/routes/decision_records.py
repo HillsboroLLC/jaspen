@@ -44,7 +44,13 @@ from ..decision_retrieval import (
     search,
     summarize,
 )
-from ..session_access import can_write_session, canonical_row
+from ..session_access import (
+    SessionForbidden,
+    SessionNotFound,
+    can_write_session,
+    canonical_row,
+    resolve_session_for_actor,
+)
 
 decision_records_bp = Blueprint('decision_records', __name__)
 
@@ -175,6 +181,32 @@ def _writable_record_or_none(record_id, user):
     return record, None
 
 
+def _authorize_thread_write(user, thread_id):
+    """Authorize a write to one project's record, before any side effect.
+
+    The access seam decides (resolve_session_for_actor): a project the caller
+    cannot read (unknown id, former member under enforcement, another
+    organization) answers 404 exactly as an unknown thread always has, so ids
+    cannot be probed; a reader without an editing role answers 403.
+
+    Returns (row, None) or (None, response).
+    """
+    try:
+        row, _membership = resolve_session_for_actor(
+            user, thread_id, require_write=True, include_archived=True,
+        )
+    except SessionNotFound:
+        return None, (jsonify({
+            'error': f'No conversation or analysis found for thread {thread_id}',
+        }), 404)
+    except SessionForbidden:
+        return None, (jsonify({
+            'error': 'Your role on this project is read-only',
+            'code': 'forbidden',
+        }), 403)
+    return row, None
+
+
 @decision_records_bp.route('/from-thread/<thread_id>', methods=['POST'])
 @jwt_required()
 def create_from_thread(thread_id):
@@ -186,14 +218,11 @@ def create_from_thread(thread_id):
     user = _current_user()
     if not user:
         return jsonify({'error': 'User not found'}), 404
-    row = canonical_row(user, thread_id, include_archived=True)
-    if row is not None and not can_write_session(row, user):
-        return jsonify({
-            'error': 'Your role on this project is read-only',
-            'code': 'forbidden',
-        }), 403
+    row, refusal = _authorize_thread_write(user, thread_id)
+    if refusal is not None:
+        return refusal
     try:
-        record, created = create_or_refresh_record(user, thread_id)
+        record, created = create_or_refresh_record(user, thread_id, session_row=row)
     except LookupError as exc:
         return jsonify({'error': str(exc)}), 404
     return jsonify({'record': record.to_dict(), 'created': created}), 201 if created else 200
@@ -511,15 +540,12 @@ def add_accepted_exposure(thread_id):
     user = _current_user()
     if not user:
         return jsonify({'error': 'User not found'}), 404
-    row = canonical_row(user, thread_id, include_archived=True)
-    if row is not None and not can_write_session(row, user):
-        return jsonify({
-            'error': 'Your role on this project is read-only',
-            'code': 'forbidden',
-        }), 403
+    row, refusal = _authorize_thread_write(user, thread_id)
+    if refusal is not None:
+        return refusal
     data = request.get_json(silent=True) or {}
     try:
-        record, _ = create_or_refresh_record(user, thread_id)
+        record, _ = create_or_refresh_record(user, thread_id, session_row=row)
         entry, created = accept_exposure(
             record,
             user,
