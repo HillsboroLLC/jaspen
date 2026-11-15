@@ -431,6 +431,95 @@ event key is already recorded (F5).
 Details are in the Phase 9 audit handoff. Local verification is not acceptance
 and does not authorize integration, deployment, or activation.
 
+### Phase 10 implementation record — trials, comps, and internal funding
+
+Status: **implemented locally, inactive; audit remediation round 1 (F1–F5)
+and final remediation (R2, F5) complete, awaiting independent
+verification.**
+Migration `f2b4d6e8a0c3` (revises `e1a3c5b7d9f2`) adds four immutable tables
+and narrows the Phase 4 later-authority gate to enterprise contracts (Phase
+11). `app/billing_offers.py` has no route, webhook, worker, or scheduler
+caller. Phase 3 stays the only ledger, Phase 4 the only entitlement authority,
+and Phase 5.4 records every event. No commercial offer, permission holder, or
+amount is defined; until Lydia approves offer definitions and staff grants,
+every command fails closed.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| P07/D07: a trial, promotion, or comp is valid only when its approved, versioned offer completely defines eligibility, owner, capabilities, credit amount, start/end, funding source, and redemption limits | `offer_terms()`; `EntitlementDefinition.funding_policy_json.offer` v1 (exact field set; unknown or missing fields fail closed); PostgreSQL redemption guard re-checks every term | `test_unapproved_or_incomplete_offers_fail_closed_without_mutation[11]`; `test_member_attributed_owner_requires_a_policy_decision` |
+| T-OFFER-01..04: only approved offers grant entitlement/lots; expiry and owner exact; D13 `offer:<offer_version>:<redemption_id>:<component>` | `redeem_credit_offer()`; `credit_offer_redemptions`, `credit_offer_fundings`; lot, grant, funding and deferred completeness guards; Phase 4 gate replaced by an entitlement-event guard | `test_trial_grants_exact_entitlement_and_lot_once_and_replay_converges`; `test_promotion_with_two_components_and_no_expiry_funds_each_component`; `test_postgres_migrated_guards_reject_direct_bypass` |
+| Redemption limits per account (across offer versions) and in total | Sequential per-key indexes, `UNIQUE (offer_key, account, index)` and `UNIQUE (offer_key, total_index)`, guard-verified | `test_per_account_limit_spans_offer_versions_and_total_limit_spans_accounts`; `test_postgres_concurrent_redemptions_respect_limits_and_converge` (3 isolation levels) |
+| P08/T-ADMIN, STOP-12/13: admin authority, capabilities, data, and funding are separate; adjustments carry actor, reason, evidence | Comps and internal funding need a named staff user with an explicit, versioned, unrevoked `billing_staff_permission_grants` row plus reason, justification, and evidence. Grants and revocations are recorded only by the provisioning service. Global admin, organization admin, and billing roles are never consulted | `test_comp_requires_explicit_permission_not_admin_or_billing_role`; `test_revoked_or_out_of_interval_permission_authorizes_nothing`; `test_staff_permissions_are_recorded_only_by_the_provisioning_service`; `test_trials_and_promotions_are_redeemed_only_by_the_offer_service[5]` |
+| ADR: internal accounts use explicit internal funding, not plan impersonation | `internal` origin funds an `internal` lot; no user, organization, plan, or subscription field is written | `test_internal_funding_is_explicit_credit_not_plan_impersonation` |
+| P23/T-OWNER: trial/promo/internal value stays with its account and source; allocation order | Account-owned lots only (member attribution refused); existing `SOURCE_PRIORITY` puts offer lots before purchased credit | `test_offer_value_stays_with_its_account_and_source`; `test_offer_lots_are_allocated_before_purchased_credit_and_stop_at_expiry` |
+| Entitlement term: `active -> expired` at term end | `expire_offer_entitlement()` (database time); PostgreSQL guard refuses `active -> expired` before `ends_at` by claimed and database time | `test_offer_entitlement_expires_only_after_its_term`; `test_postgres_f3_only_initial_approval_is_gated_and_later_lifecycle_remains_open` |
+| Audit F1: no caller-supplied command time | The commands take no time argument. Recorded timestamps (`redeemed_at`, term start, `revoked_at`, grant recording, entitlement transition times) are the database transaction timestamp (`now()` on PostgreSQL); PostgreSQL guards require `redeemed_at = now()` and `revoked_at = now()`. A retry returns the stored result and original time | `test_f1_callers_cannot_supply_or_backdate_command_time`; `test_retry_after_offer_retirement_returns_the_stored_result`; `test_postgres_f1_database_rejects_caller_supplied_times` |
+| Audit R2: authorization at actual current time | The transaction timestamp is a record, not evidence of current authority. Grant expiry and offer retirement are judged with `clock_timestamp()`: in the service after the definition and grant locks are held, in the redemption insert guard after its `FOR SHARE` grant lock, and again in the deferred guard together with revocation. That deferred check normally runs at commit, but only while the constraint stays deferred (known limitation N1, below). Grant start and offer effectiveness are judged at the recorded start, which can only be earlier and so is stricter | `test_postgres_r2_transaction_opened_before_the_deadline_cannot_redeem_after_it[grant, offer]`; `test_postgres_r2_database_guard_refuses_even_if_the_service_used_transaction_start[grant, offer]`; `test_postgres_r2_deadline_between_insert_and_commit_refuses_the_commit[grant, offer]`; `test_postgres_r2_redemption_before_the_deadline_is_valid_and_retries_after_it[grant, offer]` |
+| Audit F2: a committed revocation always wins over a later redemption | Redemption and revocation require READ COMMITTED on PostgreSQL (service check and guard); the redemption locks the grant before reading revocations in a separate statement; the revocation guard locks the grant `FOR UPDATE` and the redemption guard `FOR SHARE` | `test_postgres_f2_revocation_committed_during_a_redemption_wins[3 levels]`; `test_postgres_f2_database_refuses_snapshot_isolation_writes[3 levels]`; `test_postgres_f2_concurrent_revocation_and_redemption_have_one_valid_order`; `test_postgres_concurrent_redemptions_respect_limits_and_converge[3 levels]` |
+| Audit F3: guard scope | The entitlement-event guard gates only `proposed -> scheduled` (D07 approval); cancellation, reduction, replacement, and disposition expiry stay open | `test_postgres_f3_only_initial_approval_is_gated_and_later_lifecycle_remains_open` |
+| Idempotency, replay, atomicity | `offer-redemption:<definition>:<redemption_id>` claim; replay returns the prior result; reuse with different facts or delivery obligations conflicts; a failed event rolls back everything | `test_redemption_identity_reuse_with_different_facts_conflicts`; `test_replay_with_different_delivery_obligations_conflicts`; `test_failed_event_recording_rolls_back_every_effect` |
+
+Deferred, fail-closed, or awaiting decisions: member-attributed offers;
+revoking or reducing a comp or internal grant (no negative adjustment command
+exists; Phase 9's note that manual adjustments need D11 risk authority
+stands); ledger `expiration` entries for offer lots (availability already ends
+at `expires_at`); who may hold the two staff permissions and whether a holder
+may fund an organization they belong to; customer-facing templates for the new
+event types `trial_started`, `promotion_redeemed`, `comp_granted`, and
+`internal_funding_granted`.
+
+Enforcement differs by schema (audit F4). The database guards exist only in
+migrated schemas. Schemas built with `db.create_all()` have the model CHECK
+constraints but no triggers, so there the Phase 4 transition helper could
+activate a trial, promotion, comp, or internal instance without a redemption.
+
+The `create_all` entry points are the test fixtures and three manual scripts:
+`scripts/init_dev_db.py` (local bootstrap), `create_studio_tables.py`, and
+`create_decision_record_tables.py`. The two `create_*_tables.py` scripts call
+`db.create_all()` against whatever `DATABASE_URL` is configured. Run against a
+database whose migrations are behind, they would create every missing table,
+billing tables included, without triggers.
+
+No approved runtime path uses such a schema for billing: every caller of the
+helper is an inactive billing module, and production uses Alembic on
+PostgreSQL. Closing this gap (D10-10) is a mandatory pre-activation
+dependency.
+
+SQLite migrated schemas have the offer-lot and initial-approval guards but
+no READ COMMITTED, database-time, or current-time checks.
+
+SQLite itself allows only one writer at a time, but a deferred transaction
+reads before it takes the write lock. The service's guarantees therefore
+depend on each command's locking:
+- Redemption opens `BEGIN IMMEDIATE` through the account lock as its first
+  statement, so it holds the write lock from its first read. This applies
+  only when the redemption starts the transaction; a caller that already
+  opened one keeps SQLite's ordinary deferred locking. While a redemption
+  holds the write lock, no revocation can commit.
+- `expire_offer_entitlement` reads the redemption's account before
+  `_lock_account`, so its transaction has already begun and it does not get
+  that up-front lock.
+- Grant recording and revocation never take it either; their reads precede
+  the write lock. Two revocations of one grant are settled by the unique
+  constraint on `grant_id`.
+
+**Known limitation N1 (low severity).** The commit-time re-check
+(`phase10_redemption_final`) is a deferred constraint trigger. A caller that
+runs `SET CONSTRAINTS ALL IMMEDIATE` (or names that constraint) after
+inserting a redemption makes the check run at that moment instead of at
+commit. If the grant then expires or the offer retires before the
+transaction commits, the commit succeeds. The R2 insert-time and
+service-time checks are unaffected; only the "re-check at commit"
+protection depends on the constraint staying deferred. The trigger is
+unchanged.
+
+Integration contract D10-9: payment adapters and every other caller must
+run redemption and revocation in READ COMMITTED, and must not run
+`SET CONSTRAINTS ALL IMMEDIATE` or otherwise force early evaluation of the
+Phase 10 redemption constraint. Details are in the Phase 10 audit handoff. Local
+verification is not acceptance and does not authorize integration,
+deployment, or activation.
+
 ### Deferred Phase 5.1/5.2 activation gate — conflict evidence integrity
 
 Status: **Deferred — required before inbox activation.** These PostgreSQL

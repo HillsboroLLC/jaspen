@@ -2882,3 +2882,9 @@ from .models_billing_phase9 import (  # noqa: E402,F401
     FinancialCaseCreditEffect,
     FinancialCaseLotEvaluation,
 )
+from .models_billing_phase10 import (  # noqa: E402,F401
+    BillingStaffPermissionGrant,
+    BillingStaffPermissionRevocation,
+    CreditOfferFunding,
+    CreditOfferRedemption,
+)

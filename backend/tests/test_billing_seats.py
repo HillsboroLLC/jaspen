@@ -940,7 +940,8 @@ def _assert_models_match(engine):
 
 def test_revision_extends_phase7_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["e1a3c5b7d9f2"]  # Phase 9 extends Phase 8
+    assert script.get_heads() == ["f2b4d6e8a0c3"]  # Phase 10 extends Phase 9, which extends Phase 8
+    assert script.get_revision("f2b4d6e8a0c3").down_revision == "e1a3c5b7d9f2"
     assert script.get_revision("e1a3c5b7d9f2").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == PARENT
 
@@ -1040,7 +1041,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=6, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "e1a3c5b7d9f2"}:
+    if revision not in {REVISION, "e1a3c5b7d9f2", "f2b4d6e8a0c3"}:
         engine.dispose()
         pytest.fail(f"Phase 8 migrated tests require Alembic head {REVISION}; found {revision!r}")
     return engine

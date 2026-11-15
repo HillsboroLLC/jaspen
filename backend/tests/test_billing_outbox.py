@@ -530,7 +530,7 @@ def test_outbox_service_has_no_live_runtime_callers():
     callers = []
     for path in app_dir.rglob("*.py"):
         if path.name in {
-            "billing_allocations.py", "billing_financial_effects.py", "billing_outbox.py", "billing_plan_changes.py", "billing_seats.py",
+            "billing_allocations.py", "billing_financial_effects.py", "billing_offers.py", "billing_outbox.py", "billing_plan_changes.py", "billing_seats.py",
             "models_billing_phase5.py", "models.py",
         }:
             continue

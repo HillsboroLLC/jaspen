@@ -195,9 +195,11 @@ class EntitlementInstance(db.Model):
             "AND length(trim(approval_evidence_reference)) > 0)",
             name="ck_entitlement_instances_approval",
         ),
+        # Phase 10 lifted this gate for trial, promotion, and comp instances;
+        # their activation now requires a Phase 10 offer-redemption record
+        # (database guard). Enterprise contracts stay gated until Phase 11.
         db.CheckConstraint(
-            "source_type NOT IN ('trial','promotion','comp','enterprise_contract') "
-            "OR state IN ('proposed','cancelled')",
+            "source_type <> 'enterprise_contract' OR state IN ('proposed','cancelled')",
             name="ck_entitlement_instances_later_authority_gate",
         ),
         db.CheckConstraint(

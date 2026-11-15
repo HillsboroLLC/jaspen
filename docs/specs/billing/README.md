@@ -221,6 +221,16 @@ realized margin were not accessed or verified.
   commitment stays separate from membership occupancy; reductions never remove
   members or work; contract exceptions remain deferred to Phase 11. There is no
   live caller.
+- Phase 10 trials, promotions, comps, and internal funding are implemented
+  locally; audit remediation (F1–F5, R2) is complete and pending independent
+  verification. Recorded times come from the database transaction; grant
+  expiry and offer retirement are judged at the actual current time; on
+  PostgreSQL redemption and revocation require READ COMMITTED. Offers are approved, versioned
+  entitlement definitions; comps and internal funding require an explicit staff
+  permission grant, never admin identity or billing roles. The Phase 4
+  later-authority gate now blocks only enterprise contracts (Phase 11); trial,
+  promotion, comp, and internal entitlements need a Phase 10 redemption record.
+  No offer or permission holder is defined, and there is no live caller.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type
