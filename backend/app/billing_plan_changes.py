@@ -35,6 +35,7 @@ from .models import (
     UpgradeCreditAllocation,
 )
 from .models_billing_phase6 import RecurringCreditAllocation
+from .models_billing_phase11 import CONTRACT_PROCESSOR
 
 
 SCHEDULE_NAMESPACE = "plan_change_schedule"
@@ -138,6 +139,10 @@ def _lock_subscription(session, account_id, subscription_id):
     ).scalar_one_or_none()
     if subscription is None or subscription.billing_account_id != account_id:
         raise PlanChangeError("subscription does not belong to the billing account")
+    if subscription.processor == CONTRACT_PROCESSOR:
+        # Phase 11: contract terms change only through an executed, staff-
+        # approved contract version, never through customer plan commands.
+        raise PlanChangeError("contract-backed terms change only through an Enterprise contract version")
     return subscription
 
 
@@ -500,7 +505,9 @@ def apply_paid_upgrade(
         lot = CreditLot(
             id=lot_id, billing_account_id=account_id,
             source_type="subscription_recurring", source_id=allocation_id,
-            original_amount=amount, available_at=paid_at, expires_at=period_end,
+            # P11-DEP-001: annual-term recurring credits run to the paid term end.
+            original_amount=amount, available_at=paid_at,
+            expires_at=_stored_utc(subscription.term_ends_at) if subscription.interval == "year" else period_end,
             origin_evidence_json={"upgrade_credit_allocation_id": allocation_id, "financial_line_id": line.id},
         )
         session.add(lot)

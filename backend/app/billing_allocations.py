@@ -40,6 +40,12 @@ from .models import (
     IdempotencyRegistry,
 )
 from .models_billing_phase6 import RecurringCreditAllocation
+from .models_billing_phase11 import (
+    CONTRACT_PROCESSOR,
+    EnterpriseContractActivation,
+    EnterpriseContractTermFunding,
+    EnterpriseContractVersion,
+)
 
 
 ALLOCATION_NAMESPACE = "recurring_credit_allocation"
@@ -271,6 +277,31 @@ def _validated_paid_line(
         raise RecurringAllocationError(
             "financial line is not paid subscription evidence for this account and entitlement"
         )
+    if subscription.processor == CONTRACT_PROCESSOR:
+        # Phase 11: a contract term may be paid before it starts (approval
+        # before the effective date is allowed), so the payment-in-period
+        # rule is replaced by the contract's own evidence. The line must be
+        # the verified, exact-amount funding of this term, and the term must
+        # have been activated (effective date reached and funding verified).
+        funded = session.execute(
+            select(EnterpriseContractTermFunding.id)
+            .join(EnterpriseContractVersion, EnterpriseContractVersion.id == EnterpriseContractTermFunding.version_id)
+            .join(
+                EnterpriseContractActivation,
+                EnterpriseContractActivation.version_id == EnterpriseContractVersion.id,
+            )
+            .where(
+                EnterpriseContractTermFunding.financial_line_id == line.id,
+                EnterpriseContractTermFunding.subscription_id == subscription.id,
+                EnterpriseContractVersion.version_kind.in_(("initial", "renewal")),
+                EnterpriseContractVersion.entitlement_instance_id == instance.id,
+            )
+        ).first()
+        if funded is None:
+            raise RecurringAllocationError(
+                "contract allocation requires the activated term's verified funding"
+            )
+        return line
     term_start = _stored_utc(subscription.term_starts_at)
     if kind == "monthly_subscription" and not (period_start <= effective_at < period_end):
         raise RecurringAllocationError("monthly allocation requires payment in that period")
@@ -315,7 +346,7 @@ def allocate_recurring_credits(
         anchor_at = _stored_utc(account.account_anchor_at)
         if financial_line_id is not None:
             raise RecurringAllocationError("free allocation cannot use financial evidence")
-    elif instance.source_type == "subscription" and instance.subscription_id:
+    elif instance.source_type in ("subscription", "enterprise_contract") and instance.subscription_id:
         subscription = session.execute(
             select(BillingSubscription)
             .where(BillingSubscription.id == instance.subscription_id)
@@ -323,6 +354,11 @@ def allocate_recurring_credits(
         ).scalar_one()
         if subscription.billing_account_id != account.id:
             raise RecurringAllocationError("subscription does not belong to the billing account")
+        # Phase 11 (P11-DEP-004 option A): an Enterprise term is a
+        # contract-backed subscription and only an Enterprise entitlement may
+        # draw on it; ordinary subscriptions never carry contract authority.
+        if (instance.source_type == "enterprise_contract") != (subscription.processor == CONTRACT_PROCESSOR):
+            raise RecurringAllocationError("entitlement source does not match the subscription authority")
         kind = {
             "month": "monthly_subscription",
             "year": "annual_monthly",
@@ -449,6 +485,12 @@ def allocate_recurring_credits(
     )
     session.add(allocation)
     session.flush()
+    # Founder-approved P11-DEP-001: monthly releases of an annual term stay
+    # spendable until the paid annual term ends and never cross a renewal;
+    # monthly and Free credits still expire at their own period end.
+    lot_expires_at = (
+        _stored_utc(subscription.term_ends_at) if kind == "annual_monthly" else period_end
+    )
     try:
         lot = fund_credit_period(
             session,
@@ -460,6 +502,7 @@ def allocate_recurring_credits(
                 "recurring_credit_allocation_id": allocation.id,
                 "financial_line_id": financial_line_id,
             },
+            lot_expires_at=lot_expires_at,
         )
     except EntitlementInvariantError as exc:
         raise RecurringAllocationError(str(exc)) from exc
@@ -475,7 +518,12 @@ def expire_recurring_credits(
     session, *, credit_period_id, expired_at, delivery_obligations,
     actor_type, actor_id,
 ):
-    """Expire the unspent value of one ended Phase 6 period without rollover."""
+    """Expire the unspent value of one recurring lot at its expiry, without rollover.
+
+    Monthly and Free lots expire at their period end. An annual-term lot
+    expires at the end of its paid annual term (P11-DEP-001), so its period
+    stays ``funded`` after the month closes until the term boundary.
+    """
     credit_period_id = _text(credit_period_id, "credit_period_id", 36)
     actor_type = _text(actor_type, "actor_type", 40)
     actor_id = _text(actor_id, "actor_id", 255)
@@ -500,13 +548,16 @@ def expire_recurring_credits(
     ).scalar_one_or_none()
     if allocation is None:
         raise RecurringAllocationError("credit period is not a Phase 6 allocation")
-    if expired_at < _stored_utc(period.ends_at):
-        raise RecurringAllocationError("credit period has not ended")
+    lot_row = session.get(CreditLot, period.funded_lot_id) if period.funded_lot_id else None
+    expiry_at = _stored_utc(lot_row.expires_at) if lot_row is not None and lot_row.expires_at else _stored_utc(period.ends_at)
+    if expired_at < expiry_at:
+        raise RecurringAllocationError("recurring credits have not reached their expiry")
 
     fingerprint = _fingerprint({
         "credit_period_id": period.id,
         "lot_id": period.funded_lot_id,
         "period_end": _stored_utc(period.ends_at).isoformat(),
+        "lot_expires_at": expiry_at.isoformat(),
     })
     registry, inserted = _claim_registry(
         session, EXPIRATION_NAMESPACE, allocation.allocation_key,
@@ -582,6 +633,7 @@ def expire_recurring_credits(
                 "credit_period_id": period.id,
                 "lot_id": period.funded_lot_id,
                 "period_end": _stored_utc(period.ends_at).isoformat(),
+                "lot_expires_at": expiry_at.isoformat(),
                 "related_entry_id": source_entry.id,
                 "held_amount": held_amount,
             })
@@ -602,7 +654,7 @@ def expire_recurring_credits(
             held_delta=-held_amount,
             related_entry_id=source_entry.id if source_entry else None,
             idempotency_registry_id=entry_registry.id,
-            effective_at=period.ends_at,
+            effective_at=expiry_at,
             actor_type=actor_type,
             actor_id=actor_id,
             reason_code="recurring_period_expired",

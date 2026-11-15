@@ -80,6 +80,18 @@ class CreditPurchaseFunding(db.Model):
     actor_type = db.Column(db.String(40), nullable=False)
     actor_id = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
+    # Phase 11 credit-pack policy: a pack expires at the end of the paid term
+    # (monthly or annual) in force when it was paid. These columns record that
+    # binding; database guards require both and match them to the term.
+    expiry_subscription_id = db.Column(
+        db.String(36),
+        db.ForeignKey(
+            "billing_subscriptions.id", name="fk_credit_purchase_fundings_expiry_subscription",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         db.CheckConstraint("credit_amount > 0", name="ck_credit_purchase_fundings_amount"),
@@ -101,6 +113,7 @@ class CreditPurchaseFunding(db.Model):
         db.UniqueConstraint("idempotency_registry_id", name="uq_credit_purchase_fundings_registry"),
         db.Index("ix_credit_purchase_fundings_account_paid", "billing_account_id", "paid_at", "id"),
         db.Index("ix_credit_purchase_fundings_domain_event", "domain_event_id"),
+        db.Index("ix_credit_purchase_fundings_expiry_subscription", "expiry_subscription_id"),
     )
 
 

@@ -186,8 +186,8 @@ class EntitlementInstance(db.Model):
             name="ck_entitlement_instances_source_type",
         ),
         db.CheckConstraint(
-            "((source_type = 'subscription' AND subscription_id IS NOT NULL) OR "
-            "(source_type != 'subscription' AND subscription_id IS NULL))",
+            "((source_type IN ('subscription','enterprise_contract') AND subscription_id IS NOT NULL) OR "
+            "(source_type NOT IN ('subscription','enterprise_contract') AND subscription_id IS NULL))",
             name="ck_entitlement_instances_source_reference",
         ),
         db.CheckConstraint(
@@ -196,10 +196,12 @@ class EntitlementInstance(db.Model):
             name="ck_entitlement_instances_approval",
         ),
         # Phase 10 lifted this gate for trial, promotion, and comp instances;
-        # their activation now requires a Phase 10 offer-redemption record
-        # (database guard). Enterprise contracts stay gated until Phase 11.
+        # Phase 11 lifts it for Enterprise contracts. Leaving ``proposed`` now
+        # requires Phase 10 redemption or Phase 11 contract-activation
+        # evidence (database guards). The remaining expression keeps every
+        # Enterprise entitlement bound to its contract-backed paid term.
         db.CheckConstraint(
-            "source_type <> 'enterprise_contract' OR state IN ('proposed','cancelled')",
+            "source_type <> 'enterprise_contract' OR subscription_id IS NOT NULL",
             name="ck_entitlement_instances_later_authority_gate",
         ),
         db.CheckConstraint(

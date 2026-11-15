@@ -208,7 +208,8 @@ def test_inbox_has_no_live_runtime_importers():
     importers = []
     for path in app_dir.rglob("*.py"):
         if path.name in {
-            "billing_inbox.py", "billing_financial.py", "billing_financial_cases.py",
+            # Phase 11 contract funding (inactive) reads inbox provenance only.
+            "billing_inbox.py", "billing_financial.py", "billing_financial_cases.py", "billing_enterprise_contracts.py",
             "billing_outbox.py", "models_billing_phase5.py", "models.py",
         }:
             continue

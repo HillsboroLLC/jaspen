@@ -660,7 +660,10 @@ def test_offer_lots_are_allocated_before_purchased_credit_and_stop_at_expiry(db)
     _r, _f, lots, _s = redeem(session, ns, offer_definition(session, capabilities={}, expiry="none"))
     now = db_now(session)
     order = [b.lot.source_type for b in ordered_lot_balances(session, ns.account, now + timedelta(hours=1))]
-    assert order.index("trial") < order.index("credit_pack_purchase")
+    # Phase 11 credit-pack policy: packs now expire at the paid term end. The
+    # Phase 3 order is unchanged (expiry first, then source priority), so a
+    # non-expiring trial now follows the expiring pack.
+    assert order.index("credit_pack_purchase") < order.index("trial")
     _r, _f, expiring, _s = redeem(session, ns, offer_definition(session, capabilities={}, days=7))
     after_end = _utc(expiring[0].expires_at) + timedelta(seconds=1)
     available = {b.lot.id for b in ordered_lot_balances(session, ns.account, after_end)}
@@ -696,7 +699,8 @@ def test_phase10_service_has_no_live_runtime_callers():
     callers = [
         str(path.relative_to(BACKEND_DIR))
         for path in app_dir.rglob("*.py")
-        if path.name not in {"billing_offers.py", "models_billing_phase10.py", "models.py"}
+        # Phase 11 contract administration is itself inactive and reuses Phase 10 grants.
+        if path.name not in {"billing_offers.py", "billing_enterprise_contracts.py", "models_billing_phase10.py", "models.py"}
         and ("billing_offers" in path.read_text() or "models_billing_phase10" in path.read_text())
     ]
     assert callers == []
@@ -724,8 +728,22 @@ def _ops(engine):
 
 
 def _predecessor(engine):
-    tables = [t for t in flask_db.metadata.sorted_tables if t.name not in PHASE10_TABLES]
+    # Phase 11 tables are later than this revision and refer to its tables.
+    phase11 = ("enterprise_contracts", "enterprise_contract_versions", "enterprise_contract_events", "enterprise_contract_term_fundings", "enterprise_contract_activations", "enterprise_contract_notices")
+    tables = [t for t in flask_db.metadata.sorted_tables if t.name not in PHASE10_TABLES + phase11]
     flask_db.metadata.create_all(engine, tables=tables)
+    # The models now carry the Phase 11 constraint texts; restore the Phase 10
+    # forms so this revision sees its exact predecessor schema.
+    phase11 = ScriptDirectory(MIGRATIONS_DIR).get_revision("b4d6f8a0c2e5").module
+    with _ops(engine) as connection:
+        for table, name, old, new in phase11.CHECKS:
+            if table == "billing_staff_permission_grants":
+                continue
+            if engine.dialect.name == "postgresql":
+                connection.execute(sa.text(f"ALTER TABLE {table} DROP CONSTRAINT {name}"))
+                connection.execute(sa.text(f"ALTER TABLE {table} ADD CONSTRAINT {name} CHECK ({old})"))
+            else:
+                phase11._sqlite_replace_check(table, new, old)
 
 
 def _assert_models_match(engine):
@@ -756,7 +774,7 @@ def _gate_sql(connection):
 
 def test_revision_extends_phase9_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == [REVISION]
+    assert script.get_heads() == ["b4d6f8a0c2e5"]  # Phase 11 extends Phase 10
     assert script.get_revision(REVISION).down_revision == PARENT
 
 
@@ -1028,9 +1046,9 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=10, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision != REVISION:
+    if revision not in {REVISION, "b4d6f8a0c2e5"}:
         engine.dispose()
-        pytest.fail(f"Phase 10 migrated tests require Alembic head {REVISION}; found {revision!r}")
+        pytest.fail(f"Phase 10 migrated tests require Alembic head {REVISION} or Phase 11; found {revision!r}")
     return engine
 
 

@@ -50,7 +50,7 @@ The replacement preserves customer money, funded credits, source/member
 attribution inside organization-owned accounts, saved decisions and plans,
 plan capabilities through valid paid periods, credit-pack value, promotional
 value, audit evidence, and the regression intent of PR #27. It does not
-preserve accidental reset-on-read, negative balances, recurring rollover,
+preserve accidental reset-on-read, negative balances, rollover into a later term,
 account-wide dispute penalties, direct balance edits, or duplicated
 compatibility state as authorities.
 
@@ -219,7 +219,8 @@ realized margin were not accessed or verified.
   independent audit. The additive migration records immutable commitment
   intervals, D09 seat-change history, and a concurrency-only fence. Paid
   commitment stays separate from membership occupancy; reductions never remove
-  members or work; contract exceptions remain deferred to Phase 11. There is no
+  members or work. Phase 11 adds contract-origin commitments; contract
+  exceptions to the occupancy rule remain unapproved. There is no
   live caller.
 - Phase 10 trials, promotions, comps, and internal funding are implemented
   locally; audit remediation (F1–F5, R2) is complete and pending independent
@@ -231,6 +232,16 @@ realized margin were not accessed or verified.
   later-authority gate now blocks only enterprise contracts (Phase 11); trial,
   promotion, comp, and internal entitlements need a Phase 10 redemption record.
   No offer or permission holder is defined, and there is no live caller.
+- Phase 11 organization pools and Enterprise contracts are implemented locally
+  for independent audit, inactive, on the Phase 10 checkpoint. Founder
+  decisions of 2026-11-15: annual monthly releases accumulate and expire at the
+  paid annual term end (monthly unchanged); credit packs expire at the end of
+  the paid term in force at payment; Enterprise payment is verified through
+  Stripe only; `billing.enterprise_contract.manage` is an explicit staff
+  permission; each paid contract term is a contract-backed subscription that
+  reuses Phases 4, 6, and 8. Renewal grace (15 days, read-only) and the
+  180-day retention-review date are recorded, not enforced; nothing is
+  deleted. See the Phase 11 record in the traceability document.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type

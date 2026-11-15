@@ -876,7 +876,8 @@ def test_seat_service_has_no_live_runtime_callers():
     callers = [
         str(path.relative_to(BACKEND_DIR))
         for path in app_dir.rglob("*.py")
-        if path.name not in {"billing_seats.py", "models_billing_phase8.py", "models.py"}
+        # Phase 11 contract activation is itself inactive and reuses Phase 8 commitments.
+        if path.name not in {"billing_seats.py", "billing_enterprise_contracts.py", "models_billing_phase8.py", "models.py"}
         and ("billing_seats" in path.read_text() or "models_billing_phase8" in path.read_text())
     ]
     assert callers == []
@@ -916,7 +917,9 @@ def _revision():
 
 
 def _predecessor(engine):
-    tables = [t for t in flask_db.metadata.sorted_tables if t.name not in PHASE8_TABLES]
+    # Phase 11 tables are later than this revision and refer to its tables.
+    phase11 = ("enterprise_contracts", "enterprise_contract_versions", "enterprise_contract_events", "enterprise_contract_term_fundings", "enterprise_contract_activations", "enterprise_contract_notices")
+    tables = [t for t in flask_db.metadata.sorted_tables if t.name not in PHASE8_TABLES + phase11]
     flask_db.metadata.create_all(engine, tables=tables)
 
 
@@ -940,7 +943,7 @@ def _assert_models_match(engine):
 
 def test_revision_extends_phase7_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["f2b4d6e8a0c3"]  # Phase 10 extends Phase 9, which extends Phase 8
+    assert script.get_heads() == ["b4d6f8a0c2e5"]  # Phase 11 extends Phases 10, 9, and 8
     assert script.get_revision("f2b4d6e8a0c3").down_revision == "e1a3c5b7d9f2"
     assert script.get_revision("e1a3c5b7d9f2").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == PARENT
@@ -1041,7 +1044,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=6, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "e1a3c5b7d9f2", "f2b4d6e8a0c3"}:
+    if revision not in {REVISION, "e1a3c5b7d9f2", "f2b4d6e8a0c3", "b4d6f8a0c2e5"}:
         engine.dispose()
         pytest.fail(f"Phase 8 migrated tests require Alembic head {REVISION}; found {revision!r}")
     return engine

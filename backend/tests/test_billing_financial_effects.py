@@ -153,7 +153,8 @@ def purchase_definition(session, suffix, *, source_id=None, approved=True, expir
                 "schema_version": 1, "line_kind": "credit_pack", "source_type": "stripe_price",
                 "source_id": source_id or f"price_pack_{suffix}", "currency": currency,
                 "unit_principal_minor": PRICE, "quantity": quantity,
-                "components": components, "expiry": expiry or {"kind": "none"},
+                # Phase 11 credit-pack policy: packs expire at the paid term end.
+                "components": components, "expiry": expiry or {"kind": "current_term_end"},
             },
         },
         effective_at=ANCHOR - timedelta(days=30),
@@ -191,8 +192,47 @@ def payment(session, account_id, lines, at, suffix, *, kind="payment", currency=
     return transaction.id, {row.external_line_id: row.id for row in rows}
 
 
+def paid_term(session, ns, at=None):
+    """The one paid term in force at ``at``; create a test annual term if none.
+
+    Phase 11 credit-pack policy binds each pack to the paid monthly or annual
+    term in force at payment and expires it at that term's end.
+    """
+    at = at or ANCHOR + timedelta(days=1)
+    terms = session.execute(
+        sa.select(BillingSubscription).where(
+            BillingSubscription.billing_account_id == ns.account,
+            BillingSubscription.state.in_(("active", "past_due", "cancel_at_period_end")),
+            BillingSubscription.term_starts_at <= at, BillingSubscription.term_ends_at > at,
+        )
+    ).scalars().all()
+    if terms:
+        return terms[0]
+    suffix = f"{ns.suffix}{uuid.uuid4().hex[:4]}"
+    definition = EntitlementDefinition(
+        id=f"p9-term-def-{suffix}", key=f"term-{suffix}", version=1, exclusivity_key=f"term-{suffix}",
+        capability_json={"schema_version": 1, "capabilities": {}},
+        funding_policy_json={"schema_version": 1, "period_kind": "annual_monthly", "credit_amount": 1},
+        effective_at=ANCHOR - timedelta(days=1), approved_at=ANCHOR - timedelta(days=1),
+        approval_evidence_reference="approval:phase9-term",
+    )
+    session.add(definition)
+    session.flush()
+    subscription = BillingSubscription(
+        id=f"p9-term-{suffix}", billing_account_id=ns.account, processor="stripe",
+        external_subscription_id=f"sub_term_{suffix}", interval="year", anchor_at=ANCHOR - timedelta(days=1),
+        term_starts_at=ANCHOR - timedelta(days=1),
+        term_ends_at=add_calendar_months(ANCHOR - timedelta(days=1), 12), state="active",
+        current_entitlement_definition_id=definition.id, origin_evidence_json={"test": True},
+    )
+    session.add(subscription)
+    session.flush()
+    return subscription
+
+
 def pack_purchase(session, ns, at=None, *, discount=0, extra_lines=(), fund=True):
     at = at or ANCHOR + timedelta(days=1)
+    paid_term(session, ns, at)
     tag = uuid.uuid4().hex[:6]
     definition = purchase_definition(session, f"{ns.suffix}{tag}")
     source_id = session.get(EntitlementDefinition, definition).funding_policy_json["purchase"]["source_id"]
@@ -375,7 +415,10 @@ def test_purchase_funds_each_component_once_and_replay_converges(db):
     assert balance(session, purchase.lots["bonus"]) == (BONUS, 0)
     for component, lot_id in purchase.lots.items():
         lot = session.get(CreditLot, lot_id)
-        assert lot.source_type == "credit_pack_purchase" and lot.expires_at is None
+        # Phase 11: the pack expires at the end of the paid term in force at payment.
+        term = paid_term(session, ns, purchase.at)
+        assert lot.source_type == "credit_pack_purchase"
+        assert _utc(lot.expires_at) == _utc(term.term_ends_at)
         assert lot.origin_evidence_json["financial_line_id"] == purchase.line
     # Webhook replay and browser confirmation use the same line identity.
     for _ in range(2):
@@ -1003,7 +1046,9 @@ def _ops(engine):
 
 
 def _predecessor(engine):
-    tables = [t for t in flask_db.metadata.sorted_tables if t.name not in PHASE9_TABLES]
+    # Phase 11 tables are later than this revision and refer to its tables.
+    phase11 = ("enterprise_contracts", "enterprise_contract_versions", "enterprise_contract_events", "enterprise_contract_term_fundings", "enterprise_contract_activations", "enterprise_contract_notices")
+    tables = [t for t in flask_db.metadata.sorted_tables if t.name not in PHASE9_TABLES + phase11]
     flask_db.metadata.create_all(engine, tables=tables)
 
 
@@ -1013,10 +1058,15 @@ def _assert_models_match(engine):
         FinancialCaseLotEvaluation as Evaluation,
     )
     inspector = sa.inspect(engine)
+    # Phase 11 (revision b4d6f8a0c2e5) adds the credit-pack term-expiry binding.
+    phase11_columns = {"expiry_subscription_id", "expires_at"}
+    phase11_names = {"fk_credit_purchase_fundings_expiry_subscription"}
     for model in (Funding, Evaluation, Effect):
         table = model.__table__
-        assert {c.name for c in table.columns} == {c["name"] for c in inspector.get_columns(table.name)}
-        model_names = {c.name for c in table.constraints if c.name} - {table.primary_key.name}
+        assert {c.name for c in table.columns} - phase11_columns == {
+            c["name"] for c in inspector.get_columns(table.name)
+        }
+        model_names = {c.name for c in table.constraints if c.name} - {table.primary_key.name} - phase11_names
         db_names = {
             c["name"] for c in (
                 inspector.get_check_constraints(table.name) + inspector.get_foreign_keys(table.name)
@@ -1024,12 +1074,14 @@ def _assert_models_match(engine):
             ) if c.get("name")
         }
         assert model_names == db_names, table.name
-        assert {i.name for i in table.indexes} <= {i["name"] for i in inspector.get_indexes(table.name)}
+        assert {i.name for i in table.indexes} - {"ix_credit_purchase_fundings_expiry_subscription"} <= {
+            i["name"] for i in inspector.get_indexes(table.name)
+        }
 
 
 def test_revision_extends_phase8_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["f2b4d6e8a0c3"]  # Phase 10 extends Phase 9
+    assert script.get_heads() == ["b4d6f8a0c2e5"]  # Phase 11 extends Phase 10, which extends Phase 9
     assert script.get_revision("f2b4d6e8a0c3").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == PARENT
 
@@ -1139,7 +1191,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=8, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "f2b4d6e8a0c3"}:
+    if revision not in {REVISION, "f2b4d6e8a0c3", "b4d6f8a0c2e5"}:
         engine.dispose()
         pytest.fail(f"Phase 9 migrated tests require Alembic head {REVISION} or later; found {revision!r}")
     return engine

@@ -26,8 +26,8 @@ Moving between organizations never transfers lots.
 |---|---|---|
 | `free_recurring` | funded-period end | account-creation anchored period |
 | `subscription_recurring` | funded-period end | paid subscription line/period |
-| `enterprise_recurring` | contract-defined period end | executed contract funding schedule |
-| `credit_pack_purchase` | none unless approved offer says otherwise | paid one-time invoice line |
+| `enterprise_recurring` | reserved; Phase 11 Enterprise terms fund `subscription_recurring` lots through contract-backed subscriptions | executed contract funding schedule |
+| `credit_pack_purchase` | end of the paid monthly or annual term in force at payment (founder decision 2026-11-15) | paid one-time invoice line |
 | `promotional` | approved offer terms | versioned approved offer |
 | `trial` | approved offer terms | versioned approved trial offer |
 | `comp` | approved offer terms | approved comp record and actor |
@@ -199,7 +199,11 @@ Rules:
 
 - `planned` is not purchasing power.
 - Funding creates one lot at most once for the period.
-- No rollover: at `ends_at`, all unspent recurring value expires.
+- No rollover into a later term. A monthly or Free period's lot expires at the
+  period `ends_at`. An annual term's monthly lot becomes available when its
+  period opens and expires at the paid annual term end (P11-DEP-001,
+  2026-11-15), so an annual period stays `funded` after its month closes until
+  the term boundary. Renewal starts a fresh cycle; nothing carries over.
 - A dispute hold does not extend the lot; expiration wins at the period end.
 - A later payment success can fund an `unfunded` renewal period without moving
   the anchor, subject to the approved terminal policy and processor evidence.
@@ -320,6 +324,11 @@ Rules:
   not invent a lead time or wording.
 - A failed renewal does not apply the lower commitment. Later success may apply
   it if occupancy is then compatible and the schedule remains active.
+- Enterprise (Phase 11): contracted seats are `contract`-origin commitments set
+  only by an activated, staff-approved contract term or amendment. Mid-term
+  amendments only increase; reductions take effect with a renewal term, which
+  is refused while paid occupancy exceeds it. Customer billing roles cannot
+  change contracted seats.
 - Contract exceptions name scope, approver, evidence, effective interval, and
   review/release path.
 

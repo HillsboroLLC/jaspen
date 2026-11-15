@@ -17,7 +17,7 @@ Target test IDs are specifications for Phase 2, not tests added in Phase 1.
 | P09 Enterprise by executed organization-owned contract | Contract authority, org billing account, entitlement/lots | D07 evidence transition | T-ENTERPRISE-01 through T-ENTERPRISE-05 |
 | P10 Renewal-timed downgrade; seats separate from occupancy | Scheduled changes, entitlement, seat commitment | D08 downgrade; D09 seats | T-PLAN-06 through T-PLAN-12, T-SEAT-01 through T-SEAT-07 |
 | P11 Dispute opened/pending/won/lost, source hold, absorbed shortfall, no account penalty | Financial case, ledger holds, risk separation | D10 dispute/recovery | T-DISPUTE-01 through T-DISPUTE-12 |
-| P12 No recurring rollover; expiration-first; purchased protected | Credit lots and allocation engine | D06 allocation/expiry | T-LEDGER-01 through T-LEDGER-08 |
+| P12 No rollover into a later term (monthly at period end; annual releases accumulate to the annual term end, P11-DEP-001); expiration-first; purchased protected | Credit lots and allocation engine | D06 allocation/expiry | T-LEDGER-01 through T-LEDGER-08; Phase 11 annual tests |
 | P13 Integer UTC rounding, zero floor, taxes/fees excluded, bonus proportional | Period calculator, refund attribution, ledger invariants | D06/D07/D10 formulas | T-MATH-01 through T-MATH-08 |
 | P14 Evidence-backed legacy/Enterprise migration and `legacy_unattributed` | Migration reconciler and review queue | D16 | T-MIGRATE-01 through T-MIGRATE-12 |
 | P15 Mixed invoices use line attribution | Financial transaction/line authority | D10 mixed invoice | T-FIN-01 through T-FIN-06 |
@@ -173,7 +173,7 @@ rewriting ledger history or copying counters backward without a reviewed plan.
 | Existing test/evidence | Preserved intent | Target suite |
 |---|---|---|
 | `test_credit_pack_*adds_tokens_once`, duplicate/cross-type/concurrent tests | one purchase creates one lot across delivery races | T-ORDER-01..05, T-OWNER-05 |
-| `test_credit_pack_survives_monthly_reset` | purchased value does not expire with recurring period | T-LEDGER-03 |
+| `test_credit_pack_survives_monthly_reset` | purchased value does not expire with recurring period. **Superseded for the new ledger** by the 2026-11-15 founder policy (packs expire at the paid term end); the legacy runtime is unchanged until cutover, and migrating legacy non-expiring packs needs a founder decision (Phase 14) | T-LEDGER-03 |
 | `test_refund_reverses_only_unused_pack_value_and_keeps_audit_history` | source-specific unused reversal and audit history | T-REFUND-01..05 |
 | limited-time idempotency and refund tests | offer grant is independent, idempotent, reversible by source | T-OFFER-01..04, T-REFUND-04 |
 | `test_monthly_credits_are_consumed_before_founder_credits` | expiring value before purchased/persistent | T-LEDGER-01..04 |
@@ -543,6 +543,100 @@ is connected to a live event source.
 - Pricing and capacity policy versions are visible on every authorized AI
   operation; unknown provider/model economics fail closed before execution.
 
+### Phase 11 implementation record — organization pools and Enterprise contracts
+
+Status: **implemented locally, inactive, awaiting independent audit.** Built on
+the Phase 10 checkpoint `c9f2546a` (Phases 7–10 remain subject to their own
+independent acceptance; the Phase 9 D-1 allocation contract remains an
+activation blocker). Migration `b4d6f8a0c2e5` (revises `f2b4d6e8a0c3`) adds six
+contract tables and applies the founder-approved dependency directions of
+2026-11-15 (P11-DEP-001..004). `app/billing_enterprise_contracts.py` has no
+route, webhook, worker, or scheduler caller. Phase 3 stays the only ledger,
+Phase 4 the only entitlement authority, Phase 5.2 the only payment evidence,
+Phase 6 the only recurring allocator, Phase 8 the only seat-commitment record,
+and Phase 5.4 records every event.
+
+Earlier-phase guard changes are applied by capturing each guard's text from its
+own revision and making exact, asserted substitutions; downgrade restores the
+captured originals and refuses while Phase 11 evidence, term-bound packs,
+annual term-end lots, Enterprise entitlements, contract grants, or contracted
+seats exist.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| P11-DEP-001: monthly credits expire at the monthly period end; annual monthly releases accumulate and expire at the paid annual term end; renewal never carries credits | `fund_credit_period(lot_expires_at=)`; Phase 6 allocator binds annual lots to `term_ends_at`; `expire_recurring_credits` waits for the lot expiry; annual Phase 7 proration lots also run to the term end; Phase 4, 6, and 7 PostgreSQL guards and SQLite triggers bind the expiry by interval | `test_monthly_recurring_credits_expire_at_the_month_end_without_rollover[1,5]`; `test_annual_monthly_releases_accumulate_within_the_term_and_expire_at_its_end[1,5]`; `test_automatic_renewal_keeps_terms_and_never_carries_prior_term_credits`; `test_postgres_concurrent_annual_allocation_creates_one_term_bound_lot[3 levels]`; `test_postgres_concurrent_annual_expiration_at_the_term_end_converges[3 levels]`; `test_postgres_annual_lot_cannot_be_inserted_with_a_month_end_expiry` |
+| Every account is an organization; identical rules at every size; one shared pool | Lots are billing-account owned, no member attribution | `test_single_and_multi_member_organizations_follow_identical_credit_rules`; `test_activation_creates_one_shared_pool_entitlement_and_contracted_seats` |
+| Credit packs: full quantity on verified payment; expire at the paid term end in force at payment; distinct from recurring; no allocation or seat change; exact expiry shown before purchase | Phase 9 purchase terms `{"kind":"current_term_end"}` (indefinite `none` refused); `credit_purchase_fundings.expiry_subscription_id/expires_at`; `credit_pack_expiry_quote()` (pure read); `expire_purchased_credits()`; Phase 9 funding and lot guards; Phase 11 expiration guards | `test_credit_pack_releases_its_full_quantity_and_expires_at_the_current_term_end[month,year]`; `test_credit_pack_without_a_paid_term_or_after_it_ended_fails_closed`; `test_postgres_purchased_credit_expiration_is_guarded_by_its_term_end`; Phase 9/10 pack regressions |
+| P11-DEP-003: only explicit `billing.enterprise_contract.manage` staff grants administer contracts; admin identity, org admin, and billing roles never count | Phase 10 grant model and `_authorized_grant()`; READ COMMITTED; `phase11_grant_ok()` in every contract guard | `test_customer_admins_billing_owners_and_global_admins_cannot_administer_contracts`; `test_revoked_staff_grant_authorizes_no_contract_change`; `test_postgres_migrated_commands_require_read_committed` |
+| P11-DEP-004 option A: each paid term is a contract-backed subscription (`jaspen_contract`); the entitlement is `enterprise_contract`; credits via Phase 6, seats via Phase 8 `contract` origin | `_materialize_term()`; Phase 4 gate replaced by `phase11_entitlement_event_guard`; Phase 8 insert/final triggers split by origin | `test_postgres_migrated_contract_lifecycle_passes_every_guard`; `test_postgres_migrated_guards_refuse_bypass_of_activation_and_customer_commands` |
+| Customer admins cannot change contracted terms or seats | Phase 7 and Phase 8 commands refuse contract-backed terms (service and database) | `test_customer_plan_and_seat_commands_cannot_change_a_contract_term`; PostgreSQL bypass test |
+| P11-DEP-002: benefits need a verified Stripe `payment` of the exact agreed amount; adjustments, partial, mismatched, foreign, or reused lines never fund | `record_contract_funding()`; `phase11_funding_guard` | `test_unverified_or_mismatched_payments_never_fund_a_contract[6]`; `test_funding_and_activation_replay_converge_and_a_line_funds_one_version`; `test_contract_and_funding_are_isolated_between_organizations` |
+| Approval before the effective date grants nothing; activation needs the effective date and funding; replay and races create one effect | `activate_contract_version()`; `phase11_activation_guard` (database time) | `test_approval_before_the_effective_date_grants_nothing_until_it_is_effective`; `test_activation_requires_verified_full_funding`; `test_postgres_concurrent_activation_and_funding_converge_to_one_effect` |
+| Mid-term seat increases by funded amendment; no mid-term reduction; renewal reductions bounded by occupancy; member removal keeps the commitment | `record_contract_version(amendment)`; contract seat commitment guard | `test_mid_term_seat_increase_by_funded_amendment_and_no_mid_term_reduction`; `test_renewal_may_reduce_seats_but_not_below_paid_occupancy`; `test_member_removal_frees_occupancy_but_never_reduces_the_paid_commitment` |
+| Automatic (opt-in, unchanged terms) and manual renewal; 30-day nonrenewal deadline; reversal before the deadline; a notice never shortens paid access | `prepare_automatic_renewal()`; `record_nonrenewal_notice()`; `reverse_nonrenewal_notice()`; `phase11_notice_guard` | `test_automatic_renewal_keeps_terms_and_never_carries_prior_term_credits`; `test_timely_nonrenewal_blocks_automatic_renewal_and_can_be_reversed_before_the_deadline`; `test_manual_renewal_term_without_a_renewal_ends_at_term_end` |
+| 15-day read-only renewal grace with no funded benefit; verified payment restores paid access; lapse ends paid access at the paid end; 180-day retention-review date recorded; no data deleted | `complete_contract_term()`; `end_contract_after_grace()`; `contract_access_state()` (pure read, integration contract) | `test_unpaid_renewal_grace_is_read_only_and_creates_no_funded_benefit`; `test_unpaid_grace_lapse_ends_access_at_the_paid_end_and_preserves_data`; `test_timely_nonrenewal_ends_paid_access_at_term_end_without_grace` |
+| Immutable evidence and reversible migration | Phase 11 PostgreSQL guards and SQLite triggers; captured-original downgrade | `test_postgres_migrated_direct_sql_cannot_rewrite_contract_evidence[4]`; `test_postgres_isolated_migration_round_trip_restores_earlier_guards`; `test_sqlite_migration_matches_models_guards_and_downgrade_is_safe`; `test_captured_guard_patches_apply_exactly_once` |
+
+Fail-closed paths awaiting founder decisions (no rule invented): a credit pack
+for an organization with no paid monthly or annual term in force; a pack
+payment funded only after its term ended; mid-term amendments that change the
+recurring allocation (proration); automatic renewal after a priced seat
+amendment (full-term price not recorded); contract exceptions to the occupancy
+rule; catch-up releases for a term activated after its first month; cancelling
+or refunding a funded version (a Phase 9 refund decision).
+
+#### B1 remediation (independent-audit finding: funded versions cancelled or stranded)
+
+Status: **remediated locally, awaiting independent re-audit.** Approved rule
+(2026-11-15): a renewal whose verified payment time falls within the 15-day
+grace stays eligible for activation even if processing happens after grace; the
+paid term is never extended and no extra credit is granted.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| B1.1 a funded version is never cancelled; its evidence stays; unresolved funded versions are discoverable | `_end_access()` skips funded versions and keeps the lapsed term's renewal open for a later-recorded in-grace payment; `funded_versions_for_review()` (pure read, staff permission, one organization) with a reason per version | `test_b1_funded_renewal_paid_after_grace_survives_the_lapse_for_refund_review`; `test_b1_funded_amendment_survives_term_completion_for_refund_review`; `test_b1_timely_nonrenewal_with_a_funded_renewal_ends_access_and_keeps_the_payment`; `test_b1_refund_review_is_staff_only_and_scoped_to_one_organization` |
+| B1.2 database refuses `cancelled`/`superseded` for a funded version on every path; funding serializes with cancellation | `phase11_version_guard` (checked before the event rule); funding guard locks the version `FOR SHARE`; SQLite `trg_phase11_funded_version_cancel` | `test_postgres_b1_database_refuses_cancelling_a_funded_version`; `test_postgres_b1_concurrent_cancellation_and_funding_never_both_succeed`; `test_b1_sqlite_migration_refuses_cancelling_a_funded_version` |
+| B1.3 renewal eligibility by verified payment time; reinstatement after a lapse recorded before the payment was bound; seat floor, funding, and authority unchanged; first-month-only term activation | `activate_contract_version()`; `end_contract_after_grace()` refuses while an in-grace-paid renewal awaits activation and is keyed per lapsed term; `phase11_activation_guard` (paid within 15 days for renewals, activation within the first month); `phase11_contract_guard` allows `ended -> active` only as `reinstated_after_grace_payment` backed by such an activation | `test_b1_payment_within_grace_activates_after_grace_without_extra_credit[lapsed_first False/True]`; `test_b1_funded_renewal_blocked_by_seat_floor_is_preserved_then_activates`; `test_b1_term_activation_after_its_first_month_needs_a_catch_up_decision`; `test_b1_repeated_lapse_is_idempotent_per_term` |
+
+#### C1 remediation (re-audit condition: paid renewal stranding a contract in grace)
+
+Status: **remediated locally, awaiting a short independent re-check.**
+Root cause: `end_contract_after_grace()` refused to lapse whenever the term's
+renewal was funded with a payment inside grace, but activation also requires
+the renewal's first monthly period (no catch-up policy is approved). Once that
+month passed, activation and lapse were both refused and the contract stayed in
+`renewal_grace` indefinitely. Correction: the lapse is refused only while the
+paid-in-grace renewal can still activate (`approved`, paid before the grace
+deadline, and before `_activation_window_end()`, the rule activation itself
+uses). Otherwise the contract ends with paid access ending at the original term
+end and the 180-day retention-review date; the funded renewal stays `approved`
+with unchanged evidence and is listed for review as `catch_up_policy_required`.
+No refund, credit, or entitlement is created. No migration change.
+
+| Requirement | Regression coverage |
+|---|---|
+| Paid on grace day 2, processed on day 35, lapses; dates, approved version, review listing, unchanged evidence, no automatic effect, idempotent replay | `test_c1_renewal_paid_in_grace_but_processed_after_its_first_month_can_lapse[bound_late False/True]` |
+| A paid renewal still eligible for activation cannot be lapsed | `test_c1_activatable_paid_renewal_still_holds_the_contract_in_grace`; B1 seat-floor test |
+| Concurrent lapse and activation reach one consistent state | `test_c1_concurrent_lapse_and_activation_reach_one_consistent_state[day 20, day 35]` (SQLite and PostgreSQL) |
+| Other organizations and unauthorized actors cannot lapse | `test_c1_other_organizations_and_unauthorized_actors_cannot_lapse_the_contract` |
+
+Refund-review reasons: `awaiting_activation` (still activatable),
+`paid_after_grace`, `nonrenewal_in_effect`, `amended_term_ended`,
+`catch_up_policy_required`, `contract_ended`. All but the first need a founder or
+Phase 9 refund decision; nothing is refunded or cancelled automatically.
+
+Consequences to note: with packs now expiring, the unchanged Phase 3 order
+(expiry first, then source priority) consumes a pack before a non-expiring
+promotional or trial lot. Read-only access is recorded, not enforced:
+`contract_access_state()` is the integration contract for the application
+access workstream. Export, deletion, reimport, notices and wording, and
+per-member allowances are not implemented. The migrated-SQLite Phase 6 lot
+trigger still predates Phase 7 upgrade lots (pre-existing; PostgreSQL is the
+acceptance target).
+
+Local verification is not acceptance and does not authorize integration,
+deployment, or activation.
+
 ## D18 Phase dependency and cutover map
 
 The original 18 phases are the authoritative implementation sequence because
@@ -558,12 +652,12 @@ useful **program gates**, not a competing sequence. This map authorizes nothing.
 | 3 | Ledger primitives | 2A | Append-only constraints, idempotency, zero-floor/concurrency unit tests. |
 | 4 | Entitlement and credit periods | 2A | Org-first plans/contracts/UTC anchors and period tests. |
 | 5 | Financial transactions and event inbox | 2A | Lines, cumulative cases, ordering/replay tests before funding consumers. |
-| 6 | Free and subscription allocations | 2D funding | Period grants use phases 3–5; annual monthly allocation tests pass. |
+| 6 | Free and subscription allocations | 2D funding | Period grants use phases 3–5; annual monthly allocation tests pass (annual releases carry to the term end after P11-DEP-001). |
 | 7 | Upgrade, downgrade, and schedules | 2D schedule | Paid/prorated/scheduled precedence and race tests pass. |
 | 8 | Seats | 2D seat | Commitment/occupancy and organization permission tests pass. |
 | 9 | Refunds, disputes, and purchases | 2D financial/ledger | Cumulative source-specific lifecycle and mixed-line tests pass. |
 | 10 | Trials, comps, and internal funding | 2D funding/admin | Approved offer/source/admin authority tests pass. |
-| 11 | Enterprise | 2D entitlement | Executed-contract evidence and no-unlimited-default tests pass. |
+| 11 | Enterprise | 2D entitlement | Executed-contract evidence and no-unlimited-default tests pass; contract-backed terms, Stripe-verified funding, annual carryforward, term-bound packs (implemented locally, pending audit). |
 | 12 | AI reservations and settlements | 2D AI | Pricing/capacity binding, fallback, tools, checkpoint/resume, delivery-based billability, absorbed-usage evidence, and exact settlement tests pass. |
 | 13 | Inventory and reconciliation | 2B | Pure projections, all writer/reader inventory, compatibility field proofs. |
 | 14 | Backfill | 2B/2C | Evidence-ranked deterministic migration; no unexplained account cut over. |

@@ -40,6 +40,7 @@ from .models_billing_phase8 import (
     SeatFundingUse,
     SeatTermFunding,
 )
+from .models_billing_phase11 import CONTRACT_PROCESSOR
 from .orgs import ORG_EDIT_ROLES, normalize_org_role
 
 
@@ -271,6 +272,10 @@ def _lock_subscription(session, account_id, subscription_id):
     ).scalar_one_or_none()
     if subscription is None or subscription.billing_account_id != account_id:
         raise SeatChangeError("subscription does not belong to the billing account")
+    if subscription.processor == CONTRACT_PROCESSOR:
+        # Phase 11: contracted seats change only through an executed, staff-
+        # approved contract version; customer billing roles cannot change them.
+        raise SeatChangePermissionError("contracted seats change only through an Enterprise contract version")
     return account, subscription
 
 

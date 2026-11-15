@@ -196,8 +196,16 @@ def mark_period_unfunded(session, period_id: str, idempotency: IdempotencyRegist
 def fund_credit_period(
     session, period_id: str, idempotency: IdempotencyRegistry,
     *, actor_type: str, actor_id: str, evidence_json: dict,
+    lot_expires_at: datetime | None = None,
 ):
-    """Fund one disposable-test period through the sole Phase 3 ledger."""
+    """Fund one period through the sole Phase 3 ledger.
+
+    The lot becomes available at the period start. It expires at the period
+    end unless the caller passes a later ``lot_expires_at``: Phase 11
+    (founder-approved P11-DEP-001) keeps annual-term monthly releases
+    spendable until the paid annual term ends. Database guards bind that
+    expiry to the paid term, so it cannot be chosen freely.
+    """
     account_id = session.execute(
         select(CreditPeriod.billing_account_id).where(CreditPeriod.id == period_id)
     ).scalar_one()
@@ -216,11 +224,15 @@ def fund_credit_period(
     if idempotency.state != "claimed":
         raise EntitlementInvariantError("funding requires a claimed idempotency key")
 
+    period_end = period.ends_at if period.ends_at.tzinfo else period.ends_at.replace(tzinfo=timezone.utc)
+    expires_at = period_end if lot_expires_at is None else _utc(lot_expires_at)
+    if expires_at < period_end:
+        raise EntitlementInvariantError("a period lot cannot expire before its period ends")
     lot = CreditLot(
         id=str(uuid.uuid4()), billing_account_id=period.billing_account_id,
         source_type=PERIOD_SOURCE_TYPES[period.kind], source_id=period.id,
         original_amount=period.planned_allocation_amount,
-        available_at=period.starts_at, expires_at=period.ends_at,
+        available_at=period.starts_at, expires_at=expires_at,
         origin_evidence_json=evidence_json,
     )
     session.add(lot)

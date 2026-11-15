@@ -10,7 +10,9 @@ import uuid
 from . import db
 
 
-SEAT_COMMITMENT_ORIGINS = ("opening", "increase", "reduction")
+# ``contract``: a commitment set by an activated Phase 11 Enterprise contract
+# term or amendment (founder-approved P11-DEP-004).
+SEAT_COMMITMENT_ORIGINS = ("opening", "increase", "reduction", "contract")
 SEAT_CHANGE_STATES = (
     "increased", "scheduled_reduction", "blocked_occupancy", "awaiting_payment",
     "reduced", "cancelled", "superseded",
@@ -76,7 +78,8 @@ class SeatCommitment(db.Model):
             name="ck_seat_commitments_interval",
         ),
         db.CheckConstraint(
-            "(origin_type='opening' AND previous_commitment_id IS NULL) OR "
+            # Phase 11: a contract term's first commitment also starts a lineage.
+            "(origin_type IN ('opening','contract') AND previous_commitment_id IS NULL) OR "
             "(origin_type<>'opening' AND previous_commitment_id IS NOT NULL)",
             name="ck_seat_commitments_lineage",
         ),

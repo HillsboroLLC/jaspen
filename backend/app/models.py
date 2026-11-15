@@ -2888,3 +2888,11 @@ from .models_billing_phase10 import (  # noqa: E402,F401
     CreditOfferFunding,
     CreditOfferRedemption,
 )
+from .models_billing_phase11 import (  # noqa: E402,F401
+    EnterpriseContract,
+    EnterpriseContractActivation,
+    EnterpriseContractEvent,
+    EnterpriseContractNotice,
+    EnterpriseContractTermFunding,
+    EnterpriseContractVersion,
+)

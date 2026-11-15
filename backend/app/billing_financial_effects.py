@@ -46,6 +46,7 @@ from .billing_outbox import (
 )
 from .models import (
     BillingAccount,
+    BillingSubscription,
     CreditLedgerEntry,
     CreditLot,
     CreditPeriod,
@@ -69,6 +70,10 @@ from .models_billing_phase9 import (
 
 CONTRACT_VERSION = 1
 PURCHASE_NAMESPACE = "credit_purchase_funding"
+PURCHASE_EXPIRATION_NAMESPACE = "credit_purchase_expiration"
+PURCHASE_EXPIRY = {"kind": "current_term_end"}
+# Subscription states whose current paid term a pack can be bound to.
+PAID_TERM_STATES = ("active", "past_due", "cancel_at_period_end")
 EVALUATION_NAMESPACE = "financial_case_evaluation"
 EFFECT_NAMESPACE = "financial_case_credit_effect"
 SERVICE_ACTOR_TYPES = frozenset({"system"})
@@ -259,9 +264,10 @@ def _purchase_terms(definition, paid_at):
         value = terms.get(field)
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise FinancialEffectDependencyError(f"purchase terms require a positive integer {field}")
-    if terms.get("expiry") != {"kind": "none"}:
-        # D06: purchased credit does not expire unless an approved offer says
-        # otherwise. No approved purchased-credit expiry rule exists yet.
+    if terms.get("expiry") != PURCHASE_EXPIRY:
+        # Founder-approved Phase 11 credit-pack policy (2026-11-15): a pack
+        # expires at the end of the paid monthly or annual term in force when
+        # it was paid. Indefinite validity and any other expiry are refused.
         raise FinancialEffectDependencyError("purchased-credit expiry terms are not approved")
     components = terms.get("components")
     if not isinstance(components, list) or not components:
@@ -346,6 +352,27 @@ def fund_credit_purchase(
         # future payment-adapter contract.
         raise FinancialEffectError("payment line does not match the approved purchase definition")
 
+    # Phase 11 credit-pack policy: bind the pack to the paid term in force at
+    # payment. A replay reuses the binding already recorded for this line, so
+    # a later term change never alters an existing funding's identity.
+    recorded = session.execute(
+        select(CreditPurchaseFunding)
+        .where(CreditPurchaseFunding.financial_line_id == line.id)
+        .order_by(CreditPurchaseFunding.package_component)
+    ).scalars().first()
+    if recorded is not None and recorded.expires_at is not None:
+        expiry_subscription_id = recorded.expiry_subscription_id
+        expires_at = _stored_utc(recorded.expires_at)
+    else:
+        term = _paid_term_in_force(session, account.id, paid_at, lock=True)
+        expiry_subscription_id = term.id
+        expires_at = _stored_utc(term.term_ends_at)
+        if funded_at >= expires_at:
+            raise FinancialEffectPolicyRequiredError(
+                "the paid term ended before this credit-pack payment was funded; "
+                "late credit-pack funding requires a founder decision"
+            )
+
     registries = []
     any_inserted = False
     for name, amount in components:
@@ -355,6 +382,7 @@ def fund_credit_purchase(
             "financial_line_id": line.id, "entitlement_definition_id": definition.id,
             "package_component": name, "credit_amount": amount,
             "paid_at": paid_at.isoformat(), "contract_version": CONTRACT_VERSION,
+            "expiry_subscription_id": expiry_subscription_id, "expires_at": expires_at.isoformat(),
         })
         registry, inserted = _claim(session, PURCHASE_NAMESPACE, key, fingerprint, funded_at)
         registries.append((name, amount, key, fingerprint, registry, inserted))
@@ -401,18 +429,20 @@ def fund_credit_purchase(
             paid_at=paid_at, lot_id=lot_id, grant_entry_id=entry_id,
             idempotency_registry_id=registry.id, domain_event_id=event.id,
             contract_version=CONTRACT_VERSION, actor_type=actor_type, actor_id=actor_id,
+            expiry_subscription_id=expiry_subscription_id, expires_at=expires_at,
         )
         session.add(funding)
         session.flush()
         lot = CreditLot(
             id=lot_id, billing_account_id=account.id,
             source_type="credit_pack_purchase", source_id=funding_id,
-            original_amount=amount, available_at=paid_at, expires_at=None,
+            original_amount=amount, available_at=paid_at, expires_at=expires_at,
             origin_evidence_json={
                 "credit_purchase_funding_id": funding_id,
                 "financial_line_id": line.id,
                 "entitlement_definition_id": definition.id,
                 "package_component": name,
+                "expiry_subscription_id": expiry_subscription_id,
             },
         )
         session.add(lot)
@@ -430,6 +460,147 @@ def fund_credit_purchase(
         lots.append(lot)
     session.flush()
     return fundings, lots, "inserted"
+
+
+def _paid_term_in_force(session, account_id, at, *, lock=False):
+    """Return the one paid subscription term containing ``at``, or fail closed.
+
+    Monthly and annual terms, including Phase 11 contract-backed terms, are
+    eligible. Without exactly one paid term there is no approved expiry, so
+    funding (and the pre-purchase quote) refuses rather than inventing one.
+    """
+    query = (
+        select(BillingSubscription)
+        .where(
+            BillingSubscription.billing_account_id == account_id,
+            BillingSubscription.state.in_(PAID_TERM_STATES),
+            BillingSubscription.interval.in_(("month", "year")),
+            BillingSubscription.term_starts_at <= at,
+            BillingSubscription.term_ends_at > at,
+        )
+        .order_by(BillingSubscription.id)
+    )
+    if lock and session.get_bind().dialect.name == "postgresql":
+        query = query.with_for_update(read=True)
+    terms = session.execute(query).scalars().all()
+    if not terms:
+        raise FinancialEffectPolicyRequiredError(
+            "credit-pack expiry for an organization without a paid monthly or annual term "
+            "in force is not approved"
+        )
+    if len(terms) > 1:
+        raise FinancialEffectPolicyRequiredError(
+            "more than one paid term is in force, so the credit-pack expiry term is ambiguous"
+        )
+    return terms[0]
+
+
+def credit_pack_expiry_quote(session, *, billing_account_id, at):
+    """Pure read: the exact expiry a pack bought at ``at`` would receive.
+
+    For display before purchase. It takes no lock and writes nothing; the
+    funding command re-derives the binding from the payment time.
+    """
+    account_id = _text(billing_account_id, "billing_account_id", 36)
+    at = _utc(at, "at")
+    term = _paid_term_in_force(session, account_id, at)
+    return {
+        "subscription_id": term.id,
+        "interval": term.interval,
+        "term_starts_at": _stored_utc(term.term_starts_at),
+        "expires_at": _stored_utc(term.term_ends_at),
+    }
+
+
+def expire_purchased_credits(
+    session, *, credit_purchase_funding_id, expired_at, actor_type, actor_id, delivery_obligations,
+):
+    """Expire a pack's unspent value once its paid term has ended. No rollover.
+
+    Available value and every outstanding hold expire together, mirroring the
+    Phase 6 recurring expiration. Returns ``(funding, 'expired'|'duplicate')``.
+    """
+    funding_id = _text(credit_purchase_funding_id, "credit_purchase_funding_id", 36)
+    expired_at = _utc(expired_at, "expired_at")
+    actor_type, actor_id = _service_actor(actor_type, actor_id)
+    delivery_obligations = _deliveries(delivery_obligations)
+    account_id = session.execute(
+        select(CreditPurchaseFunding.billing_account_id).where(CreditPurchaseFunding.id == funding_id)
+    ).scalar_one_or_none()
+    if account_id is None:
+        raise FinancialEffectError("credit purchase funding is not available")
+    _lock_account(session, account_id)
+    funding = session.get(CreditPurchaseFunding, funding_id)
+    lot = session.execute(select(CreditLot).where(CreditLot.id == funding.lot_id).with_for_update()).scalar_one()
+    expires_at = _stored_utc(lot.expires_at)
+    if expires_at is None:
+        raise FinancialEffectDependencyError("purchased credit has no approved expiry")
+    if expired_at < expires_at:
+        raise FinancialEffectError("purchased credit has not reached the end of its paid term")
+    key = f"purchase-expiration:{funding.id}"
+    fingerprint = _fingerprint({"funding": funding.id, "lot": lot.id, "expires_at": expires_at.isoformat()})
+    registry, inserted = _claim(session, PURCHASE_EXPIRATION_NAMESPACE, key, fingerprint, expired_at)
+    event_envelope = {
+        "billing_account_id": account_id,
+        "event_key": f"credits_expired:purchase:{funding.id}",
+        "event_type": "credits_expired",
+        "aggregate_type": "credit_purchase_funding",
+        "aggregate_id": funding.id,
+        "occurred_at": expires_at,
+        "reference_ids": [funding.id, lot.id],
+    }
+    if not inserted:
+        if registry.state != "completed":
+            raise FinancialEffectRetryError("purchased-credit expiration is already in progress")
+        _record_event(session, event_envelope, delivery_obligations)
+        return funding, "duplicate"
+    entries = session.execute(
+        select(CreditLedgerEntry).where(CreditLedgerEntry.lot_id == lot.id)
+        .order_by(CreditLedgerEntry.created_at, CreditLedgerEntry.id)
+    ).scalars().all()
+    available = sum(int(entry.available_delta) for entry in entries)
+    held = sum(int(entry.held_delta) for entry in entries)
+    consumed = {}
+    for entry in entries:
+        if entry.related_entry_id and entry.held_delta < 0:
+            consumed[entry.related_entry_id] = consumed.get(entry.related_entry_id, 0) - int(entry.held_delta)
+    held_sources = []
+    for entry in entries:
+        if entry.entry_type in {"reservation", "dispute_hold"}:
+            remaining = int(entry.held_delta) - consumed.get(entry.id, 0)
+            if remaining > 0:
+                held_sources.append((entry, remaining))
+    if sum(amount for _entry, amount in held_sources) != held:
+        raise FinancialEffectError("held purchased-credit provenance does not reconcile")
+    _event, _messages, state = _record_event(session, event_envelope, delivery_obligations)
+    if state != "inserted":
+        raise FinancialEffectConflictError("new purchased-credit expiration reused an existing domain event")
+    parts = held_sources or ([(None, 0)] if available else [])
+    for index, (source, held_amount) in enumerate(parts):
+        entry_registry = registry
+        if index:
+            entry_registry, child = _claim(
+                session, PURCHASE_EXPIRATION_NAMESPACE, f"{key}:held:{source.id}",
+                _fingerprint({"funding": funding.id, "held_source": source.id, "amount": held_amount}),
+                expired_at,
+            )
+            if not child:
+                raise FinancialEffectRetryError("held purchased-credit expiration is already in progress")
+        _append(session, CreditLedgerEntry(
+            id=str(uuid.uuid4()), billing_account_id=account_id, lot_id=lot.id,
+            entry_type="expiration", available_delta=-available if index == 0 else 0,
+            held_delta=-held_amount, related_entry_id=source.id if source else None,
+            idempotency_registry_id=entry_registry.id, effective_at=expires_at,
+            actor_type=actor_type, actor_id=actor_id, reason_code="purchased_credit_term_expired",
+            evidence_json={"credit_purchase_funding_id": funding.id,
+                           "held_source_entry_id": source.id if source else None},
+        ))
+        if entry_registry is not registry:
+            _complete(session, entry_registry, completed_at=expired_at,
+                      result_type="credit_purchase_funding", result_id=funding.id)
+    _complete(session, registry, completed_at=expired_at, result_type="credit_purchase_funding", result_id=funding.id)
+    session.flush()
+    return funding, "expired"
 
 
 class SimplePurchase:

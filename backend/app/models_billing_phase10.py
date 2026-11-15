@@ -14,7 +14,11 @@ from . import db
 
 
 OFFER_ORIGINS = ("trial", "promotion", "comp", "internal")
-STAFF_PERMISSIONS = ("billing.comp.grant", "billing.internal_funding.grant")
+# Phase 11 (founder-approved P11-DEP-003) adds the Enterprise contract
+# administration permission. It is held only through an explicit staff grant.
+STAFF_PERMISSIONS = (
+    "billing.comp.grant", "billing.internal_funding.grant", "billing.enterprise_contract.manage",
+)
 PERMISSION_VERSION = 1
 
 

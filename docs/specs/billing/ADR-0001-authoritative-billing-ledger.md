@@ -76,9 +76,17 @@ Jaspen will use the following boundaries:
 ### Invariants
 
 - Customer available credit is never negative.
-- Recurring credits never roll over.
+- Recurring credits never roll over into a later paid term. Founder decision
+  2026-11-15 (P11-DEP-001): monthly-subscription and Free credits expire at
+  their monthly period end; an annual term's monthly releases accumulate and
+  all expire together at the paid annual term end, including on renewal.
+- Founder decision 2026-11-15 (credit packs): a purchased credit pack releases
+  its full quantity on verified payment and expires at the end of the paid
+  monthly or annual term in force when it was paid. Packs stay separate
+  `credit_pack_purchase` lots, never change a recurring allocation or a seat
+  commitment, and are never indefinitely valid.
 - Every credit belongs to exactly one organization billing account, funding
-  source, funded period or non-expiring purchase lot, and originating evidence
+  source, funded period or term-bound purchase lot, and originating evidence
   record. Optional member attribution or member-limited eligibility does not
   create a personal billing account.
 - Subscription, purchased, promotional, trial, internal, legacy, and
@@ -121,6 +129,12 @@ Jaspen will use the following boundaries:
   periods. The anchor is the paid subscription's UTC billing anchor; month-end
   anchors clamp to the last UTC calendar day. The annual payment funds those
   periods, but no future monthly lot becomes spendable before its period opens.
+  Each released monthly lot stays spendable until the paid annual term ends
+  (P11-DEP-001); nothing crosses into the next annual term.
+- Every account is an organization regardless of size, and these monthly and
+  annual rules apply identically to individual, team, and Enterprise
+  organizations. Enterprise terms are executed, staff-approved contracts whose
+  paid terms are contract-backed subscriptions (Phase 11, P11-DEP-004 option A).
 - Free receives its configured monthly allowance from the immutable
   organization-account creation UTC anchor, with no rollover. The architecture
   does not hard-code a commercial quantity.
