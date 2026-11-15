@@ -580,8 +580,8 @@ def test_subscription_allocation_rejects_cross_account_and_wrong_line(db, test_u
 def test_phase6_service_has_no_live_runtime_callers():
     app_dir = Path(__file__).resolve().parents[1] / "app"
     allowed = {
-        "billing_allocations.py", "billing_plan_changes.py", "billing_seats.py", "models.py",
-        "models_billing_phase6.py",
+        "billing_allocations.py", "billing_financial_effects.py", "billing_plan_changes.py", "billing_seats.py",
+        "models.py", "models_billing_phase6.py",
     }
     importers = []
     for path in app_dir.rglob("*.py"):
@@ -663,7 +663,7 @@ def _migrated_engine():
         revision = connection.execute(sa.text(
             "SELECT version_num FROM alembic_version"
         )).scalar_one_or_none()
-    if revision not in {"f5c8d3e0b2a1", "a7d9e2f4b6c8", "b8c2d4e6f8a1"}:
+    if revision not in {"f5c8d3e0b2a1", "a7d9e2f4b6c8", "b8c2d4e6f8a1", "e1a3c5b7d9f2"}:
         engine.dispose()
         pytest.fail(
             "Phase 6 migrated-schema tests require the Phase 6 or Phase 7 Alembic head; "

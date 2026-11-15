@@ -388,6 +388,49 @@ webhooks, provider APIs, workers, schedulers, and production configuration.
 Local verification is not acceptance and does not authorize integration,
 deployment, or activation.
 
+### Phase 9 implementation record — purchases, refunds, disputes and recoveries
+
+Status: **implemented locally, inactive, awaiting independent audit.**
+Migration `e1a3c5b7d9f2` (revises `b8c2d4e6f8a1`) adds three immutable tables.
+`app/billing_financial_effects.py` has no route, webhook, worker, or scheduler
+caller. Phase 3 stays the only ledger, Phase 5.2/5.3 stay the financial and
+case authorities, and Phase 5.4 records every event.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| Purchase funds once from approved versioned terms (D06, D13 `purchase:<line>:<component>`, D14.10) | `fund_credit_purchase()`; `credit_purchase_fundings`; `EntitlementDefinition.funding_policy_json.purchase` v1; PostgreSQL funding, purchased-lot and purchased-grant guards | `test_purchase_funds_each_component_once_and_replay_converges`; `test_purchase_rejects_unverified_or_mismatched_evidence[9]`; `test_same_line_cannot_fund_under_a_different_definition`; concurrent funding under three isolation levels |
+| D10 cumulative proportional refund, tax/fee excluded, discount-net principal, floor arithmetic, multiple refund objects | `apply_financial_case_effects()`; one immutable `financial_case_lot_evaluations` row per accepted version and lot | `test_partial_refunds_converge_to_the_equivalent_cumulative_refund`; `test_refund_excludes_tax_and_fees_and_uses_discounted_principal`; `test_refund_rounding_floors_in_exact_integers`; `test_two_refund_objects_on_one_line_share_the_cumulative_rule`; `test_full_refund_after_consumption_reverses_only_unused_value` |
+| Subscription refund disposition (financial-only and entitlement-reducing review change no credits or entitlements) | Disposition read from the Phase 5.3 current version | `test_subscription_refund_dispositions_preserve_credits_and_entitlements` |
+| Dispute opened/pending/won/lost, direct terminal, reopen, hold of unused value only, absorbed shortfall | Source-specific `dispute_hold`, `release`, `dispute_reversal`, `recovery` entries | dispute tests in `test_billing_financial_effects.py`; migrated lifecycle |
+| Expiry is not delayed by a hold; expired value is not recreated | Phase 6 expiration consumes held allocations; recovery on an expired lot is recorded as unrestorable with no credit | `test_dispute_hold_does_not_delay_expiry_and_expired_value_is_not_recreated`; `test_won_after_loss_on_expired_lot_records_unrestorable_recovery` |
+| Mixed-invoice attribution | `proportional_case_attribution()` is an advisory helper that returns exact splits only and refuses a residual. **The apply path does not call it:** it applies the line allocations stored on the accepted Phase 5.3 version, which the recorder validates only for sum, per-line eligible principal, line kind and cross-case capacity. A caller-supplied multi-line partial split derived by an unapproved remainder rule is therefore accepted (activation blocker; see below) | `test_proportional_attribution_is_exact_or_fails_closed`; `test_partial_dispute_on_mixed_invoice_touches_only_attributed_lines` |
+| Recovery bounded by prior reversal for the same case and lot | `financial_case_credit_effects`; PostgreSQL and SQLite recovery bound | `test_cancelled_refund_recovers_exactly_what_it_reversed`; migrated bypass test |
+| DB-verifiable source/lot provenance for every case ledger effect (Phase 5.3 deferred requirement) | Evaluation guard (current version, lot funded by the source line); effect guard; deferred final guard on case ledger entries | `test_postgres_migrated_guards_reject_direct_bypass` |
+| Idempotency, ordering, and concurrency | Account-first lock order; D13 keys; stale versions apply nothing; unfunded purchase line is retryable (D14.8); the prior version is chosen by the Phase 5.3 acceptance order `(effective_at, received_at)`, never by row time or ID (audit F2); a same-amount refund after its reversal was recovered is refused rather than skipped (audit F1) | duplicate/stale/retry tests; `test_postgres_concurrent_funding_and_case_application_converge`; `test_f1_*`; `test_f2_*` |
+
+Fail-closed paths awaiting decisions: partial reduction of a refunded or
+disputed amount, re-refunding an amount whose reversal was recovered,
+entitlement-reducing execution, and refunded-value absorption policy.
+
+**Not fail-closed (activation blocker):** the D-1 allocation contract. The
+apply path trusts the line allocations on the accepted Phase 5.3 version. It
+does not distinguish authoritative processor line-level evidence from
+allocations an adapter derived itself, so a derived split using an unapproved
+remainder rule would be applied. Phase 9 must not be activated until that
+evidence and allocation contract is approved and enforced. Phase 17
+acceptance must prove that an adapter cannot record or apply a multi-line
+partial allocation except from authoritative processor line evidence or the
+approved deterministic rule.
+
+Pre-activation hardening carried forward from the audit: PostgreSQL effect
+guards prove provenance but do not reconcile every effect amount to its
+evaluation and D10 target (F4); re-applying a case after new lots are funded
+can append ledger effects without a new domain event, because the version's
+event key is already recorded (F5).
+
+Details are in the Phase 9 audit handoff. Local verification is not acceptance
+and does not authorize integration, deployment, or activation.
+
 ### Deferred Phase 5.1/5.2 activation gate — conflict evidence integrity
 
 Status: **Deferred — required before inbox activation.** These PostgreSQL

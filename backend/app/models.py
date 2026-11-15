@@ -2877,3 +2877,8 @@ from .models_billing_phase8 import (  # noqa: E402,F401
     SeatFundingUse,
     SeatTermFunding,
 )
+from .models_billing_phase9 import (  # noqa: E402,F401
+    CreditPurchaseFunding,
+    FinancialCaseCreditEffect,
+    FinancialCaseLotEvaluation,
+)

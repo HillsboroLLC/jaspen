@@ -1018,7 +1018,7 @@ def test_case_recorder_has_no_live_runtime_callers():
     callers = []
     for path in app_dir.rglob("*.py"):
         if path.name in {
-            "billing_financial_cases.py", "models_billing_phase5.py", "models.py",
+            "billing_financial_cases.py", "billing_financial_effects.py", "models_billing_phase5.py", "models.py",
         }:
             continue
         if "billing_financial_cases" in path.read_text():
