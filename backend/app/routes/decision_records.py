@@ -17,6 +17,7 @@ from ..models import User
 from ..models_decision_record import DecisionRecord
 from ..decision_records import (
     can_read_record,
+    can_write_record,
     clear_supersession,
     create_or_refresh_record,
     current_state,
@@ -25,6 +26,7 @@ from ..decision_records import (
     decision_signals_for,
     option_dispositions,
     option_decision_display_text,
+    record_project_row,
     option_decision_history,
     record_option_decision,
     supersede_record,
@@ -47,8 +49,6 @@ from ..decision_retrieval import (
 from ..session_access import (
     SessionForbidden,
     SessionNotFound,
-    can_write_session,
-    canonical_row,
     resolve_session_for_actor,
 )
 
@@ -58,8 +58,9 @@ decision_records_bp = Blueprint('decision_records', __name__)
 def _decision_view(record, user, option_key=None):
     """A record plus the two things the UI cannot compute for itself:
     its derived current state, and whether THIS caller may change it."""
-    row = canonical_row(user, record.thread_id, include_archived=True)
-    can_edit = True if row is None else can_write_session(row, user)
+    # Record-bound (P2e-C1): the record's own project decides, not the
+    # caller's active organization.
+    can_edit = can_write_record(record, user)
     payload = record.to_dict(include_record=False)
     payload['current_state'] = current_state(record)
     payload['can_edit'] = bool(can_edit)
@@ -175,8 +176,10 @@ def _writable_record_or_none(record_id, user):
     record = _owned_record_or_404(record_id, user)
     if record is None:
         return None, 404
-    row = canonical_row(user, record.thread_id, include_archived=True)
-    if row is not None and not can_write_session(row, user):
+    # Record-bound (P2e-C1): write access to the record's OWN project
+    # (record_project_row). Resolving the thread id through the caller's
+    # active organization let a same-id project elsewhere grant the write.
+    if not can_write_record(record, user):
         return None, 403
     return record, None
 
@@ -312,8 +315,8 @@ def get_record(record_id):
         return jsonify({'error': 'Decision record not found'}), 404
     full = record.to_dict()
     full['current_state'] = current_state(record)
-    row = canonical_row(user, record.thread_id, include_archived=True)
-    full['can_edit'] = True if row is None else bool(can_write_session(row, user))
+    row = record_project_row(record)
+    full['can_edit'] = can_write_record(record, user, session_row=row, session_loaded=True)
     full['option_dispositions'] = option_dispositions(record, session=row)
     full['decision_signals'] = [item.to_dict() for item in decision_signals_for(record)]
     return jsonify({'record': full})

@@ -477,7 +477,7 @@ def can_read_record(record, user, membership=None, *, session_row=None, session_
     """
     from .models import UserSession  # noqa: F401  (documents the relationship)
     from .orgs import active_membership_for_user
-    from .session_access import can_read_session, canonical_row
+    from .session_access import can_read_session
 
     if record is None or user is None:
         return False
@@ -494,7 +494,10 @@ def can_read_record(record, user, membership=None, *, session_row=None, session_
     if membership is None:
         return False
 
-    row = session_row if session_loaded else canonical_row(user, record.thread_id, include_archived=True)
+    # The record's OWN project (its organization's row for the thread), never
+    # the caller's active-organization resolution: a same-id project in
+    # another organization must not stand in for it (P2e-C1).
+    row = session_row if session_loaded else record_project_row(record)
     if row is not None:
         return can_read_session(row, user, membership=membership)
 
@@ -512,6 +515,33 @@ def can_read_record(record, user, membership=None, *, session_row=None, session_
         shared = shared if isinstance(shared, list) else []
         return uid in {str(item or '').strip() for item in shared}
     return False
+
+
+def can_write_record(record, user, *, session_row=None, session_loaded=False):
+    """May this user change this Decision Record (human decision, outcomes,
+    lessons, consent, supersession)?
+
+    Read access to the record AND write access to the record's own project
+    (``record_project_row``), whatever organization the caller has active.
+
+    A record whose project no longer exists (records outlive purged projects)
+    still needs an editing role in the record's OWN organization: a viewer
+    never writes, even on work they created. A legacy personal record keeps
+    the author-only rule.
+    """
+    from .orgs import active_membership_for_user, can_edit_projects, normalize_org_role
+    from .session_access import can_write_session
+
+    if not can_read_record(record, user, session_row=session_row, session_loaded=session_loaded):
+        return False
+    row = session_row if session_loaded else record_project_row(record)
+    if row is not None:
+        return bool(can_write_session(row, user))
+    org_id = getattr(record, 'organization_id', None)
+    if not org_id:
+        return str(record.user_id or '') == str(user.id)
+    membership = active_membership_for_user(org_id, str(user.id))
+    return membership is not None and can_edit_projects(normalize_org_role(membership.role))
 
 
 def _find_existing_record(organization_id, attribution_user_id, thread_id):
@@ -1746,8 +1776,6 @@ def supersede_record(new_record, prior_record, actor):
     human decision all remain readable. Supersession adds a pointer; it never
     deletes or rewrites history.
     """
-    from .session_access import can_write_session, canonical_row
-
     if new_record is None or prior_record is None:
         raise LookupError('Decision record not found')
 
@@ -1759,8 +1787,7 @@ def supersede_record(new_record, prior_record, actor):
         # learn that an unreadable record exists by trying to supersede it.
         raise LookupError('Decision record not found')
 
-    row = canonical_row(actor, new_record.thread_id, include_archived=True)
-    if row is not None and not can_write_session(row, actor):
+    if not can_write_record(new_record, actor):
         raise PermissionError('Your role on this project is read-only')
 
     if str(new_record.organization_id or '') != str(prior_record.organization_id or ''):
