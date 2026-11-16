@@ -193,6 +193,72 @@ def _default_connector_settings(connector_id):
     }
 
 
+# Organization key for a link recorded on a project that has no organization.
+LINK_SCOPE_PERSONAL = "personal"
+
+
+def link_organization_key(organization_id):
+    """The owning-organization key a recorded link is stored under."""
+    return str(organization_id).strip() if organization_id else LINK_SCOPE_PERSONAL
+
+
+def _scoped_links(value):
+    """``{organization key: {task id: external id}}``, cleaned."""
+    out = {}
+    for org_key, links in (value.items() if isinstance(value, dict) else []):
+        key = str(org_key or "").strip()
+        if not key or not isinstance(links, dict):
+            continue
+        cleaned = {
+            str(task_id or "").strip(): str(external_id or "").strip()
+            for task_id, external_id in links.items()
+            if str(task_id or "").strip() and str(external_id or "").strip()
+        }
+        if cleaned:
+            out[key] = cleaned
+    return out
+
+
+def _apply_scoped_link_patch(scoped, prior_flat, patch):
+    """Record links under the organization that owns the project they were
+    written for.
+
+    ``patch`` is ``{"organization_key": key, "links": {task: external},
+    "reconnect": bool}``, sent by Jaspen's own sync, import and post-turn
+    sync, which know the authorized project's organization. A link that
+    already existed without an organization (legacy) is never given one
+    implicitly: it is recorded here only when the member explicitly
+    reconnects (``reconnect``: their own sync or import of that project).
+    """
+    scoped = _scoped_links(scoped)
+    if not isinstance(patch, dict):
+        return scoped
+    org_key = str(patch.get("organization_key") or "").strip()
+    links = patch.get("links") if isinstance(patch.get("links"), dict) else {}
+    if not org_key:
+        return scoped
+    reconnect = bool(patch.get("reconnect"))
+    bucket = dict(scoped.get(org_key) or {})
+    for task_id, external_id in links.items():
+        task_key = str(task_id or "").strip()
+        if not task_key:
+            continue
+        ext_value = str(external_id or "").strip()
+        if not ext_value:
+            bucket.pop(task_key, None)
+            continue
+        already_scoped = any(entries.get(task_key) == ext_value for entries in scoped.values())
+        legacy_unscoped = str(prior_flat.get(task_key) or "").strip() == ext_value and not already_scoped
+        if legacy_unscoped and not reconnect:
+            continue
+        bucket[task_key] = ext_value
+    if bucket:
+        scoped[org_key] = bucket
+    else:
+        scoped.pop(org_key, None)
+    return scoped
+
+
 def _default_thread_sync_profile(thread_id):
     return {
         "thread_id": thread_id,
@@ -201,6 +267,9 @@ def _default_thread_sync_profile(thread_id):
         "pm_tool_bound_at": None,
         "thread_sync_status": "not_started",
         "wbs_task_external_ids": {},
+        # Links by owning organization; the only links inbound webhooks
+        # accept. ``wbs_task_external_ids`` above stays for outbound sync.
+        "wbs_task_external_links": {},
         "last_full_sync_at": None,
         "last_webhook_received_at": None,
         "sync_lock_acquired_at": None,
@@ -833,6 +902,7 @@ def get_thread_sync_profile(user_id, thread_id):
         base["connector_ids"] = cleaned
     if not isinstance(base.get("wbs_task_external_ids"), dict):
         base["wbs_task_external_ids"] = {}
+    base["wbs_task_external_links"] = _scoped_links(base.get("wbs_task_external_links"))
     base["thread_sync_status"] = _normalize_thread_sync_status(base.get("thread_sync_status"), default="not_started")
     return base
 
@@ -855,6 +925,7 @@ def get_all_thread_sync_profiles(user_id):
             base["connector_ids"] = []
         if not isinstance(base.get("wbs_task_external_ids"), dict):
             base["wbs_task_external_ids"] = {}
+        base["wbs_task_external_links"] = _scoped_links(base.get("wbs_task_external_links"))
         base["thread_sync_status"] = _normalize_thread_sync_status(base.get("thread_sync_status"), default="not_started")
         profiles[thread_id] = base
     return profiles
@@ -884,6 +955,7 @@ def update_thread_sync_profile(user_id, thread_id, updates):
         ):
             if field in updates:
                 current[field] = updates.get(field)
+        prior_flat = dict(current.get("wbs_task_external_ids") if isinstance(current.get("wbs_task_external_ids"), dict) else {})
         if "wbs_task_external_ids" in updates and isinstance(updates.get("wbs_task_external_ids"), dict):
             current["wbs_task_external_ids"] = updates.get("wbs_task_external_ids")
         if "wbs_task_external_ids_patch" in updates and isinstance(updates.get("wbs_task_external_ids_patch"), dict):
@@ -898,6 +970,11 @@ def update_thread_sync_profile(user_id, thread_id, updates):
                 elif task_key in merged:
                     merged.pop(task_key, None)
             current["wbs_task_external_ids"] = merged
+        if "wbs_task_external_links_patch" in updates:
+            current["wbs_task_external_links"] = _apply_scoped_link_patch(
+                current.get("wbs_task_external_links"), prior_flat,
+                updates.get("wbs_task_external_links_patch"),
+            )
     preferred = str(current.get("preferred_pm_tool") or "").strip().lower()
     if preferred in EXECUTION_PM_CONNECTOR_IDS:
         current["connector_ids"] = [preferred]

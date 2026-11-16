@@ -7570,6 +7570,20 @@ def _trigger_post_mutation_sync(user_id, thread_id, project_wbs):
     profile_updates = {"thread_sync_status": next_status}
     if patch:
         profile_updates["wbs_task_external_ids_patch"] = patch
+        # Record the links under the organization of the project this turn
+        # authorized (the turn pins it). An automatic sync never gives an
+        # organization to a link that existed without one; only the member's
+        # own sync or import reconnects those.
+        from app.connector_store import link_organization_key
+        from app.project_scope import readable_project_row
+
+        project_row = readable_project_row(user_id, thread_id, include_archived=True)
+        if project_row is not None:
+            profile_updates["wbs_task_external_links_patch"] = {
+                "organization_key": link_organization_key(project_row.organization_id),
+                "links": patch,
+                "reconnect": False,
+            }
     update_thread_sync_profile(user_id, thread_id, profile_updates)
 
     if result.get("success"):

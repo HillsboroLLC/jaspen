@@ -345,12 +345,22 @@ def _default_task(thread_id):
 
 
 def _record_link(user, connector, thread_id, task_id=None, external=None, mode="two_way"):
-    """What Jaspen's own legacy sync or import records for a member."""
+    """What Jaspen's own legacy sync or import records for a member: the link,
+    scoped to the organization the member is working in (P2e webhook tenant
+    isolation: links without an owning organization are refused)."""
+    from app.connector_store import link_organization_key
+
     task_id = task_id or _default_task(thread_id)
+    links = {task_id: external or EXTERNAL[connector]}
     update_thread_sync_profile(user.id, thread_id, {
         "sync_mode": mode,
         "preferred_pm_tool": connector,
-        "wbs_task_external_ids": {task_id: external or EXTERNAL[connector]},
+        "wbs_task_external_ids": links,
+        "wbs_task_external_links_patch": {
+            "organization_key": link_organization_key(user.active_organization_id),
+            "links": links,
+            "reconnect": True,
+        },
     })
     if connector == "jira_sync":
         update_connector_settings(user.id, "jira_sync", {"jira_base_url": JIRA_SITE})

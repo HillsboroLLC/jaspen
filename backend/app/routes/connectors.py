@@ -45,7 +45,9 @@ from app.jira_sync import (
 )
 from app.jira_portfolio import classify_refresh_error, list_accessible_projects, portfolio_context_text, refresh_portfolio
 from app.models import ConnectorSyncLog, User
+from app.connector_store import link_organization_key
 from app.project_scope import authorized_thread_scope, scenarios_for_thread
+from app.session_access import pin_active_organization
 from app.scenarios_store import save_project_scenarios_data
 from app.safe_redirect import safe_internal_path
 from app.salesforce_sync import (
@@ -771,7 +773,9 @@ def _find_thread_task_by_external_id(user_id, connector_id, external_id):
 
 
 def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
-    authorized_thread_scope(user.id, thread_id, require_write=True)
+    _scope_user, _scope_sessions, project_row = authorized_thread_scope(user.id, thread_id, require_write=True)
+    # Links this sync records belong to the project it was authorized for.
+    link_org_key = link_organization_key(getattr(project_row, "organization_id", None))
     connector_id = str(connector_id or "").strip().lower()
     if connector_id not in EXECUTION_PM_CONNECTOR_IDS:
         return jsonify(_error_payload(
@@ -896,6 +900,11 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
             }
             if _ext_patch:
                 _prof_updates["wbs_task_external_ids_patch"] = _ext_patch
+                # The member's own sync of this project: records (and
+                # reconnects) these links under the project's organization.
+                _prof_updates["wbs_task_external_links_patch"] = {
+                    "organization_key": link_org_key, "links": _ext_patch, "reconnect": True,
+                }
             update_thread_sync_profile(user_id_str, thread_id_str, _prof_updates)
 
     bg = threading.Thread(target=_run_sync, daemon=True)
@@ -2579,7 +2588,7 @@ def import_thread_from_pm_tool(thread_id, connector_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    authorized_thread_scope(user.id, thread_id, require_write=True)
+    _scope_user, _scope_sessions, project_row = authorized_thread_scope(user.id, thread_id, require_write=True)
     connector_id = str(connector_id or "").strip().lower()
     if connector_id not in EXECUTION_PM_CONNECTOR_IDS:
         return jsonify(_error_payload(
@@ -2645,6 +2654,13 @@ def import_thread_from_pm_tool(thread_id, connector_id):
             "last_full_sync_at": _iso_now(),
             "last_webhook_received_at": _iso_now(),
             "wbs_task_external_ids_patch": external_id_map,
+            # The member's own import of this project: records (and
+            # reconnects) these links under the project's organization.
+            "wbs_task_external_links_patch": {
+                "organization_key": link_organization_key(getattr(project_row, "organization_id", None)),
+                "links": external_id_map,
+                "reconnect": True,
+            },
         },
     )
     mark_connector_sync_result(user.id, connector_id, "success")
@@ -2702,23 +2718,53 @@ def _authorize_webhook_event(connector_id, user_id, thread_id, task_id, external
     sync profile, written by Jaspen's own sync and import). For Jira the event
     must also come from the Jira site that member connected. Labels alone never
     authorize a write.
+
+    Tenant isolation: the recorded link carries the organization that owns the
+    project it was recorded for. That organization, never the member's active
+    one, decides which project is authorized and written: the member is pinned
+    to it for the rest of the request, so the role check and the webhook's
+    read and save resolve that organization's project. A link recorded before
+    organizations were stored has no verifiable owner and is refused
+    (``link_not_scoped``) until the member reconnects it by running their own
+    sync or import of the project.
     """
+    from app.connector_store import LINK_SCOPE_PERSONAL
     from app.session_access import SessionForbidden, SessionNotFound
 
+    target = _text(external_id)
+    profile = get_thread_sync_profile(user_id, thread_id)
+    scoped = profile.get("wbs_task_external_links") if isinstance(profile.get("wbs_task_external_links"), dict) else {}
+    matches = sorted({
+        (_text(org_key), _text(tid))
+        for org_key, links in scoped.items() if isinstance(links, dict)
+        for tid, ext in links.items() if target and _text(ext) == target
+    })
+    if not matches:
+        ext_map = profile.get("wbs_task_external_ids") if isinstance(profile.get("wbs_task_external_ids"), dict) else {}
+        legacy = bool(target) and any(_text(ext) == target for ext in ext_map.values())
+        reason = "link_not_scoped" if legacy else "link_not_recorded"
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, reason)
+    if len(matches) != 1:
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "link_ambiguous")
+    org_key, linked_task = matches[0]
+    claimed = _text(task_id)
+    if claimed and claimed != linked_task:
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "link_not_recorded")
+
+    owning_org = None if org_key == LINK_SCOPE_PERSONAL else org_key
+    pin_active_organization(user_id, owning_org)
     try:
-        authorized_thread_scope(user_id, thread_id, require_write=True)
+        _scope_user, _scope_sessions, project_row = authorized_thread_scope(
+            user_id, thread_id, require_write=True,
+        )
     except SessionForbidden:
         return None, _refuse_webhook_event(connector_id, user_id, thread_id, "not_authorized")
     except SessionNotFound:
         return None, _refuse_webhook_event(connector_id, user_id, thread_id, "thread_not_found")
-
-    target = _text(external_id)
-    profile = get_thread_sync_profile(user_id, thread_id)
-    ext_map = profile.get("wbs_task_external_ids") if isinstance(profile.get("wbs_task_external_ids"), dict) else {}
-    linked = sorted(_text(tid) for tid, ext in ext_map.items() if target and _text(ext) == target)
-    claimed = _text(task_id)
-    if len(linked) != 1 or (claimed and claimed != linked[0]):
-        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "link_not_recorded")
+    # The pinned lookup can still fall back to a row the member holds in
+    # another organization when the owning organization has no such project.
+    if project_row is None or _text(getattr(project_row, "organization_id", None)) != _text(owning_org):
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "thread_not_found")
 
     if connector_id == "jira_sync":
         settings = get_connector_settings(user_id, "jira_sync")
@@ -2727,7 +2773,7 @@ def _authorize_webhook_event(connector_id, user_id, thread_id, task_id, external
         )
         if not connected_host or _url_host(source_url) != connected_host:
             return None, _refuse_webhook_event(connector_id, user_id, thread_id, "link_not_recorded")
-    return linked[0], None
+    return linked_task, None
 
 
 @connectors_bp.route("/jira/webhook", methods=["POST"])
