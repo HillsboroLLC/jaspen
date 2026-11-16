@@ -2529,11 +2529,20 @@ def sync_thread_to_jira(thread_id):
     # durable plan-scoped binding, never the connector's default project.
     from app.models_pm_sync import PmSyncBinding
     from app.pm_sync.service import push_binding
+    from app.project_scope import readable_project_row
     plan_key = str((request.get_json(silent=True) or {}).get("plan_key") or "").strip()
+    # The project this id names for the caller, and only a binding of that
+    # project's organization (N1): a binding made in another organization
+    # under the same thread id is never picked up here.
+    project_row = readable_project_row(user, thread_id, include_archived=True)
     query = PmSyncBinding.query.filter_by(user_id=user.id, thread_id=thread_id, connector_id="jira_sync")
     if plan_key:
         query = query.filter_by(plan_key=plan_key)
-    bindings = query.all()
+    project_org = str(getattr(project_row, "organization_id", None) or "")
+    bindings = [
+        binding for binding in query.all()
+        if project_row is not None and str(binding.organization_id or "") == project_org
+    ]
     if len(bindings) != 1:
         return jsonify({
             "error": "Choose a Jira destination for this execution plan before syncing.",

@@ -19,8 +19,24 @@ def _now():
     return datetime.utcnow()
 
 
-def get_plan(user_id, thread_id, plan_key):
-    thread = scenarios_for_thread(user_id, thread_id).get(thread_id)
+def get_plan(user_id, thread_id, plan_key, *, binding=None):
+    """The plan to send or sync.
+
+    Without ``binding``: the plan a member is looking at, in their active
+    organization's project (preview, creating a binding). With ``binding``:
+    the plan of the binding's own project, in the binding's organization,
+    whatever organization its owner has active (N1). Every sync of an
+    existing binding passes it.
+    """
+    if binding is not None:
+        from app.pm_sync.access import binding_scenarios
+
+        data, _row = binding_scenarios(binding)
+        return _plan_in_thread(data.get(str(binding.thread_id)), binding.plan_key)
+    return _plan_in_thread(scenarios_for_thread(user_id, thread_id).get(thread_id), plan_key)
+
+
+def _plan_in_thread(thread, plan_key):
     if not isinstance(thread, dict):
         raise LookupError("Thread not found.")
     by_scorecard = thread.get("wbs_by_scorecard") if isinstance(thread.get("wbs_by_scorecard"), dict) else {}
@@ -63,7 +79,14 @@ def _persist_task_commitments(binding, plan):
             current['project_wbs'] = target
         return current
 
-    save_project_scenarios_data(binding.user_id, binding.thread_id, updater=apply)
+    # Write the binding's own project only (N1): the remembered row pins the
+    # save, so the owner's active organization cannot redirect it.
+    from app.pm_sync.access import binding_scenarios
+
+    data, row = binding_scenarios(binding)
+    if row is None:
+        raise LookupError("Thread not found.")
+    save_project_scenarios_data(binding.user_id, binding.thread_id, updater=apply, source=data)
 
 
 def _clean_phase(value):
@@ -423,7 +446,7 @@ def push_binding(binding, plan=None, trigger="send", only_task_ids=None):
     enforce_binding_owner(binding)
     ensure_not_paused(binding)
     if plan is None:
-        plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key)
+        plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key, binding=binding)
     config = jira_adapter.assert_connected(binding.user_id, binding.external_container_id)
     ensure_start_date_field(binding, config)
     all_tasks = [task for task in (plan.get("tasks") or []) if isinstance(task, dict) and str(task.get("id") or "").strip()]

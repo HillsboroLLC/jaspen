@@ -33,6 +33,45 @@ def binding_owner_payload(binding):
     }
 
 
+def binding_project_row(binding):
+    """The canonical project row this binding belongs to, or None.
+
+    Matched on the binding's own organization (or, for a personal binding,
+    its owner's rows that carry no organization), never on the owner's
+    active organization. Switching organizations must not move a binding
+    onto another organization's project that shares the thread id (N1).
+    Same rule as ``decision_records.record_project_row``.
+    """
+    from app.models import UserSession
+
+    query = UserSession.query.filter_by(session_id=str(binding.thread_id))
+    if binding.organization_id:
+        query = query.filter_by(organization_id=str(binding.organization_id))
+    else:
+        query = query.filter(
+            UserSession.organization_id.is_(None), UserSession.user_id == str(binding.user_id),
+        )
+    return query.order_by(UserSession.created_at.asc(), UserSession.id.asc()).first()
+
+
+def binding_scenarios(binding):
+    """``(data, row)``: the binding's own project as scenario data.
+
+    ``data`` holds that one row, remembered, so a project-scoped save given
+    ``source=data`` writes exactly that row and never re-resolves through
+    the owner's active organization. ``row`` is None when the project is gone.
+    """
+    from app.project_scope import project_scenarios_into
+    from app.scenarios_store import ScenariosData
+
+    data = ScenariosData()
+    row = binding_project_row(binding)
+    if row is not None:
+        project_scenarios_into(data, row)
+        data.remember(str(row.session_id), row)
+    return data, row
+
+
 def binding_owner_pause_reason(binding):
     owner = User.query.get(str(binding.user_id))
     if owner is None or getattr(owner, "deactivated_at", None):
@@ -47,10 +86,13 @@ def binding_owner_pause_reason(binding):
         if membership is None:
             return "sync_owner_left_organization"
     # Current role decides (H-2e-2b): an owner who may no longer edit the
-    # project cannot keep syncing it. A missing project is not a pause reason.
-    from app.session_access import can_write_session, canonical_row
+    # project cannot keep syncing it. The project is the binding's own, in the
+    # binding's organization, whatever organization the owner has active (N1).
+    # A missing project is not a pause reason; a sync then finds no plan and
+    # stops before any Jira call.
+    from app.session_access import can_write_session
 
-    row = canonical_row(owner, binding.thread_id, include_archived=True)
+    row = binding_project_row(binding)
     if row is not None and not can_write_session(row, owner):
         return "sync_owner_read_only"
     return None
