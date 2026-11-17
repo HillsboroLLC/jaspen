@@ -100,6 +100,23 @@ Jaspen will use the following boundaries:
   under the bound pricing version; undelivered provider usage is recorded as
   Jaspen-absorbed and the reservation is released. Response quality never
   determines billability, and the same provider usage is never charged twice.
+- Founder decisions 2026-11-16: delivered usage stays billable after an
+  operation's original deadline (the hold is a renewable reservation lease
+  that no timer releases while live; a lapsed lease releases the hold and
+  nothing is charged after it). Every member has an individual fair-use
+  allowance inside their organization, whatever its size, while drawing on
+  the organization's shared credits; organization limits may add to it but
+  never replace it. Fair use is measured in operations and provider usage,
+  never credits.
+- Founder decisions 2026-11-17: allowances apply per user per organization
+  membership. A successful response is preserved and delivered even when its
+  lease lapsed; it is then recorded as delivered and never charged (no charge
+  after a release, no new reservation). A token allowance counts only verified
+  usage of delivered responses; failed and undelivered work is bounded by the
+  abuse and capacity controls. Operational history stays on `AIProviderAttempt`
+  and immutable financial evidence stays separate, linked by operation and
+  provider request identifiers. Activating Phase 12 billing requires the
+  Phase 17 reliable-delivery integration, independently accepted.
 - Expiring eligible value is consumed first. Purchased value is protected
   behind expiring value. Within the same expiry, deterministic source priority,
   funded-at time, and lot ID break ties.

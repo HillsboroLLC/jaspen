@@ -3,8 +3,14 @@
 Status: development-only; both policies default to `shadow`.
 
 Billability was clarified on 2026-11-11 (founder-approved, delivery-based; see
-`docs/specs/billing/lifecycle-specification.md` D06). Live billing behavior is
-unchanged until the approved AI usage integration phase.
+`docs/specs/billing/lifecycle-specification.md` D06) and amended on 2026-11-16:
+a delivered response stays billable when it arrives after the original
+deadline while its reservation lease is live, and every member has an
+individual fair-use allowance (D22). On 2026-11-17 it was further clarified:
+a successful response is always preserved and delivered, and when its
+reservation lease lapsed it is delivered without a charge; a member's token
+allowance counts only verified, delivered usage. Live billing behavior is unchanged until
+the approved AI usage integration phase.
 
 ## Policy
 

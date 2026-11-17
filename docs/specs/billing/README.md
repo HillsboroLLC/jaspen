@@ -242,6 +242,21 @@ realized margin were not accessed or verified.
   reuses Phases 4, 6, and 8. Renewal grace (15 days, read-only) and the
   180-day retention-review date are recorded, not enforced; nothing is
   deleted. See the Phase 11 record in the traceability document.
+- Phase 12 AI reservations, capacity authorization, and delivery-based
+  settlement are implemented locally for independent audit, inactive, on the
+  accepted Phase 11 checkpoint. An operation binds the effective pricing and
+  capacity versions; unknown economics fail closed; only a delivered
+  response's provider-reported usage is charged, and everything else is
+  recorded as Jaspen-absorbed. Audit findings F1–F8 were remediated on
+  2026-11-16 under that day's founder decisions: a renewable reservation lease
+  keeps a delivered response billable after the original deadline, and every
+  member has an individual fair-use allowance inside their organization. The
+  founder decisions of 2026-11-17 keep a response whose lease lapsed: it is
+  recorded as delivered and never charged. Token allowances count only
+  verified, delivered usage. Activation is gated on the Phase 17
+  reliable-delivery integration. No rate,
+  conversion, or capacity number is seeded, and the AI runtime is not wired.
+  See the Phase 12 record in the traceability document.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type

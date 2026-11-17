@@ -10,6 +10,13 @@ from werkzeug.security import generate_password_hash
 
 from app import connector_store
 from app import create_app, db as _db
+from app.models_billing_phase12 import (
+    AIAbsorbedUsage,
+    AIBillingOperation,
+    AICapacityDecision,
+    AIOperationCheckpoint,
+    AIProviderCallUsage,
+)
 from app.models import (
     AdminAuditEvent,
     AdvisoryInquiry,
@@ -324,6 +331,11 @@ def db(app):
             OptionDecision,
             DecisionRecord,
             AIProviderAttempt,
+            AIOperationCheckpoint,
+            AIAbsorbedUsage,
+            AIProviderCallUsage,
+            AICapacityDecision,
+            AIBillingOperation,
             EnterpriseContractNotice,
             EnterpriseContractActivation,
             EnterpriseContractTermFunding,

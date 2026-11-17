@@ -2896,3 +2896,10 @@ from .models_billing_phase11 import (  # noqa: E402,F401
     EnterpriseContractTermFunding,
     EnterpriseContractVersion,
 )
+from .models_billing_phase12 import (  # noqa: E402,F401
+    AIAbsorbedUsage,
+    AIBillingOperation,
+    AICapacityDecision,
+    AIOperationCheckpoint,
+    AIProviderCallUsage,
+)

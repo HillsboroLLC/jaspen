@@ -126,6 +126,30 @@ billing behavior is unchanged until the approved AI usage integration phase
   twice.
 - If the response was delivered or remains accessible, its usage is charged
   even if a later nonessential workflow step fails.
+- Founder decision 2026-11-16 (late delivery): verified, successfully
+  delivered usage is billable even when the response arrives after the
+  operation's original deadline; Jaspen never gives a successful response away
+  because a timer expired, and a failed or undelivered response is never
+  charged automatically. The hold is therefore a renewable **reservation
+  lease**: the running worker renews it while the operation is alive
+  (including while it waits for a provider response), no timer or cleanup job
+  releases a live lease, and a response settles at any time while the lease is
+  live. Separately, no new provider call may start after the operation's
+  execution deadline (the runaway duration bound), and a lease is never
+  renewed past that deadline plus one lease period. A lease that lapsed means
+  the worker stopped renewing it: nothing can be charged any more, and the
+  operation ends as expired (hold released, recorded usage absorbed, delivery
+  "unsettled"), whether the cleanup job or the late response gets there first.
+- Founder decision 2026-11-17 (preserve the response): a successful provider
+  response is never lost because an internal timer or worker heartbeat failed.
+  The runtime persists every successful response durably, independently of
+  settlement and of the customer's connection, and delivers it. If the lease
+  lapsed first, the expired operation records once that the response was
+  delivered (or not), with no charge: credits are never charged after their
+  reservation was released, and no new reservation is created for the late
+  response. Its provider cost stays recorded as Jaspen-absorbed. Provider cancellation is never assumed to waive provider charges:
+  usage recorded for a cancelled, timed-out, or late call is kept as absorbed
+  evidence.
 - A timeout or missing response is not assumed to have incurred provider
   charges. Available evidence is labeled reported, estimated, or unknown;
   uncertain usage is reconciled against provider records and never charged to
@@ -142,7 +166,10 @@ billing behavior is unchanged until the approved AI usage integration phase
 
 ### Absorbed provider usage evidence
 
-Provider-billed usage that is not charged to the customer is retained with:
+Provider-billed usage that is not charged to the customer is retained with
+its exact provider cost under the bound rates and the part of that cost not
+recovered from the customer (when a capped charge covers part of a delivered
+attempt, only the remainder is absorbed), and with:
 customer and operation identifiers; provider and model; the provider request
 identifier where available; request and failure timestamps; provider-reported
 token usage and cost where available, labeled reported, estimated, or unknown;
@@ -577,7 +604,19 @@ running -> interrupted -> resumable_from_last_completed_step
 
 Rules:
 
-- Evaluate organization-wide fairness as well as per-member monopolization.
+- Founder decision 2026-11-16 (individual fair use): every active member
+  receives an individual fair-use allowance, whatever the organization's size;
+  a single-member organization follows the same rules. Members draw on the
+  organization's shared credit balance, subject to their own allowances.
+  Each member's allowance is one or more rolling windows (for example a
+  five-hour and a weekly window, each bounding operations and/or provider
+  tokens) plus a concurrency limit. Organization-wide budgets, aggregate
+  capacity, and fraud controls may also apply but never replace a member's
+  allowance. Fair-use measurements are operations and provider usage, never
+  purchased credits. Policies may differ by plan (entitlement tier) and by
+  provider/model (a window may bound the tokens of listed models), are
+  versioned and effective-dated, have no hardcoded or seeded numbers, and fail
+  closed when missing.
 - Higher tiers are eligible for more short-term capacity, concurrency, and
   preferential queueing, but no tier receives a promise beyond provider supply.
 - Purchasing credits cannot bypass capacity or abuse restrictions.
@@ -585,9 +624,22 @@ Rules:
   OpenAI support uses the same interface and accounting contract.
 - Provider 429/overload signals may reduce available service but do not alter
   customer credits or silently reset their capacity window.
-- Runaway protection bounds provider attempts, tool iterations, context growth,
-  operation duration, and total reserved exposure. Exhaustion yields a typed,
-  resumable outcome rather than uncontrolled retries.
+- Runaway protection bounds provider attempts, tool iterations, context growth
+  (per-call input and output tokens and total tokens per operation), operation
+  duration (no call starts after the execution deadline), the reservation
+  lease period, and total reserved exposure. The runtime checks the bounds
+  before every provider request. Exhaustion yields a typed, resumable outcome
+  rather than uncontrolled retries.
+- Founder decision 2026-11-17 (three separate measures): billable credits are
+  charged only for verified, delivered usage; a member's token allowance is
+  consumed only by verified (provider-reported) usage of the delivering attempt
+  of delivered operations, counted once from the call evidence, so retries and
+  replayed settlements never count twice; failed, timed-out, refused, retried,
+  and undelivered work is bounded by the abuse and capacity controls instead
+  (operation-count windows count every authorized operation whatever its
+  outcome, concurrency, attempt and tool-iteration bounds, and per-call and
+  per-operation token bounds that count all recorded usage). None of these
+  measures is a credit deduction, and none replaces another.
 - Queue/retry responses include a safe `available_again_at` or retry interval;
   details of fraud/abuse scoring remain private.
 - The policy version and authorization outcome are audit evidence, not ledger

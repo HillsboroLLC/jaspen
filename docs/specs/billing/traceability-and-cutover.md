@@ -637,6 +637,99 @@ acceptance target).
 Local verification is not acceptance and does not authorize integration,
 deployment, or activation.
 
+### Phase 12 implementation record — AI reservations and settlements
+
+Status: **implemented locally, inactive; independent audit findings F1–F8
+remediated 2026-11-16; founder decisions of 2026-11-17 incorporated; awaiting
+targeted re-acceptance. Activation is gated on the Phase 17 reliable-delivery
+integration below.** Built on
+the accepted Phase 11 checkpoint `4090fefc`. Migration `c8e0a2b4d6f1` (revises
+`b4d6f8a0c2e5`) adds five evidence tables and new guards; no earlier guard is
+replaced. `app/billing_ai_operations.py` has no route, AI runtime, webhook,
+worker, or scheduler caller; the legacy AI credit paths are unchanged until
+Phase 17. Phase 3 stays the only balance authority. No rate, conversion, or
+capacity number is seeded: every number comes from an approved, effective
+policy version. The two provider refusal/timeout governance tests recorded as
+a Phase 12 blocker pass at the baseline (61 passed in the governance,
+economics, and shared-limit files).
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| D21: bind one effective pricing version before reserving; exact provider/model rate; unknown economics fail closed; no retroactivity | `authorize_ai_operation()` binds pricing and capacity on `ai_billing_operations` and the `ai_operations` compatibility links; `conversion_json.credits_per_provider_usd`, `ceil_whole_credit`; `phase12_operation_guard` (effective at `clock_timestamp()`) | `test_authorization_binds_effective_versions_and_reserves_the_worst_case_candidate`; `test_unknown_provider_or_model_fails_closed_before_any_write[2]`; `test_missing_future_or_incomplete_pricing_policy_fails_closed`; `test_a_later_pricing_version_never_reprices_an_operation_in_progress` |
+| D06: preflight is a pure read; reserve is explicit; exhaustion blocks only new unfunded work | `preflight_ai_operation()`; worst-case hold over the authorized candidates; `credit_exhausted` writes nothing | `test_preflight_is_a_pure_read`; `test_credit_exhaustion_writes_nothing_and_leaves_the_operation_resumable`; `test_postgres_concurrent_authorizations_never_overcommit_the_balance` |
+| D06: delivered response settles the delivering attempt's reported usage; remainder released in the same transaction; replay is a no-op | `settle_delivered_operation()`; `phase12_ledger_guard` (a settlement names its delivered attempt, every call of it is reported and the last succeeded, and the operation's settlements never exceed that attempt's usage priced under the bound version — F7) | `test_delivered_response_settles_its_exact_usage_and_releases_the_rest`; `test_postgres_concurrent_settlement_replays_converge_to_one_charge`; `test_postgres_f7_a_settlement_is_tied_to_the_delivering_attempt_and_its_priced_usage` |
+| Founder decisions 2026-11-16 and 2026-11-17: delivered usage is billable after the original deadline; no timer releases a live hold; a response whose lease lapsed is preserved and recorded as delivered with no charge, never re-reserved; one outcome per operation whichever runs first (F1, F3, F4) | Renewable reservation lease (`renew_ai_operation_reservation()`, never past `execution_deadline_at` + one lease period); a charge only while the lease is live, expiry only after it lapsed, by the same database clock; a lapsed lease always ends `expired` (hold released, usage absorbed, delivery `unsettled`), and the runtime then records once `delivered`, `undelivered`, or `no_billable_usage`, never a charge (service and `phase12_operation_guard`); late evidence is absorbed | `test_f1_a_renewed_lease_settles_a_response_delivered_after_the_original_deadline`; `test_f1_f4_a_response_after_the_lease_lapsed_is_kept_unbilled_whenever_cleanup_runs[2]`; `test_f4_an_expired_operation_keeps_late_evidence_and_records_one_answer_never_a_charge`; `test_renewal_is_a_heartbeat_that_never_shortens_or_revives_a_lease`; `test_postgres_f8_settlement_racing_expiration_has_exactly_one_outcome`; `test_postgres_an_expired_operation_records_one_delivery_answer_and_never_a_charge`; `test_postgres_migrated_lease_and_bounds_cannot_be_rewritten[5]` |
+| Exact costs (F5) and accurate absorbed cost (F2) | Costs recomputed from tokens and the bound rate entries with exact decimals (no rounding until the one whole-credit rounding per settlement); cost columns `NUMERIC(30,16)`; absorbed rows carry the exact `computed_cost_usd` and the unrecovered `absorbed_cost_usd` | `test_f5_settlement_uses_exact_token_costs_without_premature_rounding`; `test_f5_the_tool_loop_is_rounded_once_not_per_call`; `test_a_failed_supplement_caps_the_charge_and_absorbs_the_excess` |
+| Fallback charges only the delivering attempt; retries, tools, and context are one operation | `record_provider_call()` (attempt number, call index, component) | `test_fallback_charges_only_the_delivering_attempt_and_absorbs_the_failed_one`; `test_tool_loop_calls_settle_together_and_the_tool_bound_is_typed` |
+| Undelivered and failed attempts, uncertain usage, and usage above the cap are Jaspen-absorbed with evidence, never charged or dropped | `ai_absorbed_usage` (provider/model, request IDs, label, tokens, cost, reason, delivery and fallback status, dispute status) | `test_undelivered_response_charges_nothing_and_records_absorbed_evidence`; `test_uncertain_usage_is_never_charged[2]`; `test_a_failed_supplement_caps_the_charge_and_absorbs_the_excess` |
+| Cap by the reservation unless one atomic supplemental reservation succeeds | Supplement within the reservation's authorized ceiling (`reservation:<operation>:2:<lot>`) | `test_usage_above_the_hold_uses_one_atomic_supplemental_reservation` |
+| No provider-billable usage releases the exact reservation; a delivered response stays charged after a later failure; quality never matters | `release_without_billable_usage()`; delivery outcome recorded once | `test_no_billable_usage_releases_the_exact_reservation`; `test_a_delivered_response_stays_charged_when_a_later_step_fails`; `test_quality_or_satisfaction_cannot_reach_settlement` |
+| D22: capacity after the reservation, before execution; denial releases atomically, charges nothing, returns `available_again_at`; individual member allowances (rolling operation/token windows, concurrency) in every organization, optional organization limits in addition; tier priority; provider pressure; credits never bypass capacity (founder decision 2026-11-16); allowances per user per organization membership; token windows count only verified usage of delivered responses' delivering attempts, while failed and undelivered work counts toward operation windows and runaway bounds (founder decisions 2026-11-17) | `ai_capacity_decisions` (audit evidence, not ledger); rules schema `jaspen.capacity.v1` (member windows required; organization scope optional; a window may bound listed models' tokens) | `test_organization_window_denial_releases_the_reservation_and_charges_nothing`; `test_member_window_stops_one_member_monopolizing_the_organization`; `test_every_member_has_their_own_allowance_and_all_draw_on_the_shared_balance`; `test_a_single_member_organization_follows_the_same_individual_rules`; `test_token_windows_measure_delivered_verified_usage_never_credits_or_lost_work`; `test_failed_and_undelivered_requests_still_count_toward_request_limits`; `test_a_window_can_bound_tokens_of_listed_models_only`; `test_fair_use_policy_without_an_individual_allowance_fails_closed[5]`; `test_concurrency_limits_running_operations_until_one_finishes[2]`; `test_provider_pressure_denies_only_when_every_candidate_is_unavailable`; `test_purchased_balance_never_bypasses_capacity_or_a_restriction`; `test_the_highest_covered_tier_sets_priority`; `test_postgres_concurrent_window_authorizations_respect_the_organization_limit`; `test_postgres_f8_concurrent_operations_stop_at_each_members_own_limit`; `test_postgres_f8_concurrent_operations_respect_a_members_concurrency_limit` |
+| Runaway bounds: attempts, tool iterations, per-call and per-operation tokens (context growth, F6), duration, lease, reserved exposure; typed and resumable | `RunawayLimitError(resumable)`; authorization refuses an oversized request before any write; `check_provider_call()` is the pure pre-call check | `test_tool_loop_calls_settle_together_and_the_tool_bound_is_typed`; `test_f6_a_request_above_a_per_call_token_bound_is_refused_before_any_write[2]`; `test_f6_context_growth_stops_at_the_operation_token_bound_with_a_typed_outcome`; `test_capacity_policy_requires_every_runaway_bound[8]` |
+| D23: resume from the last settled step under a new authorization; a settled step is never repeated or charged twice | `ai_operation_checkpoints` (unique root and step) | `test_resume_continues_from_the_last_settled_step_and_never_repeats_it`; `test_a_concurrently_resumed_duplicate_step_is_absorbed_not_charged_twice`; `test_a_running_operation_cannot_be_resumed_and_lineage_stays_in_one_account` |
+| Tenant isolation and member eligibility | Operation organization is durable context, never a UI picker; active membership; member-attributed lots for that member only; scoped lots fail closed | `test_operations_are_isolated_between_organizations_and_members`; `test_lots_attributed_to_another_member_or_scoped_lots_are_not_spendable` |
+| Upstream: recurring expiry is not delayed by a hold | Phase 6 expiration consumes the reservation allocation; settlement uses only what remains | `test_phase6_expiry_of_a_held_lot_leaves_nothing_to_settle_and_the_usage_is_absorbed` |
+| Immutable evidence, single-path guards, READ COMMITTED, reversible migration | PostgreSQL guards and SQLite triggers; downgrade refuses while evidence exists | `test_postgres_migrated_direct_sql_cannot_rewrite_ai_billing_evidence[6]`; `test_postgres_migrated_guards_refuse_unbound_reservations_and_undelivered_settlements`; `test_postgres_migrated_commands_require_read_committed`; `test_sqlite_migration_matches_models_guards_and_downgrade_is_safe` |
+
+Deferred to activation or integration (no rule invented): the approved pricing
+version (rates and `credits_per_provider_usd`) and capacity version (windows,
+concurrency, priorities, runaway bounds); who may record a provider-dispute
+outcome on absorbed usage; scoped-lot eligibility semantics; abuse signals
+beyond billing-account status; queueing by priority; the 20% low-credit
+notice; Usage & Billing projections (Phase 13); and wiring the AI runtime
+(Phase 17). One literal consequence of D06 is recorded for founder
+confirmation: a delivered response whose usage is only estimated or unknown
+is not charged. The earlier second consequence (a response delivered after its
+reservation expired is absorbed in full) was superseded by the founder
+decision of 2026-11-16 and is no longer the behavior.
+
+**Mandatory activation gate — reliable delivery (Phase 17; founder decision
+2026-11-17).** Phase 12 billing stays inactive until a runtime integration
+meeting the criteria below is implemented and independently accepted. This
+is a gate, not optional future work. The legacy runtime was verified, not
+changed: the streaming routes debit legacy credits before the provider call
+and settle before the reply is saved; they neither settle, release, nor
+persist when the browser disconnects (`GeneratorExit` is not handled); and
+provider HTTP timeouts are static configuration with no coordination with any
+reservation.
+
+Interfaces Phase 12 provides to the integration: `preflight_ai_operation()`,
+`authorize_ai_operation()`, `check_provider_call()` (before every provider
+request), `record_provider_call()` (after every provider request, whatever its
+outcome), `renew_ai_operation_reservation()` (heartbeat),
+`settle_delivered_operation()`, `record_undelivered_operation()`,
+`release_without_billable_usage()`, and `expire_ai_operation()` (recovery
+sweep). Each is idempotent on replay and refuses a contradicting outcome.
+
+Acceptance criteria for the integration:
+1. The provider call, response persistence, and settlement run independently
+   of the client connection; a disconnect never cancels them.
+2. Every successful provider response is persisted durably before or
+   independently of settlement, and a completed response is recoverable by
+   the customer after a disconnect.
+3. The heartbeat renews the lease independently of the provider call, and the
+   approved capacity version's `reservation_lease_seconds` exceeds the
+   provider timeout plus the heartbeat interval, so a healthy operation's
+   lease never lapses while it waits.
+4. Settlement is retried until it records an outcome. A recovery sweep
+   settles persisted, unsettled responses (any worker may do this), and
+   expires only lapsed leases; a response found after a lapse is recorded as
+   delivered, never charged.
+5. No duplicate charge from retries, replays, late responses, cancellations,
+   restarts, or concurrent workers (proved by journey tests on PostgreSQL).
+6. Provider cost reconciles with customer charges: every recorded call is
+   either within a settlement or Jaspen-absorbed, and unknown or estimated
+   usage is never charged.
+7. `AIProviderAttempt` becomes append-only for Phase 12-bound operations (the
+   legacy `persist_operation()` deletes and recreates attempt rows), so
+   operational and financial evidence stay linked by `ai_operations.id` and
+   the provider request identifier.
+8. Organization and member authorization boundaries are preserved on every
+   path, including recovery.
+
+Local verification is not acceptance and does not authorize integration,
+deployment, or activation.
+
 ## D18 Phase dependency and cutover map
 
 The original 18 phases are the authoritative implementation sequence because
@@ -658,7 +751,7 @@ useful **program gates**, not a competing sequence. This map authorizes nothing.
 | 9 | Refunds, disputes, and purchases | 2D financial/ledger | Cumulative source-specific lifecycle and mixed-line tests pass. |
 | 10 | Trials, comps, and internal funding | 2D funding/admin | Approved offer/source/admin authority tests pass. |
 | 11 | Enterprise | 2D entitlement | Executed-contract evidence and no-unlimited-default tests pass; contract-backed terms, Stripe-verified funding, annual carryforward, term-bound packs (implemented locally, pending audit). |
-| 12 | AI reservations and settlements | 2D AI | Pricing/capacity binding, fallback, tools, checkpoint/resume, delivery-based billability, absorbed-usage evidence, and exact settlement tests pass. |
+| 12 | AI reservations and settlements | 2D AI | Pricing/capacity binding, fallback, tools, checkpoint/resume, delivery-based billability, absorbed-usage evidence, and exact settlement tests pass (implemented locally; audit findings remediated and 2026-11-17 decisions incorporated, pending targeted re-acceptance; activation gated on Phase 17 reliable delivery). |
 | 13 | Inventory and reconciliation | 2B | Pure projections, all writer/reader inventory, compatibility field proofs. |
 | 14 | Backfill | 2B/2C | Evidence-ranked deterministic migration; no unexplained account cut over. |
 | 15 | Local rehearsal | 2C | Exact reports, failure injection, downgrade/rollback, rerun no-op. |
