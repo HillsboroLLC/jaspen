@@ -9690,6 +9690,33 @@ def _infer_plan_origin(plan, candidates):
     return best_id, best_name
 
 
+def _apply_inferred_plan_identity(plan, inferred_id, inferred_name):
+    """Name a legacy or mis-stamped plan after the option its content names.
+
+    The one identity rule shared by the plan read (in its response only) and
+    the P2d legacy plan backfill (in storage): applies when an origin was
+    recovered and differs from the stamped name; resets a generic or
+    auto-generated plan name. Returns True when anything changed.
+    """
+    if not isinstance(plan, dict):
+        return False
+    current_sc_name = str(plan.get('scorecard_name') or '').strip()
+    current_name = str(plan.get('name') or '').strip()
+    if not inferred_name or inferred_name.lower() == current_sc_name.lower():
+        return False
+    plan['scorecard_name'] = inferred_name
+    plan['idea_name'] = inferred_name
+    if inferred_id:
+        plan['scorecard_id'] = inferred_id
+    if (
+        current_name.lower() in _GENERIC_WBS_NAMES
+        or current_name.endswith('— Execution Plan')
+        or current_name.endswith('- Execution Plan')
+    ):
+        plan['name'] = f'{inferred_name} — Execution Plan'
+    return True
+
+
 def _stamp_wbs_identity(normalized_wbs, scorecard, fallback_id=None):
     """Stamp the originating idea's id + name onto a plan so every plan — no
     matter where it was built — knows which idea it belongs to and can show
@@ -9706,6 +9733,62 @@ def _stamp_wbs_identity(normalized_wbs, scorecard, fallback_id=None):
         if current_name.lower() in _GENERIC_WBS_NAMES:
             normalized_wbs['name'] = f'{idea_name} — Execution Plan'
     return normalized_wbs
+
+
+def _with_execution_plan_artifact(history, normalized_wbs, now_iso):
+    """Return ``history`` with ``normalized_wbs`` registered as its option's
+    execution_plan artifact: any prior plan artifact for the same option, or
+    with the same task list under a churned id, is replaced. Pure; the caller
+    saves. Shared by _register_execution_plan_artifact and the P2d backfill."""
+    raw = history if isinstance(history, list) else []
+    sid = str(normalized_wbs.get('scorecard_id') or '').strip()
+    idea_name = str(normalized_wbs.get('scorecard_name') or normalized_wbs.get('idea_name') or '').strip()
+    task_count = len(normalized_wbs.get('tasks') or [])
+
+    def _plan_signature(plan):
+        """A content fingerprint so plans built across id churn (the same
+        task list re-stamped with a different scorecard_id) are recognized as
+        the SAME plan and don't stack as duplicate artifacts."""
+        try:
+            names = [
+                str((t or {}).get('title') or (t or {}).get('name') or '').strip().lower()
+                for t in (plan.get('tasks') or [])
+                if isinstance(t, dict)
+            ]
+            names = [n for n in names if n]
+            return tuple(names[:12])
+        except Exception:
+            return tuple()
+
+    new_sig = _plan_signature(normalized_wbs)
+
+    kept = []
+    for msg in raw:
+        if isinstance(msg, dict):
+            art = msg.get('artifact') if isinstance(msg.get('artifact'), dict) else None
+            if art and str(art.get('type') or '') == 'execution_plan':
+                art_data = art.get('data') or {}
+                art_sid = str(art_data.get('scorecard_id') or '').strip()
+                if sid and art_sid == sid:
+                    continue  # drop the stale plan for this same idea
+                # Same content under a different (churned) id is still a dup.
+                if new_sig and _plan_signature(art_data) == new_sig:
+                    continue
+        kept.append(msg)
+
+    label = idea_name or 'this idea'
+    plural = '' if task_count == 1 else 's'
+    kept.append({
+        'role': 'assistant',
+        'content': (
+            f'Execution plan ready for "{label}" — {task_count} task{plural}. '
+            'Open the Execution view to review the list, board, and timeline.'
+        ),
+        'text': f'Execution plan ready for "{label}" — {task_count} task{plural}.',
+        'artifact': {'type': 'execution_plan', 'data': normalized_wbs},
+        'timestamp': now_iso,
+    })
+    return kept
 
 
 def _register_execution_plan_artifact(user_id, thread_id, normalized_wbs):
@@ -9727,54 +9810,8 @@ def _register_execution_plan_artifact(user_id, thread_id, normalized_wbs):
                 if isinstance(result_blob, dict) and isinstance(result_blob.get('chat_history'), list)
                 else []
             )
-        sid = str(normalized_wbs.get('scorecard_id') or '').strip()
-        idea_name = str(normalized_wbs.get('scorecard_name') or normalized_wbs.get('idea_name') or '').strip()
-        task_count = len(normalized_wbs.get('tasks') or [])
         now_iso = datetime.utcnow().isoformat()
-
-        def _plan_signature(plan):
-            """A content fingerprint so plans built across id churn (the same
-            task list re-stamped with a different scorecard_id) are recognized as
-            the SAME plan and don't stack as duplicate artifacts."""
-            try:
-                names = [
-                    str((t or {}).get('title') or (t or {}).get('name') or '').strip().lower()
-                    for t in (plan.get('tasks') or [])
-                    if isinstance(t, dict)
-                ]
-                names = [n for n in names if n]
-                return tuple(names[:12])
-            except Exception:
-                return tuple()
-
-        new_sig = _plan_signature(normalized_wbs)
-
-        kept = []
-        for msg in raw:
-            if isinstance(msg, dict):
-                art = msg.get('artifact') if isinstance(msg.get('artifact'), dict) else None
-                if art and str(art.get('type') or '') == 'execution_plan':
-                    art_data = art.get('data') or {}
-                    art_sid = str(art_data.get('scorecard_id') or '').strip()
-                    if sid and art_sid == sid:
-                        continue  # drop the stale plan for this same idea
-                    # Same content under a different (churned) id is still a dup.
-                    if new_sig and _plan_signature(art_data) == new_sig:
-                        continue
-            kept.append(msg)
-
-        label = idea_name or 'this idea'
-        plural = '' if task_count == 1 else 's'
-        kept.append({
-            'role': 'assistant',
-            'content': (
-                f'Execution plan ready for "{label}" — {task_count} task{plural}. '
-                'Open the Execution view to review the list, board, and timeline.'
-            ),
-            'text': f'Execution plan ready for "{label}" — {task_count} task{plural}.',
-            'artifact': {'type': 'execution_plan', 'data': normalized_wbs},
-            'timestamp': now_iso,
-        })
+        kept = _with_execution_plan_artifact(raw, normalized_wbs, now_iso)
         session['chat_history'] = kept
         if isinstance(session.get('result'), dict):
             session['result']['chat_history'] = kept
@@ -9815,19 +9852,7 @@ def get_thread_wbs(thread_id):
         # content, which the WBS generator seeds with the originating idea's name.
         if isinstance(project_wbs, dict) and (project_wbs.get('tasks') or []):
             inferred_id, inferred_name = _infer_plan_origin(project_wbs, candidates)
-            current_sc_name = str(project_wbs.get('scorecard_name') or '').strip()
-            current_name = str(project_wbs.get('name') or '').strip()
-            if inferred_name and inferred_name.lower() != current_sc_name.lower():
-                project_wbs['scorecard_name'] = inferred_name
-                project_wbs['idea_name'] = inferred_name
-                if inferred_id:
-                    project_wbs['scorecard_id'] = inferred_id
-                if (
-                    current_name.lower() in _GENERIC_WBS_NAMES
-                    or current_name.endswith('— Execution Plan')
-                    or current_name.endswith('- Execution Plan')
-                ):
-                    project_wbs['name'] = f'{inferred_name} — Execution Plan'
+            _apply_inferred_plan_identity(project_wbs, inferred_id, inferred_name)
 
         # When the caller didn't scope by ?scorecard_id (legacy __execution__
         # route), surface the idea this stored plan belongs to so the workspace

@@ -766,4 +766,34 @@ def create_app():
         result = backfill_decision_intelligence(dry_run=dry_run)
         click.echo(json.dumps({"dry_run": bool(dry_run), **result}, sort_keys=True))
 
+    @app.cli.group("legacy-plans")
+    def legacy_plans_cli():
+        """P2d legacy plan identifier maintenance (one-time)."""
+
+    @legacy_plans_cli.command("backfill")
+    @click.option("--dry-run", "mode", flag_value="dry_run", default=True,
+                  help="Report what would change and write nothing (the default).")
+    @click.option("--write", "mode", flag_value="write",
+                  help="Write the changes. Needs --before-image.")
+    @click.option("--rollback", "rollback_file", default=None,
+                  help="Restore the before-images in this file (dry run unless --write).")
+    @click.option("--before-image", "before_image", default=None,
+                  help="New file to record before-images in, for a write run.")
+    @click.option("--organization", "organization_id", default=None,
+                  help="Limit the job to one organization's projects.")
+    def legacy_plans_backfill_cli(mode, rollback_file, before_image, organization_id):
+        """Re-key legacy plans, register missing plan artifacts, remove orphans."""
+        from app.legacy_plan_backfill import backfill_legacy_plans, rollback_legacy_plans
+
+        write = mode == "write"
+        if rollback_file:
+            result = rollback_legacy_plans(rollback_file, write=write)
+        else:
+            if write and not before_image:
+                raise click.UsageError("--write needs --before-image <new file>.")
+            result = backfill_legacy_plans(
+                write=write, organization_id=organization_id, before_image_path=before_image,
+            )
+        click.echo(json.dumps(result, sort_keys=True, default=str, indent=2))
+
     return app
