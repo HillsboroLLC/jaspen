@@ -61,6 +61,9 @@ from app.ai_governance import (
     shadow_comparison,
 )
 from app.ai_audit import attach_governance, persist_operation
+from app.ai_providers import anthropic as anthropic_provider
+from app.ai_providers import gemini as gemini_provider
+from app.ai_providers.usage import reported_error_usage
 from app.ai_runtime import (
     AIOperationPaymentRequired,
     execute_customer_operation,
@@ -845,7 +848,6 @@ _SYSTEM_PROMPT_LEAK_FRAGMENTS = [
     "_context_summary_prompt_suffix",
     "_intake_context_prompt_suffix",
 ]
-_GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 _ROUTING_MATRIX = {
     "pluto": {
         # Keep Pluto anchored to its linked backbone model first, then fallback.
@@ -3293,46 +3295,11 @@ def _serialize_chat_attachment(attachment):
 
 
 def _conversation_attachment_blocks(attachments):
-    blocks = []
-    for attachment in attachments if isinstance(attachments, list) else []:
-        if not isinstance(attachment, dict):
-            continue
-        encoded = str(attachment.get("data") or "").strip()
-        media_type = str(attachment.get("type") or "").strip()
-        kind = str(attachment.get("kind") or "").strip().lower()
-        if not encoded or not media_type or not kind:
-            continue
-        if kind == "image":
-            blocks.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": encoded,
-                },
-            })
-        elif kind == "pdf":
-            blocks.append({
-                "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": encoded,
-                },
-            })
-        elif kind in ("word", "data"):
-            extracted_text = str(attachment.get("text_content") or "").strip()
-            attachment_name = _safe_attachment_name(attachment.get("name") or "document")
-            label = "Word Document" if kind == "word" else "Uploaded File (cell/row content)"
-            if extracted_text:
-                blocks.append({
-                    "type": "text",
-                    "text": (
-                        f"[{label}: {attachment_name}]\n"
-                        f"{extracted_text[:MAX_CONVERSATION_ATTACHMENT_TEXT_CHARS]}"
-                    ),
-                })
-    return blocks
+    return anthropic_provider.attachment_blocks(
+        attachments,
+        safe_name=_safe_attachment_name,
+        max_text_chars=MAX_CONVERSATION_ATTACHMENT_TEXT_CHARS,
+    )
 
 
 def _turn_capture_note():
@@ -5155,21 +5122,17 @@ def _generate_routed_chat_reply(
                     stream=False,
                 )
                 payload = response.json()
-                choice = ((payload.get("choices") or [{}])[0]) if isinstance(payload, dict) else {}
-                message = choice.get("message") if isinstance(choice, dict) else {}
-                message = message if isinstance(message, dict) else {}
-                reply = str(message.get("content") or "").strip()
+                choice, message = gemini_provider.first_choice(payload)
+                reply = gemini_provider.message_text(message)
                 if not reply:
                     raise ValueError("invalid_response")
                 usage = _openai_usage_to_internal(payload.get("usage"), provider="gemini", model=route["model"])
-                usage["stop_reason"] = str(choice.get("finish_reason") or "").strip() or None
+                usage["stop_reason"] = gemini_provider.finish_reason(choice)
             else:
                 api_key = _anthropic_api_key()
                 if not api_key:
                     raise RuntimeError("ANTHROPIC_API_KEY not configured")
-                import anthropic
-
-                client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
+                client = anthropic_provider.create_client(api_key)
                 anthropic_request = {
                     "max_tokens": max(200, int(max_tokens or 700)),
                     "system": system_prompt,
@@ -5188,18 +5151,7 @@ def _generate_routed_chat_reply(
                 reply = _anthropic_response_text(response)
                 if not reply:
                     raise ValueError("invalid_response")
-                usage = {
-                    "input_tokens": int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0),
-                    "output_tokens": int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0),
-                    "total_tokens": int(
-                        (int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0))
-                        + (int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0))
-                    ),
-                    "provider": "anthropic",
-                    "model": actual_model,
-                    "stop_reason": str(getattr(response, "stop_reason", "") or "").strip() or None,
-                    "refused": str(getattr(response, "stop_reason", "") or "").lower() == "refusal",
-                }
+                usage = anthropic_provider.reply_usage(response, model=actual_model)
 
             usage = _attach_failover_usage(
                 usage,
@@ -5256,154 +5208,59 @@ def _generate_routed_chat_reply(
 
 
 def _openai_tools_from_anthropic(enable_mutation_tools=False, user_id=None, plan_key="free", include_capture_tools=True):
-    tools = []
-    for item in _anthropic_tool_definitions(
+    return gemini_provider.tools_from_definitions(_anthropic_tool_definitions(
         enable_mutation_tools=enable_mutation_tools,
         user_id=user_id,
         plan_key=plan_key,
         include_capture_tools=include_capture_tools,
-    ):
-        if not isinstance(item, dict):
-            continue
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": item.get("name"),
-                "description": item.get("description"),
-                "parameters": item.get("input_schema") or {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": False,
-                },
-            },
-        })
-    return tools
+    ))
 
 
 def _openai_messages_from_history(messages):
-    output = []
-    for item in messages or []:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "").strip().lower()
-        content = item.get("content")
-        text_content = _message_text(item)
-        if role not in {"assistant", "user", "tool"}:
-            continue
-        if isinstance(content, str):
-            payload = {
-                "role": role,
-                "content": text_content if role != "user" else _wrap_user_message_content(_unwrap_user_message_content(text_content)),
-            }
-            if role == "assistant" and isinstance(item.get("tool_calls"), list):
-                payload["tool_calls"] = item.get("tool_calls")
-            if role == "tool" and item.get("tool_call_id"):
-                payload["tool_call_id"] = item.get("tool_call_id")
-            output.append(payload)
-            continue
-        if role == "assistant" and isinstance(content, list):
-            assistant_text = _anthropic_text(content)
-            if assistant_text:
-                output.append({"role": "assistant", "content": assistant_text})
-    return output
-
-
-def _anthropic_request_timeout_seconds():
-    value = (
-        current_app.config.get("AI_AGENT_ANTHROPIC_TIMEOUT_SECONDS")
-        or os.getenv("AI_AGENT_ANTHROPIC_TIMEOUT_SECONDS")
-        or 60
+    return gemini_provider.messages_from_history(
+        messages,
+        message_text=_message_text,
+        user_content=lambda text: _wrap_user_message_content(_unwrap_user_message_content(text)),
     )
-    try:
-        return max(5.0, float(value))
-    except Exception:
-        return 60.0
 
 
-def _gemini_request_timeouts():
-    connect_value = (
-        current_app.config.get("AI_AGENT_GEMINI_CONNECT_TIMEOUT_SECONDS")
-        or os.getenv("AI_AGENT_GEMINI_CONNECT_TIMEOUT_SECONDS")
-        or 20
-    )
-    read_value = (
-        current_app.config.get("AI_AGENT_GEMINI_READ_TIMEOUT_SECONDS")
-        or os.getenv("AI_AGENT_GEMINI_READ_TIMEOUT_SECONDS")
-        or 60
-    )
-    try:
-        connect_timeout = max(5.0, float(connect_value))
-    except Exception:
-        connect_timeout = 20.0
-    try:
-        read_timeout = max(5.0, float(read_value))
-    except Exception:
-        read_timeout = 60.0
-    return (connect_timeout, read_timeout)
+# Provider code lives in app/ai_providers (P5a). The old names below stay so
+# existing imports keep working until P9 retires them.
+#
+# Patch points that still work: _anthropic_message_create,
+# _gemini_openai_request, _openai_messages_from_history,
+# _conversation_attachment_blocks, _anthropic_response_text,
+# _openai_usage_to_internal, _anthropic_api_key, _gemini_api_key. Callers in
+# this module look these names up here, so a monkeypatch of the name changes
+# what the turn does.
+#
+# Compatibility names only (a monkeypatch does NOT reach the provider code
+# that uses them): _anthropic_text, _anthropic_model_accepts_temperature (it
+# still controls the routed reply's temperature here, but not
+# message_create's), _anthropic_request_timeout_seconds,
+# _gemini_request_timeouts, _anthropic_content_to_dicts,
+# _parse_openai_tool_call_arguments. Patch the function in
+# app.ai_providers instead. tests/test_ai_providers.py checks no test relies
+# on patching these.
+_anthropic_request_timeout_seconds = anthropic_provider.request_timeout_seconds
+_gemini_request_timeouts = gemini_provider.request_timeouts
 
 
 def _gemini_openai_request(*, model_name, system_prompt, messages, tools, max_tokens, temperature, stream=False):
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            *(_openai_messages_from_history(messages)),
-        ],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if tools:
-        payload["tools"] = tools
-        payload["tool_choice"] = "auto"
-    if stream:
-        payload["stream"] = True
-        payload["stream_options"] = {"include_usage": True}
-
-    response = requests.post(
-        _GEMINI_OPENAI_BASE_URL,
-        headers={
-            "Authorization": f"Bearer {_gemini_api_key()}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=_gemini_request_timeouts(),
+    return gemini_provider.chat_completion(
+        model_name=model_name,
+        system_prompt=system_prompt,
+        messages=_openai_messages_from_history(messages),
+        tools=tools,
+        max_tokens=max_tokens,
+        temperature=temperature,
         stream=stream,
+        api_key=_gemini_api_key(),
     )
-    response.raise_for_status()
-    return response
 
 
-def _parse_openai_tool_call_arguments(raw_arguments):
-    text = str(raw_arguments or "").strip()
-    if not text:
-        return {}
-    try:
-        data = json.loads(text)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _openai_usage_to_internal(usage, *, provider, model):
-    usage = usage if isinstance(usage, dict) else {}
-    input_tokens = int(
-        usage.get("prompt_tokens")
-        or usage.get("input_tokens")
-        or 0
-    )
-    output_tokens = int(
-        usage.get("completion_tokens")
-        or usage.get("output_tokens")
-        or 0
-    )
-    total_tokens = int(usage.get("total_tokens") or (input_tokens + output_tokens))
-    return {
-        "provider": provider,
-        "model": model,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "total_tokens": total_tokens,
-    }
+_parse_openai_tool_call_arguments = gemini_provider.parse_tool_call_arguments
+_openai_usage_to_internal = gemini_provider.usage_to_internal
 
 
 def _merge_usage_totals(base_usage, extra_usage):
@@ -5437,15 +5294,7 @@ def _attach_failover_usage(usage, *, attempted_providers=None, final_provider=No
 def _failed_attempt_cost_fields(exc, *, model, estimated_input_tokens, estimated_output_tokens,
                                 estimate_method):
     """Prefer provider-reported failed usage; otherwise record a conservative estimate."""
-    usage = getattr(exc, 'usage', None)
-    if usage is None:
-        usage = getattr(getattr(exc, 'response', None), 'usage', None)
-    if isinstance(usage, dict):
-        input_tokens = usage.get('input_tokens') or usage.get('prompt_tokens')
-        output_tokens = usage.get('output_tokens') or usage.get('completion_tokens')
-    else:
-        input_tokens = getattr(usage, 'input_tokens', None) if usage is not None else None
-        output_tokens = getattr(usage, 'output_tokens', None) if usage is not None else None
+    input_tokens, output_tokens = reported_error_usage(exc)
     if input_tokens is not None or output_tokens is not None:
         input_tokens = max(0, int(input_tokens or 0))
         output_tokens = max(0, int(output_tokens or 0))
@@ -8863,9 +8712,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         decision=governance_decision, legacy_routes=legacy_routes, operation_type="decision_capture",
     )
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
+        client = anthropic_provider.create_client(api_key)
         forced = not str(model_name).lower().startswith(("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-mythos-5-1"))
         response, resolved = _anthropic_message_create(
             client,
@@ -8878,8 +8725,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
             messages=[{"role": "user", "content": user_content}],
         )
         usage["model"] = resolved
-        usage["input_tokens"] = int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0)
-        usage["output_tokens"] = int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0)
+        usage["input_tokens"], usage["output_tokens"] = anthropic_provider.usage_counts(response)
     except Exception:
         current_app.logger.exception("turn capture call failed thread=%s", thread_id)
         return {**empty, "summary": {"capture_unavailable": True}}
@@ -11710,44 +11556,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
     return _tool_error(f"Unsupported tool '{tool_name}'.", code="unknown_tool")
 
 
-def _anthropic_content_to_dicts(content_blocks):
-    """Normalize SDK content blocks to dicts containing ONLY the canonical
-    fields the Anthropic API accepts on round-trip. model_dump() can include
-    extra fields (e.g. parsed_output on newer Haiku models) that the API
-    rejects with 'Extra inputs are not permitted'."""
-    normalized = []
-    for block in (content_blocks or []):
-        block_type = (
-            block.get("type") if isinstance(block, dict)
-            else getattr(block, "type", "text")
-        )
-        if block_type == "text":
-            text_val = (
-                block.get("text") if isinstance(block, dict)
-                else getattr(block, "text", "")
-            )
-            normalized.append({"type": "text", "text": str(text_val or "")})
-        elif block_type == "tool_use":
-            tu_id = block.get("id") if isinstance(block, dict) else getattr(block, "id", None)
-            tu_name = block.get("name") if isinstance(block, dict) else getattr(block, "name", None)
-            tu_input = block.get("input") if isinstance(block, dict) else getattr(block, "input", None)
-            normalized.append({
-                "type": "tool_use",
-                "id": tu_id,
-                "name": tu_name,
-                "input": tu_input if isinstance(tu_input, (dict, list)) else {},
-            })
-        elif block_type == "tool_result":
-            tr_id = block.get("tool_use_id") if isinstance(block, dict) else getattr(block, "tool_use_id", None)
-            tr_content = block.get("content") if isinstance(block, dict) else getattr(block, "content", "")
-            normalized.append({
-                "type": "tool_result",
-                "tool_use_id": tr_id,
-                "content": tr_content if isinstance(tr_content, str) else json.dumps(tr_content),
-            })
-        # silently drop unknown block types (thinking, etc.) — they aren't
-        # accepted as input by the API anyway
-    return normalized
+_anthropic_content_to_dicts = anthropic_provider.content_to_dicts
 
 
 def _entitlement_plan_key(user):
@@ -11776,28 +11585,8 @@ def _entitlement_plan_key(user):
     return to_public_plan(getattr(user, "subscription_plan", None))
 
 
-def _anthropic_text(content_blocks):
-    out = []
-    for block in (content_blocks or []):
-        if isinstance(block, dict):
-            if block.get("type") == "text" and block.get("text"):
-                out.append(str(block.get("text")))
-            continue
-        if getattr(block, "type", None) == "text":
-            text = getattr(block, "text", "")
-            if text:
-                out.append(str(text))
-    return "\n".join(out).strip()
-
-
-def _anthropic_response_text(response):
-    """Return visible text while treating an HTTP-200 refusal as a result."""
-    text = _anthropic_text(getattr(response, "content", None))
-    if text:
-        return text
-    if str(getattr(response, "stop_reason", "") or "").strip().lower() == "refusal":
-        return "I’m unable to help with that request."
-    return ""
+_anthropic_text = anthropic_provider.text
+_anthropic_response_text = anthropic_provider.response_text
 
 
 def _sse_payload(payload):
@@ -11805,47 +11594,15 @@ def _sse_payload(payload):
 
 
 def _anthropic_message_create(client, *, model_name, stream=False, strict_model=False, **kwargs):
-    last_error = None
     candidates = (
         [_anthropic_model_for_selection({"llm_model": model_name})]
         if strict_model
         else _anthropic_model_candidates(model_name)
     )
-    for candidate in candidates:
-        if not candidate:
-            continue
-        try:
-            request_kwargs = dict(kwargs)
-            if not _anthropic_model_accepts_temperature(candidate):
-                request_kwargs.pop("temperature", None)
-                request_kwargs.pop("top_p", None)
-                request_kwargs.pop("top_k", None)
-            if str(candidate).strip().lower().startswith("claude-sonnet-5"):
-                # Preserve pre-migration latency, output budgets, and economics.
-                # Adaptive thinking can be benchmarked and enabled separately.
-                request_kwargs["thinking"] = {"type": "disabled"}
-            if stream:
-                return client.messages.stream(model=candidate, **request_kwargs), candidate
-            return client.messages.create(model=candidate, **request_kwargs), candidate
-        except Exception as exc:
-            last_error = exc
-            continue
-    if last_error:
-        raise last_error
-    raise RuntimeError("No valid Anthropic model candidates configured")
+    return anthropic_provider.message_create(client, candidates=candidates, stream=stream, **kwargs)
 
 
-def _anthropic_model_accepts_temperature(model_name):
-    """Return False for current Claude generations that reject temperature."""
-    normalized = str(model_name or "").strip().lower()
-    return not (
-        normalized.startswith("claude-sonnet-5")
-        or normalized.startswith("claude-fable-5")
-        or normalized.startswith("claude-opus-4-7")
-        or normalized.startswith("claude-opus-4-8")
-        or normalized.startswith("claude-opus-5")
-        or normalized.startswith("claude-mythos-5")
-    )
+_anthropic_model_accepts_temperature = anthropic_provider.model_accepts_temperature
 
 
 def _generate_assistant_reply_anthropic(
@@ -11871,7 +11628,7 @@ def _generate_assistant_reply_anthropic(
         return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
 
     try:
-        import anthropic
+        anthropic_provider.load_sdk()
     except Exception:
         return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
 
@@ -11912,7 +11669,7 @@ def _generate_assistant_reply_anthropic(
     elif not messages:
         messages = [{"role": "user", "content": user_content}]
 
-    client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
+    client = anthropic_provider.create_client(api_key)
     can_mutate = (
         not disable_mutations
         and bool(thread_id)
@@ -11950,26 +11707,19 @@ def _generate_assistant_reply_anthropic(
             tools=tools,
             messages=messages,
         )
-        total_input_tokens += int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0)
-        total_output_tokens += int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0)
+        response_input_tokens, response_output_tokens = anthropic_provider.usage_counts(response)
+        total_input_tokens += response_input_tokens
+        total_output_tokens += response_output_tokens
 
         # Tool loop: allow Claude to call local readiness/data-contract tools.
         for _ in range(3):
-            tool_blocks = [b for b in (response.content or []) if getattr(b, "type", None) == "tool_use" or (isinstance(b, dict) and b.get("type") == "tool_use")]
+            tool_blocks = anthropic_provider.tool_use_blocks(response.content)
             if not tool_blocks:
                 break
 
             tool_results = []
             for block in tool_blocks:
-                if isinstance(block, dict):
-                    tool_name = str(block.get("name") or "").strip()
-                    tool_use_id = block.get("id")
-                    tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
-                else:
-                    tool_name = str(getattr(block, "name", "") or "").strip()
-                    tool_use_id = getattr(block, "id", None)
-                    raw_input = getattr(block, "input", None)
-                    tool_input = raw_input if isinstance(raw_input, dict) else {}
+                tool_name, tool_use_id, tool_input = anthropic_provider.tool_use_call(block)
 
                 is_mutation = _is_mutation_tool(tool_name)
                 if is_mutation:
@@ -12009,14 +11759,9 @@ def _generate_assistant_reply_anthropic(
                         "error": result_payload.get("error"),
                         "code": result_payload.get("code"),
                     })
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "content": json.dumps(result_payload),
-                })
+                tool_results.append(anthropic_provider.tool_result_block(tool_use_id, result_payload))
 
-            messages.append({"role": "assistant", "content": _anthropic_content_to_dicts(response.content)})
-            messages.append({"role": "user", "content": tool_results})
+            messages.extend(anthropic_provider.tool_round_messages(response.content, tool_results))
             response, resolved_model_name = _anthropic_message_create(
                 client,
                 model_name=model_name,
@@ -12026,8 +11771,9 @@ def _generate_assistant_reply_anthropic(
                 tools=tools,
                 messages=messages,
             )
-            total_input_tokens += int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0)
-            total_output_tokens += int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0)
+            response_input_tokens, response_output_tokens = anthropic_provider.usage_counts(response)
+            total_input_tokens += response_input_tokens
+            total_output_tokens += response_output_tokens
 
         if not _anthropic_response_text(response).strip() and not _has_successful_mutations(executed_mutations):
             raise ValueError("invalid_response")
@@ -12112,7 +11858,7 @@ def _stream_assistant_reply_events_anthropic(
         return
 
     try:
-        import anthropic
+        anthropic_provider.load_sdk()
     except Exception:
         yield {"type": "delta", "text": fallback_reply}
         return
@@ -12154,7 +11900,7 @@ def _stream_assistant_reply_events_anthropic(
     elif not messages:
         messages = [{"role": "user", "content": user_content}]
 
-    client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
+    client = anthropic_provider.create_client(api_key)
     can_mutate = (
         not disable_mutations
         and bool(thread_id)
@@ -12197,29 +11943,23 @@ def _stream_assistant_reply_events_anthropic(
                 messages=messages,
             )
             with manager as stream:
-                for event in stream:
-                    if event.type == "content_block_delta" and getattr(event.delta, "type", None) == "text_delta":
-                        text = str(getattr(event.delta, "text", "") or "")
-                        if text:
-                            if _scoring_outcome_card_action(executed_actions):
-                                continue
-                            candidate_reply = "".join(streamed_reply_parts) + text
-                            if _check_response_for_leak(candidate_reply):
-                                leak_detected = True
-                                current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
-                                continue
-                            streamed_reply_parts.append(text)
-                            yield {"type": "delta", "text": text}
+                for text in anthropic_provider.iter_text_deltas(stream):
+                    if _scoring_outcome_card_action(executed_actions):
+                        continue
+                    candidate_reply = "".join(streamed_reply_parts) + text
+                    if _check_response_for_leak(candidate_reply):
+                        leak_detected = True
+                        current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
+                        continue
+                    streamed_reply_parts.append(text)
+                    yield {"type": "delta", "text": text}
                 final_message = stream.get_final_message()
 
-            usage = getattr(final_message, "usage", None)
-            total_input_tokens += int(getattr(usage, "input_tokens", 0) or 0)
-            total_output_tokens += int(getattr(usage, "output_tokens", 0) or 0)
+            message_input_tokens, message_output_tokens = anthropic_provider.usage_counts(final_message)
+            total_input_tokens += message_input_tokens
+            total_output_tokens += message_output_tokens
 
-            tool_blocks = [
-                block for block in (getattr(final_message, "content", None) or [])
-                if getattr(block, "type", None) == "tool_use" or (isinstance(block, dict) and block.get("type") == "tool_use")
-            ]
+            tool_blocks = anthropic_provider.tool_use_blocks(getattr(final_message, "content", None))
             if not tool_blocks:
                 if not _anthropic_response_text(final_message).strip() and not _has_successful_mutations(executed_mutations):
                     raise ValueError("invalid_response")
@@ -12248,15 +11988,7 @@ def _stream_assistant_reply_events_anthropic(
 
             tool_results = []
             for block in tool_blocks:
-                if isinstance(block, dict):
-                    tool_name = str(block.get("name") or "").strip()
-                    tool_use_id = block.get("id")
-                    tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
-                else:
-                    tool_name = str(getattr(block, "name", "") or "").strip()
-                    tool_use_id = getattr(block, "id", None)
-                    raw_input = getattr(block, "input", None)
-                    tool_input = raw_input if isinstance(raw_input, dict) else {}
+                tool_name, tool_use_id, tool_input = anthropic_provider.tool_use_call(block)
 
                 yield {"type": "tool_use", "tool": tool_name, "input": tool_input}
                 is_mutation = _is_mutation_tool(tool_name)
@@ -12298,14 +12030,9 @@ def _stream_assistant_reply_events_anthropic(
                         "code": result_payload.get("code"),
                     })
                 yield {"type": "tool_result", "tool": tool_name, "result": result_payload}
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "content": json.dumps(result_payload),
-                })
+                tool_results.append(anthropic_provider.tool_result_block(tool_use_id, result_payload))
 
-            messages.append({"role": "assistant", "content": _anthropic_content_to_dicts(getattr(final_message, "content", None))})
-            messages.append({"role": "user", "content": tool_results})
+            messages.extend(anthropic_provider.tool_round_messages(getattr(final_message, "content", None), tool_results))
         reply = _finalize_agent_reply(
             "" if leak_detected else "".join(streamed_reply_parts).strip(),
             fallback_reply,
@@ -12351,7 +12078,7 @@ def _stream_assistant_reply_events_anthropic(
                     "degraded": True, "error_code": "narration_failed",
                 "provider": "anthropic",
                     "model": resolved_model_name,
-                    "refused": str(getattr(final_message, "stop_reason", "") or "").lower() == "refusal",
+                    "refused": anthropic_provider.is_refusal(final_message),
                     "input_tokens": total_input_tokens,
                     "output_tokens": total_output_tokens,
                     "total_tokens": total_input_tokens + total_output_tokens,
@@ -12483,11 +12210,9 @@ def _generate_assistant_reply_gemini(
                 total_usage,
                 _openai_usage_to_internal(payload.get("usage"), provider="gemini", model=model_name),
             )
-            choice = ((payload.get("choices") or [{}])[0]) if isinstance(payload, dict) else {}
-            message = choice.get("message") if isinstance(choice, dict) else {}
-            message = message if isinstance(message, dict) else {}
-            tool_calls = message.get("tool_calls") if isinstance(message.get("tool_calls"), list) else []
-            assistant_text = str(message.get("content") or "").strip()
+            choice, message = gemini_provider.first_choice(payload)
+            tool_calls = gemini_provider.message_tool_calls(message)
+            assistant_text = gemini_provider.message_text(message)
 
             if not tool_calls:
                 if not assistant_text and not _has_successful_mutations(executed_mutations):
@@ -12504,16 +12229,10 @@ def _generate_assistant_reply_gemini(
                 total_usage["model"] = model_name
                 return reply, total_usage, executed_actions, executed_mutations, undo_snapshot
 
-            openai_messages.append({
-                "role": "assistant",
-                "content": message.get("content"),
-                "tool_calls": tool_calls,
-            })
+            openai_messages.append(gemini_provider.assistant_tool_call_message(message.get("content"), tool_calls))
 
             for tool_call in tool_calls:
-                function = tool_call.get("function") if isinstance(tool_call, dict) else {}
-                tool_name = str((function or {}).get("name") or "").strip()
-                tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
+                tool_name, tool_input = gemini_provider.tool_call_request(tool_call)
                 undo_snapshot = _maybe_capture_turn_undo_snapshot(
                     undo_snapshot,
                     tool_name=tool_name,
@@ -12550,11 +12269,7 @@ def _generate_assistant_reply_gemini(
                         "error": result_payload.get("error"),
                         "code": result_payload.get("code"),
                     })
-                openai_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.get("id"),
-                    "content": json.dumps(result_payload),
-                })
+                openai_messages.append(gemini_provider.tool_result_message(tool_call, result_payload))
     except Exception:
         current_app.logger.exception("ai_agent gemini generation failed")
         if _has_successful_mutations(executed_mutations):
@@ -12690,23 +12405,13 @@ def _stream_assistant_reply_events_gemini(
                 temperature=temperature,
                 stream=True,
             )
-            for raw_line in response.iter_lines(decode_unicode=True):
-                line = str(raw_line or "").strip()
-                if not line.startswith("data:"):
+            for payload in gemini_provider.iter_stream_payloads(response):
+                chunk_usage, delta = gemini_provider.stream_chunk(payload)
+                if chunk_usage is not None:
+                    usage_payload = chunk_usage
+                if delta is None:
                     continue
-                data_text = line[5:].strip()
-                if not data_text or data_text == "[DONE]":
-                    continue
-                payload = json.loads(data_text)
-                if isinstance(payload.get("usage"), dict):
-                    usage_payload = payload.get("usage") or {}
-                choices = payload.get("choices") if isinstance(payload, dict) else None
-                if not isinstance(choices, list) or not choices:
-                    continue
-                delta = (choices[0] or {}).get("delta") if isinstance(choices[0], dict) else {}
-                if not isinstance(delta, dict):
-                    continue
-                text = str(delta.get("content") or "")
+                text = gemini_provider.delta_text(delta)
                 if text:
                     if _scoring_outcome_card_action(executed_actions):
                         continue
@@ -12716,20 +12421,8 @@ def _stream_assistant_reply_events_gemini(
                         continue
                     streamed_parts.append(text)
                     yield {"type": "delta", "text": text}
-                for tool_delta in delta.get("tool_calls") if isinstance(delta.get("tool_calls"), list) else []:
-                    idx = int(tool_delta.get("index", len(tool_calls_by_index)))
-                    existing = tool_calls_by_index.setdefault(idx, {
-                        "id": tool_delta.get("id"),
-                        "type": "function",
-                        "function": {"name": "", "arguments": ""},
-                    })
-                    if tool_delta.get("id"):
-                        existing["id"] = tool_delta.get("id")
-                    function = tool_delta.get("function") if isinstance(tool_delta.get("function"), dict) else {}
-                    if function.get("name"):
-                        existing["function"]["name"] = str(function.get("name"))
-                    if function.get("arguments"):
-                        existing["function"]["arguments"] += str(function.get("arguments"))
+                for tool_delta in gemini_provider.delta_tool_calls(delta):
+                    gemini_provider.merge_tool_call_delta(tool_calls_by_index, tool_delta)
 
             total_usage = _merge_usage_totals(
                 total_usage,
@@ -12756,15 +12449,9 @@ def _stream_assistant_reply_events_gemini(
                 })
                 return
 
-            openai_messages.append({
-                "role": "assistant",
-                "content": "".join(streamed_parts) or None,
-                "tool_calls": tool_calls,
-            })
+            openai_messages.append(gemini_provider.assistant_tool_call_message("".join(streamed_parts) or None, tool_calls))
             for tool_call in tool_calls:
-                function = tool_call.get("function") if isinstance(tool_call, dict) else {}
-                tool_name = str((function or {}).get("name") or "").strip()
-                tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
+                tool_name, tool_input = gemini_provider.tool_call_request(tool_call)
                 yield {"type": "tool_use", "tool": tool_name, "input": tool_input}
                 undo_snapshot = _maybe_capture_turn_undo_snapshot(
                     undo_snapshot,
@@ -12803,11 +12490,7 @@ def _stream_assistant_reply_events_gemini(
                         "code": result_payload.get("code"),
                     })
                 yield {"type": "tool_result", "tool": tool_name, "result": result_payload}
-                openai_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.get("id"),
-                    "content": json.dumps(result_payload),
-                })
+                openai_messages.append(gemini_provider.tool_result_message(tool_call, result_payload))
     except Exception:
         current_app.logger.exception("ai_agent gemini streaming failed")
         if _has_successful_mutations(executed_mutations):
