@@ -164,6 +164,194 @@ for execution-path and evidence detail.
 - Existing tests prove a blocked request occurs before provider execution and
   credit deduction. Purchasing credits does not reset limiter counters.
 
+### Phase 13 refresh — enforced inventory (2026-11-17)
+
+Refreshed by symbol on the billing line at `4efabb05` and on the unified line
+at `d05e9c0f` (F1 `3d0b71d5` onward; the uncommitted P3 tree at that base
+scans identically). The two lines fork at `0cf97e7c`. The tables above
+describe intent at `88684284` and are kept as written; the tables below are
+the complete, test-enforced list. `backend/tests/test_billing_legacy_writer_inventory.py`
+fails when a function writes a legacy billing field or references a legacy
+credit mutator without being listed, and when a listed entry disappears.
+Migrations (historical data rewrites such as `f8d5c3b0e2a7`) and tests are
+outside the scan.
+
+Line tags: `both` (identical on both lines), `billing_line` (only here),
+`unified_line` (only after F1). The unified line replaces the six per-route
+copies of the chat credit sequence in `ai_agent.conversation_start`,
+`conversation_continue` and `conversation_regenerate` (and their
+`event_stream` closures) with one `TurnBilling` binding in
+`ai_agent._conversation_turn`; `conversation_turn.ConversationTurn` records the
+turn's charge. That binding is the legacy credit writer Phase 17 replaces
+with the Phase 12 ledger. After the merge, the merged tree is re-tagged and
+must pass the same guard.
+
+Found beyond the intent tables above: `ai_audit.persist_operation` and
+`ai_runtime.finalize_batch_charge_allocation` / `reverse_customer_operation_charge`
+write `AIOperation.charged_credits`; `UsageEvent` rows (with `credits_charged`)
+are created by `ai_agent._record_usage`, `strategy._record_claude_operation`
+and `decision_asset_email_service.record_telemetry`; `teams.create_team_org`
+creates organizations with a plan; `billing.add_billed_seat` writes
+`max_total_paid_seats`; and user creation in `auth` signup, Google and SSO
+paths, `create_user.py` and `scripts/init_dev_db.py` sets plan and counter
+defaults.
+
+**Scanner scope after the acceptance remediation (M2, 2026-11-17).** Besides
+attribute writes and legacy row creation, the guard records ORM bulk updates
+and `update(...).values(...)`, raw SQL that updates, inserts or deletes in a
+legacy table (`sql:<table>`; none exists today), dynamic `setattr`
+(`setattr(dynamic)`, each listed for review because the attribute cannot be
+resolved statically), dynamic `getattr` on a legacy writer module
+(`getattr(dynamic)`), import aliases (resolved to the canonical name), every
+`thinking_power` meter access whether read or write, `status` and revocation
+columns on grant and entitlement objects, and every reference to a function
+that writes a legacy field (HTTP routes, CLI entry points, constructors and
+properties excepted). The tables below were regenerated with that scanner.
+After re-acceptance (M2b) the guard also records `thinking_power=` keyword
+writes, `status` and revocation writes in any function that names
+`PersistentCreditGrant` or `AccountEntitlement`, `update`/`insert`/`delete`
+statements and `bulk_*_mappings` on a legacy model, bulk
+`session.query(Model)` updates and deletes, and field names in `execute`
+mapping lists. No existing code matched, so the tables are unchanged. The
+static-scan limits are listed in the Phase 13 record.
+
+**Legacy field writers** (field writes, meter access, row creation, reviewed
+dynamic writes):
+
+| Function | Writes | Line |
+|---|---|---|
+| `app/ai_audit.py` `persist_operation` | `AIOperation()`, `charged_credits` | both |
+| `app/ai_runtime.py` `_claim_operation` | `AIOperation()` | both |
+| `app/ai_runtime.py` `finalize_batch_charge_allocation` | `charged_credits` | both |
+| `app/ai_runtime.py` `reverse_customer_operation_charge` | `charged_credits` | both |
+| `app/billing_ai_operations.py` `_finalize` | `setattr(dynamic)` | billing_line |
+| `app/billing_ai_operations.py` `authorize_ai_operation` | `setattr(dynamic)` | billing_line |
+| `app/billing_config.py` `_resolve_org_pool` | `thinking_power` | both |
+| `app/billing_config.py` `_resolve_user_pool` | `credits_remaining`, `credits_reset_at`, `thinking_power` | both |
+| `app/billing_config.py` `add_credits` | `credits_remaining`, `credits_reset_at`, `thinking_power` | both |
+| `app/billing_config.py` `apply_plan_to_user` | `credits_remaining`, `credits_reset_at`, `subscription_plan` | both |
+| `app/billing_config.py` `bootstrap_legacy_credits` | `credits_remaining`, `credits_reset_at` | both |
+| `app/billing_config.py` `cap_monthly_credits` | `credits_remaining`, `thinking_power` | both |
+| `app/billing_config.py` `consume_credits` | `credits_remaining`, `credits_reset_at`, `thinking_power` | both |
+| `app/billing_config.py` `release_consumed_credits` | `credits_remaining`, `thinking_power` | both |
+| `app/billing_config.py` `reset_user_monthly_credits` | `credits_remaining`, `credits_reset_at` | both |
+| `app/billing_enterprise_contracts.py` `_transition` | `setattr(dynamic)` | billing_line |
+| `app/billing_projections.py` `_meter` | `thinking_power` | billing_line |
+| `app/conversation_turn.py` `ConversationTurn.__init__` | `credits_charged` | unified_line |
+| `app/conversation_turn.py` `ConversationTurn.settle` | `credits_charged` | unified_line |
+| `app/decision_asset_email_service.py` `record_telemetry` | `UsageEvent()` | both |
+| `app/founder_entitlements.py` `consume_persistent_credits` | `PersistentCreditTransaction()`, `remaining_amount` | both |
+| `app/founder_entitlements.py` `grant_limited_time_300k_offer` | `AccountEntitlement()`, `PersistentCreditGrant()`, `PersistentCreditTransaction()` | both |
+| `app/founder_entitlements.py` `grant_persistent_credit_pack` | `PersistentCreditGrant()`, `PersistentCreditTransaction()` | both |
+| `app/founder_entitlements.py` `refund_persistent_usage` | `PersistentCreditTransaction()`, `remaining_amount` | both |
+| `app/founder_entitlements.py` `reverse_limited_time_300k_credits` | `PersistentCreditTransaction()`, `remaining_amount`, `reversed_at`, `revoked_at`, `status` | both |
+| `app/founder_entitlements.py` `reverse_persistent_credit_pack` | `PersistentCreditTransaction()`, `remaining_amount`, `reversed_at`, `status` | both |
+| `app/models.py` `Organization.plan` | `plan_key` | both |
+| `app/orgs.py` `ensure_default_organization_for_user` | `Organization()` | both |
+| `app/orgs.py` `sync_org_plan_from_owner` | `plan_key` | both |
+| `app/routes/admin.py` `adjust_user_credits` | `credits_remaining` | both |
+| `app/routes/admin.py` `patch_user` | `credits_remaining`, `subscription_plan` | both |
+| `app/routes/ai_agent.py` `_persist_credit_deduction` | `credits_remaining` | both |
+| `app/routes/ai_agent.py` `_record_usage` | `UsageEvent()` | both |
+| `app/routes/auth.py` `_sso_user_and_membership` | `User()` | both |
+| `app/routes/auth.py` `google_callback` | `User()` | both |
+| `app/routes/auth.py` `signup` | `User()` | both |
+| `app/routes/billing.py` `_record_payment` | `Payment()` | both |
+| `app/routes/billing.py` `add_billed_seat` | `max_total_paid_seats` | both |
+| `app/routes/billing.py` `modify_subscription` | `subscription_status` | both |
+| `app/routes/billing.py` `stripe_webhook` | `subscription_status` | both |
+| `app/routes/billing.py` `sync_embedded_subscription` | `subscription_status` | both |
+| `app/routes/leads.py` `_apply_non_empty_metadata` | `setattr(dynamic)` | both |
+| `app/routes/strategy.py` `_record_claude_operation` | `UsageEvent()` | both |
+| `app/routes/teams.py` `create_team_org` | `Organization()` | both |
+| `create_user.py` `create_user` | `User()` | both |
+| `scripts/init_dev_db.py` `main` | `User()` | both |
+
+**Legacy writer references** (calls and bindings of the D04 mutation
+functions and of every legacy field writer, including `get_usage_meter_state`,
+which writes on read):
+
+| Function | References | Line |
+|---|---|---|
+| `app/ai_runtime.py` `_claim_operation` | `_claim_operation` | both |
+| `app/ai_runtime.py` `execute_customer_operation` | `_claim_operation`, `_release_reserved_credits`, `_reserve_preflight_credits`, `_settle_reserved_credits`, `persist_operation` | both |
+| `app/ai_runtime.py` `finalize_batch_charge_allocation` | `_release_reserved_credits` | both |
+| `app/ai_runtime.py` `reverse_customer_operation_charge` | `_release_reserved_credits` | both |
+| `app/billing_config.py` `add_credits` | `_resolve_org_pool`, `_resolve_user_pool` | both |
+| `app/billing_config.py` `apply_plan_to_user` | `_resolve_org_pool`, `_resolve_user_pool` | both |
+| `app/billing_config.py` `bootstrap_legacy_credits` | `_resolve_org_pool`, `_resolve_user_pool` | both |
+| `app/billing_config.py` `cap_monthly_credits` | `_resolve_org_pool`, `_resolve_user_pool` | both |
+| `app/billing_config.py` `consume_credits` | `_resolve_org_pool`, `_resolve_user_pool`, `consume_persistent_credits` | both |
+| `app/billing_config.py` `get_usage_meter_state` | `_resolve_org_pool`, `_resolve_user_pool` | both |
+| `app/billing_config.py` `release_consumed_credits` | `_resolve_org_pool`, `refund_persistent_usage` | both |
+| `app/billing_config.py` `reset_user_monthly_credits` | `_resolve_org_pool`, `_resolve_user_pool` | both |
+| `app/conversation_turn.py` `ConversationTurn.settle` | `settle` | unified_line |
+| `app/decision_asset_email_service.py` `process_delivery` | `record_telemetry` | both |
+| `app/founder_entitlements.py` `<module>` | `reverse_limited_time_300k_credits` | both |
+| `app/founder_entitlements.py` `grant_founder_offer` | `grant_limited_time_300k_offer` | both |
+| `app/orgs.py` `ensure_default_organization_for_user` | `sync_org_plan_from_owner` | both |
+| `app/orgs.py` `resolve_active_org_for_user` | `ensure_default_organization_for_user` | both |
+| `app/orgs.py` `sync_org_plan_and_commit` | `sync_org_plan_from_owner` | both |
+| `app/routes/admin.py` `adjust_user_credits` | `apply_plan_to_user` | both |
+| `app/routes/admin.py` `force_plan` | `apply_plan_to_user` | both |
+| `app/routes/admin.py` `run_user_recovery` | `apply_plan_to_user` | both |
+| `app/routes/ai_agent.py` `_conversation_turn` | `_persist_credit_deduction`, `_release_reserved_credits`, `_reserve_preflight_credits`, `_settle_reserved_credits` | unified_line |
+| `app/routes/ai_agent.py` `_execute_mutation_tool` | `_record_claude_operation`, `reverse_customer_operation_charge` | both |
+| `app/routes/ai_agent.py` `_execute_mutation_tool._reverse_plan_charge` | `reverse_customer_operation_charge` | both |
+| `app/routes/ai_agent.py` `_finish_conversation_turn` | `_record_usage`, `settle` | unified_line |
+| `app/routes/ai_agent.py` `_finish_regenerated_turn` | `_record_usage`, `settle` | unified_line |
+| `app/routes/ai_agent.py` `_insufficient_credits_payload` | `get_usage_meter_state` | both |
+| `app/routes/ai_agent.py` `_record_failed_chat_usage` | `_record_usage` | both |
+| `app/routes/ai_agent.py` `_record_usage` | `persist_operation` | both |
+| `app/routes/ai_agent.py` `_release_reserved_credits` | `release_consumed_credits` | both |
+| `app/routes/ai_agent.py` `_reserve_preflight_credits` | `consume_credits` | both |
+| `app/routes/ai_agent.py` `_rollback_promoted_session` | `release_consumed_credits` | both |
+| `app/routes/ai_agent.py` `_settle_reserved_credits` | `consume_credits`, `release_consumed_credits` | both |
+| `app/routes/ai_agent.py` `clarify_batch_idea` | `bootstrap_legacy_credits` | both |
+| `app/routes/ai_agent.py` `conversation_continue` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_reserve_preflight_credits`, `_settle_reserved_credits`, `bootstrap_legacy_credits` | billing_line, both |
+| `app/routes/ai_agent.py` `conversation_continue.event_stream` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_settle_reserved_credits` | billing_line |
+| `app/routes/ai_agent.py` `conversation_regenerate` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_reserve_preflight_credits`, `_settle_reserved_credits`, `bootstrap_legacy_credits` | billing_line, both |
+| `app/routes/ai_agent.py` `conversation_regenerate.event_stream` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_settle_reserved_credits` | billing_line |
+| `app/routes/ai_agent.py` `conversation_start` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_reserve_preflight_credits`, `_settle_reserved_credits`, `bootstrap_legacy_credits` | billing_line, both |
+| `app/routes/ai_agent.py` `conversation_start.event_stream` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_settle_reserved_credits` | billing_line |
+| `app/routes/ai_agent.py` `promote_all_batch_ideas` | `bootstrap_legacy_credits` | both |
+| `app/routes/ai_agent.py` `promote_batch_idea` | `bootstrap_legacy_credits` | both |
+| `app/routes/ai_agent.py` `rank_batch_ideas` | `bootstrap_legacy_credits` | both |
+| `app/routes/auth.py` `_enforce_admin_account_profile` | `apply_plan_to_user` | both |
+| `app/routes/auth.py` `_ensure_user_org` | `ensure_default_organization_for_user` | both |
+| `app/routes/auth.py` `_sso_user_and_membership` | `apply_plan_to_user` | both |
+| `app/routes/auth.py` `get_current_user` | `bootstrap_legacy_credits` | both |
+| `app/routes/auth.py` `get_current_user_from_cookie` | `bootstrap_legacy_credits` | both |
+| `app/routes/auth.py` `google_callback` | `apply_plan_to_user`, `bootstrap_legacy_credits` | both |
+| `app/routes/auth.py` `login` | `bootstrap_legacy_credits` | both |
+| `app/routes/auth.py` `signup` | `apply_plan_to_user` | both |
+| `app/routes/auth.py` `sso_callback` | `_sso_user_and_membership` | both |
+| `app/routes/billing.py` `_fulfill_credit_pack_purchase` | `_record_payment`, `grant_persistent_credit_pack` | both |
+| `app/routes/billing.py` `_fulfill_limited_time_300k_invoice` | `_record_payment`, `get_usage_meter_state`, `grant_limited_time_300k_offer` | both |
+| `app/routes/billing.py` `_fulfill_limited_time_300k_payment_intent` | `_record_payment`, `get_usage_meter_state`, `grant_limited_time_300k_offer` | both |
+| `app/routes/billing.py` `create_checkout_session` | `apply_plan_to_user` | both |
+| `app/routes/billing.py` `get_billing_status` | `apply_plan_to_user`, `bootstrap_legacy_credits`, `get_usage_meter_state` | both |
+| `app/routes/billing.py` `modify_subscription` | `apply_plan_to_user` | both |
+| `app/routes/billing.py` `stripe_webhook` | `_record_payment`, `apply_plan_to_user`, `cap_monthly_credits`, `get_usage_meter_state`, `grant_limited_time_300k_offer`, `reset_user_monthly_credits`, `reverse_limited_time_300k_credits`, `reverse_persistent_credit_pack` | both |
+| `app/routes/billing.py` `sync_embedded_subscription` | `apply_plan_to_user` | both |
+| `app/routes/decision_asset_email.py` `request_email_assets` | `record_telemetry` | both |
+| `app/routes/strategy.py` `_build_execution_plan` | `_record_claude_operation`, `reverse_customer_operation_charge` | both |
+| `app/routes/strategy.py` `_record_claude_operation` | `persist_operation` | both |
+| `app/routes/strategy.py` `_record_claude_operation_batch` | `_record_claude_operation`, `persist_operation` | both |
+| `app/routes/strategy.py` `analyze_project` | `_record_claude_operation`, `bootstrap_legacy_credits`, `reverse_customer_operation_charge` | both |
+| `app/routes/strategy.py` `chat_with_analysis` | `bootstrap_legacy_credits` | both |
+| `app/routes/strategy.py` `execution_assistant` | `reverse_customer_operation_charge` | both |
+| `app/routes/strategy.py` `portfolio_scores_agent` | `bootstrap_legacy_credits` | both |
+| `app/routes/strategy.py` `score_batch_queued` | `finalize_batch_charge_allocation`, `reverse_customer_operation_charge` | both |
+| `app/routes/team.py` `list_user_organizations` | `ensure_default_organization_for_user` | both |
+| `app/routes/team.py` `remove_member` | `ensure_default_organization_for_user` | both |
+| `app/routes/teams.py` `_require_org_access` | `sync_org_plan_and_commit` | both |
+| `app/routes/teams.py` `accept_team_invitation` | `sync_org_plan_and_commit` | both |
+| `app/routes/teams.py` `create_team_org` | `ensure_default_organization_for_user` | both |
+| `create_user.py` `<module>` | `create_user` | both |
+| `scripts/backfill_payments.py` `main` | `_record_payment` | both |
+| `scripts/reset_monthly_credits.py` `reset_monthly_credits` | `reset_user_monthly_credits` | both |
+
 ## D15 Legacy retirement map
 
 | Legacy item | Replacement | Compatibility window | Sunset condition |

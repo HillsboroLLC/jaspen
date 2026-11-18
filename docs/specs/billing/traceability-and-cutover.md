@@ -639,10 +639,10 @@ deployment, or activation.
 
 ### Phase 12 implementation record — AI reservations and settlements
 
-Status: **implemented locally, inactive; independent audit findings F1–F8
-remediated 2026-11-16; founder decisions of 2026-11-17 incorporated; awaiting
-targeted re-acceptance. Activation is gated on the Phase 17 reliable-delivery
-integration below.** Built on
+Status: **accepted; local checkpoint `4efabb05` (2026-11-17, after targeted
+re-acceptance of the F1–F8 remediation and the founder decisions of
+2026-11-17); inactive, not pushed. Activation is gated on the Phase 17
+reliable-delivery integration below.** Built on
 the accepted Phase 11 checkpoint `4090fefc`. Migration `c8e0a2b4d6f1` (revises
 `b4d6f8a0c2e5`) adds five evidence tables and new guards; no earlier guard is
 replaced. `app/billing_ai_operations.py` has no route, AI runtime, webhook,
@@ -730,6 +730,71 @@ Acceptance criteria for the integration:
 Local verification is not acceptance and does not authorize integration,
 deployment, or activation.
 
+### Phase 13 implementation record — inventory and reconciliation (pure projections)
+
+Status: **independently accepted (2026-11-17), inactive; local checkpoint
+pending.** The first acceptance review returned CONDITIONAL PASS with findings
+H1, M1, M2, L1 and L2; re-acceptance found M2b; all were remediated (see
+below), and the narrow re-acceptance returned PASS with no remaining blockers.
+Built on the accepted Phase 12 checkpoint `4efabb05`. No migration, no model
+change, and no edit to any existing module: `app/billing_projections.py` is
+new and has no route, AI runtime, webhook, job, or reader caller. As earlier
+phases did, the five inactive-service guards of Phases 4, 5.1, 8, 11, and 12
+list the new module as an allowed inactive reader. Phase 13
+reads the Phase 3–12 records only; the Phase 3 ledger stays the only balance
+authority. It writes nothing: no lot, no `migration_opening`, no quarantine
+row, no run record (Phase 14), and no rehearsal report or failure injection
+(Phase 15). Live legacy readers, including the mutating
+`get_usage_meter_state` and pool resolvers (STOP-01), are unchanged; they
+move to these projections at the Phase 17 reader cutover.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| ADR "derived target fields" and D23 Usage & Billing data; one organization billing account with an optional member view; versioned | `project_billing_account()` (available, held, recurring, purchased, other and per-source credits; period remaining; used this period from settlements; next allocation; plan and plan source; subscription status, interval, term, next payment; scheduled change; offers; seat commitment vs occupancy; contract access; access restriction with reason; capacity) with `PROJECTION_VERSION` | `test_projection_equals_the_ledger_after_allocation_and_settlement`; `test_recurring_and_purchased_credits_are_separate_and_dates_follow_the_term`; `test_enterprise_contract_projection_reports_contract_seats_and_no_self_serve_payment`; `test_a_restricted_billing_account_is_reported_restricted` |
+| T-USAGE data: ledger-synchronized totals, history and per-session usage, used is settled usage (never limit minus balance), UTC with a display time zone | `project_usage_history()` (charged credits from settlement entries only; sessions by `AIOperation.thread_id`); display dates in the requested zone | `test_member_view_counts_only_that_members_usage_and_spendable_lots`; `test_an_open_reservation_is_held_not_available_and_never_shown_as_used` |
+| Projection equals the ledger after Phase 6 allocation, Phase 7 paid upgrade, Phase 9 purchase and dispute hold, Phase 11 contract, Phase 12 settlement, reservation and capacity denial; expired value is never available | read-only sums over `credit_ledger_entries` per lot; the current period is found by subscription (a paid upgrade supersedes the entitlement mid-period) and includes its upgrade lots | `test_a_paid_upgrade_mid_period_keeps_the_period_and_adds_its_prorated_lot`; `test_a_pack_purchase_is_purchased_credit_and_a_dispute_hold_is_not_available`; `test_expired_recurring_value_is_never_available`; `test_capacity_is_reported_apart_from_credits` |
+| T-READ-01..08: pure reads under empty, funded, due, legacy, admin, organization, in-flight, and disputed states | no write, flush, or lock; `session.no_autoflush`, so a caller's pending change is neither flushed nor lost; legacy readers that write on read are never called | `test_t_read_projections_and_comparison_never_write_under_any_state[8]`; `test_t_read_a_caller_pending_change_is_neither_flushed_nor_lost`; `test_t_read_the_comparison_never_calls_the_writing_legacy_readers`; `test_postgres_migrated_projections_run_inside_a_read_only_transaction` |
+| Reject, never clamp, an invariant violation | `ProjectionInvariantError`: lot below the zero floor or above its original amount, entries pointing at another account's lot, unknown source, two active base plans, two current periods or schedules, an operation of another organization, a recorded charge that differs from its settlements | `test_a_ledger_below_the_zero_floor_is_rejected_not_clamped`; `test_two_active_base_plans_are_rejected`; `test_an_operation_whose_recorded_charge_disagrees_with_its_settlement_is_rejected` |
+| Tenant isolation and member eligibility (Phase 12 rule reused) | one account per call; member view requires active membership (`ProjectionIsolationError`); member-attributed lots spendable only by that member; scoped lots fail closed | `test_projections_are_isolated_between_organizations`; `test_a_lot_attributed_to_one_member_is_not_spendable_by_another`; `test_a_scoped_lot_fails_closed` |
+| D16 compatibility field proofs: every ADR compatibility field compared and classified (match, known projection duplication, known stale counter, evidence-backed adjustment, unresolved); special cases classified; any unresolved difference or blocking flag blocks the account | `compare_legacy_compatibility()` report: `users.credits_remaining` (negative meter, shared pool copied, counter below proven purchased, expired recurring value, legacy persistent grants not yet in the ledger, counter above evidence, in-flight reservation), `credits_reset_at`, `subscription_plan`/`status`, organization meter, `plan_key` (Enterprise label without contract), `max_total_paid_seats`, persistent grant vs its transaction log, offers, `ai_operations.charged_credits`; flags `in_flight_reservation` and `active_dispute` | `test_the_combined_counter_is_classified_with_the_d16_classes[7]`; `test_an_in_flight_reservation_blocks_and_is_never_inferred_from_the_counter`; `test_a_persistent_grant_whose_log_disagrees_is_unresolved`; `test_an_enterprise_label_without_a_contract_is_unresolved_and_with_one_is_compared`; `test_plan_status_seats_offers_and_operation_charges_are_compared`; `test_the_comparison_is_deterministic` |
+| Consistent snapshot under concurrency | a reader on PostgreSQL uses one REPEATABLE READ, READ ONLY transaction; conservation `available + held + settled = funded` holds in every snapshot | `test_postgres_migrated_snapshot_projection_conserves_credits_during_concurrent_settlements` |
+| All writer/reader inventory, enforced on both code lines | D04 Phase 13 refresh in `current-state-inventory.md`; `tests/test_billing_legacy_writer_inventory.py` scans `app/`, `scripts/`, and top-level scripts for legacy field writes and legacy mutator references; entries tagged `both`, `billing_line`, `unified_line`; the unified-line check runs with `JASPEN_UNIFIED_LINE_BACKEND` | `test_every_legacy_billing_writer_on_this_line_is_inventoried`; `test_every_legacy_billing_writer_on_the_unified_line_is_inventoried` (passes on `d05e9c0f` and on the uncommitted P3 tree); `test_inventory_entries_are_unique_and_tagged` |
+| Inactive | no import of the module outside itself | `test_phase13_projections_have_no_live_callers` |
+
+**Acceptance remediation (2026-11-17).** The independent review's findings
+are recorded as found, then corrected; the table above is kept as first
+written.
+
+| Finding (as reviewed) | Correction | Regression coverage |
+|---|---|---|
+| **H1 (High):** a legacy counter of 5,000,000 against a 500-credit ledger was classified `known_stale_counter` with `blocked: False`, because a missing or old reset date alone made a counter stale | A stale classification now needs positive, bounded evidence: a recorded `remaining` and `cycle_limit`, a known reset date whose cycle has ended, `0 <= remaining <= cycle_limit`, and the lapsed value explaining the difference exactly (the non-recurring parts of legacy and ledger agree). A missing date proves nothing. Anything else above the evidence is `unresolved` (`counter_above_evidence`) and blocks. The organization meter and the user meter follow the same rule | `test_h1_reviewer_counterexample_is_unresolved_and_blocks`; `test_h1_an_old_or_missing_reset_date_never_explains_a_difference[6]`; `test_h1_a_lapsed_cycle_within_its_limit_is_stale_at_the_exact_boundary`; `test_h1_the_organization_meter_follows_the_same_rule` |
+| **M1:** `ui_preferences.thinking_power.remaining` and the user and organization `cycle_reset_at` were read as inputs but not reported | Reported and classified: both meters' `remaining` against the period remaining, and `users.credits_reset_at` plus both meters' `cycle_reset_at` against the next allocation (legacy last reset + 1 calendar month). A lapsed date is stale only on the ledger's own anchor sequence; another anchor is `unresolved` (`anchor_mismatch`). A missing or malformed field on the pool the legacy plan meters (shared-pool plans meter the organization, other plans the user) is `unresolved`. The other pool's fields are listed under `not_applicable`, not omitted | `test_m1_user_meter_and_reset_dates_are_reported_and_match_on_the_same_anchor`; `test_m1_a_reset_date_from_another_anchor_is_unresolved_drift`; `test_m1_a_lapsed_reset_on_the_ledger_anchor_is_stale`; `test_m1_a_missing_or_malformed_meter_on_the_applicable_pool_is_visible_and_unresolved`; `test_m1_a_shared_pool_compares_the_organization_meter_and_lists_the_user_meter` |
+| **M2:** the writer guard missed bulk updates, raw SQL, dynamic `setattr`/`getattr`, aliased imports, in-place meter mutation, grant and entitlement revocation, and new call sites of inventoried writers | Scanner extended within the same guard: ORM `.update({...})` and `update(...).values(...)`, raw SQL that updates, inserts or deletes in legacy tables (`sql:<table>`), dynamic `setattr` (`setattr(dynamic)`, listed for review), dynamic `getattr` on legacy writer modules (`getattr(dynamic)`), import aliases resolved to canonical names, every `thinking_power` access (read or write), `status`/`revoked_at`/`revoke_reason`/`reversed_at` on grant and entitlement objects, and references to every function that writes a legacy field (routes, CLI entry points, constructors and properties excepted). Inventory regenerated; P3 still scans identically to `d05e9c0f` | `test_m2_every_reviewed_write_pattern_is_detected`; `test_m2_negative_control_unrelated_writes_are_not_flagged`; the three inventory tests on `4efabb05`, `d05e9c0f` and the P3 tree |
+| **L1:** the inactive-module guard missed `from . import billing_projections` and `from app import billing_projections` | Any app file other than the module that names it, by any syntax, fails the guard; the five earlier allowlists may exempt only `app/billing_projections.py`, the single file of that name, each by exactly one entry | `test_l1_no_import_syntax_bypasses_the_live_caller_guard[7]`; `test_l1_earlier_allowlists_exempt_only_the_one_inactive_phase13_module`; `test_phase13_projections_have_no_live_callers` |
+| **L2:** a null legacy balance was classified `known_stale_counter` | A null balance is never stale. On the sales-led Enterprise plan (legacy did not meter credits) it is an `evidence_backed_adjustment` only when every spendable target credit is executed-contract funding; otherwise it stays `unresolved` (`enterprise_without_contract` or `unmetered_sales_led_plan`). On a metered plan it is `unresolved` (`null_legacy_balance`) | `test_l2_a_null_balance_on_a_sales_led_plan_without_a_contract_blocks`; `test_l2_a_null_balance_on_a_sales_led_plan_is_explained_only_by_contract_funding`; `test_l2_a_null_balance_on_a_metered_plan_is_unresolved_not_stale` |
+| **M2b (re-acceptance):** the scanner still missed `thinking_power=` keyword writes (for example `dict(o.settings).update(thinking_power=m)`); `status`/`revoked_at`/`reversed_at` writes on variables not named like a grant or entitlement; and legacy-model bulk writes through `update(Model)`, `insert(Model)`, `session.execute(statement, mappings)` and `bulk_*_mappings(Model, ...)`. Separately, an inapplicable meter that stored a value was reported both under `not_applicable` and as an `unresolved` comparison | Scanner: a `thinking_power=` keyword in any call is a meter write; a function that names `PersistentCreditGrant` or `AccountEntitlement` owns every `status`/revocation write in it, whatever the variable is called (including `setattr` and bulk payloads); `update`/`insert`/`delete` builders (dialect `*_insert` included) and `bulk_update_mappings`/`bulk_insert_mappings` on a legacy model are recorded as `update(Model)`, `insert(Model)`, `bulk_*_mappings(Model)`; `session.query(Model)...update/delete` is recorded as `query(Model).update`/`.delete` whatever the payload; field names in `execute` and bulk mapping lists are read. No existing code matched the new rules, so the inventory is unchanged on all three trees. Comparator: a pool the legacy runtime does not meter is listed once under `not_applicable` and never compared, whatever it stores, and a dormant organization meter is no longer evidence of `shared_pool_copied` for a personal-plan counter; the applicable pool still blocks on unresolved evidence | `test_m2b_every_missed_probe_is_detected`; `test_m2b_negative_control_unrelated_bulk_and_status_writes_are_not_flagged`; `test_m2b_an_inapplicable_organization_meter_is_only_listed_as_not_applicable`; `test_m2b_an_inapplicable_user_meter_is_only_listed_as_not_applicable`; `test_m2b_a_dormant_organization_meter_is_not_evidence_for_a_personal_counter`; `test_m2b_the_applicable_meter_still_blocks_on_unresolved_evidence`; the inventory tests on `4efabb05`, `d05e9c0f` and P3 `87e89d26` |
+
+Detection limits (static scan): the final re-acceptance (PASS, 2026-11-17)
+accepted these as documented residual limits, not blockers: SQL assembled at run time from
+fragments or variables, table names that are not literals, writes through
+objects that arrive without any reference to their model in the writing
+function and without a grant or entitlement name, `**kwargs` payloads whose
+keys are not literals, and writes reached only through dynamic dispatch the
+scanner cannot resolve. Dynamic `setattr` and dynamic `getattr` on legacy
+writer modules stay listed for review. The guard is a review trigger for new
+code, not a proof against deliberate evasion.
+
+Deferred (no rule invented): the unit identity of legacy stored integers and
+ledger credit units, which D16 assumes, is confirmed before Phase 14 uses
+these reports; scoped-lot eligibility (reported as `scoped_unspendable`);
+live capacity counters (the projection reports the latest recorded capacity
+decision; remaining window counts need the approved capacity version at
+activation); next payment for contract-backed terms (invoiced by contract,
+reported `None`); former members' legacy counters (only active members are
+compared); `UsageEvent.credits_charged` (analytics only, no operation link to
+compare); the Phase 17 reader wiring, which must read in one REPEATABLE READ
+snapshot; and re-tagging the inventory when the unified line merges.
+
 ## D18 Phase dependency and cutover map
 
 The original 18 phases are the authoritative implementation sequence because
@@ -751,8 +816,8 @@ useful **program gates**, not a competing sequence. This map authorizes nothing.
 | 9 | Refunds, disputes, and purchases | 2D financial/ledger | Cumulative source-specific lifecycle and mixed-line tests pass. |
 | 10 | Trials, comps, and internal funding | 2D funding/admin | Approved offer/source/admin authority tests pass. |
 | 11 | Enterprise | 2D entitlement | Executed-contract evidence and no-unlimited-default tests pass; contract-backed terms, Stripe-verified funding, annual carryforward, term-bound packs (implemented locally, pending audit). |
-| 12 | AI reservations and settlements | 2D AI | Pricing/capacity binding, fallback, tools, checkpoint/resume, delivery-based billability, absorbed-usage evidence, and exact settlement tests pass (implemented locally; audit findings remediated and 2026-11-17 decisions incorporated, pending targeted re-acceptance; activation gated on Phase 17 reliable delivery). |
-| 13 | Inventory and reconciliation | 2B | Pure projections, all writer/reader inventory, compatibility field proofs. |
+| 12 | AI reservations and settlements | 2D AI | Pricing/capacity binding, fallback, tools, checkpoint/resume, delivery-based billability, absorbed-usage evidence, and exact settlement tests pass (accepted, local checkpoint `4efabb05`, inactive; activation gated on Phase 17 reliable delivery). |
+| 13 | Inventory and reconciliation | 2B | Pure projections, all writer/reader inventory, compatibility field proofs (independently accepted on `4efabb05`, inactive; local checkpoint pending). |
 | 14 | Backfill | 2B/2C | Evidence-ranked deterministic migration; no unexplained account cut over. |
 | 15 | Local rehearsal | 2C | Exact reports, failure injection, downgrade/rollback, rerun no-op. |
 | 16 | Shadow verification | 2B/2F | Production-like authorized environment only; projected/legacy comparisons, pricing/capacity telemetry, zero customer impact. |

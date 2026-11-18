@@ -243,8 +243,8 @@ realized margin were not accessed or verified.
   180-day retention-review date are recorded, not enforced; nothing is
   deleted. See the Phase 11 record in the traceability document.
 - Phase 12 AI reservations, capacity authorization, and delivery-based
-  settlement are implemented locally for independent audit, inactive, on the
-  accepted Phase 11 checkpoint. An operation binds the effective pricing and
+  settlement are accepted (local checkpoint `4efabb05`, not pushed), inactive,
+  on the accepted Phase 11 checkpoint. An operation binds the effective pricing and
   capacity versions; unknown economics fail closed; only a delivered
   response's provider-reported usage is charged, and everything else is
   recorded as Jaspen-absorbed. Audit findings F1–F8 were remediated on
@@ -257,6 +257,17 @@ realized margin were not accessed or verified.
   reliable-delivery integration. No rate,
   conversion, or capacity number is seeded, and the AI runtime is not wired.
   See the Phase 12 record in the traceability document.
+- Phase 13 inventory and reconciliation is independently accepted
+  (2026-11-17) and inactive, on the accepted Phase 12 checkpoint `4efabb05`;
+  local checkpoint pending. The findings of its CONDITIONAL PASS review (H1,
+  M1, M2, L1, L2) and the re-acceptance finding M2b were remediated, and the
+  narrow re-acceptance returned PASS. Pure projections give the Usage & Billing data for one
+  organization billing account (optional member view) from the Phase 3–12
+  records; a read-only comparison classifies every legacy compatibility field
+  with the D16 classes; an enforced inventory lists every legacy billing
+  writer on the billing line and the unified line. Nothing is written, no
+  migration is added, and live readers are unchanged until Phase 17. See the
+  Phase 13 record in the traceability document.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type

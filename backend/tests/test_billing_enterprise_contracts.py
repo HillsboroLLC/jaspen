@@ -1025,7 +1025,8 @@ def test_phase11_service_has_no_live_runtime_callers():
         str(path.relative_to(BACKEND_DIR))
         for path in app_dir.rglob("*.py")
         if path.name not in {"billing_enterprise_contracts.py", "models_billing_phase11.py", "models.py",
-                             "billing_allocations.py", "billing_plan_changes.py", "billing_seats.py"}
+                             "billing_allocations.py", "billing_plan_changes.py", "billing_seats.py",
+                             "billing_projections.py"}  # Phase 13 projections are inactive and read only.
         and ("billing_enterprise_contracts" in path.read_text() or "models_billing_phase11" in path.read_text())
     ]
     assert callers == []

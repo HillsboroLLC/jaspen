@@ -211,6 +211,8 @@ def test_inbox_has_no_live_runtime_importers():
             # Phase 11 contract funding (inactive) reads inbox provenance only.
             "billing_inbox.py", "billing_financial.py", "billing_financial_cases.py", "billing_enterprise_contracts.py",
             "billing_outbox.py", "models_billing_phase5.py", "models.py",
+            # Phase 13 projections (inactive) read financial cases only.
+            "billing_projections.py",
         }:
             continue
         text = path.read_text()
