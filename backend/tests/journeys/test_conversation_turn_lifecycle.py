@@ -447,7 +447,7 @@ def test_probe_json_turn_is_free_when_the_reply_cannot_be_saved(client, db, solo
         {"role": "assistant", "content": "Answer"},
     ])
     before = _balance(solo["user"])
-    real_save = agent.save_user_sessions
+    real_save = agent._save_turn_project
     state = {"generated": False}
     monkeypatch.setattr(agent, "_generate_assistant_reply", lambda *a, **k: (
         state.update(generated=True) or (REPLY, _usage(), [], [], None)
@@ -455,11 +455,11 @@ def test_probe_json_turn_is_free_when_the_reply_cannot_be_saved(client, db, solo
 
     def failing_save(*args, **kwargs):
         if state["generated"]:
-            _db.session.rollback()  # what save_user_sessions does when it fails
+            _db.session.rollback()  # what the project store does when it fails
             return False
         return real_save(*args, **kwargs)
 
-    monkeypatch.setattr(agent, "save_user_sessions", failing_save)
+    monkeypatch.setattr(agent, "_save_turn_project", failing_save)
     body = {"thread_id": "t-save"} if url == REGENERATE_URL else {"thread_id": "t-save", "message": "More"}
 
     response = client.post(url, headers=solo["headers"], json=body)
@@ -525,7 +525,7 @@ def test_streamed_turn_is_free_when_the_reply_cannot_be_saved(client, db, solo, 
     _script_generation(monkeypatch)
     _seed(solo["user"], "t-save2")
     before = _balance(solo["user"])
-    real_save = agent.save_user_sessions
+    real_save = agent._save_turn_project
     saves = {"n": 0}
 
     def failing_save(*args, **kwargs):
@@ -535,7 +535,7 @@ def test_streamed_turn_is_free_when_the_reply_cannot_be_saved(client, db, solo, 
             return False
         return real_save(*args, **kwargs)
 
-    monkeypatch.setattr(agent, "save_user_sessions", failing_save)
+    monkeypatch.setattr(agent, "_save_turn_project", failing_save)
 
     response = client.post(f"{CONTINUE_URL}?stream=1", headers=solo["headers"], json={
         "thread_id": "t-save2", "message": "More",

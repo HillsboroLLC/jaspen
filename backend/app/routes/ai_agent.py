@@ -226,7 +226,10 @@ from .sessions import (
     _session_row_to_payload,
     load_user_sessions,
     load_sessions_for_thread,
-    save_user_sessions,
+    delete_user_sessions,
+    run_project_write,
+    save_one_project,
+    save_project_session,
     archive_user_session,
     restore_user_session,
     hard_delete_user_session,
@@ -1589,7 +1592,7 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message, p
     if isinstance(durable, dict):
         durable["scoring_rubric"] = rubric
         sessions[key or thread_id] = durable
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, key or thread_id):
             return None
     return {
         "card": _rubric_card(rubric, kit=kit),
@@ -2649,7 +2652,6 @@ def _save_user_memory(user_id, facts):
     if not isinstance(facts, dict) or not facts:
         return
     try:
-        from app.routes.sessions import save_user_sessions as _sav
         sessions = load_user_sessions(str(user_id)) or {}
         sentinel = sessions.get(_USER_MEMORY_SESSION_KEY) or {}
         sentinel["session_id"] = _USER_MEMORY_SESSION_KEY
@@ -2660,7 +2662,7 @@ def _save_user_memory(user_id, facts):
         sentinel["memory_facts"] = facts
         sentinel["timestamp"] = datetime.utcnow().isoformat()
         sessions[_USER_MEMORY_SESSION_KEY] = sentinel
-        _sav(str(user_id), sessions)
+        save_one_project(str(user_id), sessions, _USER_MEMORY_SESSION_KEY)
     except Exception:
         current_app.logger.exception("Failed saving user memory for user %s", user_id)
 
@@ -3786,7 +3788,7 @@ def _criteria_card_after_scoring(user_id, thread_id, project=None):
     rubric = {**rubric, "criteria_summary_presented_at": _iso_now()}
     session["scoring_rubric"] = rubric
     sessions[key or thread_id] = session
-    if not save_user_sessions(user_id, sessions):
+    if not save_one_project(user_id, sessions, key or thread_id):
         return None
     kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version")) if session.get("decision_kit") else None
     return _rubric_card(rubric, kit=kit)
@@ -5537,7 +5539,7 @@ def _execute_local_tool_inner(tool_name, tool_input, *, readiness, user, user_id
                 if session.get("scoring_with_proposed_rubric"):
                     durable_session["scoring_with_proposed_rubric"] = True
                 sessions[session_key or thread_id] = durable_session
-                save_user_sessions(user_id, sessions)
+                save_one_project(user_id, sessions, session_key or thread_id)
         except Exception:
             current_app.logger.exception("same-turn rubric approval persist failed")
 
@@ -9368,7 +9370,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         approved["approved_by_user_at"] = _iso_now()
         session["scoring_rubric"] = approved
         sessions[session_key or thread_id] = session
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, session_key or thread_id):
             return _tool_error(
                 "The rubric approval could not be saved. Ask the user to try again.",
                 code="rubric_approval_save_failed",
@@ -9535,7 +9537,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             if isinstance(_sess, dict) and not same_as_existing:
                 _sess["rubric_proposal"] = proposal
                 sessions[_key or thread_id] = _sess
-                save_user_sessions(user_id, sessions)
+                save_one_project(user_id, sessions, _key or thread_id)
             return {
                 "ok": True,
                 "tool": tool_name,
@@ -9574,7 +9576,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             if isinstance(_sess, dict):
                 _sess["scoring_rubric"] = rubric_obj
                 sessions[_key or thread_id] = _sess
-                save_user_sessions(user_id, sessions)
+                save_one_project(user_id, sessions, _key or thread_id)
         except Exception:
             current_app.logger.exception("set_scoring_rubric best-effort persist failed")
 
@@ -9753,7 +9755,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             current_app.logger.warning("Rejected %d non-canonical fact(s) for option %s", len(rejected_fields), option_identity)
         session["facts_changed"] = True
         sessions[session_key or thread_id] = session
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, session_key or thread_id):
             return _tool_error(
                 "The fact update could not be saved. The existing score remains unchanged.",
                 code="fact_update_persist_failed",
@@ -9975,7 +9977,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                         _sess[key] = _queue_session[key]
                 # Clear overflow left by earlier versions; this queue is complete.
                 _sess["scorecard_queue_overflow"] = overflow
-                persisted_queue = bool(save_user_sessions(user_id, sessions))
+                persisted_queue = bool(save_one_project(user_id, sessions, _key or thread_id))
         except Exception:
             current_app.logger.exception("queue_scorecards canonical fact persist failed")
         if not persisted_queue:
@@ -10206,7 +10208,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             session["rejected_option_attributes"] = rejected_store
             current_app.logger.warning("Rejected %d non-canonical fact(s) while scoring option %s", len(rejected_fields), option_identity)
         sessions[session_key or thread_id] = session
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, session_key or thread_id):
             error = _tool_error(
                 "The canonical facts could not be saved, so scoring was not started. Try again.",
                 code="canonical_fact_persist_failed",
@@ -10505,7 +10507,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 from ..decision_state import mark_option_scored
                 mark_option_scored(session, option_key, requested_name)
                 sessions[session_key or thread_id] = session
-                if not save_user_sessions(user_id, sessions):
+                if not save_one_project(user_id, sessions, session_key or thread_id):
                     reverse_customer_operation_charge(
                         user, ai_settlement, error_code='scorecard_persistence_failed',
                     )
@@ -10612,7 +10614,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         session["completed_at"] = generated_at
         session["timestamp"] = generated_at
         sessions[session_key or thread_id] = session
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, session_key or thread_id):
             return _tool_error("Failed to persist generated scorecard.", code="persist_failed")
         _refresh_decision_record_after_score(user, thread_id)
 
@@ -10784,7 +10786,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             target_session["result"] = result_blob
         target_session["timestamp"] = datetime.utcnow().isoformat()
         sessions[target_key or thread_id] = target_session
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, target_key or thread_id):
             return _tool_error("Failed to persist thread rename.", code="persist_failed")
 
         all_data = _project_scenarios(user_id, thread_id, project) or {}
@@ -15092,7 +15094,7 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
 
     sessions = load_user_sessions(user.id) or {}
     sessions[thread_id] = session
-    if not save_user_sessions(user.id, sessions):
+    if not save_one_project(user.id, sessions, thread_id):
         return None, {"error": "Failed to persist promoted thread."}, 500
 
     return {
@@ -15112,8 +15114,7 @@ def _rollback_promoted_session(user, thread_id, credits_to_refund=0):
         session_key, _session = _resolve_user_session(sessions, thread_id)
         target_key = session_key or str(thread_id)
         if target_key in sessions:
-            sessions.pop(target_key, None)
-            save_user_sessions(user.id, sessions, session_ids_to_delete=[target_key])
+            delete_user_sessions(user.id, [target_key])
     except Exception:
         current_app.logger.exception("Rollback failed while removing promoted session")
     try:
@@ -15284,71 +15285,81 @@ Return concise plain text with:
 
 
 def _persist_thread_insight(user_id, thread_id, filename, insight_payload, summary_text):
-    # P3 replaces this local retry with the project store's single-project entry.
-    for _attempt in range(3):
-        try:
-            _user, sessions, _row = _authorized_thread_scope(
-                user_id, thread_id, require_write=True
-            )
-            session_key, loaded_session = _resolve_user_session(sessions, thread_id)
-            if not isinstance(loaded_session, dict):
-                current_app.logger.warning(
-                    "[analyze_data] project %s could not be resolved for persistence",
-                    thread_id,
-                )
-                return None
+    """Record one data insight on its project, through the project store.
 
-            loaded_revision = loaded_session.get("revision")
-            session = dict(loaded_session)
-            insights = session.get("ai_insights")
-            if not isinstance(insights, list):
-                insights = []
-
-            event = {
-                "id": f"ins_{uuid.uuid4().hex[:10]}",
-                "timestamp": _iso_now(),
-                "file_name": filename,
-                "summary": summary_text,
-                "insight": insight_payload,
-            }
-            session["ai_insights"] = [
-                event,
-                *[item for item in insights if isinstance(item, dict)],
-            ][:20]
-
-            chat_history = list(_session_chat_history(session))
-            chat_history.append({
-                "role": "assistant",
-                "content": f"[AI Data Insights] {summary_text}",
-                "timestamp": _iso_now(),
-            })
-            session["chat_history"] = chat_history
-            session["timestamp"] = _iso_now()
-            staged = dict(session)
-            if loaded_revision is not None:
-                staged["base_revision"] = loaded_revision
-            if not save_user_sessions(user_id, {session_key or thread_id: staged}):
-                current_app.logger.warning(
-                    "[analyze_data] failed to persist insight for project %s",
-                    thread_id,
-                )
-                return None
-            return event
-        except RevisionConflict:
-            db.session.rollback()
-        except SessionAccessError:
-            db.session.rollback()
+    The store applies only this insight to the stored project (another
+    member's save meanwhile is kept), and a lost race re-runs the unit on fresh
+    data (run_project_write). Returns the event, or None when it was not saved.
+    """
+    def _unit():
+        _user, sessions, _row = _authorized_thread_scope(
+            user_id, thread_id, require_write=True
+        )
+        session_key, session = _resolve_user_session(sessions, thread_id)
+        if not isinstance(session, dict):
             current_app.logger.warning(
-                "[analyze_data] access lost before insight persistence for project %s",
+                "[analyze_data] project %s could not be resolved for persistence",
                 thread_id,
             )
             return None
 
-    current_app.logger.warning(
-        "[analyze_data] insight persistence conflicted three times for project %s",
-        thread_id,
-    )
-    return None
+        insights = session.get("ai_insights")
+        if not isinstance(insights, list):
+            insights = []
+
+        event = {
+            "id": f"ins_{uuid.uuid4().hex[:10]}",
+            "timestamp": _iso_now(),
+            "file_name": filename,
+            "summary": summary_text,
+            "insight": insight_payload,
+        }
+        session["ai_insights"] = [
+            event,
+            *[item for item in insights if isinstance(item, dict)],
+        ][:20]
+
+        chat_history = list(_session_chat_history(session))
+        chat_history.append({
+            "role": "assistant",
+            "content": f"[AI Data Insights] {summary_text}",
+            "timestamp": _iso_now(),
+        })
+        session["chat_history"] = chat_history
+        session["timestamp"] = _iso_now()
+        if not save_project_session(user_id, session_key or thread_id, session):
+            current_app.logger.warning(
+                "[analyze_data] failed to persist insight for project %s",
+                thread_id,
+            )
+            return None
+        return event
+
+    try:
+        return run_project_write(_unit)
+    except RevisionConflict:
+        db.session.rollback()
+        current_app.logger.warning(
+            "[analyze_data] insight not saved for project %s: the project changed",
+            thread_id,
+        )
+        return None
+    except SessionAccessError:
+        db.session.rollback()
+        current_app.logger.warning(
+            "[analyze_data] access lost before insight persistence for project %s",
+            thread_id,
+        )
+        return None
+
+
+def _save_turn_project(user_id, sessions, **kwargs):
+    """The turn store's write: the turn's one project, through the store."""
+    projects = [(key, value) for key, value in (sessions or {}).items() if isinstance(value, dict)]
+    if len(projects) != 1:
+        raise ValueError("A conversation turn saves exactly one project.")
+    key, payload = projects[0]
+    return save_project_session(user_id, key, payload, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -15390,7 +15401,7 @@ def _conversation_turn(*, user, user_id, thread_id, session, sessions, model_typ
             persist_balance=lambda *a, **k: _persist_credit_deduction(*a, **k),
             insufficient_payload=lambda *a, **k: _insufficient_credits_payload(*a, **k),
         ),
-        store=TurnStore(save=lambda *a, **k: save_user_sessions(*a, **k)),
+        store=TurnStore(save=lambda *a, **k: _save_turn_project(*a, **k)),
     )
 
 
@@ -16525,7 +16536,7 @@ Rules:
     try:
         session["knowledge_signals"] = {"signals": signals, "confidence": conf, "updated_at": _iso_now()}
         sessions[session_key] = session
-        save_user_sessions(user_id, sessions)
+        save_one_project(user_id, sessions, session_key)
     except Exception:
         pass
 
@@ -16621,7 +16632,7 @@ def reset_threads():
             else:
                 destroyable.append(sid)
 
-        save_user_sessions(user_id, {}, session_ids_to_delete=destroyable)
+        delete_user_sessions(user_id, destroyable)
         for sid in destroyable:
             try:
                 mark_ledger_purged(sid)
@@ -16994,7 +17005,7 @@ def update_thread(thread_id):
         session["created_by_user_id"] = str(user_id)
     session["timestamp"] = _iso_now()
     sessions[session_key or resolved_thread_id] = session
-    save_user_sessions(user_id, sessions)
+    save_one_project(user_id, sessions, session_key or resolved_thread_id)
     if user_profile_changed:
         db.session.commit()
 
@@ -17081,7 +17092,7 @@ def touch_thread(thread_id):
     now_iso = _iso_now()
     session["timestamp"] = now_iso
     sessions[session_key or resolved_thread_id] = session
-    save_user_sessions(user_id, sessions)
+    save_one_project(user_id, sessions, session_key or resolved_thread_id)
 
     return jsonify({
         "success": True,
@@ -17528,7 +17539,7 @@ def append_thread_messages(thread_id):
     session["timestamp"] = now_iso
     sessions[session_key or resolved_thread_id] = session
 
-    if not save_user_sessions(user_id, sessions):
+    if not save_one_project(user_id, sessions, session_key or resolved_thread_id):
         return jsonify({"error": "Failed to persist messages"}), 500
 
     return jsonify({
@@ -17578,7 +17589,7 @@ def set_thread_message_feedback(thread_id, message_index):
     session["chat_history"] = updated_chat_history
     session["timestamp"] = _iso_now()
     sessions[session_key or thread_id] = session
-    if not save_user_sessions(user_id, sessions):
+    if not save_one_project(user_id, sessions, session_key or thread_id):
         return jsonify({"error": "Failed to persist message feedback"}), 500
 
     user = User.query.get(user_id)
@@ -17676,7 +17687,7 @@ def conversation_undo_mutations():
     if loaded_revision is not None:
         staged["base_revision"] = loaded_revision
     try:
-        if not save_user_sessions(user_id, {session_key or thread_id: staged}, commit=False):
+        if not save_project_session(user_id, session_key or thread_id, staged, commit=False):
             db.session.rollback()
             return jsonify({"error": "Failed to persist undo state"}), 500
         restored = _restore_thread_mutation_snapshot(user_id, snapshot)

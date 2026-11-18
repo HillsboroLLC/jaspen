@@ -93,7 +93,12 @@ from app.project_scope import (
     scenarios_for_thread,
 )
 from app.scorecards import project_scorecard_query
-from .sessions import load_sessions_for_thread, load_user_sessions, save_user_sessions
+from .sessions import (
+    load_sessions_for_thread,
+    load_user_sessions,
+    run_project_write,
+    save_one_project,
+)
 
 strategy_bp = Blueprint('strategy', __name__)
 
@@ -1924,7 +1929,7 @@ def _persist_scenario_snapshot_to_session(user_id, thread_id, scenario, result, 
     session['timestamp'] = datetime.utcnow().isoformat()
 
     sessions[session_key or resolved_thread_id] = session
-    persisted = save_user_sessions(user_id, sessions, commit=commit)
+    persisted = save_one_project(user_id, sessions, session_key or resolved_thread_id, commit=commit)
     if not persisted:
         raise RuntimeError('Failed to persist scenario snapshot.')
 
@@ -2057,7 +2062,7 @@ def _rename_snapshot_in_session(
     session['analysis_history'] = next_history
 
     sessions[session_key or resolved_thread_id] = session
-    persisted = save_user_sessions(user_id, sessions, commit=commit)
+    persisted = save_one_project(user_id, sessions, session_key or resolved_thread_id, commit=commit)
     if not persisted:
         raise RuntimeError('Failed to persist snapshot rename.')
 
@@ -2136,7 +2141,7 @@ def _delete_snapshot_from_session(
         ]
         session['analyses'] = list(session['analysis_history'])
         sessions[session_key or resolved_thread_id] = session
-        if not save_user_sessions(user_id, sessions, commit=commit):
+        if not save_one_project(user_id, sessions, session_key or resolved_thread_id, commit=commit):
             raise RuntimeError('Failed to persist scorecard deletion.')
         return {
             'deleted_snapshot_id': target_id,
@@ -2171,7 +2176,7 @@ def _delete_snapshot_from_session(
     ]
 
     sessions[session_key or resolved_thread_id] = session
-    persisted = save_user_sessions(user_id, sessions, commit=commit)
+    persisted = save_one_project(user_id, sessions, session_key or resolved_thread_id, commit=commit)
     if not persisted:
         raise RuntimeError('Failed to persist snapshot deletion.')
 
@@ -2248,7 +2253,7 @@ def _set_selected_snapshot_in_session(
     }
     session['result'] = next_result
     sessions[session_key or resolved_thread_id] = session
-    persisted = save_user_sessions(user_id, sessions)
+    persisted = save_one_project(user_id, sessions, session_key or resolved_thread_id)
     if not persisted:
         raise RuntimeError('Failed to persist active snapshot selection.')
 
@@ -4403,7 +4408,7 @@ def analyze_project():
             session['analyses'] = history
             session['timestamp'] = generated_at
             sessions[session_key or resolved_thread_id] = session
-            persisted_session = save_user_sessions(current_user_id, sessions)
+            persisted_session = save_one_project(current_user_id, sessions, session_key or resolved_thread_id)
 
             # Store as a named scenario so the bundle surfaces it in scorecardSnapshots
             _snap_label = version_label or f'Version {len(history)}'
@@ -4439,7 +4444,7 @@ def analyze_project():
                 session['notes'] = {}
 
             sessions[session_key or resolved_thread_id] = session
-            persisted_session = save_user_sessions(current_user_id, sessions)
+            persisted_session = save_one_project(current_user_id, sessions, session_key or resolved_thread_id)
 
         # PHASE 3. A completed score is the product's meaningful "decision
         # artifact exists" moment -- the same lifecycle point that already
@@ -4684,79 +4689,86 @@ def delete_score_entry(thread_id, snapshot_id):
     """Delete exactly one peer scorecard; session deletion is a separate action."""
     try:
         current_user_id = get_jwt_identity()
-        _user, sessions, _project_row = _thread_scope(current_user_id, thread_id, require_write=True)
-        if not isinstance(sessions, dict):
-            return jsonify({'error': 'No sessions found'}), 404
+        _thread_scope(current_user_id, thread_id, require_write=True)
 
-        session_key = thread_id
-        session = sessions.get(thread_id)
-        if not session:
-            for k, v in sessions.items():
-                if str((v or {}).get('session_id', '')) == str(thread_id):
-                    session = v
-                    session_key = k
-                    break
+        # Session and scenario data save together; a lost race re-runs the whole
+        # unit on fresh data (backlog 14).
+        def _delete():
+            _user, sessions, _project_row = _thread_scope(current_user_id, thread_id, require_write=True)
+            if not isinstance(sessions, dict):
+                return jsonify({'error': 'No sessions found'}), 404
 
-        if not isinstance(session, dict):
-            return jsonify({'error': 'Thread not found'}), 404
+            session_key = thread_id
+            session = sessions.get(thread_id)
+            if not session:
+                for k, v in sessions.items():
+                    if str((v or {}).get('session_id', '')) == str(thread_id):
+                        session = v
+                        session_key = k
+                        break
 
-        all_data = _thread_scenarios(current_user_id, thread_id)
-        thread_data = all_data.get(thread_id) or all_data.get(session_key) or {}
-        all_snapshots = _thread_peer_scorecards(
-            current_user_id,
-            thread_id,
-            legacy_session=session,
-            legacy_thread_data=thread_data,
-        )
-        target = next((
-            item for item in all_snapshots
-            if str(item.get('id') or item.get('analysis_id') or '') == str(snapshot_id)
-        ), None)
+            if not isinstance(session, dict):
+                return jsonify({'error': 'Thread not found'}), 404
 
-        if target is None:
-            return jsonify({'error': 'Snapshot not found'}), 404
+            all_data = _thread_scenarios(current_user_id, thread_id)
+            thread_data = all_data.get(thread_id) or all_data.get(session_key) or {}
+            all_snapshots = _thread_peer_scorecards(
+                current_user_id,
+                thread_id,
+                legacy_session=session,
+                legacy_thread_data=thread_data,
+            )
+            target = next((
+                item for item in all_snapshots
+                if str(item.get('id') or item.get('analysis_id') or '') == str(snapshot_id)
+            ), None)
 
-        _archive_project_scorecard(
-            current_user_id,
-            snapshot_id,
-            legacy_payload=target,
-            thread_id=thread_id,
-        )
+            if target is None:
+                return jsonify({'error': 'Snapshot not found'}), 404
 
-        result = session.get('result') if isinstance(session.get('result'), dict) else {}
-        result_id = str(result.get('id') or result.get('analysis_id') or thread_id)
-        baseline = result.get('_baseline_scorecard') if isinstance(result.get('_baseline_scorecard'), dict) else {}
-        baseline_id = str(baseline.get('id') or baseline.get('analysis_id') or result_id)
-        if str(snapshot_id) in {result_id, baseline_id}:
-            session.pop('result', None)
-            session.pop('analysis_result', None)
-            session['selected_scorecard_id'] = None
-        elif result:
-            result['scorecard_snapshots'] = [
-                item for item in (result.get('scorecard_snapshots') or [])
-                if isinstance(item, dict)
-                and str(item.get('id') or item.get('analysis_id') or '') != str(snapshot_id)
-            ]
-            session['result'] = result
-        for history_key in ('analysis_history', 'analyses'):
-            session[history_key] = [
-                item for item in (session.get(history_key) or [])
-                if isinstance(item, dict)
-                and str(item.get('id') or item.get('analysis_id') or '') != str(snapshot_id)
-            ]
-        sessions[session_key] = session
-        if not save_user_sessions(current_user_id, sessions, commit=False):
-            raise RuntimeError('Failed to persist scorecard deletion')
+            _archive_project_scorecard(
+                current_user_id,
+                snapshot_id,
+                legacy_payload=target,
+                thread_id=thread_id,
+            )
 
-        scenarios = thread_data.get('scenarios') if isinstance(thread_data.get('scenarios'), dict) else {}
-        scenarios.pop(str(snapshot_id), None)
-        thread_data['scenarios'] = scenarios
-        all_data[thread_id] = thread_data
-        save_session_and_project_scenarios_data(
-            current_user_id, thread_id, thread_data, source=all_data,
-        )
+            result = session.get('result') if isinstance(session.get('result'), dict) else {}
+            result_id = str(result.get('id') or result.get('analysis_id') or thread_id)
+            baseline = result.get('_baseline_scorecard') if isinstance(result.get('_baseline_scorecard'), dict) else {}
+            baseline_id = str(baseline.get('id') or baseline.get('analysis_id') or result_id)
+            if str(snapshot_id) in {result_id, baseline_id}:
+                session.pop('result', None)
+                session.pop('analysis_result', None)
+                session['selected_scorecard_id'] = None
+            elif result:
+                result['scorecard_snapshots'] = [
+                    item for item in (result.get('scorecard_snapshots') or [])
+                    if isinstance(item, dict)
+                    and str(item.get('id') or item.get('analysis_id') or '') != str(snapshot_id)
+                ]
+                session['result'] = result
+            for history_key in ('analysis_history', 'analyses'):
+                session[history_key] = [
+                    item for item in (session.get(history_key) or [])
+                    if isinstance(item, dict)
+                    and str(item.get('id') or item.get('analysis_id') or '') != str(snapshot_id)
+                ]
+            sessions[session_key] = session
+            if not save_one_project(current_user_id, sessions, session_key, commit=False):
+                raise RuntimeError('Failed to persist scorecard deletion')
 
-        return jsonify({'deleted': 'snapshot', 'thread_id': thread_id, 'snapshot_id': snapshot_id}), 200
+            scenarios = thread_data.get('scenarios') if isinstance(thread_data.get('scenarios'), dict) else {}
+            scenarios.pop(str(snapshot_id), None)
+            thread_data['scenarios'] = scenarios
+            all_data[thread_id] = thread_data
+            save_session_and_project_scenarios_data(
+                current_user_id, thread_id, thread_data, source=all_data,
+            )
+
+            return jsonify({'deleted': 'snapshot', 'thread_id': thread_id, 'snapshot_id': snapshot_id}), 200
+
+        return run_project_write(_delete)
 
     except SessionAccessError as e:
         db.session.rollback()
@@ -7667,7 +7679,7 @@ def score_next_queued(thread_id):
             session2['chat_history'] = chat_history
             session2['timestamp'] = datetime.utcnow().isoformat()
             sessions2[session_key or thread_id] = session2
-            save_user_sessions(user_id, sessions2)
+            save_one_project(user_id, sessions2, session_key or thread_id)
             return jsonify({
                 'ok': False,
                 'error': failure_message,
@@ -7693,7 +7705,7 @@ def score_next_queued(thread_id):
             session2['chat_history'] = chat_history
         session2['timestamp'] = datetime.utcnow().isoformat()
         sessions2[session_key or thread_id] = session2
-        save_user_sessions(user_id, sessions2)
+        save_one_project(user_id, sessions2, session_key or thread_id)
 
         return jsonify({
             'ok': True,
@@ -8085,7 +8097,7 @@ def score_batch_queued(thread_id):
             session['active_evaluation_scorecard_id'] = analysis_id
             session['timestamp'] = generated_at
             sessions[session_key or thread_id] = session
-            save_user_sessions(user_id, sessions)
+            save_one_project(user_id, sessions, session_key or thread_id)
             scored_out.append({'name': name, 'score': scorecard.get('jaspen_score'), 'id': analysis_id})
 
         allocation = finalize_batch_charge_allocation(
@@ -8124,7 +8136,7 @@ def score_batch_queued(thread_id):
             if isinstance(portfolio_summary, dict) and (portfolio_summary.get('structure') or portfolio_summary.get('recommended_sequence')):
                 session['portfolio_summary'] = portfolio_summary
             sessions[session_key or thread_id] = session
-            save_user_sessions(user_id, sessions)
+            save_one_project(user_id, sessions, session_key or thread_id)
 
         if scored_out:
             try:
@@ -9142,55 +9154,62 @@ def update_scenario(scenario_id):
         thread_id = request.args.get('thread_id')
         if not thread_id:
             return jsonify({'error': 'thread_id query param required'}), 400
-        _user, _sessions, _project_row = _thread_scope(user_id, thread_id, require_write=True)
-
+        _thread_scope(user_id, thread_id, require_write=True)
         data = request.get_json() or {}
-        all_data = _thread_scenarios(user_id, thread_id)
-        td = all_data.get(thread_id, {})
-        scenario = td.get('scenarios', {}).get(scenario_id)
-        if not scenario:
-            return jsonify({'error': 'Scenario not found'}), 404
 
-        expected_updated_at = data.get('expected_updated_at')
-        _assert_object_basis(scenario, expected_updated_at, session_id=thread_id)
-        if 'label' in data:
-            scenario['label'] = data['label']
-        if 'deltas' in data:
-            scenario['deltas'] = data['deltas']
-            # Re-compute result immediately so it's never null on disk.
-            baseline = td.get('baseline')
-            baseline_inputs = _scenario_inputs(td, _resolve_session_entry(_sessions, thread_id)[1])
-            if isinstance(baseline, dict) and baseline_inputs:
-                result = _compute_scenario_scorecard(baseline, data['deltas'], baseline_inputs)
-                result['analysis_id'] = scenario_id
-                result['scenario_id'] = scenario_id
-                result['thread_id'] = thread_id
-                result['label'] = scenario.get('label', 'Scenario')
-                scenario['result'] = result
-            else:
-                scenario['result'] = None  # no baseline to compute against
+        # Label edits change session and scenario data together. A lost race
+        # re-runs the whole edit on fresh data (backlog 14).
+        def _edit():
+            _user, _sessions, _project_row = _thread_scope(user_id, thread_id, require_write=True)
 
-        scenario['updated_at'] = datetime.utcnow().isoformat()
-        desired_scenario = copy.deepcopy(scenario)
+            all_data = _thread_scenarios(user_id, thread_id)
+            td = all_data.get(thread_id, {})
+            scenario = td.get('scenarios', {}).get(scenario_id)
+            if not scenario:
+                return jsonify({'error': 'Scenario not found'}), 404
 
-        def _apply_scenario_edit(current_td):
-            scenarios = current_td.get('scenarios') if isinstance(current_td.get('scenarios'), dict) else {}
-            current_scenario = scenarios.get(scenario_id)
-            _assert_object_basis(current_scenario, expected_updated_at, session_id=thread_id)
-            scenarios[scenario_id] = desired_scenario
-            current_td['scenarios'] = scenarios
-            return current_td
+            expected_updated_at = data.get('expected_updated_at')
+            _assert_object_basis(scenario, expected_updated_at, session_id=thread_id)
+            if 'label' in data:
+                scenario['label'] = data['label']
+            if 'deltas' in data:
+                scenario['deltas'] = data['deltas']
+                # Re-compute result immediately so it's never null on disk.
+                baseline = td.get('baseline')
+                baseline_inputs = _scenario_inputs(td, _resolve_session_entry(_sessions, thread_id)[1])
+                if isinstance(baseline, dict) and baseline_inputs:
+                    result = _compute_scenario_scorecard(baseline, data['deltas'], baseline_inputs)
+                    result['analysis_id'] = scenario_id
+                    result['scenario_id'] = scenario_id
+                    result['thread_id'] = thread_id
+                    result['label'] = scenario.get('label', 'Scenario')
+                    scenario['result'] = result
+                else:
+                    scenario['result'] = None  # no baseline to compute against
 
-        if 'label' in data:
-            _rename_snapshot_in_session(
-                user_id, thread_id, scenario_id, scenario['label'], commit=False,
+            scenario['updated_at'] = datetime.utcnow().isoformat()
+            desired_scenario = copy.deepcopy(scenario)
+
+            def _apply_scenario_edit(current_td):
+                scenarios = current_td.get('scenarios') if isinstance(current_td.get('scenarios'), dict) else {}
+                current_scenario = scenarios.get(scenario_id)
+                _assert_object_basis(current_scenario, expected_updated_at, session_id=thread_id)
+                scenarios[scenario_id] = desired_scenario
+                current_td['scenarios'] = scenarios
+                return current_td
+
+            if 'label' in data:
+                _rename_snapshot_in_session(
+                    user_id, thread_id, scenario_id, scenario['label'], commit=False,
+                )
+            save = (
+                save_session_and_project_scenarios_data
+                if 'label' in data else save_project_scenarios_data
             )
-        save = (
-            save_session_and_project_scenarios_data
-            if 'label' in data else save_project_scenarios_data
-        )
-        new_revision = save(user_id, thread_id, updater=_apply_scenario_edit)
-        return jsonify({**scenario, 'revision': new_revision}), 200
+            new_revision = save(user_id, thread_id, updater=_apply_scenario_edit)
+            return jsonify({**scenario, 'revision': new_revision}), 200
+
+        return run_project_write(_edit)
 
     except SessionAccessError as e:
         body, status = e.to_response()
@@ -9216,45 +9235,52 @@ def delete_scenario(scenario_id):
             return jsonify({'error': 'thread_id query param required'}), 400
         _thread_scope(user_id, thread_id, require_write=True)
 
-        data = request.get_json(silent=True) or {}
-        all_data = _thread_scenarios(user_id, thread_id)
-        td = all_data.get(thread_id, {})
-        if scenario_id not in td.get('scenarios', {}):
-            return jsonify({'error': 'Scenario not found'}), 404
+        # Session and scenario data save together; a lost race re-runs the whole
+        # unit on fresh data (backlog 14).
+        def _delete():
+            _thread_scope(user_id, thread_id, require_write=True)
 
-        expected_updated_at = data.get('expected_updated_at')
-        _assert_object_basis(td['scenarios'][scenario_id], expected_updated_at, session_id=thread_id)
-        del td['scenarios'][scenario_id]
-        if td.get('adopted_scenario_id') == scenario_id:
-            td['adopted_scenario_id'] = None
+            data = request.get_json(silent=True) or {}
+            all_data = _thread_scenarios(user_id, thread_id)
+            td = all_data.get(thread_id, {})
+            if scenario_id not in td.get('scenarios', {}):
+                return jsonify({'error': 'Scenario not found'}), 404
 
-        def _apply_scenario_delete(current_td):
-            scenarios = current_td.get('scenarios') if isinstance(current_td.get('scenarios'), dict) else {}
-            _assert_object_basis(scenarios.get(scenario_id), expected_updated_at, session_id=thread_id)
-            scenarios.pop(scenario_id, None)
-            current_td['scenarios'] = scenarios
-            if current_td.get('adopted_scenario_id') == scenario_id:
-                current_td['adopted_scenario_id'] = None
-            return current_td
+            expected_updated_at = data.get('expected_updated_at')
+            _assert_object_basis(td['scenarios'][scenario_id], expected_updated_at, session_id=thread_id)
+            del td['scenarios'][scenario_id]
+            if td.get('adopted_scenario_id') == scenario_id:
+                td['adopted_scenario_id'] = None
 
-        snapshot_meta = None
-        try:
-            snapshot_meta = _delete_snapshot_from_session(
-                user_id, thread_id, scenario_id, commit=False,
+            def _apply_scenario_delete(current_td):
+                scenarios = current_td.get('scenarios') if isinstance(current_td.get('scenarios'), dict) else {}
+                _assert_object_basis(scenarios.get(scenario_id), expected_updated_at, session_id=thread_id)
+                scenarios.pop(scenario_id, None)
+                current_td['scenarios'] = scenarios
+                if current_td.get('adopted_scenario_id') == scenario_id:
+                    current_td['adopted_scenario_id'] = None
+                return current_td
+
+            snapshot_meta = None
+            try:
+                snapshot_meta = _delete_snapshot_from_session(
+                    user_id, thread_id, scenario_id, commit=False,
+                )
+            except ValueError as delete_error:
+                db.session.rollback()
+                return jsonify({'error': str(delete_error)}), 400
+            new_revision = save_session_and_project_scenarios_data(
+                user_id, thread_id, updater=_apply_scenario_delete,
             )
-        except ValueError as delete_error:
-            db.session.rollback()
-            return jsonify({'error': str(delete_error)}), 400
-        new_revision = save_session_and_project_scenarios_data(
-            user_id, thread_id, updater=_apply_scenario_delete,
-        )
-        return jsonify({
-            'success': True,
-            'deleted_scenario_id': scenario_id,
-            'selected_scorecard_id': (snapshot_meta or {}).get('selected_scorecard_id'),
-            'scorecard_snapshots': (snapshot_meta or {}).get('scorecard_snapshots'),
-            'revision': new_revision,
-        }), 200
+            return jsonify({
+                'success': True,
+                'deleted_scenario_id': scenario_id,
+                'selected_scorecard_id': (snapshot_meta or {}).get('selected_scorecard_id'),
+                'scorecard_snapshots': (snapshot_meta or {}).get('scorecard_snapshots'),
+                'revision': new_revision,
+            }), 200
+
+        return run_project_write(_delete)
 
     except SessionAccessError as e:
         body, status = e.to_response()
@@ -9368,84 +9394,91 @@ def adopt_scenario(scenario_id):
                     break
             if not thread_id:
                 return jsonify({'error': 'Scenario not found in any thread'}), 404
-        _user, _sessions, _project_row = _thread_scope(user_id, thread_id, require_write=True)
+        _thread_scope(user_id, thread_id, require_write=True)
 
-        all_data = _thread_scenarios(user_id, thread_id)
-        resolved_thread_id = None
-        td = None
-        scenario = None
-        if thread_id:
-            candidate = all_data.get(thread_id, {})
-            if scenario_id not in candidate.get('scenarios', {}):
-                return jsonify({'error': 'Scenario not found'}), 404
-            resolved_thread_id = thread_id
-            td = candidate
-            scenario = candidate.get('scenarios', {}).get(scenario_id)
-        else:
-            for tid, candidate in all_data.items():
-                if scenario_id in candidate.get('scenarios', {}):
-                    resolved_thread_id = tid
-                    td = candidate
-                    scenario = candidate.get('scenarios', {}).get(scenario_id)
-                    break
-            if not resolved_thread_id or not isinstance(scenario, dict):
-                return jsonify({'error': 'Scenario not found in any thread'}), 404
+        # Session and scenario data save together; a lost race re-runs the whole
+        # unit on fresh data (backlog 14).
+        def _adopt():
+            _user, _sessions, _project_row = _thread_scope(user_id, thread_id, require_write=True)
 
-        baseline = td.get('baseline') if isinstance(td.get('baseline'), dict) else None
-        if not baseline:
-            return jsonify({'error': 'No baseline stored for this thread.'}), 400
-        baseline_inputs = _scenario_inputs(td, _resolve_session_entry(_sessions, resolved_thread_id)[1])
-        result = scenario.get('result') if isinstance(scenario.get('result'), dict) else None
-        if not result:
-            result = _compute_scenario_scorecard(baseline, scenario.get('deltas') or {}, baseline_inputs)
-            result['analysis_id'] = scenario_id
-            result['scenario_id'] = scenario_id
-            result['thread_id'] = resolved_thread_id
-            result['label'] = scenario.get('label') or 'Scenario'
-            scenario['result'] = result
+            all_data = _thread_scenarios(user_id, thread_id)
+            resolved_thread_id = None
+            td = None
+            scenario = None
+            if thread_id:
+                candidate = all_data.get(thread_id, {})
+                if scenario_id not in candidate.get('scenarios', {}):
+                    return jsonify({'error': 'Scenario not found'}), 404
+                resolved_thread_id = thread_id
+                td = candidate
+                scenario = candidate.get('scenarios', {}).get(scenario_id)
+            else:
+                for tid, candidate in all_data.items():
+                    if scenario_id in candidate.get('scenarios', {}):
+                        resolved_thread_id = tid
+                        td = candidate
+                        scenario = candidate.get('scenarios', {}).get(scenario_id)
+                        break
+                if not resolved_thread_id or not isinstance(scenario, dict):
+                    return jsonify({'error': 'Scenario not found in any thread'}), 404
 
-        td['adopted_scenario_id'] = scenario_id
-        expected_updated_at = data.get('expected_updated_at')
-        _assert_object_basis(scenario, expected_updated_at, session_id=resolved_thread_id)
-        scenario['updated_at'] = datetime.utcnow().isoformat()
-        desired_scenario = copy.deepcopy(scenario)
+            baseline = td.get('baseline') if isinstance(td.get('baseline'), dict) else None
+            if not baseline:
+                return jsonify({'error': 'No baseline stored for this thread.'}), 400
+            baseline_inputs = _scenario_inputs(td, _resolve_session_entry(_sessions, resolved_thread_id)[1])
+            result = scenario.get('result') if isinstance(scenario.get('result'), dict) else None
+            if not result:
+                result = _compute_scenario_scorecard(baseline, scenario.get('deltas') or {}, baseline_inputs)
+                result['analysis_id'] = scenario_id
+                result['scenario_id'] = scenario_id
+                result['thread_id'] = resolved_thread_id
+                result['label'] = scenario.get('label') or 'Scenario'
+                scenario['result'] = result
 
-        def _apply_scenario_adopt(current_td):
-            scenarios = current_td.get('scenarios') if isinstance(current_td.get('scenarios'), dict) else {}
-            _assert_object_basis(scenarios.get(scenario_id), expected_updated_at, session_id=resolved_thread_id)
-            scenarios[scenario_id] = desired_scenario
-            current_td['scenarios'] = scenarios
-            current_td['adopted_scenario_id'] = scenario_id
-            return current_td
+            td['adopted_scenario_id'] = scenario_id
+            expected_updated_at = data.get('expected_updated_at')
+            _assert_object_basis(scenario, expected_updated_at, session_id=resolved_thread_id)
+            scenario['updated_at'] = datetime.utcnow().isoformat()
+            desired_scenario = copy.deepcopy(scenario)
 
-        snapshot_meta = _persist_scenario_snapshot_to_session(
-            user_id,
-            resolved_thread_id,
-            scenario,
-            result,
-            select=True,
-            commit=False,
-        )
-        new_revision = save_session_and_project_scenarios_data(
-            user_id, resolved_thread_id, updater=_apply_scenario_adopt,
-        )
-        _audit_strategy_event(
-            'scenario.adopted',
-            user_id=user_id,
-            details={
-                'thread_id': resolved_thread_id,
-                'scenario_id': scenario_id,
-            },
-        )
-        return jsonify({
-            'success': True,
-            'adopted_scenario_id': scenario_id,
-            'selected_scorecard_id': (snapshot_meta or {}).get('selected_scorecard_id'),
-            'snapshot': (snapshot_meta or {}).get('snapshot'),
-            'scorecard_snapshots': (snapshot_meta or {}).get('scorecard_snapshots'),
-            'scenario_updated_at': scenario.get('updated_at'),
-            'revision': new_revision,
-        }), 200
+            def _apply_scenario_adopt(current_td):
+                scenarios = current_td.get('scenarios') if isinstance(current_td.get('scenarios'), dict) else {}
+                _assert_object_basis(scenarios.get(scenario_id), expected_updated_at, session_id=resolved_thread_id)
+                scenarios[scenario_id] = desired_scenario
+                current_td['scenarios'] = scenarios
+                current_td['adopted_scenario_id'] = scenario_id
+                return current_td
+
+            snapshot_meta = _persist_scenario_snapshot_to_session(
+                user_id,
+                resolved_thread_id,
+                scenario,
+                result,
+                select=True,
+                commit=False,
+            )
+            new_revision = save_session_and_project_scenarios_data(
+                user_id, resolved_thread_id, updater=_apply_scenario_adopt,
+            )
+            _audit_strategy_event(
+                'scenario.adopted',
+                user_id=user_id,
+                details={
+                    'thread_id': resolved_thread_id,
+                    'scenario_id': scenario_id,
+                },
+            )
+            return jsonify({
+                'success': True,
+                'adopted_scenario_id': scenario_id,
+                'selected_scorecard_id': (snapshot_meta or {}).get('selected_scorecard_id'),
+                'snapshot': (snapshot_meta or {}).get('snapshot'),
+                'scorecard_snapshots': (snapshot_meta or {}).get('scorecard_snapshots'),
+                'scenario_updated_at': scenario.get('updated_at'),
+                'revision': new_revision,
+            }), 200
+
+        return run_project_write(_adopt)
 
     except SessionAccessError as e:
         body, status = e.to_response()
@@ -9817,7 +9850,7 @@ def _register_execution_plan_artifact(user_id, thread_id, normalized_wbs):
             session['result']['chat_history'] = kept
         session['timestamp'] = now_iso
         sessions[session_key or thread_id] = session
-        return save_user_sessions(user_id, sessions)
+        return save_one_project(user_id, sessions, session_key or thread_id)
     except Exception:
         current_app.logger.exception("[_register_execution_plan_artifact] failed")
         return False
@@ -10484,90 +10517,97 @@ def update_scorecard_snapshot(thread_id, snapshot_id):
     try:
         user_id = get_jwt_identity()
         _thread_scope(user_id, thread_id, require_write=True)
-        payload = request.get_json() or {}
-        next_label = str(payload.get('label') or '').strip()
-        set_active = bool(payload.get('active'))
-        expected_selected_scorecard_id = str(payload.get('expected_selected_scorecard_id') or '').strip() or None
-        expected_snapshot_id = str(payload.get('expected_snapshot_id') or snapshot_id or '').strip() or None
-        expected_snapshot_revision = str(
-            payload.get('expected_snapshot_revision')
-            or payload.get('expected_snapshot_created_at')
-            or ''
-        ).strip() or None
 
-        snapshot_meta = None
-        if next_label:
-            snapshot_meta = _rename_snapshot_in_session(
-                user_id,
-                thread_id,
-                snapshot_id,
-                next_label,
-                expected_selected_scorecard_id=expected_selected_scorecard_id,
-                expected_snapshot_id=expected_snapshot_id,
-                expected_snapshot_revision=expected_snapshot_revision,
-                commit=False,
-            )
-            if not snapshot_meta:
-                return jsonify({'error': 'Snapshot not found'}), 404
+        # Session and scenario data save together; a lost race re-runs the whole
+        # unit on fresh data (backlog 14).
+        def _update():
+            _thread_scope(user_id, thread_id, require_write=True)
+            payload = request.get_json() or {}
+            next_label = str(payload.get('label') or '').strip()
+            set_active = bool(payload.get('active'))
+            expected_selected_scorecard_id = str(payload.get('expected_selected_scorecard_id') or '').strip() or None
+            expected_snapshot_id = str(payload.get('expected_snapshot_id') or snapshot_id or '').strip() or None
+            expected_snapshot_revision = str(
+                payload.get('expected_snapshot_revision')
+                or payload.get('expected_snapshot_created_at')
+                or ''
+            ).strip() or None
 
-            all_data = _thread_scenarios(user_id, thread_id)
-            td = all_data.get(thread_id, {})
-            scenarios = td.get('scenarios') if isinstance(td.get('scenarios'), dict) else {}
-            scenario = scenarios.get(snapshot_id)
-            if isinstance(scenario, dict):
-                scenario['label'] = next_label
-                if isinstance(scenario.get('result'), dict):
-                    scenario['result']['label'] = next_label
-                scenario['updated_at'] = datetime.utcnow().isoformat()
-                save_session_and_project_scenarios_data(
-                    user_id, thread_id, td, source=all_data,
+            snapshot_meta = None
+            if next_label:
+                snapshot_meta = _rename_snapshot_in_session(
+                    user_id,
+                    thread_id,
+                    snapshot_id,
+                    next_label,
+                    expected_selected_scorecard_id=expected_selected_scorecard_id,
+                    expected_snapshot_id=expected_snapshot_id,
+                    expected_snapshot_revision=expected_snapshot_revision,
+                    commit=False,
                 )
-            else:
-                db.session.commit()
-
-        if set_active:
-            active_meta = _set_selected_snapshot_in_session(
-                user_id,
-                thread_id,
-                snapshot_id,
-                expected_selected_scorecard_id=expected_selected_scorecard_id,
-                expected_snapshot_id=expected_snapshot_id,
-                expected_snapshot_revision=expected_snapshot_revision,
-            )
-            if not active_meta:
-                native_row = _thread_scorecard_row(
-                    user_id, thread_id, snapshot_id, path='snapshot_activate',
-                )
-                if native_row is None:
+                if not snapshot_meta:
                     return jsonify({'error': 'Snapshot not found'}), 404
-                sessions = _thread_sessions(user_id, thread_id)
-                resolved_id, session = _resolve_session_entry(sessions, thread_id)
-                if isinstance(session, dict):
-                    result = session.get('result') if isinstance(session.get('result'), dict) else {}
-                    result['selected_scorecard_id'] = str(snapshot_id)
-                    session['result'] = result
-                    sessions[resolved_id or thread_id] = session
-                    save_user_sessions(user_id, sessions)
-                active_meta = {
-                    'snapshot': native_row.to_peer_dict(),
-                    'selected_scorecard_id': str(snapshot_id),
+
+                all_data = _thread_scenarios(user_id, thread_id)
+                td = all_data.get(thread_id, {})
+                scenarios = td.get('scenarios') if isinstance(td.get('scenarios'), dict) else {}
+                scenario = scenarios.get(snapshot_id)
+                if isinstance(scenario, dict):
+                    scenario['label'] = next_label
+                    if isinstance(scenario.get('result'), dict):
+                        scenario['result']['label'] = next_label
+                    scenario['updated_at'] = datetime.utcnow().isoformat()
+                    save_session_and_project_scenarios_data(
+                        user_id, thread_id, td, source=all_data,
+                    )
+                else:
+                    db.session.commit()
+
+            if set_active:
+                active_meta = _set_selected_snapshot_in_session(
+                    user_id,
+                    thread_id,
+                    snapshot_id,
+                    expected_selected_scorecard_id=expected_selected_scorecard_id,
+                    expected_snapshot_id=expected_snapshot_id,
+                    expected_snapshot_revision=expected_snapshot_revision,
+                )
+                if not active_meta:
+                    native_row = _thread_scorecard_row(
+                        user_id, thread_id, snapshot_id, path='snapshot_activate',
+                    )
+                    if native_row is None:
+                        return jsonify({'error': 'Snapshot not found'}), 404
+                    sessions = _thread_sessions(user_id, thread_id)
+                    resolved_id, session = _resolve_session_entry(sessions, thread_id)
+                    if isinstance(session, dict):
+                        result = session.get('result') if isinstance(session.get('result'), dict) else {}
+                        result['selected_scorecard_id'] = str(snapshot_id)
+                        session['result'] = result
+                        sessions[resolved_id or thread_id] = session
+                        save_one_project(user_id, sessions, resolved_id or thread_id)
+                    active_meta = {
+                        'snapshot': native_row.to_peer_dict(),
+                        'selected_scorecard_id': str(snapshot_id),
+                    }
+                snapshot_meta = {
+                    **(snapshot_meta or {}),
+                    **active_meta,
                 }
-            snapshot_meta = {
-                **(snapshot_meta or {}),
-                **active_meta,
-            }
 
-        if not snapshot_meta:
-            return jsonify({'error': 'No changes requested'}), 400
+            if not snapshot_meta:
+                return jsonify({'error': 'No changes requested'}), 400
 
-        peers = _canonical_thread_peers(user_id, thread_id)
-        return jsonify({
-            'success': True,
-            'snapshot': snapshot_meta.get('snapshot'),
-            'scorecard_snapshots': peers,
-            'peer_scorecards': peers,
-            'selected_scorecard_id': snapshot_meta.get('selected_scorecard_id'),
-        }), 200
+            peers = _canonical_thread_peers(user_id, thread_id)
+            return jsonify({
+                'success': True,
+                'snapshot': snapshot_meta.get('snapshot'),
+                'scorecard_snapshots': peers,
+                'peer_scorecards': peers,
+                'selected_scorecard_id': snapshot_meta.get('selected_scorecard_id'),
+            }), 200
+
+        return run_project_write(_update)
     except ScorecardConflictError as conflict:
         payload = conflict.payload if isinstance(conflict.payload, dict) else {}
         return jsonify(payload or {'error': str(conflict), 'code': 'scorecard_conflict'}), 409
@@ -10951,7 +10991,7 @@ def _save_one_session(user_id, sessions, key):
     the write, and the old callers never checked the result, so a lost edit
     still reported success.
     """
-    if not save_user_sessions(user_id, {key: sessions[key]}):
+    if not save_one_project(user_id, sessions, key):
         raise OverridesSaveFailed('session_not_saved')
 
 
@@ -11244,7 +11284,7 @@ def patch_thread_scorecard(thread_id):
     session['result'] = next_result
     session['timestamp'] = datetime.utcnow().isoformat()
     sessions[resolved_thread_id] = session
-    save_user_sessions(user_id, sessions)
+    save_one_project(user_id, sessions, resolved_thread_id)
     return jsonify({
         'success': True,
         'updated_scorecard': edited_snapshot,
@@ -11260,49 +11300,56 @@ def delete_scorecard_snapshot(thread_id, snapshot_id):
     try:
         user_id = get_jwt_identity()
         _thread_scope(user_id, thread_id, require_write=True)
-        expected_selected_scorecard_id = str(request.args.get('expected_selected_scorecard_id') or '').strip() or None
-        expected_snapshot_id = str(request.args.get('expected_snapshot_id') or snapshot_id or '').strip() or None
-        expected_snapshot_revision = str(
-            request.args.get('expected_snapshot_revision')
-            or request.args.get('expected_snapshot_created_at')
-            or ''
-        ).strip() or None
-        snapshot_meta = _delete_snapshot_from_session(
-            user_id,
-            thread_id,
-            snapshot_id,
-            expected_selected_scorecard_id=expected_selected_scorecard_id,
-            expected_snapshot_id=expected_snapshot_id,
-            expected_snapshot_revision=expected_snapshot_revision,
-            commit=False,
-        )
-        if not snapshot_meta:
-            return jsonify({'error': 'Snapshot not found'}), 404
 
-        # Stage the native scorecard tombstone in the same transaction as the
-        # legacy session snapshot and linked scenario deletion.
-        _archive_project_scorecard(user_id, snapshot_id, thread_id=thread_id)
-        all_data = _thread_scenarios(user_id, thread_id)
-        td = all_data.get(thread_id, {})
-        scenarios = td.get('scenarios') if isinstance(td.get('scenarios'), dict) else {}
-        if snapshot_id in scenarios:
-            del scenarios[snapshot_id]
-            if td.get('adopted_scenario_id') == snapshot_id:
-                td['adopted_scenario_id'] = None
-            save_session_and_project_scenarios_data(
-                user_id, thread_id, td, source=all_data,
+        # Session and scenario data save together; a lost race re-runs the whole
+        # unit on fresh data (backlog 14).
+        def _delete():
+            _thread_scope(user_id, thread_id, require_write=True)
+            expected_selected_scorecard_id = str(request.args.get('expected_selected_scorecard_id') or '').strip() or None
+            expected_snapshot_id = str(request.args.get('expected_snapshot_id') or snapshot_id or '').strip() or None
+            expected_snapshot_revision = str(
+                request.args.get('expected_snapshot_revision')
+                or request.args.get('expected_snapshot_created_at')
+                or ''
+            ).strip() or None
+            snapshot_meta = _delete_snapshot_from_session(
+                user_id,
+                thread_id,
+                snapshot_id,
+                expected_selected_scorecard_id=expected_selected_scorecard_id,
+                expected_snapshot_id=expected_snapshot_id,
+                expected_snapshot_revision=expected_snapshot_revision,
+                commit=False,
             )
-        else:
-            db.session.commit()
+            if not snapshot_meta:
+                return jsonify({'error': 'Snapshot not found'}), 404
 
-        peers = _canonical_thread_peers(user_id, thread_id)
-        return jsonify({
-            'success': True,
-            'deleted_snapshot_id': snapshot_meta.get('deleted_snapshot_id'),
-            'scorecard_snapshots': peers,
-            'peer_scorecards': peers,
-            'selected_scorecard_id': snapshot_meta.get('selected_scorecard_id'),
-        }), 200
+            # Stage the native scorecard tombstone in the same transaction as the
+            # legacy session snapshot and linked scenario deletion.
+            _archive_project_scorecard(user_id, snapshot_id, thread_id=thread_id)
+            all_data = _thread_scenarios(user_id, thread_id)
+            td = all_data.get(thread_id, {})
+            scenarios = td.get('scenarios') if isinstance(td.get('scenarios'), dict) else {}
+            if snapshot_id in scenarios:
+                del scenarios[snapshot_id]
+                if td.get('adopted_scenario_id') == snapshot_id:
+                    td['adopted_scenario_id'] = None
+                save_session_and_project_scenarios_data(
+                    user_id, thread_id, td, source=all_data,
+                )
+            else:
+                db.session.commit()
+
+            peers = _canonical_thread_peers(user_id, thread_id)
+            return jsonify({
+                'success': True,
+                'deleted_snapshot_id': snapshot_meta.get('deleted_snapshot_id'),
+                'scorecard_snapshots': peers,
+                'peer_scorecards': peers,
+                'selected_scorecard_id': snapshot_meta.get('selected_scorecard_id'),
+            }), 200
+
+        return run_project_write(_delete)
     except ScorecardConflictError as conflict:
         payload = conflict.payload if isinstance(conflict.payload, dict) else {}
         return jsonify(payload or {'error': str(conflict), 'code': 'scorecard_conflict'}), 409
@@ -11335,159 +11382,170 @@ def update_strategy_thread(thread_id):
         # common shared mutation there is. It now goes through the same
         # chokepoint as everything else.
         actor = User.query.get(str(user_id))
-        canonical = canonical_row(actor, thread_id, include_archived=True) if actor else None
-        if canonical is not None:
+        if actor is not None and canonical_row(actor, thread_id, include_archived=True) is not None:
             resolve_session_for_actor(
                 actor, thread_id, require_write=True, include_archived=True
             )
-            check_revision(canonical, extract_base_revision(payload))
-            sessions = load_sessions_for_thread(actor, thread_id, include_archived=True) or {}
-        else:
-            # No canonical row: a legacy thread reached only through the
-            # caller's own data. Nothing is shared, so there is nothing to race on.
-            sessions = _thread_sessions(user_id, thread_id)
-        all_data = _thread_scenarios(user_id, thread_id)
-        resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
-        if not resolved_thread_id:
-            return jsonify({'error': 'Thread not found'}), 404
 
-        thread_data = all_data.get(resolved_thread_id) if isinstance(all_data, dict) else None
-        thread_data = thread_data if isinstance(thread_data, dict) else None
-        if not isinstance(session, dict) and not isinstance(thread_data, dict):
-            return jsonify({'error': 'Thread not found'}), 404
-        if not isinstance(session, dict):
-            existing_baseline = thread_data.get('baseline') if isinstance(thread_data, dict) else None
-            scenarios = thread_data.get('scenarios') if isinstance(thread_data, dict) and isinstance(thread_data.get('scenarios'), dict) else {}
-            adopted_scenario_id = thread_data.get('adopted_scenario_id') if isinstance(thread_data, dict) else None
-            adopted_scenario = scenarios.get(adopted_scenario_id) if adopted_scenario_id and isinstance(scenarios.get(adopted_scenario_id), dict) else None
-            current_result = (
-                adopted_scenario.get('result') if isinstance(adopted_scenario, dict) and isinstance(adopted_scenario.get('result'), dict)
-                else existing_baseline if isinstance(existing_baseline, dict)
-                else None
-            )
-            existing_name = None
-            if isinstance(existing_baseline, dict):
-                existing_name = (
-                    existing_baseline.get('project_name')
-                    or existing_baseline.get('name')
-                    or existing_baseline.get('title')
+        # Session and scenario data save together; a lost race re-runs the whole
+        # unit on fresh data (backlog 14).
+        def _rename():
+            actor = User.query.get(str(user_id))
+            canonical = canonical_row(actor, thread_id, include_archived=True) if actor else None
+            if canonical is not None:
+                resolve_session_for_actor(
+                    actor, thread_id, require_write=True, include_archived=True
                 )
+                check_revision(canonical, extract_base_revision(payload))
+                sessions = load_sessions_for_thread(actor, thread_id, include_archived=True) or {}
+            else:
+                # No canonical row: a legacy thread reached only through the
+                # caller's own data. Nothing is shared, so there is nothing to race on.
+                sessions = _thread_sessions(user_id, thread_id)
+            all_data = _thread_scenarios(user_id, thread_id)
+            resolved_thread_id, session_key, session = _resolve_strategy_thread_state(sessions, all_data, thread_id)
+            if not resolved_thread_id:
+                return jsonify({'error': 'Thread not found'}), 404
+
+            thread_data = all_data.get(resolved_thread_id) if isinstance(all_data, dict) else None
+            thread_data = thread_data if isinstance(thread_data, dict) else None
+            if not isinstance(session, dict) and not isinstance(thread_data, dict):
+                return jsonify({'error': 'Thread not found'}), 404
+            if not isinstance(session, dict):
+                existing_baseline = thread_data.get('baseline') if isinstance(thread_data, dict) else None
+                scenarios = thread_data.get('scenarios') if isinstance(thread_data, dict) and isinstance(thread_data.get('scenarios'), dict) else {}
+                adopted_scenario_id = thread_data.get('adopted_scenario_id') if isinstance(thread_data, dict) else None
+                adopted_scenario = scenarios.get(adopted_scenario_id) if adopted_scenario_id and isinstance(scenarios.get(adopted_scenario_id), dict) else None
+                current_result = (
+                    adopted_scenario.get('result') if isinstance(adopted_scenario, dict) and isinstance(adopted_scenario.get('result'), dict)
+                    else existing_baseline if isinstance(existing_baseline, dict)
+                    else None
+                )
+                existing_name = None
+                if isinstance(existing_baseline, dict):
+                    existing_name = (
+                        existing_baseline.get('project_name')
+                        or existing_baseline.get('name')
+                        or existing_baseline.get('title')
+                    )
+                now_iso = datetime.utcnow().isoformat()
+                session = {
+                    'session_id': resolved_thread_id,
+                    'name': str(existing_name or next_name or 'Jaspen Analysis').strip(),
+                    'document_type': 'strategy',
+                    'created': now_iso,
+                    'timestamp': now_iso,
+                    'status': 'completed' if isinstance(thread_data, dict) and (thread_data.get('baseline') or thread_data.get('scenarios')) else 'in_progress',
+                    'chat_history': [],
+                    'result': dict(current_result) if isinstance(current_result, dict) else None,
+                    'analysis_history': (
+                        [{'analysis_id': str(current_result.get('analysis_id') or resolved_thread_id), 'result': dict(current_result)}]
+                        if isinstance(current_result, dict)
+                        else []
+                    ),
+                }
+                session_key = resolved_thread_id
+
             now_iso = datetime.utcnow().isoformat()
-            session = {
-                'session_id': resolved_thread_id,
-                'name': str(existing_name or next_name or 'Jaspen Analysis').strip(),
-                'document_type': 'strategy',
-                'created': now_iso,
-                'timestamp': now_iso,
-                'status': 'completed' if isinstance(thread_data, dict) and (thread_data.get('baseline') or thread_data.get('scenarios')) else 'in_progress',
-                'chat_history': [],
-                'result': dict(current_result) if isinstance(current_result, dict) else None,
-                'analysis_history': (
-                    [{'analysis_id': str(current_result.get('analysis_id') or resolved_thread_id), 'result': dict(current_result)}]
-                    if isinstance(current_result, dict)
-                    else []
-                ),
-            }
-            session_key = resolved_thread_id
+            session['name'] = next_name
+            session['timestamp'] = now_iso
 
-        now_iso = datetime.utcnow().isoformat()
-        session['name'] = next_name
-        session['timestamp'] = now_iso
+            if isinstance(session.get('result'), dict):
+                result = dict(session['result'])
+                result['project_name'] = next_name
 
-        if isinstance(session.get('result'), dict):
-            result = dict(session['result'])
-            result['project_name'] = next_name
+                compat = result.get('compat')
+                if isinstance(compat, dict):
+                    compat = dict(compat)
+                    compat['title'] = next_name
+                    result['compat'] = compat
 
-            compat = result.get('compat')
-            if isinstance(compat, dict):
-                compat = dict(compat)
-                compat['title'] = next_name
-                result['compat'] = compat
+                baseline_scorecard = result.get('_baseline_scorecard')
+                if isinstance(baseline_scorecard, dict):
+                    patched_baseline = dict(baseline_scorecard)
+                    patched_baseline['project_name'] = next_name
+                    result['_baseline_scorecard'] = patched_baseline
 
-            baseline_scorecard = result.get('_baseline_scorecard')
-            if isinstance(baseline_scorecard, dict):
-                patched_baseline = dict(baseline_scorecard)
-                patched_baseline['project_name'] = next_name
-                result['_baseline_scorecard'] = patched_baseline
+                snapshots = result.get('scorecard_snapshots')
+                if isinstance(snapshots, list):
+                    next_snapshots = []
+                    for snapshot in snapshots:
+                        if isinstance(snapshot, dict):
+                            patched_snapshot = dict(snapshot)
+                            patched_snapshot['project_name'] = next_name
+                            next_snapshots.append(patched_snapshot)
+                        else:
+                            next_snapshots.append(snapshot)
+                    result['scorecard_snapshots'] = next_snapshots
 
-            snapshots = result.get('scorecard_snapshots')
-            if isinstance(snapshots, list):
-                next_snapshots = []
-                for snapshot in snapshots:
-                    if isinstance(snapshot, dict):
-                        patched_snapshot = dict(snapshot)
-                        patched_snapshot['project_name'] = next_name
-                        next_snapshots.append(patched_snapshot)
-                    else:
-                        next_snapshots.append(snapshot)
-                result['scorecard_snapshots'] = next_snapshots
+                session['result'] = result
 
-            session['result'] = result
+            history = session.get('analysis_history')
+            if isinstance(history, list):
+                next_history = []
+                for entry in history:
+                    if not isinstance(entry, dict):
+                        next_history.append(entry)
+                        continue
+                    patched_entry = dict(entry)
+                    if isinstance(patched_entry.get('result'), dict):
+                        patched_result = dict(patched_entry['result'])
+                        patched_result['project_name'] = next_name
+                        if isinstance(patched_result.get('compat'), dict):
+                            compat = dict(patched_result['compat'])
+                            compat['title'] = next_name
+                            patched_result['compat'] = compat
+                        patched_entry['result'] = patched_result
+                    next_history.append(patched_entry)
+                session['analysis_history'] = next_history
 
-        history = session.get('analysis_history')
-        if isinstance(history, list):
-            next_history = []
-            for entry in history:
-                if not isinstance(entry, dict):
-                    next_history.append(entry)
-                    continue
-                patched_entry = dict(entry)
-                if isinstance(patched_entry.get('result'), dict):
-                    patched_result = dict(patched_entry['result'])
-                    patched_result['project_name'] = next_name
-                    if isinstance(patched_result.get('compat'), dict):
-                        compat = dict(patched_result['compat'])
-                        compat['title'] = next_name
-                        patched_result['compat'] = compat
-                    patched_entry['result'] = patched_result
-                next_history.append(patched_entry)
-            session['analysis_history'] = next_history
+            sessions[session_key or resolved_thread_id] = session
+            if not save_one_project(user_id, sessions, session_key or resolved_thread_id, commit=False):
+                raise RuntimeError('Failed to persist project rename')
 
-        sessions[session_key or resolved_thread_id] = session
-        if not save_user_sessions(user_id, sessions, commit=False):
-            raise RuntimeError('Failed to persist project rename')
+            if isinstance(thread_data, dict):
+                baseline = thread_data.get('baseline')
+                if isinstance(baseline, dict):
+                    patched_baseline = dict(baseline)
+                    patched_baseline['project_name'] = next_name
+                    thread_data['baseline'] = patched_baseline
 
-        if isinstance(thread_data, dict):
-            baseline = thread_data.get('baseline')
-            if isinstance(baseline, dict):
-                patched_baseline = dict(baseline)
-                patched_baseline['project_name'] = next_name
-                thread_data['baseline'] = patched_baseline
+                scenarios = thread_data.get('scenarios')
+                if isinstance(scenarios, dict):
+                    next_scenarios = {}
+                    for scenario_id, scenario in scenarios.items():
+                        if isinstance(scenario, dict):
+                            patched_scenario = dict(scenario)
+                            if isinstance(patched_scenario.get('result'), dict):
+                                patched_result = dict(patched_scenario['result'])
+                                patched_result['project_name'] = next_name
+                                patched_scenario['result'] = patched_result
+                            next_scenarios[scenario_id] = patched_scenario
+                        else:
+                            next_scenarios[scenario_id] = scenario
+                    thread_data['scenarios'] = next_scenarios
 
-            scenarios = thread_data.get('scenarios')
-            if isinstance(scenarios, dict):
-                next_scenarios = {}
-                for scenario_id, scenario in scenarios.items():
-                    if isinstance(scenario, dict):
-                        patched_scenario = dict(scenario)
-                        if isinstance(patched_scenario.get('result'), dict):
-                            patched_result = dict(patched_scenario['result'])
-                            patched_result['project_name'] = next_name
-                            patched_scenario['result'] = patched_result
-                        next_scenarios[scenario_id] = patched_scenario
-                    else:
-                        next_scenarios[scenario_id] = scenario
-                thread_data['scenarios'] = next_scenarios
+                all_data[resolved_thread_id] = thread_data
+                save_session_and_project_scenarios_data(
+                    user_id, resolved_thread_id, thread_data, source=all_data,
+                )
+            else:
+                db.session.commit()
 
-            all_data[resolved_thread_id] = thread_data
-            save_session_and_project_scenarios_data(
-                user_id, resolved_thread_id, thread_data, source=all_data,
-            )
-        else:
-            db.session.commit()
+            _written = canonical_row(actor, resolved_thread_id, include_archived=True) if actor else None
+            return jsonify({
+                'success': True,
+                'thread': {
+                    'id': resolved_thread_id,
+                    'session_id': resolved_thread_id,
+                    'name': next_name,
+                    'status': session.get('status') or 'in_progress',
+                    'revision': int(_written.revision or 1) if _written is not None else None,
+                    'timestamp': now_iso,
+                },
+            }), 200
 
-        _written = canonical_row(actor, resolved_thread_id, include_archived=True) if actor else None
-        return jsonify({
-            'success': True,
-            'thread': {
-                'id': resolved_thread_id,
-                'session_id': resolved_thread_id,
-                'name': next_name,
-                'status': session.get('status') or 'in_progress',
-                'revision': int(_written.revision or 1) if _written is not None else None,
-                'timestamp': now_iso,
-            },
-        }), 200
+        return run_project_write(_rename)
 
     except SessionAccessError:
         # A 403/404/409 is a decision, not a failure. Let the app-level handler
@@ -11780,10 +11838,10 @@ Rules:
 
         session['timestamp'] = datetime.utcnow().isoformat()
         sessions[session_key or thread_id] = session
-        persisted = save_user_sessions(user_id, sessions)
+        persisted = save_one_project(user_id, sessions, session_key or thread_id)
         if not persisted:
             current_app.logger.error(
-                "[scorecard_assistant] save_user_sessions failed for user=%s thread=%s",
+                "[scorecard_assistant] project save failed for user=%s thread=%s",
                 user_id, thread_id,
             )
 
@@ -11805,10 +11863,10 @@ Rules:
             session['result']['chat_history'] = chat_history
         session['timestamp'] = now_iso
         sessions[session_key or thread_id] = session
-        persisted = save_user_sessions(user_id, sessions)
+        persisted = save_one_project(user_id, sessions, session_key or thread_id)
         if not persisted:
             current_app.logger.error(
-                "[scorecard_assistant] save_user_sessions failed for user=%s thread=%s",
+                "[scorecard_assistant] project save failed for user=%s thread=%s",
                 user_id, thread_id,
             )
 
@@ -12096,7 +12154,7 @@ If no plan changes are needed, return "uiActions": [].
         try:
             _persist_scorecard_assistant_turn(session, session.get('result') or {}, instruction, reply)
             sessions[session_key] = session
-            save_user_sessions(user_id, sessions)
+            save_one_project(user_id, sessions, session_key)
         except Exception as persist_err:
             current_app.logger.warning("[execution_assistant] persist failed: %s", persist_err)
 
@@ -12277,7 +12335,7 @@ def scorecard_attributes(thread_id, scorecard_id):
     )
     session['facts_changed'] = True
     sessions[_session_key or thread_id] = session
-    if not save_user_sessions(user_id, sessions):
+    if not save_one_project(user_id, sessions, _session_key or thread_id):
         return jsonify({
             'error': 'The fact update could not be saved. The existing score remains unchanged.',
             'code': 'fact_update_persist_failed',

@@ -344,7 +344,7 @@ def test_queue_keeps_seven_and_never_leaks_continuation(app, db, test_user, monk
     # caller's personal session list.
     monkeypatch.setattr(agent, '_project_sessions', lambda *_a, **_k: {'seven': {'session_id': 'seven'}})
     saved = []
-    monkeypatch.setattr(agent, 'save_user_sessions', lambda uid, sessions: saved.append(sessions) or True)
+    monkeypatch.setattr(agent, 'save_one_project', lambda uid, sessions, key, **_k: saved.append({key: sessions[key]}) or True)
     result = agent._execute_mutation_tool('queue_scorecards', {'ideas': [{'name': f'Option {i}'} for i in range(7)]}, user=test_user, user_id=test_user.id, thread_id='seven')
     assert result['ok'], result
     assert len(result['queue']) == 7 and result['overflow_count'] == 0
@@ -2642,7 +2642,7 @@ def test_rfp_queue_stops_when_canonical_fact_persistence_fails(app, db, test_use
     sessions = load_user_sessions(test_user.id)
     sessions[tid]['chat_history'] = [{'role': 'user', 'content': 'Option A: Contract value $14M.'}]
     assert save_user_sessions(test_user.id, sessions)
-    monkeypatch.setattr(agent, 'save_user_sessions', lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(agent, 'save_one_project', lambda *_args, **_kwargs: False)
 
     result = agent._execute_mutation_tool(
         'queue_scorecards',

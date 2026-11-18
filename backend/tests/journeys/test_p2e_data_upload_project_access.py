@@ -216,7 +216,11 @@ def _competitor_save(original_save, owner, thread_id, *, name, chat_text):
         {"role": "user", "content": chat_text}
     ]
     staged["base_revision"] = current["revision"]
-    assert original_save(owner.id, {thread_id: staged})
+    # The owner's save is another request (P3: the project store keeps a
+    # per-request record of what that request read and saved).
+    from flask import current_app
+    with current_app.app_context():
+        assert original_save(owner.id, {thread_id: staged})
 
 
 def test_teammate_edit_during_model_call_is_preserved(client, dist, monkeypatch):
@@ -242,20 +246,24 @@ def test_teammate_edit_during_model_call_is_preserved(client, dist, monkeypatch)
     assert calls == [True]
 
 
-def test_lost_race_at_save_reloads_and_retries_once(client, dist, model_calls, monkeypatch):
+def test_lost_race_at_save_keeps_both_saves(client, dist, model_calls, monkeypatch):
+    """P3: the store applies only the insight to the stored project, so a
+    teammate's save that lands first is kept without a second attempt.
+    (Before P3 this unit re-read and retried; see H-3 Step 0.)"""
     from app.routes import ai_agent
-    original_save = ai_agent.save_user_sessions
+    from app.routes.sessions import save_user_sessions as competitor_save
+    original_save = ai_agent.save_project_session
     owner = dist["users"]["owner"]
     attempts = []
 
-    def _racing_save(user_id, sessions, *args, **kwargs):
+    def _racing_save(user_id, session_id, payload, *args, **kwargs):
         attempts.append(True)
         if len(attempts) == 1:
-            _competitor_save(original_save, owner, "t-shared",
+            _competitor_save(competitor_save, owner, "t-shared",
                              name="Owner won first save race", chat_text="Owner race entry")
-        return original_save(user_id, sessions, *args, **kwargs)
+        return original_save(user_id, session_id, payload, *args, **kwargs)
 
-    monkeypatch.setattr(ai_agent, "save_user_sessions", _racing_save)
+    monkeypatch.setattr(ai_agent, "save_project_session", _racing_save)
     response = _upload(client, dist, "editor")
     assert response.status_code == 200
     assert response.get_json()["persisted"] is True
@@ -263,24 +271,27 @@ def test_lost_race_at_save_reloads_and_retries_once(client, dist, model_calls, m
     assert after["name"] == "Owner won first save race"
     assert any(m.get("content") == "Owner race entry" for m in after["payload"]["chat_history"])
     assert after["payload"]["ai_insights"][0]["summary"] == INSIGHT_TEXT
-    assert len(attempts) == 2
+    assert len(attempts) == 1
     assert len(model_calls) == 1
 
 
 def test_every_save_attempt_loses_without_overwriting(client, dist, model_calls, monkeypatch):
+    """Every attempt loses its compare-and-swap: three attempts, nothing of
+    the insight is written and the teammate's last save stands."""
     from app.routes import ai_agent
-    original_save = ai_agent.save_user_sessions
+    from app.routes.sessions import save_user_sessions as competitor_save
+    from app.session_access import LostRace
     owner = dist["users"]["owner"]
     attempts = []
 
-    def _always_racing_save(user_id, sessions, *args, **kwargs):
+    def _always_racing_save(user_id, session_id, payload, *args, **kwargs):
         attempt = len(attempts) + 1
         attempts.append(attempt)
-        _competitor_save(original_save, owner, "t-shared", name=f"Competitor version {attempt}",
+        _competitor_save(competitor_save, owner, "t-shared", name=f"Competitor version {attempt}",
                          chat_text=f"Competitor entry {attempt}")
-        return original_save(user_id, sessions, *args, **kwargs)
+        raise LostRace(payload.get("revision"), None, session_id=session_id)
 
-    monkeypatch.setattr(ai_agent, "save_user_sessions", _always_racing_save)
+    monkeypatch.setattr(ai_agent, "save_project_session", _always_racing_save)
     response = _upload(client, dist, "editor")
     assert response.status_code == 200
     assert response.get_json()["persisted"] is False
@@ -290,6 +301,42 @@ def test_every_save_attempt_loses_without_overwriting(client, dist, model_calls,
     assert after["payload"]["chat_history"][-1]["content"] == "Competitor entry 3"
     assert after["payload"].get("ai_insights") in (None, [])
     assert attempts == [1, 2, 3]
+    assert len(model_calls) == 1
+
+
+def test_teammate_removing_an_insight_meanwhile_keeps_both_changes(client, dist, model_calls, monkeypatch):
+    """A teammate removed an earlier insight while this one was being added.
+    Insights carry ids, so these are different objects: the removal stands and
+    the new insight is saved (P3). Neither writer is overwritten."""
+    from app import db as _db
+    from app.models import UserSession
+    from app.routes import ai_agent
+    from app.routes.sessions import save_user_sessions as competitor_save
+    original_save = ai_agent.save_project_session
+    owner = dist["users"]["owner"]
+    row = UserSession.query.filter_by(session_id="t-shared").first()
+    seeded = copy.deepcopy(row.payload)
+    seeded["ai_insights"] = [{"id": "earlier", "summary": "Earlier insight"}]
+    row.payload = seeded
+    _db.session.commit()
+
+    def _racing_save(user_id, session_id, payload, *args, **kwargs):
+        current = _row_snapshot("t-shared")
+        staged = copy.deepcopy(current["payload"])
+        staged["ai_insights"] = []
+        staged["base_revision"] = current["revision"]
+        from flask import current_app
+        with current_app.app_context():
+            assert competitor_save(owner.id, {"t-shared": staged})
+        return original_save(user_id, session_id, payload, *args, **kwargs)
+
+    monkeypatch.setattr(ai_agent, "save_project_session", _racing_save)
+    response = _upload(client, dist, "editor")
+    assert response.status_code == 200
+    assert response.get_json()["persisted"] is True
+    after = _row_snapshot("t-shared")
+    insights = after["payload"]["ai_insights"]
+    assert [item["summary"] for item in insights] == [INSIGHT_TEXT]
     assert len(model_calls) == 1
 
 

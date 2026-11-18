@@ -118,6 +118,18 @@ class RevisionConflict(SessionAccessError):
         return body, status
 
 
+class LostRace(RevisionConflict):
+    """Another write landed between this write's read and its compare-and-swap.
+
+    Nothing the caller asserted was wrong, so the whole unit may be read again
+    and re-applied (``app.routes.sessions.run_project_write``). It is still a
+    RevisionConflict, so a unit that runs out of attempts, or is not retried,
+    answers with the same approved refusal. A conflict the caller asserted (a
+    stale ``base_revision`` or object basis) and a conflicting change to the
+    same object are plain RevisionConflicts and are never retried.
+    """
+
+
 # --- Organization context ----------------------------------------------------
 
 _UNPINNED = object()
@@ -499,6 +511,31 @@ def check_revision(row, base_revision):
         raise RevisionConflict(expected, current, session_id=row.session_id)
 
 
+def lock_project_row(row):
+    """Re-read ``row`` from the database, locked until the transaction ends.
+
+    Every project writer takes this lock before it reads the stored project
+    for its decision: the project store, the scenario store, and comments,
+    sharing and activity (team.py). Those last three change the payload
+    without a new revision, so a compare-and-swap cannot see them; the lock
+    makes the writers take turns instead. One project row per write unit, so
+    the lock order is always the same.
+
+    PostgreSQL: SELECT ... FOR UPDATE. Other databases have no row lock, so,
+    as in the P2d backfill, a no-op UPDATE takes the database's write lock
+    first (SQLite serializes writers on it).
+    """
+    if db.session.get_bind().dialect.name != 'postgresql':
+        table = UserSession.__table__
+        db.session.execute(
+            table.update()
+            .where(table.c.id == row.id)
+            .values(revision=table.c.revision)
+        )
+    db.session.refresh(row, with_for_update=True)
+    return row
+
+
 def stamp_write(row, user_id):
     """Record an accepted mutation with a database compare-and-swap."""
     from sqlalchemy.orm.attributes import set_committed_value
@@ -513,7 +550,7 @@ def stamp_write(row, user_id):
     ).update(values, synchronize_session=False)
     if changed != 1:
         current = db.session.get(UserSession, row.id)
-        raise RevisionConflict(
+        raise LostRace(
             expected,
             int(current.revision or 1) if current is not None else None,
             session_id=row.session_id,

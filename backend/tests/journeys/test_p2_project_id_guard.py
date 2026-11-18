@@ -700,6 +700,8 @@ def test_exemptions_wrappers_and_loaders_are_real_and_still_needed():
         names = {_call_name(c) for c in ast.walk(fn) if isinstance(c, ast.Call)}
         assert not names & {
             "save_user_sessions", "save_scenarios_data", "save_project_scenarios_data",
+            # P3: the single-project store entries.
+            "save_project_session", "save_one_project", "delete_user_sessions",
             "execute_customer_operation", "execute_customer_text_operation", "get_llm_client",
         }, (key, "an exempted function saves or calls the model")
     for key, entry in ORDERING_EXEMPTIONS.items():

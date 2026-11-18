@@ -1,13 +1,20 @@
 # app/routes/sessions.py
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, g, has_app_context, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
+import json
 import logging
+import random
+import time
+
+from sqlalchemy import event
 
 from app import db
 from app.models import User, UserSession
+from app.project_changes import ConflictingChange, apply_request_changes, changed_paths
 from app.session_access import (
+    LostRace,
     RevisionConflict,
     attributed_scope_clause,
     SessionAccessError,
@@ -22,6 +29,7 @@ from app.session_access import (
     hide_for_user,
     is_hidden_for,
     is_personal_session_id,
+    lock_project_row,
     reachable_by_attribution,
     resolve_session_for_actor,
     stamp_write,
@@ -292,6 +300,7 @@ def load_user_sessions(user_id, include_archived=False):
             # organization (or losing their seat).
             continue
         payload = _session_row_to_payload(row)
+        _remember_read(payload)
         sessions[str(payload.get('session_id') or row.session_id)] = payload
     return sessions
 
@@ -340,6 +349,7 @@ def load_sessions_for_thread(user, thread_id, include_archived=False):
         return sessions
 
     payload = _session_row_to_payload(row)
+    _remember_read(payload)
     sessions[str(payload.get('session_id') or row.session_id)] = payload
     return sessions
 
@@ -468,8 +478,344 @@ def _session_query_for_user(user_id):
     return query.order_by(UserSession.updated_at.desc(), UserSession.id.desc())
 
 
+# ---------------------------------------------------------------------------
+# One project per write (P3)
+#
+# A route reads a project, changes part of it and saves it. Every project a
+# route loads is remembered for the rest of the request (the version it read,
+# by revision), so the store can tell what THIS request changed. When someone
+# else saved the same project in between, only this request's changes are
+# applied to the stored project (app.project_changes); a part both writers
+# changed differently is refused with the approved conflict message, never
+# overwritten.
+# ---------------------------------------------------------------------------
+
+PROJECT_WRITE_ATTEMPTS = 3
+_RETRY_PAUSE_SECONDS = 0.02
+_REQUEST_RECORDS = ('_p3_project_reads', '_p3_own_paths', '_p3_uncommitted')
+
+
+@sessions_bp.before_app_request
+def _start_project_write_record():
+    """The record belongs to one request, even where an application context
+    outlives it (tests, CLI); it is never shared between requests."""
+    for name in _REQUEST_RECORDS:
+        g.pop(name, None)
+
+
+@sessions_bp.teardown_app_request
+def _end_project_write_record(_exc=None):
+    for name in _REQUEST_RECORDS:
+        g.pop(name, None)
+
+
+def _project_reads():
+    if not has_app_context():
+        return None
+    reads = getattr(g, '_p3_project_reads', None)
+    if reads is None:
+        reads = {}
+        g._p3_project_reads = reads
+    return reads
+
+
+def _own_paths(row):
+    """Parts of this project the current request has already saved."""
+    if not has_app_context():
+        return set()
+    own = getattr(g, '_p3_own_paths', None)
+    if own is None:
+        own = {}
+        g._p3_own_paths = own
+    return own.setdefault((str(row.user_id or ''), str(row.session_id or '')), set())
+
+
+def _remember_read(payload):
+    """Record the version of a project this request was handed."""
+    reads = _project_reads()
+    if reads is None or not isinstance(payload, dict):
+        return
+    try:
+        revision = int(payload.get('revision'))
+    except (TypeError, ValueError):
+        return
+    key = (str(payload.get('user_id') or ''), str(payload.get('session_id') or ''), revision)
+    is_new = key not in reads
+    reads[key] = json.dumps(_payload_content(payload), default=str)
+    return key if is_new else None
+
+
+def _uncommitted():
+    """What this request recorded for writes its open transaction holds."""
+    if not has_app_context():
+        return None
+    pending = getattr(g, '_p3_uncommitted', None)
+    if pending is None:
+        pending = []
+        g._p3_uncommitted = pending
+    return pending
+
+
+@event.listens_for(db.session, 'after_commit')
+def _keep_committed_records(_session):
+    """The writes are stored: their records stay for the rest of the request."""
+    if has_app_context():
+        g.pop('_p3_uncommitted', None)
+
+
+@event.listens_for(db.session, 'after_rollback')
+def _forget_rolled_back_records(_session):
+    """The writes were rolled back (a lost race re-running its unit, a refusal,
+    an error): forget the versions and own paths they recorded, so a retry
+    neither treats a version that was never stored as read nor wins a
+    conflict over a path it never wrote. Versions the request loaded stay."""
+    if not has_app_context():
+        return
+    pending = g.pop('_p3_uncommitted', None) or []
+    reads = getattr(g, '_p3_project_reads', None) or {}
+    own = getattr(g, '_p3_own_paths', None) or {}
+    for kind, key, value in reversed(pending):
+        if kind == 'read':
+            reads.pop(key, None)
+        elif kind == 'own' and key in own:
+            own[key].discard(value)
+
+
+def _version_read(payload, row):
+    """The version of this project the request read at the payload's revision."""
+    reads = _project_reads()
+    if not reads:
+        return None
+    try:
+        revision = int(payload.get('revision'))
+    except (TypeError, ValueError):
+        return None
+    owner = str(payload.get('user_id') or row.user_id or '')
+    for sid in {str(payload.get('session_id') or ''), str(row.session_id or '')}:
+        stored = reads.get((owner, sid, revision))
+        if stored is not None:
+            return json.loads(stored)
+    return None
+
+
+def _apply_to_current(row, payload):
+    """Apply only this request's changes when the project moved on.
+
+    Returns the payload to write. Raises RevisionConflict when this request
+    and another writer changed the same part differently.
+
+    * A declared ``base_revision`` (already checked against the stored row) is
+      the caller's own claim that it builds on the current version: written
+      as given.
+    * A copy this request loaded (its ``revision`` matches a version this
+      request was handed) has only its changes applied to what is stored.
+    * Anything else carries no usable starting point and is written as
+      given, exactly as before P3.
+    """
+    if extract_base_revision(payload) is not None:
+        return payload
+    original = _version_read(payload, row)
+    if original is None:
+        return payload
+
+    current = _session_row_to_payload(row)
+    if _payload_content(current) == _payload_content(original):
+        return payload
+
+    current_revision = int(row.revision or 1)
+    try:
+        merged = apply_request_changes(
+            _payload_content(original),
+            _payload_content(payload),
+            _payload_content(current),
+            own_paths=_own_paths(row),
+        )
+    except ConflictingChange as conflict:
+        logger.info(
+            "Same-object conflict on project %s at %s", row.session_id, conflict.paths[:5]
+        )
+        raise RevisionConflict(payload.get('revision'), current_revision, session_id=row.session_id)
+
+    for key in _VOLATILE_PAYLOAD_KEYS:
+        if key in payload:
+            merged[key] = payload[key]
+    return merged
+
+
+def _resolve_write_target(actor, user_id, sid):
+    existing = canonical_row(actor, sid, include_archived=True) if actor else None
+    if existing is not None:
+        return existing
+    if actor is None:
+        # Preserve the old fallback only when there is no actor record.
+        return (
+            UserSession.query
+            .filter_by(user_id=user_id, session_id=sid)
+            .first()
+        )
+    # For a known actor, canonical_row already returns their unbound legacy
+    # row; an org-bound row from another active org must not be overwritten
+    # as a fallback.
+    own = (
+        UserSession.query
+        .filter_by(user_id=user_id, session_id=sid)
+        .first()
+    )
+    if own is not None and own.organization_id:
+        raise SessionNotFound(denied=True)
+    return own
+
+
+def _write_one_project(actor, user_id, key, payload):
+    """Stage one project's write in the current transaction. Returns the row."""
+    sid = str(payload.get('session_id') or key or '').strip()
+    if not sid:
+        return None
+
+    existing = _resolve_write_target(actor, user_id, sid)
+    if existing is None:
+        row = _upsert_session_row(user_id, sid, payload, existing=None)
+        db.session.add(row)
+        db.session.flush()
+        _after_write(payload, row, before=None)
+        return row
+
+    for attempt in range(PROJECT_WRITE_ATTEMPTS):
+        # Decide against what is stored now, locked until this transaction
+        # ends (session_access.lock_project_row). Comments, sharing and the
+        # activity feed change the payload without a new revision, so the
+        # compare-and-swap alone cannot see them; with the lock they wait for
+        # this save, or this save waits for them and applies its changes on
+        # top of theirs.
+        lock_project_row(existing)
+        # Access is decided on the locked row, so a project unshared a moment
+        # ago is not written by someone who just lost access.
+        if actor is not None and not can_read_session(existing, actor):
+            raise SessionNotFound(denied=True)
+        if actor is not None and not can_write_session(existing, actor):
+            raise SessionForbidden(
+                'Your role on this project is read-only.'
+            )
+        # Only validate an EXPLICIT claim here. Whether a revision is
+        # *required* is an endpoint-level decision: endpoints call
+        # check_revision() directly and then strip `base_revision` before
+        # handing the payload over, so re-applying the requirement at this
+        # depth would reject the very write the endpoint just authorized.
+        # This still catches an internal caller that passes a stale
+        # base_revision through.
+        declared = extract_base_revision(payload)
+        if declared is not None:
+            check_revision(existing, declared)
+        to_write = _apply_to_current(existing, payload)
+        before = _payload_content(_session_row_to_payload(existing))
+        try:
+            row = _upsert_session_row(user_id, sid, to_write, existing=existing)
+        except LostRace:
+            # Another save landed between the read above and the
+            # compare-and-swap. The merge needs only stored data, so the
+            # store can redo it without re-running the caller.
+            db.session.expire(existing)
+            if attempt + 1 >= PROJECT_WRITE_ATTEMPTS:
+                raise
+            continue
+        db.session.flush()
+        _after_write(payload, row, before=before)
+        return row
+    return None
+
+
+def _after_write(payload, row, *, before):
+    """Keep the caller's copy and this request's record on the saved version."""
+    revision = int(row.revision or 1)
+    if isinstance(payload, dict):
+        payload['revision'] = revision
+    saved = _session_row_to_payload(row)
+    pending = _uncommitted()
+    read_key = _remember_read(saved)
+    if read_key is not None and pending is not None:
+        pending.append(('read', read_key, None))
+    own = _own_paths(row)
+    paths = {'/'} if before is None else changed_paths(before, _payload_content(saved))
+    own_key = (str(row.user_id or ''), str(row.session_id or ''))
+    for path in paths - own:
+        if pending is not None:
+            pending.append(('own', own_key, path))
+    own.update(paths)
+
+
+def save_project_session(user_id, session_id, payload, *, commit=True):
+    """Save exactly one project. The single-project entry to the store.
+
+    Resolves the organization's canonical row, enforces read and write access
+    and any declared ``base_revision``, then writes only what this request
+    changed (see the section comment above). Returns True, or False on an
+    unexpected storage error; raises SessionAccessError (403/404/409) when the
+    write is refused.
+    """
+    user_id = str(user_id)
+    actor = User.query.get(user_id)
+    try:
+        if isinstance(payload, dict):
+            _write_one_project(actor, user_id, session_id, payload)
+        if commit:
+            db.session.commit()
+        return True
+    except SessionAccessError:
+        db.session.rollback()
+        raise
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error saving project {session_id} for user {user_id}: {e}")
+        return False
+
+
+def save_one_project(user_id, sessions, key, *, commit=True):
+    """Save ``sessions[key]`` only: the route's working set stays in memory."""
+    payload = sessions.get(key) if isinstance(sessions, dict) else None
+    if not isinstance(payload, dict):
+        return False
+    return save_project_session(user_id, key, payload, commit=commit)
+
+
+def delete_user_sessions(user_id, session_ids, *, commit=True):
+    """Delete the named projects (permission-checked). Writes nothing else."""
+    return save_user_sessions(user_id, {}, session_ids_to_delete=session_ids, commit=commit)
+
+
+def run_project_write(unit, *, attempts=PROJECT_WRITE_ATTEMPTS):
+    """Run a read-modify-write unit, re-running it after a lost race.
+
+    ``unit`` reads the project, checks what the caller asserted, applies the
+    change and saves, all inside the call. When another save lands between
+    its read and its compare-and-swap (LostRace), the transaction is rolled
+    back, including any staged session change, and the whole unit runs again
+    on fresh data, up to ``attempts`` times. A conflict the caller asserted, or
+    a change to the same object, is never retried. The unit must not have
+    side effects outside the database before its save.
+    """
+    attempts = max(1, int(attempts))
+    for attempt in range(attempts):
+        try:
+            return unit()
+        except LostRace:
+            db.session.rollback()
+            if attempt + 1 >= attempts:
+                raise
+            # A short, random pause so writers that collided do not collide
+            # again in lockstep.
+            time.sleep(random.uniform(0, _RETRY_PAUSE_SECONDS) * (attempt + 1))
+    return None
+
+
 def save_user_sessions(user_id, sessions, session_ids_to_delete=None, *, commit=True):
     """Upsert provided sessions; delete only explicitly requested session ids.
+
+    Compatibility entry. Routes save through ``save_project_session`` /
+    ``save_one_project`` (one project per write) and delete through
+    ``delete_user_sessions``; tests/test_p3_one_project_writes.py enforces it.
+    Each project in ``sessions`` is written exactly as ``save_project_session``
+    writes it, so a stale copy of a project this caller did not change is
+    never written back over newer work.
 
     Canonical-ownership behaviour (Phase 1):
 
@@ -498,55 +844,9 @@ def save_user_sessions(user_id, sessions, session_ids_to_delete=None, *, commit=
         for key, payload in sessions.items():
             if not isinstance(payload, dict):
                 continue
-
-            sid = str(payload.get('session_id') or key or '').strip()
-            if not sid:
-                continue
-
-            existing = canonical_row(actor, sid, include_archived=True) if actor else None
-            if existing is None:
-                # Preserve the old fallback only when there is no actor
-                # record. For a known actor, canonical_row already returns
-                # their unbound legacy row; an org-bound row from another
-                # active org must not be overwritten as a fallback.
-                if actor is None:
-                    existing = (
-                        UserSession.query
-                        .filter_by(user_id=user_id, session_id=sid)
-                        .first()
-                    )
-                else:
-                    own = (
-                        UserSession.query
-                        .filter_by(user_id=user_id, session_id=sid)
-                        .first()
-                    )
-                    if own is not None and own.organization_id:
-                        raise SessionNotFound(denied=True)
-                    existing = own
-
-            if existing is not None:
-                if actor is not None and not can_read_session(existing, actor):
-                    raise SessionNotFound(denied=True)
-                if actor is not None and not can_write_session(existing, actor):
-                    raise SessionForbidden(
-                        'Your role on this project is read-only.'
-                    )
-                # Only validate an EXPLICIT claim here. Whether a revision is
-                # *required* is an endpoint-level decision: endpoints call
-                # check_revision() directly and then strip `base_revision`
-                # before handing the payload over, so re-applying the
-                # requirement at this depth would reject the very write the
-                # endpoint just authorized. This still catches an internal
-                # caller that passes a stale base_revision through.
-                declared = extract_base_revision(payload)
-                if declared is not None:
-                    check_revision(existing, declared)
-
-            row = _upsert_session_row(user_id, sid, payload, existing=existing)
-            if row.id is None:
-                db.session.add(row)
-            resolved[sid] = row
+            row = _write_one_project(actor, user_id, key, payload)
+            if row is not None:
+                resolved[str(row.session_id)] = row
 
         explicit_deletes = {
             str(sid).strip()
@@ -612,9 +912,13 @@ def save_session():
         sessions = load_sessions_for_thread(actor, session_id)
         normalized = _normalize_session_payload(current_user_id, session_id, data)
         normalized.pop('base_revision', None)
+        # The client's whole copy replaces the project, exactly as before; a
+        # stale copy is refused above through `base_revision`, so the echoed
+        # `revision` is not a second claim.
+        normalized.pop('revision', None)
         sessions[session_id] = normalized
 
-        if save_user_sessions(current_user_id, sessions):
+        if save_one_project(current_user_id, sessions, session_id):
             row = canonical_row(actor, session_id, include_archived=True)
             logger.info(f"Session {session_id} saved for user {current_user_id}")
             return jsonify({
@@ -713,7 +1017,7 @@ def complete_session():
         sessions[session_id]['completed_at'] = _iso_now()
         sessions[session_id]['timestamp'] = _iso_now()
 
-        if save_user_sessions(current_user_id, sessions):
+        if save_one_project(current_user_id, sessions, session_id):
             logger.info(f"Session {session_id} marked as completed for user {current_user_id}")
             return jsonify({'success': True})
         return jsonify({'error': 'Failed to update session'}), 500

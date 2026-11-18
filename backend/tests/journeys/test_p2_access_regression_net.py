@@ -527,11 +527,11 @@ def test_team_comment_follows_today_s_participation_rule(client, net, calls, act
     assert _external(calls) == {}, actor
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "POST /team/projects/<id>/comments: add_project_comment mutates row.payload in place and "
-    "db.JSON does not detect it, so the comment and its activity entry are not saved "
-    "(pre-existing persistence defect, not authorization; not fixed here)"))
 def test_team_comment_is_saved_to_the_project(client, net):
+    """Fixed in P3: comments are written from a fresh copy of the stored
+    project (app.routes.team._locked_payload), so the change is saved. Before
+    P3 this was a strict-xfail probe: the payload was mutated in place and
+    db.JSON did not detect it, so the comment was never saved."""
     response = _call(client, net, "editor", "POST", "/api/v1/team/projects/t-shared/comments",
                      {"body": "Net comment"})
     assert response.status_code == 201
