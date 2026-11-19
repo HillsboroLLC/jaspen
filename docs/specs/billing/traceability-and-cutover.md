@@ -998,6 +998,83 @@ pool comparison unresolved (fail closed); such accounts quarantine.
 Local verification is not acceptance and does not authorize commit,
 integration, deployment, activation, or a production migration.
 
+### Phase 15 implementation record — local rehearsal
+
+Status: **implemented locally, inactive, not committed; independent acceptance
+CONDITIONAL PASS (2026-11-19, C1-C4); C1-C4 remediated, awaiting narrow
+re-acceptance.** Built on the accepted Phase 14 checkpoint `b68cd58e`, branch
+`codex/billing-phase-15`. No migration, table, or writer is added:
+`app/billing_rehearsal.py` orchestrates the accepted Phase 14 commands and
+every report is a pure read. It has no route, job, webhook, script, startup,
+or AI-runtime caller. Phase 14 code is unchanged.
+
+**Founder test-credit policy (2026-11-19), applied in reporting only.** Jaspen
+has no paying customers. Credits funded by a payment archived `test_activity`
+stay exactly as opened (the same lot type, amounts, and original terms;
+F1 is resolved without reclassification: they are not promotional, not
+deleted, and no balance changes). Reports identify them as founder test
+activity and exclude them from customer revenue and from genuine purchased
+credit. `unverified` payments stay unverified, never counted as test activity
+or as a genuine customer purchase. Genuine customer purchased credit and
+customer revenue are 0 until a separately authorized processor verification
+exists.
+
+**Start checks (re-acceptance list) and where each applies.**
+
+| Check | Local fixtures | Restore-copy rehearsal | Cutover |
+|---|---|---|---|
+| F1 founder decision | Decided (policy above) | same | same |
+| Environment (C1: decided by the runtime and the database, never the label) | `fixtures` only on a verified local test database (SQLite, or PostgreSQL on a loopback or test-compose host whose configured and server-reported names contain `test`); refused in any production runtime (`is_production_runtime`) | `restore_copy` (PostgreSQL only; refused in any production runtime) | not a rehearsal |
+| Gate 1 units; pricing at 3,600,000 per provider dollar | Enforced (precondition and run start) | Enforced | Enforced |
+| In-flight AI operations (`started`, including P4.0 claims) | Reported; affected accounts quarantine | Must be zero | Must be drained |
+| D04 writer freeze incl. `TurnBilling` | Not applicable | Attested reference required | Required |
+| Migration-only role; runtime role without INSERT on Phase 14 tables | Not applicable | Enforced: connected role has INSERT on the nine tables, no UPDATE, DELETE, TRUNCATE, or superuser; the named runtime role has no INSERT on any | Required (creating the roles needs founder approval) |
+| Run order; `sources_opened_more_than_once` empty; archive complete | Enforced and reported | same | same |
+| F4 expired/live split | Reported | same | sizes the founder pre-2026-05-08 rule |
+| Review-permission holder | Reported | Reported | Only if a review is needed |
+| Approved `EntitlementDefinition`s; Stripe read for `mapped_pending_processor` | Deferred | Deferred | Required |
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| Preconditions and environments | `rehearsal_preconditions()` (pure): each finding names its scope (`local`, `restore_copy`, `cutover`) | `test_fixture_preconditions_pass_and_any_other_environment_is_refused`; `test_restore_copy_preconditions_fail_closed_without_the_cutover_controls`; `test_a_rehearsal_needs_explicit_targets_and_honours_the_pricing_unit`; `test_postgres_restore_copy_needs_a_least_privilege_migration_role_and_a_read_only_runtime_role`; C1: `test_a_production_runtime_refuses_every_rehearsal_even_when_labelled_fixtures[4]`; `test_only_a_verified_local_test_database_counts_as_fixtures[9]`; `test_a_fixtures_label_cannot_switch_off_the_controls_on_an_unapproved_database`; `test_postgres_fixtures_are_refused_on_a_local_database_not_named_for_tests` |
+| Run order archive, establish, backfill, map over explicit targets; each step commits alone | `run_rehearsal()`; a quarantined establishment without an account is skipped and reported; mapping only for established accounts | `test_a_fixture_rehearsal_runs_in_order_and_reports_every_d16_item` |
+| Failure injection and resume | A failure rolls back its own step only; `RehearsalStepError` lists the committed steps; the same call resumes the same run (every Phase 14 command replays); a bounded retry for `MigrationRetryError` | `test_a_failure_at_any_step_keeps_earlier_steps_and_the_same_call_resumes[4]`; `test_a_transient_retry_is_retried_then_surfaces_as_a_step_failure`; `test_a_rerun_writes_nothing_and_reproduces_every_decision` |
+| Run ownership (C3) | A run never builds on another run's records: resuming a run after a newer run has established any of its targets raises `RehearsalSupersededError` before any step and writes nothing; each backfill and mapping step also refuses unless the organization's latest establishment belongs to its own run. Re-acceptance R1: Phase 14's `map_legacy_plan` only flushes inside the caller's transaction, so after it returns the mapping step checks that the written row's establishment belongs to this run, before `_step` commits; otherwise it raises `RehearsalSupersededError` and the mapping and its idempotency claim roll back together. The report's `cross_run_plan_mappings` therefore stays empty for rehearsals run through `run_rehearsal`, including under a forced two-session interleaving; it remains a detector for mappings written any other way. Two interleaved concurrent rehearsals: one may fail closed, and each source still opens once | `test_an_interrupted_older_run_cannot_resume_after_a_newer_run_and_writes_no_mappings`; `test_a_rerun_writes_nothing_and_reproduces_every_decision`; `test_postgres_concurrent_rehearsals_open_each_source_exactly_once`; `test_postgres_r1_a_run_cannot_commit_a_mapping_to_an_establishment_a_concurrent_run_wrote` |
+| Rerun no-op (D16 "a deterministic rerun showing zero new entries") | `rerun_proof()`: zero new openings, ledger entries, and archives; equal evidence fingerprints and decisions (a plan mapping's run-specific establishment and credit references excluded) | `test_a_rerun_writes_nothing_and_reproduces_every_decision`; PostgreSQL rerun tests |
+| D16 reconciliation report items | `rehearsal_report()`: sums by account, source, currency, plan, and period; pre/post available, held, settled, expired, reversed; duplicate references, sources opened elsewhere or twice, idempotency claims not completed; every unresolved conflict by category; sampled account proofs (input evidence and target entries); compatibility comparison of every API field recomputed and checked against each stored result | `test_a_fixture_rehearsal_runs_in_order_and_reports_every_d16_item` |
+| Census and legacy immutability | `rehearsal_census()` and `legacy_fingerprint()`: target and downstream table counts (Phase 4 and 5.2 stay 0) and a digest of every legacy field read; unchanged by every rehearsal | rehearsal tests (`legacy_unchanged`, `census_delta`) |
+| F4 | `historical_value_by_state()`: expired, live, and undetermined apart; user totals reconcile exactly to `historical_value_population()`; organization pool meters added (disclosed: the Phase 14 population lists users only) | `test_pre_boundary_value_is_reported_expired_live_and_undetermined_separately` |
+| Founder test separation | `founder_test_credit_separation()`: each migrated lot's funding from the immutable result evidence and archive; genuine purchased credit and revenue 0; founder test and unverified apart. Team pools (C2): `founder_test` only when the account's bound payer has at least one subscription invoice, every one attributed to this account and archived `test_activity`, and no other pooled subject holds a paid subscription; anything mixed, missing, or ambiguous stays `unverified` (with `funding_basis`); the pool lot is only read | `test_founder_test_credit_is_kept_identified_and_excluded_from_customer_reporting`; `test_without_an_attestation_no_payment_is_classified_as_test_activity`; `test_a_fully_attested_team_pool_is_founder_test_and_kept_exactly_as_opened`; `test_an_unattested_team_pool_stays_unverified`; `test_a_mixed_team_pool_stays_unverified_and_the_archive_conflict_is_reported` |
+| Archive conflicts in the report (C4) | `rehearsal_report(test_activity_attestation=, archive_step_findings=)`: `classification_differs_from_archive` and `attested_payer_without_payments` recomputed from the run's attestation, then every archive-step finding carried in verbatim | `test_attestation_conflicts_and_attested_payers_without_payments_appear_in_the_report`; `test_a_mixed_team_pool_stays_unverified_and_the_archive_conflict_is_reported` |
+| Downgrade and rollback (D16) | The accepted Phase 14 downgrade: empty round trip exact; refused atomically once evidence exists | `test_sqlite_empty_round_trip_is_exact_and_downgrade_refuses_once_a_run_exists`; `test_postgres_empty_round_trip_is_exact_and_downgrade_refuses_after_a_rehearsal` (needs `TEST_PHASE15_ROUNDTRIP_DATABASE_URL`, a fresh database at head) |
+| Concurrency | Two concurrent rehearsals open each source once | `test_postgres_concurrent_rehearsals_open_each_source_exactly_once` |
+| Inactive; pure reports | No caller; reports write nothing | `test_phase15_rehearsal_has_no_live_callers`; `test_reports_are_pure_reads` |
+
+Test-side updates (the established pattern): one allowlist entry for the
+inactive module in the Phase 4, Phase 13, and Phase 14 live-caller guards.
+
+Carried to Phase 16 from the acceptance audit (not Phase 15 blockers): L1
+post-side `expired`/`reversed`/`settled` from target ledger entries instead of
+by construction; L2 a census-based rerun proof; I1 organization meters
+counted under the Phase 14 pool rule; I2 `credit_reservations` and the Phase 12
+tables in the run census; I3 the stale README Phase 14 bullet. The in-flight
+definition (`status == 'started'`) must cover any non-terminal status P4.1
+adds; distinguishing stale from outstanding operations belongs to P4.1.
+
+**Cutover-only dependencies (unchanged by Phase 15).** The migration-only and
+runtime roles on a restore copy and in production; the D04 writer freeze
+including `TurnBilling`; drained `started` AI operations (P4.0 claims them on
+the unified line); approved `EntitlementDefinition`s; the Stripe read for any
+`mapped_pending_processor` account; a founder rule for live pre-2026-05-08
+value; organizations for users without one. Unified-line integration: the
+P4.0 worktree adds AI-operation writers (`ai_audit.claim_turn_operation`,
+`close_turn_operation_alone`) and a meter reference (`_meter_cycle_marker`)
+that the Phase 13 writer inventory must list before P4.0 joins the billing
+line (the inventory check fails on the Phase 14 checkpoint too).
+
+Local verification is not acceptance and does not authorize commit,
+integration, deployment, activation, or a production migration.
+
 ## D18 Phase dependency and cutover map
 
 The original 18 phases are the authoritative implementation sequence because
@@ -1022,7 +1099,7 @@ useful **program gates**, not a competing sequence. This map authorizes nothing.
 | 12 | AI reservations and settlements | 2D AI | Pricing/capacity binding, fallback, tools, checkpoint/resume, delivery-based billability, absorbed-usage evidence, and exact settlement tests pass (accepted, local checkpoint `4efabb05`, inactive; activation gated on Phase 17 reliable delivery). |
 | 13 | Inventory and reconciliation | 2B | Pure projections, all writer/reader inventory, compatibility field proofs (independently accepted on `4efabb05`, inactive; local checkpoint `26468456`). |
 | 14 | Backfill | 2B/2C | Evidence-ranked deterministic migration; no unexplained account cut over. |
-| 15 | Local rehearsal | 2C | Exact reports, failure injection, downgrade/rollback, rerun no-op. |
+| 15 | Local rehearsal | 2C | Exact reports, failure injection, downgrade/rollback, rerun no-op (implemented locally on `b68cd58e`, inactive; acceptance CONDITIONAL PASS, C1-C4 remediated, awaiting narrow re-acceptance). |
 | 16 | Shadow verification | 2B/2F | Production-like authorized environment only; projected/legacy comparisons, pricing/capacity telemetry, zero customer impact. |
 | 17 | Controlled cutover | 2D then 2E | Command families cut over in dependency order, then readers; explicit separate authorization and rollback gates. |
 | 18 | Legacy retirement | 2F/2G | Observation proves zero legacy writes/drift; consumer inventory empty; PR #27 disposition separately decided. |

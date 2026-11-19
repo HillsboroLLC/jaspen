@@ -288,6 +288,17 @@ realized margin were not accessed or verified.
   details left unresolved for a later, separately authorized Stripe read. No
   production data, Stripe, or AI provider is touched. See the Phase 14 record
   in the traceability document.
+- Phase 15 local rehearsal is implemented locally, inactive, on the accepted
+  Phase 14 checkpoint `b68cd58e` (no migration); independent acceptance
+  CONDITIONAL PASS, C1-C4 remediated, awaiting narrow re-acceptance. It runs the Phase 14 commands in order (archive, establish,
+  backfill, map) on a verified local test database or an approved restore
+  copy only (never in a production runtime), one run never building on
+  another's records, with
+  failure injection, resume, a rerun proof of zero new entries, the D16
+  reconciliation reports, pre-2026-05-08 value expired and live apart, and
+  the founder test-credit separation (test credits kept as opened, excluded
+  from customer revenue and genuine purchased credit; unverified stays
+  unverified). See the Phase 15 record in the traceability document.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type
