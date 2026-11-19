@@ -60,7 +60,15 @@ from app.ai_governance import (
     routing_decision,
     shadow_comparison,
 )
-from app.ai_audit import attach_governance, persist_operation
+from app.ai_audit import (
+    attach_governance,
+    claim_turn_operation,
+    close_turn_operation_alone,
+    note_turn_operation,
+    persist_operation,
+    session_has_uncommitted_writes,
+    transaction_counters,
+)
 from app.ai_providers import anthropic as anthropic_provider
 from app.ai_providers import gemini as gemini_provider
 from app.ai_providers.usage import reported_error_usage
@@ -13506,6 +13514,7 @@ def _record_usage(
     error_code=None,
     idempotency_key=None,
     request_fingerprint=None,
+    operation_id=None,
 ):
     if not isinstance(session, dict):
         return
@@ -13625,12 +13634,14 @@ def _record_usage(
                 metadata_json={
                     'retry_attempts_recorded': 0,
                     'idempotency_protected': bool(idempotency_key),
+                    **({'operation_id': operation_id} if operation_id else {}),
                 },
                 is_failover=bool(failover),
             ))
             persist_operation(
                 usage_user,
-                usage=usage,
+                # A claimed chat turn (P4.0) closes its own operation row.
+                usage={**usage, 'operation_id': operation_id} if operation_id else usage,
                 charged_credits=int(credits_charged or 0),
                 operation_type=operation_type,
                 thread_id=thread_id,
@@ -13643,8 +13654,9 @@ def _record_usage(
         current_app.logger.exception("Failed queuing usage event persistence")
 
 
-def _record_failed_chat_usage(session, error, *, regenerated=False, attachments=None):
+def _record_failed_chat_usage(session, error, *, regenerated=False, attachments=None, turn=None):
     usage = dict(getattr(error, 'jaspen_usage', {}) or {})
+    evidence = getattr(turn, "operation_evidence", None)
     _record_usage(
         session,
         usage,
@@ -13653,7 +13665,13 @@ def _record_failed_chat_usage(session, error, *, regenerated=False, attachments=
         regenerated=regenerated,
         success=False,
         error_code=usage.get('error_code') or type(error).__name__,
+        operation_id=evidence.operation_id if evidence else None,
     )
+    if evidence is not None:
+        evidence.note_close(
+            "provider_unavailable" if isinstance(error, ConversationProviderUnavailable) else "generation_failed",
+            turn, error_code=usage.get('error_code') or type(error).__name__,
+        )
     db.session.commit()
 
 
@@ -13673,7 +13691,7 @@ def _persist_failed_conversation_turn(
         session["name"] = name
     if model_type:
         session["model_type"] = model_type
-    _record_failed_chat_usage(session, error, attachments=attachments)
+    _record_failed_chat_usage(session, error, attachments=attachments, turn=turn)
     return turn.save()
 
 
@@ -15061,14 +15079,180 @@ _SSE_HEADERS = {
 }
 
 
-def _conversation_turn(*, user, user_id, thread_id, session, sessions, model_type, session_key=None):
+class _TurnOperationEvidence:
+    """Durable evidence for one chat turn's AI operation (P4.0, stage S0).
+
+    Wraps the billing binding WITHOUT changing a call: the legacy functions
+    receive the same arguments and their results are returned untouched. It
+    claims the turn's ``AIOperation`` immediately before ``reserve`` (committed
+    by itself while the session holds no other write), remembers what the
+    meter reported, and records it on the same row at the turn's existing
+    terminal step. It adds no commit between reserve and that step.
+    """
+
+    def __init__(self, *, user, thread_id, session, route, streaming,
+                 idempotency_key, request_fingerprint):
+        self.user = user
+        self.thread_id = thread_id
+        self.project_session = session
+        self.route = route
+        self.streaming = streaming
+        self.idempotency_key = idempotency_key
+        self.request_fingerprint = request_fingerprint
+        self.operation_id = None
+        self.claim = None
+        self.facts = {}
+        self._at_reserve = None
+        self._at_settle = None
+
+    # -- binding wrappers (same arguments, same results) -----------------
+
+    def reserve(self, user, model_type, *, token_hint=None):
+        was_clean = not session_has_uncommitted_writes()
+        try:
+            self.operation_id, self.claim = claim_turn_operation(
+                user,
+                thread_id=self.thread_id,
+                route=self.route,
+                streaming=self.streaming,
+                project_organization_id=(self.project_session or {}).get("organization_id"),
+                client_idempotency_key=self.idempotency_key,
+                request_fingerprint=self.request_fingerprint,
+                estimated_reservation=_preflight_credit_estimate(model_type, token_hint=token_hint),
+                cycle_marker=_meter_cycle_marker(user),
+            )
+        except Exception:
+            # Evidence never stops a turn. Discard only the failed claim.
+            current_app.logger.exception("[p4.0] turn operation claim failed")
+            if was_clean:
+                db.session.rollback()  # only the failed claim was pending
+            self.operation_id = None
+        self._at_reserve = transaction_counters()
+        result = _reserve_preflight_credits(user, model_type, token_hint=token_hint)
+        self.facts.update({
+            "model_type": model_type,
+            "reservation_ok": bool(result.get("ok")),
+            "reserved_credits": int(result.get("reserved") or 0),
+            "required_credits": int(result.get("required") or 0),
+        })
+        if not result.get("ok"):
+            self.close_alone("refused_at_reserve", error_code="thinking_power_exhausted")
+        return result
+
+    def settle(self, user, *, reserved_credits, actual_credits):
+        self._at_settle = transaction_counters()
+        result = _settle_reserved_credits(
+            user, reserved_credits=reserved_credits, actual_credits=actual_credits,
+        )
+        self.facts.update({
+            "actual_credits": int(actual_credits or 0),
+            "settlement_ok": bool(result.get("ok")),
+            "settled_credits": int(result.get("charged") or 0),
+        })
+        return result
+
+    def release(self, user, reserved_credits):
+        self.facts["released_credits"] = int(reserved_credits or 0)
+        return _release_reserved_credits(user, reserved_credits)
+
+    def persist_balance(self, user_id, remaining):
+        self.facts.setdefault("balance_persist_calls", 0)
+        self.facts["balance_persist_calls"] += 1
+        before = transaction_counters()["commits"]
+        try:
+            return _persist_credit_deduction(user_id, remaining)
+        finally:
+            # The single signal that the charge is durable (R1). Observed,
+            # not assumed: the legacy helper swallows its own failures and
+            # can return without committing. Absent means not observed.
+            if transaction_counters()["commits"] > before:
+                self.facts["balance_committed"] = True
+
+    # -- closing ---------------------------------------------------------
+
+    def _window(self, turn):
+        """Commits and rollbacks the session saw while the turn generated."""
+        if self._at_reserve is None:
+            return {}
+        end = self._at_settle or transaction_counters()
+        return {
+            "generation_commits": end["commits"] - self._at_reserve["commits"],
+            "generation_rollbacks": end["rollbacks"] - self._at_reserve["rollbacks"],
+            "settled": bool(getattr(turn, "settled", False)),
+        }
+
+    def _facts(self, turn, outcome, **extra):
+        return {
+            **self.facts,
+            **self._window(turn),
+            **extra,
+            "outcome": outcome,
+            "closed_at": datetime.utcnow().isoformat(),
+        }
+
+    def note_close(self, outcome, turn, **extra):
+        """Record the outcome in the transaction the terminal step commits."""
+        if not self.operation_id:
+            return
+        try:
+            note_turn_operation(self.operation_id, self._facts(turn, outcome, **extra))
+        except Exception:
+            current_app.logger.exception("[p4.0] turn operation note failed")
+
+    def close_alone(self, outcome, turn=None, *, error_code=None, **extra):
+        """Close where today's path ends without a commit (see ai_audit)."""
+        if not self.operation_id:
+            return
+        try:
+            close_turn_operation_alone(
+                self.operation_id,
+                outcome=outcome,
+                updates=self._facts(turn, outcome, **extra),
+                error_code=error_code,
+                claim=self.claim,
+                user=self.user,
+                thread_id=self.thread_id,
+            )
+        except Exception:
+            current_app.logger.exception("[p4.0] turn operation close failed")
+            db.session.rollback()
+
+
+def _meter_cycle_marker(user):
+    """The meter's last reset, read without touching the meter."""
+    marker = {"user_credits_reset_at": None, "organization_cycle_reset_at": None}
+    try:
+        reset_at = getattr(user, "credits_reset_at", None)
+        marker["user_credits_reset_at"] = reset_at.isoformat() if reset_at else None
+        org_id = str(getattr(user, "active_organization_id", "") or "").strip()
+        if org_id:
+            from app.models import Organization
+            org = db.session.get(Organization, org_id)
+            settings = org.settings if org is not None and isinstance(org.settings, dict) else {}
+            meter = settings.get("thinking_power") if isinstance(settings.get("thinking_power"), dict) else {}
+            marker["organization_cycle_reset_at"] = meter.get("cycle_reset_at")
+    except Exception:
+        current_app.logger.exception("[p4.0] cycle marker read failed")
+    return marker
+
+
+def _conversation_turn(*, user, user_id, thread_id, session, sessions, model_type, session_key=None,
+                       route=None, streaming=None, idempotency_key=None, request_fingerprint=None):
     """Bind one turn to today's billing and storage.
 
     This is the single binding to replace when the authoritative ledger takes
     over AI settlement (billing Phase 12). Each function is looked up when it
     is called, so tests that substitute one of them still take effect.
+
+    P4.0: the binding also carries the turn's durable operation evidence
+    (``_TurnOperationEvidence``). It passes every billing call through
+    unchanged.
     """
-    return ConversationTurn(
+    evidence = _TurnOperationEvidence(
+        user=user, thread_id=thread_id, session=session, route=route, streaming=streaming,
+        idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
+    )
+    turn = ConversationTurn(
         user=user,
         user_id=user_id,
         thread_id=thread_id,
@@ -15077,15 +15261,41 @@ def _conversation_turn(*, user, user_id, thread_id, session, sessions, model_typ
         model_type=model_type,
         session_key=session_key,
         billing=TurnBilling(
-            reserve=lambda *a, **k: _reserve_preflight_credits(*a, **k),
+            reserve=lambda *a, **k: evidence.reserve(*a, **k),
             price=lambda *a, **k: _charge_for_usage(*a, **k),
-            settle=lambda *a, **k: _settle_reserved_credits(*a, **k),
-            release=lambda *a, **k: _release_reserved_credits(*a, **k),
-            persist_balance=lambda *a, **k: _persist_credit_deduction(*a, **k),
+            settle=lambda *a, **k: evidence.settle(*a, **k),
+            release=lambda *a, **k: evidence.release(*a, **k),
+            persist_balance=lambda *a, **k: evidence.persist_balance(*a, **k),
             insufficient_payload=lambda *a, **k: _insufficient_credits_payload(*a, **k),
         ),
         store=TurnStore(save=lambda *a, **k: _save_turn_project(*a, **k)),
     )
+    turn.operation_evidence = evidence
+    return turn
+
+
+def _turn_operation_id(turn):
+    evidence = getattr(turn, "operation_evidence", None)
+    return evidence.operation_id if evidence else None
+
+
+def _note_turn(turn, outcome, **extra):
+    evidence = getattr(turn, "operation_evidence", None)
+    if evidence is not None:
+        evidence.note_close(outcome, turn, **extra)
+
+
+def _close_turn_alone(turn, outcome, **extra):
+    evidence = getattr(turn, "operation_evidence", None)
+    if evidence is not None:
+        evidence.close_alone(outcome, turn, **extra)
+
+
+def _close_turn_on_unexpected_error(turn, error):
+    """C1: an unhandled exception in a JSON finish path ends in a 500 with no
+    commit, so the row is closed alone. Charges are untouched; the row records
+    whether the charge was already durable (``balance_committed``)."""
+    _close_turn_alone(turn, "failed_unexpectedly", error_code=type(error).__name__)
 
 
 class _TurnRequest:
@@ -15169,6 +15379,7 @@ def _finish_conversation_turn(turn, req, *, reply, usage, actions, mutations, un
 
     refusal = turn.settle(usage)
     if refusal is not None:
+        _close_turn_alone(turn, "refused_at_settle", error_code="thinking_power_exhausted")
         return None, (refusal, 402)
 
     if not streaming:
@@ -15217,8 +15428,11 @@ def _finish_conversation_turn(turn, req, *, reply, usage, actions, mutations, un
         success=not bool(scoring_failure),
         error_code=scoring_failure.get("code") if scoring_failure else None,
         operation_type="score_next" if scoring_failure else None,
+        operation_id=_turn_operation_id(turn),
     )
+    _note_turn(turn, "settled")
     if not turn.save():
+        _close_turn_alone(turn, "reply_not_saved", error_code="reply_not_saved")
         return None, ({"error": "Failed to persist conversation state"}, 500)
 
     if streaming:
@@ -15289,6 +15503,7 @@ def _finish_conversation_turn(turn, req, *, reply, usage, actions, mutations, un
         session, req.idempotency_key, req.request_fingerprint, payload,
     )
     if not turn.save():
+        _close_turn_alone(turn, "replay_cache_not_saved")
         return None, ({"error": "Failed to persist idempotency state"}, 500)
     return payload, None
 
@@ -15317,7 +15532,9 @@ def _conversation_turn_failed(turn, req, error):
             return _analysis_unavailable_stream_payload(turn.user, turn.thread_id), 503
         return {"error": "Failed to save your message", "retryable": True}, 500
     if not turn.settled:
-        _record_failed_chat_usage(turn.session, error, attachments=req.attachments)
+        _record_failed_chat_usage(turn.session, error, attachments=req.attachments, turn=turn)
+    else:
+        _close_turn_alone(turn, "failed_after_settle", error_code=type(error).__name__)
     return None
 
 
@@ -15361,6 +15578,11 @@ def _stream_conversation_turn(turn, req):
                 yield _sse_payload({"type": "error", **error[0]})
                 return
             yield _sse_payload(done_payload)
+        except GeneratorExit:
+            # The client went away mid-stream. Today's path has no cleanup
+            # and no commit; record the interruption on the row alone.
+            _close_turn_alone(turn, "interrupted", error_code="client_disconnected")
+            raise
         except Exception as generation_error:
             handled = _conversation_turn_failed(turn, req, generation_error)
             if handled is not None:
@@ -15391,10 +15613,14 @@ def _run_conversation_turn(turn, req):
             return jsonify(handled[0]), handled[1]
         raise
 
-    payload, error = _finish_conversation_turn(
-        turn, req, reply=reply, usage=usage, actions=actions, mutations=mutations,
-        undo_snapshot=undo_snapshot, streaming=False,
-    )
+    try:
+        payload, error = _finish_conversation_turn(
+            turn, req, reply=reply, usage=usage, actions=actions, mutations=mutations,
+            undo_snapshot=undo_snapshot, streaming=False,
+        )
+    except Exception as finish_error:
+        _close_turn_on_unexpected_error(turn, finish_error)
+        raise
     if error is not None:
         return jsonify(error[0]), error[1]
     return jsonify(payload), 200
@@ -15413,6 +15639,7 @@ def _finish_regenerated_turn(turn, *, reply, usage, chat_history, last_msg, old_
 
     refusal = turn.settle(usage)
     if refusal is not None:
+        _close_turn_alone(turn, "refused_at_settle", error_code="thinking_power_exhausted")
         return None, (refusal, 402)
     turn.persist_balance()
     credits_charged, remaining = turn.credits_charged, turn.remaining
@@ -15439,8 +15666,11 @@ def _finish_regenerated_turn(turn, *, reply, usage, chat_history, last_msg, old_
         regenerated=True,
         idempotency_key=idempotency_key,
         request_fingerprint=request_fingerprint,
+        operation_id=_turn_operation_id(turn),
     )
+    _note_turn(turn, "settled")
     if not turn.save():
+        _close_turn_alone(turn, "reply_not_saved", error_code="reply_not_saved")
         return None, ({"error": "Failed to persist regenerated response"}, 500)
 
     _audit_ai_agent_event(
@@ -15484,6 +15714,7 @@ def _finish_regenerated_turn(turn, *, reply, usage, chat_history, last_msg, old_
     })
     _remember_conversation_payload(session, idempotency_key, request_fingerprint, payload)
     if not turn.save():
+        _close_turn_alone(turn, "replay_cache_not_saved")
         return None, ({"error": "Failed to persist idempotency state"}, 500)
     return payload, None
 
@@ -15717,6 +15948,8 @@ def conversation_start():
     turn = _conversation_turn(
         user=user, user_id=user_id, thread_id=thread_id, session=session,
         sessions=sessions, model_type=model_selection["model_type"],
+        route=request.endpoint, streaming=stream_requested,
+        idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
     )
     if not turn.save():
         return jsonify({
@@ -15938,6 +16171,8 @@ def conversation_continue():
     turn = _conversation_turn(
         user=user, user_id=user_id, thread_id=thread_id, session=session,
         sessions=sessions, model_type=model_selection["model_type"],
+        route=request.endpoint, streaming=stream_requested,
+        idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
     )
     if not turn.save():
         return jsonify({
@@ -17532,6 +17767,8 @@ def conversation_regenerate():
         user=user, user_id=user_id, thread_id=thread_id, session=session,
         sessions=sessions, model_type=model_selection["model_type"],
         session_key=session_key or thread_id,
+        route=request.endpoint, streaming=stream_requested,
+        idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
     )
     refusal = turn.reserve(token_hint=preflight_token_hint)
     if refusal is not None:
@@ -17587,10 +17824,15 @@ def conversation_regenerate():
                     yield _sse_payload({"type": "error", **error[0]})
                     return
                 yield _sse_payload(done_payload)
+            except GeneratorExit:
+                _close_turn_alone(turn, "interrupted", error_code="client_disconnected")
+                raise
             except Exception as generation_error:
                 if not turn.settled:
                     turn.release_unsettled()
-                    _record_failed_chat_usage(session, generation_error, regenerated=True)
+                    _record_failed_chat_usage(session, generation_error, regenerated=True, turn=turn)
+                else:
+                    _close_turn_alone(turn, "failed_after_settle", error_code=type(generation_error).__name__)
                 current_app.logger.exception("conversation_regenerate stream failed")
                 yield _sse_payload({"type": "error", "error": "Streaming failed"})
                 return
@@ -17603,10 +17845,14 @@ def conversation_regenerate():
         )
     except Exception as generation_error:
         turn.release_unsettled()
-        _record_failed_chat_usage(session, generation_error, regenerated=True)
+        _record_failed_chat_usage(session, generation_error, regenerated=True, turn=turn)
         raise
 
-    response_payload, error = finish(assistant_reply, usage, streaming=False)
+    try:
+        response_payload, error = finish(assistant_reply, usage, streaming=False)
+    except Exception as finish_error:
+        _close_turn_on_unexpected_error(turn, finish_error)
+        raise
     if error is not None:
         return jsonify(error[0]), error[1]
     return jsonify(response_payload), 200

@@ -810,7 +810,14 @@ def test_settlement_refusal_is_returned_without_saving_a_reply_or_audit(
         ["user", "assistant"] if route == "regenerate" else ["user"]
     )
     assert UsageEvent.query.filter_by(thread_id=thread_id).count() == 0
-    assert AIOperation.query.filter_by(thread_id=thread_id).count() == 0
+    # P4.0 (authorized evidence change): the refused turn keeps its one
+    # claimed operation, closed as a failure that charged nothing. Before
+    # P4.0 a refused turn left no operation at all.
+    operation = AIOperation.query.filter_by(thread_id=thread_id).one()
+    assert operation.status == "failed"
+    assert operation.error_code == "thinking_power_exhausted"
+    assert operation.charged_credits == 0
+    assert operation.metadata_json["turn_lifecycle"]["outcome"] == "refused_at_settle"
 
 
 @pytest.mark.parametrize("route", ["start", "continue", "regenerate"])

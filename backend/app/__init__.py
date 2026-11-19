@@ -753,6 +753,26 @@ def create_app():
             "body_preview": result.get("body", "")[:1200] if dry_run else None,
         }, default=str))
 
+    @app.cli.group("ai-operations")
+    def ai_operations_cli():
+        """AI operation evidence (report only)."""
+
+    @ai_operations_cli.command("report")
+    @click.option("--older-than-minutes", default=30, show_default=True, type=int,
+                  help="Report operations still 'started' after this long.")
+    @click.option("--since-days", default=30, show_default=True, type=int,
+                  help="Look at operations created in this many days.")
+    def ai_operations_report_cli(older_than_minutes, since_days):
+        """List unclosed AI operations and chat turns whose evidence does not
+        reconcile. Changes nothing: no release, no status change, no commit."""
+        from app.ai_audit import report_turn_operations
+
+        result = report_turn_operations(
+            max_turn_seconds=int(older_than_minutes) * 60, since_days=since_days,
+        )
+        db.session.rollback()
+        click.echo(json.dumps(result, sort_keys=True, default=str))
+
     @app.cli.group("decision-intelligence")
     def decision_intelligence_cli():
         """Decision-intelligence data maintenance."""

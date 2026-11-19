@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from flask import current_app
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 
 from . import db
 from .ai_governance import (
@@ -151,8 +153,14 @@ def persist_operation(
     usage = usage if isinstance(usage, dict) else {}
     operation_id = str(usage.get('operation_id') or new_operation_id())
     existing = AIOperation.query.get(operation_id)
+    claimed_lifecycle = dict(_turn_lifecycle(existing) or {})
+    claimed_turn = _turn_lifecycle(existing) is not None
     if existing is None and idempotency_key:
         existing = AIOperation.query.filter_by(idempotency_key=str(idempotency_key)).first()
+    claimed_key = existing.idempotency_key if existing is not None else None
+    if claimed_turn:
+        # A claimed conversation turn closes exactly once (P4.0).
+        check_operation_transition(existing.status, _audit_status(usage, success))
 
     governance = usage.get('governance') if isinstance(usage.get('governance'), dict) else {}
     failover = usage.get('failover') if isinstance(usage.get('failover'), dict) else {}
@@ -183,17 +191,30 @@ def persist_operation(
     legacy_first = legacy_routes[0] if legacy_routes and isinstance(legacy_routes[0], dict) else {}
 
     operation = existing or AIOperation(id=operation_id)
-    operation.user_id = str(user.id) if user is not None else None
-    operation.organization_id = getattr(user, 'active_organization_id', None) if user is not None else None
+    if not claimed_turn:
+        # A claimed chat turn keeps the member and organization it was
+        # claimed for (the acting member), so its identity never changes.
+        operation.user_id = str(user.id) if user is not None else None
+        operation.organization_id = getattr(user, 'active_organization_id', None) if user is not None else None
     operation.thread_id = str(thread_id or '').strip() or None
     operation.operation_type = str(operation_type or usage.get('operation_type') or 'ai_operation')
-    operation.idempotency_key = str(idempotency_key or operation.idempotency_key or '').strip() or None
+    candidate_key = str(idempotency_key or operation.idempotency_key or '').strip() or None
+    duplicate_of = None
+    if claimed_turn and candidate_key and candidate_key != claimed_key:
+        with db.session.no_autoflush:
+            holder = AIOperation.query.filter(
+                AIOperation.idempotency_key == candidate_key,
+                AIOperation.id != operation.id,
+            ).first()
+        if holder is not None:
+            # A second request with the same client key generated while the
+            # first was still running. Both really generated, so both keep a
+            # row; the unique key stays with the first.
+            candidate_key = claimed_key
+            duplicate_of = holder.id
+    operation.idempotency_key = candidate_key
     operation.request_fingerprint = str(request_fingerprint or operation.request_fingerprint or '').strip() or None
-    operation.status = (
-        'failed'
-        if usage.get('operation_failed')
-        else ('succeeded' if success else ('degraded' if usage.get('degraded') else 'failed'))
-    )
+    operation.status = _audit_status(usage, success)
     operation.customer_visible = bool(customer_visible)
     operation.subsidized = subsidized
     operation.subsidy_classification = classification
@@ -252,6 +273,11 @@ def persist_operation(
             if isinstance(item, dict)
         ],
     }
+    if claimed_turn:
+        lifecycle = claimed_lifecycle
+        if duplicate_of:
+            lifecycle['concurrent_duplicate_of'] = duplicate_of
+        operation.metadata_json = {**operation.metadata_json, TURN_LIFECYCLE_KEY: lifecycle}
     if existing is None:
         db.session.add(operation)
     else:
@@ -328,3 +354,350 @@ def persist_operation(
             ))
             sequence += 1
     return operation
+
+
+def _audit_status(usage, success):
+    """The terminal status ``persist_operation`` records (unchanged rule)."""
+    usage = usage if isinstance(usage, dict) else {}
+    success = bool(success and usage_is_billable_success(usage))
+    if usage.get('operation_failed'):
+        return 'failed'
+    if success:
+        return 'succeeded'
+    return 'degraded' if usage.get('degraded') else 'failed'
+
+
+# ---------------------------------------------------------------------------
+# Conversation-turn operation evidence (P4.0, F2-F4 decision stage S0)
+#
+# A chat turn's AIOperation is claimed ('started') and committed by itself
+# before the turn reserves, and closed at the turn's existing terminal step.
+# Nothing here reserves, settles, releases or prices anything: the legacy
+# meter still decides every charge exactly as before. What is added is a
+# durable record of what happened, so the F2/F3/F4 decision can be measured.
+#
+# Status vocabulary is the existing one (started -> succeeded | degraded |
+# failed). The finer outcome (settled, released, refused, reply not saved,
+# interrupted) lives in metadata_json['turn_lifecycle'].
+# ---------------------------------------------------------------------------
+
+TURN_LIFECYCLE_KEY = 'turn_lifecycle'
+TURN_LIFECYCLE_VERSION = 'p4.0-s0'
+STARTED = 'started'
+TERMINAL_STATUSES = frozenset({'succeeded', 'degraded', 'failed'})
+
+# Outcome -> the terminal status a close without a provider audit records.
+TURN_OUTCOMES = {
+    'settled': None,              # status comes from persist_operation
+    'refused_at_reserve': 'failed',
+    'refused_at_settle': 'failed',
+    'generation_failed': None,    # status comes from persist_operation
+    'provider_unavailable': None,  # status comes from persist_operation
+    'failed_after_settle': 'failed',
+    'reply_not_saved': 'failed',
+    'interrupted': 'failed',
+    'failed_unexpectedly': 'failed',
+}
+
+
+# Outcomes that end a turn with no saved reply. With a durable, non-zero
+# settlement they are the F2 case (charged without a saved reply).
+CHARGE_WITHOUT_REPLY_OUTCOMES = frozenset({
+    'reply_not_saved', 'failed_after_settle', 'failed_unexpectedly',
+})
+
+
+class OperationTransitionError(ValueError):
+    """An operation was moved to a state its current state does not allow."""
+
+
+def check_operation_transition(current, target):
+    """started -> any terminal status, once. Re-closing with the SAME status
+    is an idempotent no-op; anything else is contradictory and refused."""
+    current = str(current or '')
+    target = str(target or '')
+    if target not in TERMINAL_STATUSES:
+        raise OperationTransitionError(f'{target!r} is not a terminal operation status')
+    if current == STARTED:
+        return
+    if current == target:
+        return
+    raise OperationTransitionError(
+        f'operation already closed as {current!r}; refusing {target!r}'
+    )
+
+
+def _turn_lifecycle(operation):
+    if operation is None:
+        return None
+    metadata = operation.metadata_json if isinstance(operation.metadata_json, dict) else {}
+    value = metadata.get(TURN_LIFECYCLE_KEY)
+    return value if isinstance(value, dict) else None
+
+
+# -- transaction observation -------------------------------------------------
+# Counts commits and rollbacks per database session, and whether flushed
+# writes are waiting for a commit. Read-only bookkeeping in ``session.info``.
+
+def _tx_state(session):
+    return session.info.setdefault('jaspen_tx', {'commits': 0, 'rollbacks': 0, 'flushed': False})
+
+
+@event.listens_for(Session, 'after_flush')
+def _jaspen_after_flush(session, _flush_context):
+    _tx_state(session)['flushed'] = True
+
+
+@event.listens_for(Session, 'after_commit')
+def _jaspen_after_commit(session):
+    state = _tx_state(session)
+    state['commits'] += 1
+    state['flushed'] = False
+
+
+@event.listens_for(Session, 'after_soft_rollback')
+def _jaspen_after_soft_rollback(session, previous_transaction):
+    if getattr(previous_transaction, 'parent', None) is None:
+        state = _tx_state(session)
+        state['rollbacks'] += 1
+        state['flushed'] = False
+
+
+def transaction_counters():
+    state = _tx_state(db.session())
+    return {'commits': int(state['commits']), 'rollbacks': int(state['rollbacks'])}
+
+
+def session_has_uncommitted_writes():
+    session = db.session()
+    if session.new or session.deleted or _tx_state(session)['flushed']:
+        return True
+    return any(session.is_modified(item) for item in session.dirty)
+
+
+# -- claim and close ---------------------------------------------------------
+
+CLIENT_IDEMPOTENCY_KEY_MAX = 200  # same bound as the route's validation
+
+
+def _bounded_client_key(value):
+    key = str(value or '').strip()
+    return key[:CLIENT_IDEMPOTENCY_KEY_MAX] or None
+
+
+def claim_turn_operation(user, *, thread_id, route=None, streaming=None,
+                         project_organization_id=None, client_idempotency_key=None,
+                         request_fingerprint=None, estimated_reservation=None,
+                         cycle_marker=None):
+    """Insert this turn's operation as 'started' and commit it by itself.
+
+    Called immediately before the turn reserves. It commits only when the
+    request's session holds no other uncommitted write, so the claim can
+    never make anything else durable; otherwise the row is added and becomes
+    durable with the turn's own next commit (recorded as such).
+    """
+    operation_id = new_operation_id()
+    clean = not session_has_uncommitted_writes()
+    independent = (not clean) and db.engine.dialect.name == 'postgresql'
+    classification = subsidy_classification(user, customer_visible=True)
+    now = datetime.utcnow()
+    lifecycle = {
+        'version': TURN_LIFECYCLE_VERSION,
+        'route': route,
+        'streaming': None if streaming is None else bool(streaming),
+        'project_organization_id': project_organization_id,
+        'client_idempotency_key_present': bool(client_idempotency_key),
+        # C2 (F2_F4 decisions 1.4.1): the client's key as sent, so a refused,
+        # failed or interrupted turn can be tied back to its retries. It is a
+        # random client token (validated to <= 200 characters at the route)
+        # and is already stored as given in the project's replay cache. Any
+        # lookup by it must stay scoped to the operation's user/organization.
+        'client_idempotency_key': _bounded_client_key(client_idempotency_key),
+        'estimated_reservation': None if estimated_reservation is None else int(estimated_reservation),
+        'cycle_marker': cycle_marker,
+        'claimed_at': now.isoformat(),
+        # True: committed alone in the request session. 'independent': the
+        # session held another uncommitted write, so the row was committed on
+        # its own connection (PostgreSQL). False: deferred to the turn's own
+        # next commit (other databases), never committing anything early.
+        'claim_committed': True if clean else ('independent' if independent else False),
+        'outcome': None,
+    }
+    values = dict(
+        id=operation_id,
+        user_id=str(user.id) if user is not None else None,
+        organization_id=getattr(user, 'active_organization_id', None) if user is not None else None,
+        thread_id=str(thread_id or '').strip() or None,
+        operation_type='conversation',
+        request_fingerprint=str(request_fingerprint or '').strip() or None,
+        status=STARTED,
+        customer_visible=True,
+        subsidized=bool(classification),
+        subsidy_classification=classification,
+        router_mode=router_mode(current_app.config),
+        router_version=ROUTER_VERSION,
+        escalated=False,
+        policy_mode=credit_policy_mode(current_app.config),
+        policy_version=CREDIT_POLICY_VERSION,
+        projected_credits=0,
+        charged_credits=0,
+        metadata_json={TURN_LIFECYCLE_KEY: lifecycle},
+        created_at=now,
+        updated_at=now,
+    )
+    if independent:
+        with db.engine.begin() as connection:
+            connection.execute(AIOperation.__table__.insert().values(**values))
+        return operation_id, lifecycle
+    db.session.add(AIOperation(**values))
+    if clean:
+        db.session.commit()
+    return operation_id, lifecycle
+
+
+def note_turn_operation(operation_id, updates):
+    """Merge lifecycle facts into the claimed row in the CURRENT transaction.
+    Never commits; the turn's existing commit makes it durable."""
+    operation = db.session.get(AIOperation, operation_id) if operation_id else None
+    if operation is None:
+        return None
+    metadata = dict(operation.metadata_json or {})
+    lifecycle = dict(metadata.get(TURN_LIFECYCLE_KEY) or {})
+    lifecycle.update(updates or {})
+    metadata[TURN_LIFECYCLE_KEY] = lifecycle
+    operation.metadata_json = metadata
+    return operation
+
+
+def close_turn_operation_alone(operation_id, *, outcome, updates=None, error_code=None,
+                               claim=None, user=None, thread_id=None):
+    """Close a claimed turn whose path ends with NO commit of its own.
+
+    Such a path ends in the request teardown discarding every uncommitted
+    change. Rolling back here first discards exactly the same changes, a
+    little earlier, so the commit below carries this one row and nothing
+    else: no balance can differ from before.
+    """
+    status = TURN_OUTCOMES.get(outcome) or 'failed'
+    db.session.rollback()
+    operation = db.session.get(AIOperation, operation_id) if operation_id else None
+    lifecycle_updates = {'outcome': outcome, 'closed_at': datetime.utcnow().isoformat(),
+                         'closed_alone': True, **(updates or {})}
+    if operation is None:
+        # The claim never became durable and was discarded with the rollback.
+        operation = AIOperation(
+            id=operation_id or new_operation_id(),
+            user_id=str(user.id) if user is not None else None,
+            organization_id=getattr(user, 'active_organization_id', None) if user is not None else None,
+            thread_id=str(thread_id or '').strip() or None,
+            operation_type='conversation',
+            status=STARTED,
+            router_mode=router_mode(current_app.config),
+            router_version=ROUTER_VERSION,
+            policy_mode=credit_policy_mode(current_app.config),
+            policy_version=CREDIT_POLICY_VERSION,
+            metadata_json={TURN_LIFECYCLE_KEY: {**(claim or {}), 'claim_lost': True}},
+        )
+        db.session.add(operation)
+    if operation.status == STARTED:
+        check_operation_transition(operation.status, status)
+        operation.status = status
+        operation.error_code = error_code or outcome
+        operation.settled_at = datetime.utcnow()
+    else:
+        # Already closed by its own terminal step: keep that status and add
+        # what happened afterwards (for example the replay cache not saved).
+        previous = (_turn_lifecycle(operation) or {}).get('outcome')
+        lifecycle_updates = {
+            'after_close': [*((_turn_lifecycle(operation) or {}).get('after_close') or []),
+                            {'event': outcome, **(updates or {})}],
+        }
+        if previous is None:
+            lifecycle_updates['outcome'] = outcome
+    note_turn_operation(operation.id, lifecycle_updates)
+    db.session.commit()
+    return operation.id
+
+
+# -- report-only sweep -------------------------------------------------------
+
+DEFAULT_MAX_TURN_SECONDS = 30 * 60
+
+
+def report_turn_operations(*, now=None, max_turn_seconds=DEFAULT_MAX_TURN_SECONDS, since_days=30):
+    """List operations that never closed and chat turns whose evidence does
+    not reconcile. Reads only; changes nothing."""
+    from .models import UsageEvent
+
+    now = now or datetime.utcnow()
+    since = now - timedelta(days=max(1, int(since_days or 30)))
+    stale_before = now - timedelta(seconds=max(0, int(max_turn_seconds)))
+    unclosed = []
+    for op in AIOperation.query.filter(
+        AIOperation.status == STARTED, AIOperation.created_at < stale_before,
+        AIOperation.created_at >= since,
+    ).order_by(AIOperation.created_at).all():
+        unclosed.append({
+            'operation_id': op.id, 'operation_type': op.operation_type,
+            'conversation_turn': _turn_lifecycle(op) is not None,
+            'user_id': op.user_id, 'organization_id': op.organization_id, 'thread_id': op.thread_id,
+            'age_seconds': int((now - op.created_at).total_seconds()),
+            'estimated_reservation': (_turn_lifecycle(op) or {}).get('estimated_reservation'),
+        })
+
+    usage_by_operation = {}
+    for row in UsageEvent.query.filter(
+        UsageEvent.created_at >= since, UsageEvent.endpoint == 'ai.conversation',
+    ).all():
+        linked = (row.metadata_json or {}).get('operation_id') if isinstance(row.metadata_json, dict) else None
+        if linked:
+            usage_by_operation.setdefault(linked, []).append(row)
+
+    findings = []
+    outcomes = {}
+    for op in AIOperation.query.filter(
+        AIOperation.created_at >= since, AIOperation.status != STARTED,
+    ).all():
+        lifecycle = _turn_lifecycle(op)
+        if lifecycle is None:
+            continue
+        outcome = lifecycle.get('outcome') or 'unrecorded'
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        usage_rows = usage_by_operation.get(op.id, [])
+        usage_charged = sum(int(row.credits_charged or 0) for row in usage_rows)
+        reasons = []
+        if outcome == 'settled':
+            if not usage_rows:
+                reasons.append('no_usage_row')
+            elif usage_charged != int(op.charged_credits or 0):
+                reasons.append('usage_and_operation_charge_differ')
+            if lifecycle.get('settled_credits') is not None and int(lifecycle['settled_credits']) != int(op.charged_credits or 0):
+                reasons.append('settlement_and_operation_charge_differ')
+        if (outcome in CHARGE_WITHOUT_REPLY_OUTCOMES
+                and lifecycle.get('balance_committed') is True
+                and int(lifecycle.get('settled_credits') or 0) > 0):
+            reasons.append('charge_committed_without_saved_reply')  # F2
+        if outcome != 'settled' and int(lifecycle.get('generation_commits') or 0) > 0:
+            reasons.append('reservation_possibly_kept_by_mid_turn_commit')  # F3
+        if int(lifecycle.get('generation_rollbacks') or 0) > 0:
+            reasons.append('reservation_possibly_discarded_by_rollback')  # F4
+        if lifecycle.get('concurrent_duplicate_of'):
+            reasons.append('concurrent_duplicate_request')
+        if reasons:
+            findings.append({
+                'operation_id': op.id, 'thread_id': op.thread_id, 'user_id': op.user_id,
+                'organization_id': op.organization_id, 'status': op.status, 'outcome': outcome,
+                'charged_credits': int(op.charged_credits or 0), 'usage_charged_credits': usage_charged,
+                'reserved_credits': lifecycle.get('reserved_credits'),
+                'settled_credits': lifecycle.get('settled_credits'),
+                'reasons': reasons,
+            })
+    return {
+        'generated_at': now.isoformat(),
+        'max_turn_seconds': int(max_turn_seconds),
+        'since': since.isoformat(),
+        'unclosed': unclosed,
+        'mismatched': findings,
+        'turn_outcomes': dict(sorted(outcomes.items())),
+        'changes_made': 0,
+    }
