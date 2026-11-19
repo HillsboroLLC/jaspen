@@ -1068,7 +1068,16 @@ def _predecessor(engine):
     flask_db.metadata.create_all(engine, tables=tables)
     module = _revision()
     pg = engine.dialect.name == "postgresql"
+    # Phase 14 extends the same permission CHECK; restore the Phase 11 form first.
+    from alembic.script import ScriptDirectory
+    phase14 = ScriptDirectory(str(MIGRATIONS_DIR)).get_revision("d2f4a6c8e0b3").module
     with _ops(engine) as connection:
+        p14_table, p14_name, p14_old, p14_new = phase14.PERMISSION_CHECK
+        if pg:
+            connection.execute(sa.text(f"ALTER TABLE {p14_table} DROP CONSTRAINT {p14_name}"))
+            connection.execute(sa.text(f"ALTER TABLE {p14_table} ADD CONSTRAINT {p14_name} CHECK ({p14_old})"))
+        else:
+            module._sqlite_replace_check(p14_table, p14_new, p14_old)
         for table, name, old, new in module.CHECKS:
             if pg:
                 connection.execute(sa.text(f"ALTER TABLE {table} DROP CONSTRAINT {name}"))
@@ -1117,7 +1126,7 @@ def _assert_models_match(engine):
 
 def test_revision_extends_phase10_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["c8e0a2b4d6f1"]  # Phase 12 extends Phase 11
+    assert script.get_heads() == ["d2f4a6c8e0b3"]  # Phase 14 extends Phase 12; Phase 12 extends Phase 11
     assert script.get_revision("c8e0a2b4d6f1").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == PARENT
 
@@ -1194,7 +1203,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=10, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "c8e0a2b4d6f1"}:
+    if revision not in {REVISION, "c8e0a2b4d6f1", "d2f4a6c8e0b3"}:
         engine.dispose()
         pytest.fail(f"Phase 11 migrated tests require Alembic head {REVISION}; found {revision!r}")
     return engine

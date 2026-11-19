@@ -1037,8 +1037,10 @@ def test_phase12_service_has_no_live_runtime_callers():
     app_dir = BACKEND_DIR / "app"
     callers = [
         str(path.relative_to(BACKEND_DIR)) for path in app_dir.rglob("*.py")
-        # Phase 13 projections are themselves inactive and only read Phase 12 records.
-        if path.name not in {"billing_ai_operations.py", "models_billing_phase12.py", "models.py", "billing_projections.py"}
+        # Phase 13 projections are themselves inactive and only read Phase 12 records; the inactive Phase 14
+        # backfill reads only the pricing conversion key to verify the internal-unit rate.
+        if path.name not in {"billing_ai_operations.py", "models_billing_phase12.py", "models.py", "billing_projections.py",
+                             "billing_migration.py"}
         and ("billing_ai_operations" in path.read_text() or "models_billing_phase12" in path.read_text())
     ]
     assert callers == []
@@ -1062,7 +1064,8 @@ def _ops(engine):
 
 def test_revision_extends_phase11_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == [REVISION]
+    # Phase 14 (d2f4a6c8e0b3) is the next revision; Phase 12 stays its direct parent.
+    assert script.get_revision("d2f4a6c8e0b3").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == PARENT
 
 
@@ -1135,9 +1138,9 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=12, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision != REVISION:
+    if revision not in {REVISION, "d2f4a6c8e0b3"}:
         engine.dispose()
-        pytest.fail(f"Phase 12 migrated tests require Alembic head {REVISION}; found {revision!r}")
+        pytest.fail(f"Phase 12 migrated tests require Alembic head {REVISION} or Phase 14; found {revision!r}")
     return engine
 
 

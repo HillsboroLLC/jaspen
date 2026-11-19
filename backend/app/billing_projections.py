@@ -69,6 +69,7 @@ from .models_billing_phase4 import (
 from .models_billing_phase5 import FinancialCase
 from .models_billing_phase7 import ScheduledPlanChange, UpgradeCreditAllocation
 from .models_billing_phase12 import AIBillingOperation, AICapacityDecision
+from .models_billing_phase14 import BillingMigrationOpening
 
 
 PROJECTION_VERSION = "jaspen.billing.projection.v1"
@@ -334,6 +335,21 @@ def _period_lot_ids(session, period):
     return lot_ids
 
 
+def _migration_cycle_lot_ids(session, account_id):
+    """Phase 14 recurring openings: each carries one legacy recurring cycle until its own expiry.
+
+    Until a Phase 4 credit period covers the moment, the open legacy cycle is
+    the account's current period for ``period_remaining``; it is never a
+    plan, and it schedules no allocation.
+    """
+    return set(session.execute(
+        select(BillingMigrationOpening.lot_id).where(
+            BillingMigrationOpening.billing_account_id == account_id,
+            BillingMigrationOpening.legacy_source_kind.in_(("user_recurring_meter", "organization_recurring_meter")),
+        )
+    ).scalars().all())
+
+
 def _active_schedule(session, subscription_id):
     rows = session.execute(
         select(ScheduledPlanChange, EntitlementDefinition.key)
@@ -410,8 +426,22 @@ def project_billing_account(session, *, billing_account_id, at=None, member_user
                 session, account.id, _utc(period.starts_at), at, member_user_id,
             )
         else:
-            credits["period_remaining"] = None
-            credits["used_this_period"] = None
+            migration_cycle_ids = _migration_cycle_lot_ids(session, account.id)
+            cycle = [lot for lot, _available, _held in balances
+                     if lot.id in migration_cycle_ids and _open_at(lot, at)]
+            if cycle:
+                cycle_ids = {lot.id for lot in cycle}
+                credits["period_remaining"] = sum(
+                    available for lot, available, _held in balances
+                    if lot.id in cycle_ids and lot.eligibility_scope is None
+                    and (member_user_id is None or _eligible(lot, member_user_id))
+                )
+                credits["used_this_period"] = _settled_between(
+                    session, account.id, min(_utc(lot.available_at) for lot in cycle), at, member_user_id,
+                )
+            else:
+                credits["period_remaining"] = None
+                credits["used_this_period"] = None
         next_allocation = _next_allocation_at(instance, subscription, schedule, period) \
             if instance is not None else None
 
@@ -701,7 +731,7 @@ def _counter_comparison(user, legacy, target, *, at, purchased, target_recurring
     return _comparison(field, subject, legacy, target, UNRESOLVED)
 
 
-def _meter_remaining_comparison(field, subject, meter, fallback_reset, projected, *, at):
+def _meter_remaining_comparison(field, subject, meter, fallback_reset, projected, *, at, zero_live_cycle=False):
     """A legacy recurring meter's ``remaining`` against the ledger's period remaining (M1).
 
     Called only for the pool the legacy runtime meters; the other pool is
@@ -719,6 +749,11 @@ def _meter_remaining_comparison(field, subject, meter, fallback_reset, projected
         return _comparison(field, subject, remaining, projected, UNRESOLVED, special_case="negative_legacy_meter")
     if remaining == projected:
         return _comparison(field, subject, remaining, projected, MATCH)
+    if remaining == 0 and projected is None and zero_live_cycle:
+        # Phase 14 evidence only: the backfill verified a well-formed live legacy cycle with nothing left,
+        # which opens no lot. Without that evidence a zero meter against no period stays unresolved (Phase 13).
+        return _comparison(field, subject, remaining, projected, MATCH,
+                           detail="a verified live legacy cycle with nothing left; neither side holds a period value")
     # The whole meter is recurring value: a bounded lapsed cycle explains it exactly or not at all.
     if _lapsed_cycle_value(meter, fallback_reset, at) == remaining:
         return _comparison(field, subject, remaining, projected, STALE_COUNTER, special_case="expired_recurring_value",
@@ -796,14 +831,26 @@ def _unique(rows):
     return out
 
 
-def compare_legacy_compatibility(session, *, billing_account_id, at=None):
+def compare_legacy_compatibility(session, *, billing_account_id, at=None, value_owners=None, zero_cycles=None):
     """Read-only D16 comparison of every legacy compatibility field of one account.
 
     Returns a report; any ``unresolved`` comparison or blocking flag marks the
     account ``blocked`` for cutover. Legacy readers that write on read
     (``get_usage_meter_state`` and the pool resolvers, STOP-01) are never
     called: stored legacy values are read directly.
+
+    ``value_owners`` (Phase 14) maps a user to the organization that owns
+    their personal legacy value by evidence (``None`` when unresolved). With
+    it, a member whose personal value belongs to another organization is
+    listed under ``not_applicable`` for those fields instead of being compared
+    here, an unresolved owner is ``unresolved`` (``ambiguous_owner``), and a
+    holder owned here who is not an active member is ``unresolved``
+    (``attributed_member_not_active``). ``zero_cycles`` (Phase 14) names the
+    ``(field, subject)`` meters the backfill verified as a well-formed live
+    cycle with nothing left; only those match a missing period. Without
+    either argument the comparison is the accepted Phase 13 comparison.
     """
+    zero_cycles = {tuple(item) for item in (zero_cycles or ())}
     with session.no_autoflush:
         account = _account(session, billing_account_id)
         at = _clock(session) if at is None else _utc(at)
@@ -848,6 +895,7 @@ def compare_legacy_compatibility(session, *, billing_account_id, at=None):
             comparisons.append(_meter_remaining_comparison(
                 "organizations.settings.thinking_power.remaining", organization.id, org_meter, None,
                 projection["credits"]["period_remaining"], at=at,
+                zero_live_cycle=("organizations.settings.thinking_power.remaining", organization.id) in zero_cycles,
             ))
             comparisons.append(_reset_date_comparison(
                 "organizations.settings.thinking_power.cycle_reset_at", organization.id,
@@ -871,6 +919,9 @@ def compare_legacy_compatibility(session, *, billing_account_id, at=None):
         contract_lot_ids = _contract_funded_lot_ids(session, account.id)
         for user in members:
             user_id = user.id
+            owner = (value_owners or {}).get(user_id, account.organization_id)
+            personal_elsewhere = value_owners is not None and user_id in value_owners \
+                and owner != account.organization_id
             member = project_billing_account(session, billing_account_id=account.id, at=at, member_user_id=user_id)
             credits = member["credits"]
             spendable = [
@@ -887,30 +938,46 @@ def compare_legacy_compatibility(session, *, billing_account_id, at=None):
             legacy_persistent = sum(int(g.remaining_amount) for g in grants
                                     if g.status == "active" and int(g.remaining_amount) > 0)
             personal_pool = normalize_plan_key(user.subscription_plan) not in SHARED_POOL_PLANS
-            comparisons.append(_counter_comparison(
-                user, user.credits_remaining, credits["member_spendable"], at=at, purchased=purchased_spendable,
-                target_recurring=recurring_spendable, legacy_persistent=legacy_persistent,
-                # Only a shared-pool member's counter can copy the organization pool.
-                org_meter_remaining=None if personal_pool else org_remaining, in_flight=bool(open_operations),
-                sales_led=normalize_plan_key(user.subscription_plan) in ENTERPRISE_PLAN_KEYS,
-                has_contract=has_contract, contract_funded=contract_funded,
-            ))
+            if personal_elsewhere:
+                # Phase 14: this member's personal value is owned elsewhere (or unresolved); never compared here.
+                reason = ("personal legacy value is owned by another organization" if owner is not None
+                          else "the owner of this personal legacy value is unresolved")
+                if owner is None:
+                    comparisons.append(_comparison("users.credits_remaining", user_id, user.credits_remaining, None,
+                                                   UNRESOLVED, special_case="ambiguous_owner", detail=reason))
+                not_applicable.append({
+                    "subject": user_id, "reason": reason,
+                    "fields": ("users.credits_remaining, users.ui_preferences.thinking_power, users.credits_reset_at, "
+                               "persistent_credit_grants") if personal_pool else "persistent_credit_grants",
+                })
+                grants, legacy_persistent = [], 0
+            if not (personal_elsewhere and personal_pool):
+                comparisons.append(_counter_comparison(
+                    user, user.credits_remaining, credits["member_spendable"], at=at, purchased=purchased_spendable,
+                    target_recurring=recurring_spendable, legacy_persistent=legacy_persistent,
+                    # Only a shared-pool member's counter can copy the organization pool.
+                    org_meter_remaining=None if personal_pool else org_remaining, in_flight=bool(open_operations),
+                    sales_led=normalize_plan_key(user.subscription_plan) in ENTERPRISE_PLAN_KEYS,
+                    has_contract=has_contract, contract_funded=contract_funded,
+                ))
             user_meter = _meter(user.ui_preferences)
-            if personal_pool:
+            if personal_pool and not personal_elsewhere:
                 comparisons.append(_meter_remaining_comparison(
                     "users.ui_preferences.thinking_power.remaining", user_id, user_meter, user.credits_reset_at,
                     credits["period_remaining"], at=at,
+                    zero_live_cycle=("users.ui_preferences.thinking_power.remaining", user_id) in zero_cycles,
                 ))
                 comparisons.append(_reset_date_comparison(
                     "users.ui_preferences.thinking_power.cycle_reset_at", user_id,
                     user_meter.get("cycle_reset_at") if user_meter else None, projected_next, anchor, at=at,
                 ))
-            else:
+            elif not personal_pool:
                 not_applicable.append({"subject": user_id, "reason": "the user's plan meters the organization pool",
                                        "fields": "users.ui_preferences.thinking_power"})
-            comparisons.append(_reset_date_comparison(
-                "users.credits_reset_at", user_id, user.credits_reset_at, projected_next, anchor, at=at,
-            ))
+            if not (personal_elsewhere and personal_pool):
+                comparisons.append(_reset_date_comparison(
+                    "users.credits_reset_at", user_id, user.credits_reset_at, projected_next, anchor, at=at,
+                ))
             for grant in grants:
                 log_balance = _grant_log_balance(session, grant)
                 comparisons.append(_comparison(
@@ -933,6 +1000,15 @@ def compare_legacy_compatibility(session, *, billing_account_id, at=None):
             comparisons.append(_comparison("account_entitlements (has_offer)", user_id, legacy_offer,
                                            projection["has_offer"],
                                            MATCH if legacy_offer == projection["has_offer"] else UNRESOLVED))
+
+        # Phase 14: holders owned here by evidence who are no longer active members.
+        member_ids = {user.id for user in members}
+        for user_id in sorted(uid for uid, owner in (value_owners or {}).items()
+                              if owner == account.organization_id and uid not in member_ids):
+            comparisons.append(_comparison(
+                "users.credits_remaining", user_id, session.get(User, user_id).credits_remaining, None, UNRESOLVED,
+                special_case="attributed_member_not_active",
+                detail="member-attributed value owned here cannot be spent by a former member"))
 
         # Phase 12-bound operations: the operation audit must equal its ledger settlements.
         bound = session.execute(

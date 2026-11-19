@@ -699,8 +699,9 @@ def test_phase10_service_has_no_live_runtime_callers():
     callers = [
         str(path.relative_to(BACKEND_DIR))
         for path in app_dir.rglob("*.py")
-        # Phase 11 contract administration is itself inactive and reuses Phase 10 grants.
-        if path.name not in {"billing_offers.py", "billing_enterprise_contracts.py", "models_billing_phase10.py", "models.py"}
+        # Phase 11 contract administration and the Phase 14 backfill are inactive and reuse Phase 10 grants.
+        if path.name not in {"billing_offers.py", "billing_enterprise_contracts.py", "models_billing_phase10.py", "models.py",
+                             "billing_migration.py"}
         and ("billing_offers" in path.read_text() or "models_billing_phase10" in path.read_text())
     ]
     assert callers == []
@@ -730,7 +731,12 @@ def _ops(engine):
 def _predecessor(engine):
     # Phase 11 tables are later than this revision and refer to its tables.
     phase11 = ("enterprise_contracts", "enterprise_contract_versions", "enterprise_contract_events", "enterprise_contract_term_fundings", "enterprise_contract_activations", "enterprise_contract_notices")
-    tables = [t for t in flask_db.metadata.sorted_tables if t.name not in PHASE10_TABLES + phase11]
+    # Phase 14 migration reviews also refer to Phase 10 staff grants.
+    phase14 = ("billing_migration_plan_mappings", "billing_migration_payment_archives",
+               "billing_migration_openings", "billing_migration_reviews", "billing_migration_account_results",
+               "billing_migration_payment_attributions", "billing_migration_payer_bindings",
+               "billing_migration_establishments", "billing_migration_runs")
+    tables = [t for t in flask_db.metadata.sorted_tables if t.name not in PHASE10_TABLES + phase11 + phase14]
     flask_db.metadata.create_all(engine, tables=tables)
     # The models now carry the Phase 11 constraint texts; restore the Phase 10
     # forms so this revision sees its exact predecessor schema.
@@ -774,7 +780,7 @@ def _gate_sql(connection):
 
 def test_revision_extends_phase9_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["c8e0a2b4d6f1"]  # Phases 12 and 11 extend Phase 10
+    assert script.get_heads() == ["d2f4a6c8e0b3"]  # Phase 14 extends Phase 12; Phases 12 and 11 extend Phase 10
     assert script.get_revision(REVISION).down_revision == PARENT
 
 
@@ -1046,7 +1052,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=10, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "b4d6f8a0c2e5", "c8e0a2b4d6f1"}:
+    if revision not in {REVISION, "b4d6f8a0c2e5", "c8e0a2b4d6f1", "d2f4a6c8e0b3"}:
         engine.dispose()
         pytest.fail(f"Phase 10 migrated tests require Alembic head {REVISION} or Phase 11; found {revision!r}")
     return engine

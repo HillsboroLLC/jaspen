@@ -917,6 +917,8 @@ def test_the_comparison_is_deterministic(db):
 # ---------------------------------------------------------------------------
 
 PHASE13_MODULE = "app/billing_projections.py"
+# Phase 14 is the one inactive module allowed to read the projections (D16 reconciliation).
+PHASE14_MODULE = "app/billing_migration.py"
 
 
 def phase13_live_importers(backend):
@@ -929,7 +931,8 @@ def phase13_live_importers(backend):
     """
     return sorted(
         str(path.relative_to(backend)) for path in (backend / "app").rglob("*.py")
-        if str(path.relative_to(backend)) != PHASE13_MODULE and "billing_projections" in path.read_text()
+        if str(path.relative_to(backend)) not in (PHASE13_MODULE, PHASE14_MODULE)
+        and "billing_projections" in path.read_text()
     )
 
 

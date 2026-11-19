@@ -102,6 +102,17 @@ from app.models import (
     UserSession,
 )
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
+from app.models_billing_phase14 import (
+    BillingMigrationAccountResult,
+    BillingMigrationEstablishment,
+    BillingMigrationOpening,
+    BillingMigrationPayerBinding,
+    BillingMigrationPaymentArchive,
+    BillingMigrationPaymentAttribution,
+    BillingMigrationPlanMapping,
+    BillingMigrationReview,
+    BillingMigrationRun,
+)
 
 
 _ALLOWED_TEST_DATABASE_HOSTS = {"localhost", "127.0.0.1", "postgres"}
@@ -325,6 +336,15 @@ def db(app):
         from app.models_decision_record import DecisionRecord, DecisionSignal, OptionDecision
 
         for model in (
+            BillingMigrationPlanMapping,
+            BillingMigrationPaymentArchive,
+            BillingMigrationOpening,
+            BillingMigrationReview,
+            BillingMigrationAccountResult,
+            BillingMigrationPaymentAttribution,
+            BillingMigrationPayerBinding,
+            BillingMigrationEstablishment,
+            BillingMigrationRun,
             PmSyncLink,
             PmSyncBinding,
             DecisionSignal,

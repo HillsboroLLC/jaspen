@@ -98,6 +98,7 @@ def test_phase_4_policy_has_no_live_runtime_importers():
         "billing_allocations.py", "billing_enterprise_contracts.py", "billing_entitlements.py", "billing_offers.py", "billing_plan_changes.py", "billing_seats.py", "models.py",
         "models_billing_phase4.py",
         "billing_projections.py",  # Phase 13 projections are inactive and read only.
+        "billing_migration.py",  # Phase 14 backfill is inactive.
     }
     importers = []
     for path in app_dir.rglob("*.py"):

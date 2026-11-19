@@ -352,6 +352,20 @@ which writes on read):
 | `scripts/backfill_payments.py` `main` | `_record_payment` | both |
 | `scripts/reset_monthly_credits.py` `reset_monthly_credits` | `reset_user_monthly_credits` | both |
 
+**Phase 14 (2026-11-18).** `app/billing_migration.py` reads the legacy
+counters, meters, grants, transactions, payments, memberships, and operations
+and writes none of them; the enforced scan finds no legacy write and no mutator
+reference in it, so both tables above are unchanged. Its only target writes are
+Phase 14 evidence (including the legacy payment archive and plan mappings,
+which copy legacy rows and change none), `migration_opening` lots and entries,
+and, during establishment, a `proposed` billing account and its processor
+customer. It is
+the only allowed inactive reader of the Phase 13 projections. For the D16
+snapshot it holds the legacy rows it reads `FOR SHARE` until its transaction
+commits; every writer above (and the unified line's `TurnBilling`) must still
+be frozen or instrumented before a rehearsal or production snapshot (D16
+precondition).
+
 ## D15 Legacy retirement map
 
 | Legacy item | Replacement | Compatibility window | Sunset condition |

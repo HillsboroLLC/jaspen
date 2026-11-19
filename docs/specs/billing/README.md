@@ -259,7 +259,7 @@ realized margin were not accessed or verified.
   See the Phase 12 record in the traceability document.
 - Phase 13 inventory and reconciliation is independently accepted
   (2026-11-17) and inactive, on the accepted Phase 12 checkpoint `4efabb05`;
-  local checkpoint pending. The findings of its CONDITIONAL PASS review (H1,
+  local checkpoint `26468456`. The findings of its CONDITIONAL PASS review (H1,
   M1, M2, L1, L2) and the re-acceptance finding M2b were remediated, and the
   narrow re-acceptance returned PASS. Pure projections give the Usage & Billing data for one
   organization billing account (optional member view) from the Phase 3–12
@@ -268,6 +268,26 @@ realized margin were not accessed or verified.
   writer on the billing line and the unified line. Nothing is written, no
   migration is added, and live readers are unchanged until Phase 17. See the
   Phase 13 record in the traceability document.
+- Phase 14 legacy backfill is implemented locally, inactive, on the accepted
+  Phase 13 checkpoint `26468456` (migration `d2f4a6c8e0b3`); its independent
+  acceptance returned FAIL (B1, B2) and the remediation is ready for narrow
+  re-acceptance. Gate 1: legacy stored integers and ledger integers are the
+  same internal unit (1,000 per displayed credit; 3,600,000 per provider
+  dollar), copied as stored. Each organization's billing account, payer, and
+  payment receipts are established once from ranked evidence; then
+  evidence-ranked `migration_opening` lots, each legacy source at most once
+  across all accounts and each traceable to its real legacy row, are checked
+  against the exact D16 conservation equations and the Phase 13 comparison;
+  anything unexplained is quarantined. Purchased credit keeps its original
+  terms (packs and the 300K offer stay non-expiring). Per the founder
+  decisions of 2026-11-18, every legacy payment row is preserved in an
+  immutable legacy archive (test activity only on an explicit founder
+  attestation; never a financial transaction, nothing missing filled in), and
+  each account's legacy plan, subscription, entitlements, and seats are mapped
+  from existing records, with subscription dates, paid seats, and payment
+  details left unresolved for a later, separately authorized Stripe read. No
+  production data, Stripe, or AI provider is touched. See the Phase 14 record
+  in the traceability document.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type

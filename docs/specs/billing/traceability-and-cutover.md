@@ -795,6 +795,209 @@ compared); `UsageEvent.credits_charged` (analytics only, no operation link to
 compare); the Phase 17 reader wiring, which must read in one REPEATABLE READ
 snapshot; and re-tagging the inventory when the unified line merges.
 
+### Phase 14 implementation record — evidence-backed legacy backfill
+
+Status: **implemented locally; independent acceptance FAIL (2026-11-18,
+blockers B1 and B2, gaps P-1, P-2, P-3); remediated, then completed with the
+founder decisions on historical payments and plans (2026-11-18); independent
+re-acceptance PASS (2026-11-19); inactive; local checkpoint only (not pushed,
+merged, deployed, or activated).** Built on the accepted Phase 13
+checkpoint `26468456`. Migration `d2f4a6c8e0b3` (revises `c8e0a2b4d6f1`) adds
+nine immutable evidence tables. `app/billing_migration.py` has no route, AI runtime,
+webhook, job, scheduler, startup, or script caller, and writes no legacy field
+(the enforced writer inventory finds none). The Phase 3 ledger stays the only
+balance authority and the Phase 3 billing account the only payer authority; no
+historical ledger entry is changed.
+
+**Gate 1 (credit units), concluded 2026-11-17.** Legacy stored integers are the
+legacy internal unit, 1,000 per displayed credit: `billing_config.TOKENS_PER_CREDIT`,
+`ai_governance.INTERNAL_UNITS_PER_CREDIT`, every `tokens_to_credits` display
+path, the catalog (`credits_3000` stores 3,000,000; Free stores 300,000), and
+the 300K offer (`300_000_000`). The accepted ledger code (Phases 3-13) is
+unit-agnostic. D16 states conservation "exact in internal integer credit units".
+The ledger integer is therefore the legacy internal unit and the backfill copies
+values as stored; no conversion exists. A run records the basis
+`jaspen.legacy_internal_unit.v1` and fails closed if either constant changes.
+
+**Pricing unit (verified relationship, R4B).** 1 displayed credit = 1,000
+internal units, and 3,600 displayed credits per provider dollar = 3,600,000
+internal units per provider dollar (`ai_governance.credits_for_provider_cost`).
+Gate 1 fails closed if the live rate drifts, and a run refuses to start while
+any approved, announced, or effective pricing version states
+`credits_per_provider_usd` as anything but 3,600,000
+(`pricing_rate_in_displayed_credits` for 3,600, which would make every migrated
+credit 1,000 times cheaper to spend). No customer pricing is changed and no
+pricing version is activated.
+
+**Historical values (R4C).** The 2026-05-08 change (`8599941d`) was a
+repricing, not a unit conversion: stored values were not rewritten and no single
+conversion factor exists. A value whose cycle or grant started before it is
+never opened and never discarded: it stays quarantined (`pre_unit_boundary_value`,
+`legacy_meter_absent` for a counter with no meter beyond proven persistent
+value, `grant_date_missing`), and `historical_value_population()` reports the
+holders and amounts in every rehearsal report for a founder rule.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| D16 step 1 billing account, payer, and payments (restored scope) | `plan_establishment()` (pure) and `establish_billing_account()`: the organization's account, created `proposed` when absent (currency from the payer's payments, else the legacy catalog currency; anchor = organization creation, D07 free anchor); the payer whose processor customer ranked legacy evidence assigns here bound once (`billing_migration_payer_bindings`, unique per payer, customer, and account); each of the payer's legacy payments attributed once with its identity and amounts copied (`billing_migration_payment_attributions`, unique per payment); conflicts quarantine; replay `unchanged`; changed evidence never moves a binding | `test_establishment_creates_the_missing_account_and_binds_its_payer_and_payments_once`; `test_an_existing_processor_customer_is_external_evidence_and_is_kept`; `test_establishment_quarantines_conflicting_payer_or_payment_evidence[5]`; `test_a_credit_backfill_needs_an_established_account`; `test_a_receipt_that_appears_after_establishment_blocks_the_backfill_until_reviewed` |
+| D16 step 1 ownership: payer evidence (an external processor customer, payments linked to an account), then the pooled organization the user owns and pays for, then the sole-member organization; never the active organization (its stamp on payments and grants is only a veto); a Phase 14 binding or attribution pins the owner and any later disagreement quarantines (`payer_binding_conflict`) | `resolve_legacy_value_owner()` (organization first) | `test_payer_evidence_owns_personal_value_and_the_active_organization_is_never_evidence`; `test_an_active_organization_stamp_on_a_payment_is_a_veto_not_evidence`; `test_a_member_whose_personal_value_belongs_to_their_own_organization_is_not_compared_in_the_team`; `test_value_without_ownership_evidence_is_quarantined`; `test_value_of_a_former_member_owned_here_is_quarantined_not_stranded` |
+| B1: no customer value is duplicated | Database `uq_billing_migration_openings_source` (one opening per legacy source kind and id, across every account, forever); planning quarantines `legacy_source_opened_elsewhere`; a concurrent loser quarantines or retries; reports list `sources_opened_more_than_once` (always empty) and block the global cutover otherwise | `test_b1_the_audited_double_funding_scenario_opens_the_grant_once`; `test_a_legacy_source_opened_elsewhere_quarantines_when_ownership_evidence_moves`; `test_postgres_concurrent_backfills_of_two_accounts_never_open_one_source_twice`; `test_postgres_b2_a_migration_opening_needs_an_authoritative_legacy_source[second_opening_of_a_source]` |
+| B2: every opening traces to a real legacy source | The opening guard requires an established account and: for a grant, the active legacy grant (same member, original and remaining amounts) behind a real payment of the same source attributed to this account, comped exactly when promotional, with its original non-expiring terms; for a meter, the member's (active here) or the organization's live legacy meter with the same remaining, limit, cycle start, no overage, and (PostgreSQL) cycle end; for a review, an exact review never approved by the run's operator. Bindings and attributions must copy real legacy rows exactly. The earlier lot guards' early return therefore never skips funding evidence | `test_postgres_b2_a_migration_opening_needs_an_authoritative_legacy_source[8]`; `test_postgres_forged_payer_bindings_and_payment_attributions_are_refused[3]`; `test_postgres_migrated_direct_sql_cannot_forge_or_rewrite_migration_evidence[8]`; `test_sqlite_migration_guards_and_restores_earlier_triggers_exactly` |
+| D16 steps 2-3: grants (rank 1 with payment, attribution, and transaction log), user and organization meters (rank 3); counters and plans (rank 4) compared, never used to mint value; member attribution kept; one organization lot for a pool | `plan_account_backfill()` (pure); `migration_opening` lots of source `free_recurring`, `subscription_recurring`, `credit_pack_purchase`, `promotional`; lot original amount is the legacy original, the opening entry the remaining value | `test_a_personal_recurring_remainder_opens_one_member_attributed_lot_to_the_cycle_end`; `test_a_pooled_organization_meter_opens_one_unattributed_lot_not_one_per_member`; `test_purchased_packs_and_the_300k_offer_keep_their_original_non_expiring_terms[3]` |
+| Expiry (founder decision 2026-11-18): purchased credit keeps its original terms | Run policy `original_terms` only (CHECK); recurring value expires at its legacy cycle end (`legacy_cycle_end`); `credit_pack` and `300k_limited_time` were sold non-expiring and stay non-expiring (`non_expiring_legacy_contract`, the source evidence recorded per opening); any other grant source quarantines (`expiry_terms_unestablished`); a lapsed cycle's remainder and overage expired with it; CHECKs bind basis and expiry per source | `test_purchased_packs_and_the_300k_offer_keep_their_original_non_expiring_terms[3]`; `test_a_grant_source_without_established_terms_quarantines_and_no_expiry_is_invented`; `test_no_migration_expiry_policy_but_original_terms_can_exist`; `test_overage_in_a_lapsed_cycle_expired_with_it_and_in_a_live_cycle_quarantines` |
+| D16 special cases | Quarantine codes: `negative_legacy_meter`, `counter_below_proven_purchased` and `counter_above_evidence` (Phase 13), shared-pool copies as `known_projection_duplication`, `enterprise_without_contract`, expired cycles never opened, `legacy_operation_in_flight` and Phase 13 flags, `legacy_dispute_state_unknown`, `duplicate_external_reference`, grant log and sum mismatches, `payment_evidence_missing`, `payment_not_attributed_to_account`, `grant_organization_conflict`, `overage_in_recurring_meter` (live cycle only), `reset_date_conflict`, `grant_date_missing` | `test_a_negative_legacy_meter_quarantines_and_creates_no_debt`; `test_a_counter_below_proven_purchased_value_quarantines`; `test_expired_recurring_value_is_never_opened`; `test_an_enterprise_label_without_an_executed_contract_quarantines`; `test_an_in_flight_legacy_operation_quarantines_and_no_hold_is_inferred`; `test_contradictory_or_missing_grant_evidence_quarantines[5]`; `test_one_payment_behind_two_grants_is_a_duplicate_reference_not_double_funding`; `test_a_grant_without_a_date_is_grant_date_missing_not_pre_boundary` |
+| D16 step 7 and separation of duties: `legacy_unattributed` only for a known owner and exact amount after a recorded review | `record_unattributed_review()`: no default reviewer; an explicit, unrevoked `billing.migration.review` staff grant (Phase 10); never the subject, a member, owner, or bound payer of the beneficiary organization; never consumed by a run its reviewer operates (`reviewer_is_run_operator`); amount equal to the unexplained difference net of a lapsed cycle and never above the counter; one review per evidence (a second approval is refused); immutable attribution (reviewer, grant, `reviewed_at = now()`); expiry never chosen: the live legacy cycle end, or non-expiring only with a real non-expiring purchase of the subject, attributed here, that funds no grant | `test_a_counter_above_all_evidence_needs_a_review_then_opens_exact_legacy_unattributed`; `test_a_review_no_longer_applies_once_the_evidence_changes`; `test_migration_review_separation_of_duties`; `test_a_lapsed_cycle_difference_is_reviewable_net_of_the_lapsed_remainder_with_evidenced_terms`; `test_a_non_expiring_review_needs_an_attributed_purchase_that_funds_no_grant`; `test_postgres_a_fabricated_review_is_refused[4]`; `test_postgres_migrated_review_requires_an_unrevoked_grant_and_read_committed` |
+| D16 conservation: available + held = accepted recurring + persistent + approved adjustments (exact integers); purchased principal by source; settled usage by operation; money by currency with paid, due, and discount apart; global: each source opened once | `_conservation()` in a probe savepoint, then the Phase 13 comparison with the owner map and the verified zero cycles; any unexplained credit difference rolls the probe back and records `quarantined`; the final write must reproduce the probe | `test_existing_target_funding_is_never_funded_twice`; the conservation assertions in the opening tests; `test_b1_the_audited_double_funding_scenario_opens_the_grant_once` |
+| D16 step 8 evidence and reports | `billing_migration_runs` (operator, policy, unit), `_establishments`, `_payer_bindings`, `_payment_attributions`, `_account_results`, `_openings`, `_reviews`; `migration_run_report()` with establishments, outcomes, sums by source, quarantine codes, `sources_opened_more_than_once`, `historical_value_population`, uncovered holders, and the global cutover gate | `test_the_run_report_covers_every_holder_and_blocks_the_global_write_cutover`; `test_historical_counters_without_evidence_stay_quarantined_and_are_reported` |
+| Idempotency, concurrency, atomicity, isolation | Same evidence: `unchanged`, zero entries; changed evidence quarantines; account lock first (Phase 3 order), legacy rows (members, owner, grants, payments) `FOR SHARE`, READ COMMITTED; caller-owned transaction | `test_replaying_the_same_evidence_creates_zero_entries_and_changed_evidence_quarantines`; `test_postgres_concurrent_backfills_of_one_account_open_value_once[2]`; `test_a_failure_mid_opening_leaves_nothing_and_a_retry_succeeds`; `test_accounts_are_isolated_and_each_opens_only_its_own_value`; `test_postgres_migrated_backfill_requires_read_committed` |
+| Database guards and migration safety | Immutability (row and `TRUNCATE`) on all nine tables; deferred final checks; the four earlier lot guards receive one asserted early return; revision CHECKs are literal copies of the models; downgrade refuses while evidence or a review grant exists and restores every earlier guard byte for byte | `test_revision_check_constraints_are_literal_copies_of_the_models`; `test_postgres_downgrade_restores_the_earlier_guards_byte_for_byte`; `test_sqlite_migration_guards_and_restores_earlier_triggers_exactly`; independent `pg_dump -s` round trip (parent → head → down → head, byte-identical) |
+| Phase 13 compatibility (R4A) | Without Phase 14 rows, an owner map, or verified zero cycles, the accepted Phase 13 comparison is unchanged: a zero meter against no period stays `unresolved`. It matches only when the backfill verified a well-formed live legacy cycle with nothing left (`zero_cycles`) | `test_a_zero_live_meter_matches_only_with_phase14_evidence`; `test_a_zero_meter_that_is_not_a_verified_live_cycle_never_clears_a_blocker`; the Phase 13 suite |
+| Inactive | No live caller; reads stay pure; no migration role, reviewer, or permission is created | `test_phase14_backfill_has_no_live_callers`; `test_planning_and_reports_are_pure_reads`; `test_postgres_no_migration_reviewer_or_role_exists_by_default` |
+
+Phase 13 changes (additive): when no Phase 4 credit period covers the moment,
+an open Phase 14 recurring opening is the period for `period_remaining`; the
+comparison accepts an owner map (`value_owners`, organization ids) so a member
+whose personal value belongs to another organization is `not_applicable`, an
+unresolved owner is `unresolved` (`ambiguous_owner`), and a holder owned here
+who is not an active member is `unresolved` (`attributed_member_not_active`);
+and `zero_cycles` lets a verified empty live legacy cycle match a missing period.
+
+**Activation prerequisite: dedicated migration database role (documented, not
+created).** Before any rehearsal on a restore copy or any production migration:
+a role (for example `jaspen_billing_migration`) that alone holds `INSERT` on
+the nine Phase 14 tables, `INSERT` on `credit_lots`, `credit_ledger_entries`,
+and `idempotency_registry`, `INSERT` and `UPDATE (processor,
+processor_customer_id)` on `billing_accounts`, and `SELECT` on the legacy rows
+it reads; it has no `UPDATE`, `DELETE`, or `TRUNCATE` anywhere and no access to
+any other legacy table. The runtime role has `INSERT` on none of the Phase 14
+tables, so even a fully consistent forged chain cannot be written by the
+application connection. Creating the role, its credentials, and its grants is
+an activation step that needs its own founder approval.
+
+**Restored scope (D18 row 14) and the founder decisions of 2026-11-18.** The
+approved Phase 14 is the evidence-ranked deterministic migration with no
+unexplained account cut over. Implemented here: billing-account establishment,
+payer bindings, and payment attributions (the evidence the credit openings
+depend on), the credit openings, the legacy payment archive, and the legacy
+plan mappings. Business context recorded with the decisions: Jaspen has no
+paying customers; all known historical paid activity was founder testing
+(including Stripe coupon tests); genuine free-user accounts exist.
+
+1. **Historical payments: legacy archive, not financial transactions
+   (decided).** `archive_legacy_payments()` copies every legacy `payments` row
+   exactly as stored into `billing_migration_payment_archives` (one archive
+   per payment, ever). A payment is `test_activity` only when an explicit
+   founder attestation (`{"reference", "payer_user_ids"}`, no default, no
+   wildcard) names its payer; every other payment stays `unverified`. No
+   archive is a verified customer payment (`verified_customer_payments` is 0
+   in every report); that needs a separately authorized Stripe verification.
+   Nothing the legacy row never recorded (processor event, mode, tax, fees,
+   lines, payment method, refunds and disputes) is filled in; it is listed on
+   each archive. No Phase 5.2 financial transaction is created, so
+   `ck_financial_transactions_external_evidence` is untouched. With no legacy
+   payment, nothing is written. A changed or vanished row is reported, never
+   rewritten. Classification never changes a credit opening: purchased credit
+   opens from its grant and payment as before.
+2. **Plans, subscriptions, and entitlements: evidence-backed mappings
+   (decided).** `map_legacy_plan()` records, per run and established account,
+   `billing_migration_plan_mappings`: each person's plan in the organization
+   that owns their personal legacy value (the backfill's owner rule), the
+   organization's plan as its owner's plan (the legacy
+   `sync_org_plan_from_owner` rule), live legacy entitlements (the 300K
+   offer), seat configuration, and a reference to the account's credit
+   result. Free accounts map `free` with no subscription and no paid seats;
+   an ended subscription maps `free_after_ended_subscription`; a live paid
+   subscription maps `mapped_pending_processor` with its period dates,
+   anchor, cancellation, price, paid seat quantity, and payment details
+   unresolved (`requires_processor_verification`). A paid label without a
+   processor subscription (comped, coupon, or set by hand), contradictory
+   plan and status, an unknown plan or entitlement key, an unarchived or
+   changed payment, a paid plan owned elsewhere, and an unresolved owner all
+   quarantine. No Phase 4 subscription, entitlement instance, or credit
+   period is created: that still needs approved `EntitlementDefinition`s.
+3. **Seats.** Legacy seat fields are configuration, recorded as such; paid
+   seats are `none` without paid subscription evidence and `unresolved` with
+   it (same later Stripe read).
+4. **Membership history.** Legacy keeps only current membership and
+   `joined_at`; history before the snapshot cannot be reconstructed. The
+   backfill fingerprints membership as evidence and quarantines on change.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| Payment archive: exact copy, once, test activity only by attestation, no artificial records | `plan_payment_archive()` (pure), `archive_legacy_payments()`, `payment_archive_summary()`; PostgreSQL and SQLite guards: exact copy of every column, own claim, unique payment and reference, `test_activity` needs payer and reference, immutable | `test_with_no_payments_nothing_is_archived_and_a_free_account_maps_free_with_its_credit_preserved`; `test_every_payment_is_archived_exactly_once_and_test_activity_needs_a_named_payer`; `test_a_test_activity_attestation_names_its_payers_explicitly[6]`; `test_a_changed_payment_row_is_reported_and_its_archive_is_never_rewritten`; `test_postgres_payments_archive_exactly_and_plans_map_with_every_guard_live`; `test_postgres_forged_or_rewritten_payment_archives_and_plan_mappings_are_refused[9]`; `test_sqlite_migration_guards_and_restores_earlier_triggers_exactly` |
+| Plan mappings: free preserved, paid terms unresolved, ambiguity quarantined, no Phase 4 rows | `plan_legacy_plan_mapping()` (pure), `map_legacy_plan()`; guard: an established account of its own organization under its own claim | `test_a_live_paid_subscription_maps_with_its_dates_seats_and_payment_details_unresolved`; `test_ambiguous_plan_records_quarantine_instead_of_guessing[9]`; `test_an_ended_subscription_maps_free_and_keeps_the_300k_entitlement_and_its_non_expiring_credit`; `test_free_members_without_a_plan_of_their_own_are_listed_not_guessed`; `test_a_plan_mapping_needs_an_established_account_and_replays_to_the_same_row` |
+
+**Remaining cutover dependencies.** The run report blocks the global write
+cutover while any account lacks a mapping, any mapping is not `mapped`, or any
+payment is unarchived, in addition to the credit conditions. Before any account
+is `cutover_eligible`:
+
+1. approved `EntitlementDefinition`s for the mapped legacy plans (at least
+   Free) and the 300K offer, so Phase 4 instances and credit periods can be
+   created from the mappings (a pricing and plan approval);
+2. for any `mapped_pending_processor` account, the separately authorized
+   Stripe read of subscription terms and paid seats (none is expected, since
+   all historical paid activity was founder testing);
+3. the dedicated migration database role, and who holds
+   `billing.migration.review`;
+4. a founder rule for pre-2026-05-08 values, sized by
+   `historical_value_population()`;
+5. the D04 writer freeze, including the unified line's `TurnBilling`, for a
+   consistent snapshot; users without an organization stay uncovered.
+
+Until 1 exists, plan, status, and reset-date comparisons stay `unresolved`, so
+no account becomes `cutover_eligible`; refunds or disputes of archived test
+payments cannot gain Phase 9 provenance.
+
+**Founder reporting policy (2026-11-19; documented, not implemented in Phase
+14).** Confirmed founder-test payments and the credits they funded must be
+distinguishable from genuine customer purchases, and excluded from actual
+customer revenue and from purchased-credit reporting. Their historical evidence
+is preserved: the archive rows, their `test_activity` classification and
+attestation reference, and the openings and lots they funded are kept, never
+deleted or rewritten. Phase 14 changes no balance and no lot classification for
+this policy; the reporting that applies it is later work. Today the archive
+classification identifies the payments, and an opening's grant and payment
+evidence links a lot to its archived payment.
+
+**Carried forward from the re-acceptance (2026-11-19), without expanding Phase
+14:**
+
+- **F1 (open founder decision).** A pack whose payment is archived
+  `test_activity` still opens as a `credit_pack_purchase` lot; the backfill
+  never reads the archive classification. Decide before Phase 15 reports or
+  cutover whether attested founder test credit opens as purchased, as
+  promotional, or not at all. Until then the reporting policy above applies to
+  any report built on these lots.
+- **F2 (residual by design; cutover prerequisite).** Fabricated legacy rows
+  written directly (a payment plus a grant plus its log) are evidence the real
+  commands will open, because legacy tables are the source and the runtime role
+  can still write them. Controls: the dedicated migration role, the D04 writer
+  freeze (including `TurnBilling`), and snapshots taken from a restore point.
+  No Phase 14 table can be forged on its own.
+- **F4 (report accuracy).** `historical_value_population()` counts every meter
+  whose reset predates 2026-05-08 as `pre_unit_boundary_meter`, including cycles
+  already expired under their original terms, so the founder sizing can be
+  overstated. Phase 15 reports expired and live pre-boundary value separately.
+
+Phase 15 start checks: the F1 decision; fixtures or a restore copy only (for a
+restore copy, the migration role exists, the runtime role has no `INSERT` on
+the Phase 14 tables, and writers are frozen before the snapshot); run order
+archive, establish, backfill, map, with `sources_opened_more_than_once` empty
+and the archive complete; F4 reporting; pricing at 3,600,000 per provider
+dollar; failure injection, rerun no-op, downgrade refusal with evidence, and an
+empty-database round trip.
+
+Integration requirements carried forward: the first target credit period must
+start at each opening's legacy cycle end; the unified line's `TurnBilling`
+writer must be frozen with the other D04 writers for a consistent snapshot;
+users without an organization stay uncovered and block the global write
+cutover. A member's personal recurring lot inside a pooled account makes the
+pool comparison unresolved (fail closed); such accounts quarantine.
+
+Local verification is not acceptance and does not authorize commit,
+integration, deployment, activation, or a production migration.
+
 ## D18 Phase dependency and cutover map
 
 The original 18 phases are the authoritative implementation sequence because
@@ -817,7 +1020,7 @@ useful **program gates**, not a competing sequence. This map authorizes nothing.
 | 10 | Trials, comps, and internal funding | 2D funding/admin | Approved offer/source/admin authority tests pass. |
 | 11 | Enterprise | 2D entitlement | Executed-contract evidence and no-unlimited-default tests pass; contract-backed terms, Stripe-verified funding, annual carryforward, term-bound packs (implemented locally, pending audit). |
 | 12 | AI reservations and settlements | 2D AI | Pricing/capacity binding, fallback, tools, checkpoint/resume, delivery-based billability, absorbed-usage evidence, and exact settlement tests pass (accepted, local checkpoint `4efabb05`, inactive; activation gated on Phase 17 reliable delivery). |
-| 13 | Inventory and reconciliation | 2B | Pure projections, all writer/reader inventory, compatibility field proofs (independently accepted on `4efabb05`, inactive; local checkpoint pending). |
+| 13 | Inventory and reconciliation | 2B | Pure projections, all writer/reader inventory, compatibility field proofs (independently accepted on `4efabb05`, inactive; local checkpoint `26468456`). |
 | 14 | Backfill | 2B/2C | Evidence-ranked deterministic migration; no unexplained account cut over. |
 | 15 | Local rehearsal | 2C | Exact reports, failure injection, downgrade/rollback, rerun no-op. |
 | 16 | Shadow verification | 2B/2F | Production-like authorized environment only; projected/legacy comparisons, pricing/capacity telemetry, zero customer impact. |
