@@ -624,40 +624,158 @@ def close_turn_operation_alone(operation_id, *, outcome, updates=None, error_cod
 DEFAULT_MAX_TURN_SECONDS = 30 * 60
 
 
+# -- unclosed-operation classification (P4.1 X1) ------------------------------
+#
+# Billing migration treats an account as in flight while any of its
+# operations is 'started' (Phase 14 ``_in_flight_legacy_operations``). Since
+# P4.0 a chat turn killed mid-generation also leaves a 'started' row. That row
+# is evidence, not a reservation: S0 never commits a reservation with its
+# claim, and no code path will ever settle or release a P4.0 turn after its
+# process is gone. Whatever the turn's balance write did, the meter already
+# shows it. So once a P4.0 turn is older than the maximum turn duration it
+# can no longer change any balance.
+#
+# This classifier says which is which. It reads only. It never closes,
+# releases, or edits a row: a stale row stays 'started' and is reported for
+# the deferred F3 review (a mid-turn commit may have kept its reservation),
+# never silently dropped. Anything it does not positively recognise as P4.0
+# evidence is treated as outstanding (fail closed).
+
+UNCLOSED_IN_PROGRESS = 'in_progress'
+UNCLOSED_STALE_TURN_EVIDENCE = 'stale_turn_evidence'
+UNCLOSED_OUTSTANDING = 'outstanding'
+UNCLOSED_CLASSES = (UNCLOSED_IN_PROGRESS, UNCLOSED_STALE_TURN_EVIDENCE, UNCLOSED_OUTSTANDING)
+
+
+def _operation_started_at(operation, lifecycle):
+    if getattr(operation, 'created_at', None) is not None:
+        return operation.created_at
+    claimed_at = (lifecycle or {}).get('claimed_at')
+    try:
+        return datetime.fromisoformat(str(claimed_at)) if claimed_at else None
+    except ValueError:
+        return None
+
+
+def classify_unclosed_operation(operation, *, now=None, max_turn_seconds=DEFAULT_MAX_TURN_SECONDS):
+    """Classify one operation that has not reached a terminal status.
+
+    Returns None for a closed operation. Otherwise a dict whose ``class`` is:
+
+    - ``in_progress``: a P4.0 chat turn younger than ``max_turn_seconds``; it
+      may still settle, so it is in flight.
+    - ``stale_turn_evidence``: a P4.0 chat turn ('started', unbound, claim
+      version ``p4.0-s0``) older than the bound. Not in flight.
+    - ``outstanding``: everything else that is not terminal, including
+      runtime operations whose reservation was committed with the claim,
+      rows bound to a billing account, unknown lifecycle versions, statuses
+      added later, and rows with no usable timestamp. In flight.
+
+    Reads only.
+    """
+    status = str(getattr(operation, 'status', '') or '')
+    if status in TERMINAL_STATUSES:
+        return None
+    now = now or datetime.utcnow()
+    lifecycle = _turn_lifecycle(operation)
+    started_at = _operation_started_at(operation, lifecycle)
+    age = int((now - started_at).total_seconds()) if started_at is not None else None
+    result = {
+        'operation_id': operation.id,
+        'status': status,
+        'operation_type': operation.operation_type,
+        'age_seconds': age,
+        'max_turn_seconds': int(max_turn_seconds),
+    }
+    p4_0_evidence = (
+        status == STARTED
+        and operation.operation_type == 'conversation'
+        and lifecycle is not None
+        and lifecycle.get('version') == TURN_LIFECYCLE_VERSION
+        and getattr(operation, 'billing_account_id', None) is None
+    )
+    if not p4_0_evidence:
+        reason = ('not_a_p4_0_turn_claim' if lifecycle is None or operation.operation_type != 'conversation'
+                  else 'unrecognised_turn_claim')
+        return {**result, 'class': UNCLOSED_OUTSTANDING, 'in_flight': True, 'reason': reason}
+    if age is None:
+        return {**result, 'class': UNCLOSED_OUTSTANDING, 'in_flight': True, 'reason': 'no_start_time'}
+    if age < int(max_turn_seconds):
+        return {**result, 'class': UNCLOSED_IN_PROGRESS, 'in_flight': True, 'reason': 'within_turn_bound'}
+    return {
+        **result,
+        'class': UNCLOSED_STALE_TURN_EVIDENCE,
+        'in_flight': False,
+        'reason': 'p4_0_turn_past_bound',
+        # S0 records no durable reservation; whether a mid-turn commit kept
+        # one is unknown from the row. Kept for the deferred F3 review.
+        'reservation_durability': 'not_recorded',
+        'estimated_reservation': lifecycle.get('estimated_reservation'),
+        'cycle_marker': lifecycle.get('cycle_marker'),
+        'f3_review': True,
+    }
+
+
+def operation_is_in_flight(operation, *, now=None, max_turn_seconds=DEFAULT_MAX_TURN_SECONDS):
+    """True when the operation may still change a balance (see above)."""
+    classified = classify_unclosed_operation(operation, now=now, max_turn_seconds=max_turn_seconds)
+    return bool(classified and classified['in_flight'])
+
+
 def report_turn_operations(*, now=None, max_turn_seconds=DEFAULT_MAX_TURN_SECONDS, since_days=30):
     """List operations that never closed and chat turns whose evidence does
     not reconcile. Reads only; changes nothing."""
     from .models import UsageEvent
 
     now = now or datetime.utcnow()
-    since = now - timedelta(days=max(1, int(since_days or 30)))
+    # since_days=0 reads all history (billing migration looks at any age).
+    all_history = since_days is not None and int(since_days) == 0
+    since = None if all_history else now - timedelta(days=max(1, int(since_days or 30)))
     stale_before = now - timedelta(seconds=max(0, int(max_turn_seconds)))
     unclosed = []
-    for op in AIOperation.query.filter(
-        AIOperation.status == STARTED, AIOperation.created_at < stale_before,
-        AIOperation.created_at >= since,
-    ).order_by(AIOperation.created_at).all():
+    unclosed_classes = {name: 0 for name in UNCLOSED_CLASSES}
+    unclosed_query = AIOperation.query.filter(
+        AIOperation.status.notin_(sorted(TERMINAL_STATUSES)), AIOperation.created_at < stale_before,
+    )
+    if since is not None:
+        unclosed_query = unclosed_query.filter(AIOperation.created_at >= since)
+    unclosed_ids = []
+    for op in unclosed_query.order_by(AIOperation.created_at, AIOperation.id).all():
+        classified = classify_unclosed_operation(op, now=now, max_turn_seconds=max_turn_seconds)
+        unclosed_classes[classified['class']] += 1
+        unclosed_ids.append(op.id)
         unclosed.append({
-            'operation_id': op.id, 'operation_type': op.operation_type,
+            'operation_id': op.id, 'operation_type': op.operation_type, 'status': op.status,
             'conversation_turn': _turn_lifecycle(op) is not None,
             'user_id': op.user_id, 'organization_id': op.organization_id, 'thread_id': op.thread_id,
             'age_seconds': int((now - op.created_at).total_seconds()),
             'estimated_reservation': (_turn_lifecycle(op) or {}).get('estimated_reservation'),
+            'class': classified['class'],
+            'in_flight': classified['in_flight'],
+            'reason': classified['reason'],
         })
 
     usage_by_operation = {}
-    for row in UsageEvent.query.filter(
-        UsageEvent.created_at >= since, UsageEvent.endpoint == 'ai.conversation',
-    ).all():
+    usage_query = UsageEvent.query.filter(UsageEvent.endpoint == 'ai.conversation')
+    if since is not None:
+        usage_query = usage_query.filter(UsageEvent.created_at >= since)
+    for row in usage_query.all():
         linked = (row.metadata_json or {}).get('operation_id') if isinstance(row.metadata_json, dict) else None
         if linked:
             usage_by_operation.setdefault(linked, []).append(row)
 
+    for entry in unclosed:
+        # A usage row points at a turn whose close never landed.
+        linked = usage_by_operation.get(entry['operation_id'], [])
+        entry['usage_rows'] = len(linked)
+        entry['usage_charged_credits'] = sum(int(row.credits_charged or 0) for row in linked)
+
     findings = []
     outcomes = {}
-    for op in AIOperation.query.filter(
-        AIOperation.created_at >= since, AIOperation.status != STARTED,
-    ).all():
+    closed_query = AIOperation.query.filter(AIOperation.status != STARTED)
+    if since is not None:
+        closed_query = closed_query.filter(AIOperation.created_at >= since)
+    for op in closed_query.all():
         lifecycle = _turn_lifecycle(op)
         if lifecycle is None:
             continue
@@ -695,8 +813,9 @@ def report_turn_operations(*, now=None, max_turn_seconds=DEFAULT_MAX_TURN_SECOND
     return {
         'generated_at': now.isoformat(),
         'max_turn_seconds': int(max_turn_seconds),
-        'since': since.isoformat(),
+        'since': since.isoformat() if since is not None else None,
         'unclosed': unclosed,
+        'unclosed_by_class': unclosed_classes,
         'mismatched': findings,
         'turn_outcomes': dict(sorted(outcomes.items())),
         'changes_made': 0,

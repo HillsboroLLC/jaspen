@@ -761,7 +761,7 @@ def create_app():
     @click.option("--older-than-minutes", default=30, show_default=True, type=int,
                   help="Report operations still 'started' after this long.")
     @click.option("--since-days", default=30, show_default=True, type=int,
-                  help="Look at operations created in this many days.")
+                  help="Look at operations created in this many days (0 = all history).")
     def ai_operations_report_cli(older_than_minutes, since_days):
         """List unclosed AI operations and chat turns whose evidence does not
         reconcile. Changes nothing: no release, no status change, no commit."""

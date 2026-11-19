@@ -13515,6 +13515,7 @@ def _record_usage(
     idempotency_key=None,
     request_fingerprint=None,
     operation_id=None,
+    acting_user=None,
 ):
     if not isinstance(session, dict):
         return
@@ -13606,10 +13607,15 @@ def _record_usage(
 
     try:
         thread_id = str(session.get("session_id") or "").strip() or None
-        if user_id:
-            usage_user = User.query.get(user_id)
+        # P4.1 D2: the usage belongs to the member who took the turn (and was
+        # charged), not the project owner whose id the session carries. The
+        # project's organization still comes first. Without an acting member
+        # (no caller today) the previous owner attribution is kept.
+        usage_user = acting_user if acting_user is not None else (User.query.get(user_id) if user_id else None)
+        usage_user_id = str(getattr(usage_user, "id", "") or "").strip() or user_id
+        if usage_user_id:
             db.session.add(UsageEvent(
-                user_id=user_id,
+                user_id=usage_user_id,
                 organization_id=session.get('organization_id') or getattr(usage_user, 'active_organization_id', None),
                 thread_id=thread_id,
                 evaluation_id=evaluation_id,
@@ -13666,6 +13672,7 @@ def _record_failed_chat_usage(session, error, *, regenerated=False, attachments=
         success=False,
         error_code=usage.get('error_code') or type(error).__name__,
         operation_id=evidence.operation_id if evidence else None,
+        acting_user=getattr(turn, "user", None),
     )
     if evidence is not None:
         evidence.note_close(
@@ -15429,6 +15436,7 @@ def _finish_conversation_turn(turn, req, *, reply, usage, actions, mutations, un
         error_code=scoring_failure.get("code") if scoring_failure else None,
         operation_type="score_next" if scoring_failure else None,
         operation_id=_turn_operation_id(turn),
+        acting_user=turn.user,
     )
     _note_turn(turn, "settled")
     if not turn.save():
@@ -15667,6 +15675,7 @@ def _finish_regenerated_turn(turn, *, reply, usage, chat_history, last_msg, old_
         idempotency_key=idempotency_key,
         request_fingerprint=request_fingerprint,
         operation_id=_turn_operation_id(turn),
+        acting_user=turn.user,
     )
     _note_turn(turn, "settled")
     if not turn.save():

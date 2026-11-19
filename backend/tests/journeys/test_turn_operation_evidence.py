@@ -499,8 +499,8 @@ def test_a_colleagues_turn_is_their_operation_on_the_organizations_project(clien
 
     assert status == 200, payload
     [operation] = _ops(thread_id)
-    # The operation is the acting member's. (UsageEvent.user_id is still the
-    # project owner's, as before P4.0: reported, not changed here.)
+    # The operation is the acting member's. (Its UsageEvent is too since
+    # P4.1 D2; see test_p4_1_attribution_and_stale_evidence.py.)
     assert operation.user_id == colleague.id
     assert operation.organization_id == org.id
     assert _lifecycle(operation)["project_organization_id"] == org.id
