@@ -69,6 +69,7 @@ from app.ai_audit import (
     session_has_uncommitted_writes,
     transaction_counters,
 )
+from app.ai_context import build_shared_assistant_context
 from app.ai_providers import anthropic as anthropic_provider
 from app.ai_providers import gemini as gemini_provider
 from app.ai_providers.usage import reported_error_usage
@@ -4405,6 +4406,47 @@ def _build_agent_system_prompt(*, context_summary_text, intake_context, view_con
         f"{_readiness_phase_prompt_suffix(readiness)}"
         f"{_decision_kit_prompt_suffix(user_id, thread_id, project=project)}"
     )
+
+
+def _build_shared_system_prompt(*, session, chat_history, context_summary_text,
+                                intake_context, view_context, readiness, user,
+                                user_id, thread_id, project):
+    """Build the unchanged conversation prompt from the shared project context."""
+    shared = build_shared_assistant_context(
+        user or user_id,
+        thread_id,
+        sessions={thread_id: session} if isinstance(session, dict) else {},
+        project=project,
+        session=session,
+        history=chat_history,
+        view_context=view_context,
+    )
+    system_prompt = _build_agent_system_prompt(
+        context_summary_text=context_summary_text,
+        intake_context=intake_context,
+        view_context=shared.view_context,
+        connector_context_snapshot=shared.session.get("connector_context_snapshot"),
+        user_id=user_id,
+        thread_id=thread_id,
+        chat_history=chat_history,
+        readiness=readiness,
+        data_context_connector_ids=shared.session.get("data_context_connector_ids"),
+        project=project,
+    )
+    system_prompt += _scorecard_content_prompt_suffix(
+        shared.session, shared.view_context,
+        user_id=user_id, thread_id=thread_id, project=project,
+    )
+    active_scorecard_id = str(
+        (_sanitize_view_context(shared.view_context) or {}).get("active_scorecard_id") or ""
+    ).strip() or None
+    system_prompt += _wbs_content_prompt_suffix(
+        user_id, thread_id, active_scorecard_id, project,
+    )
+    system_prompt += _decision_facts_prompt_suffix(
+        user_id, thread_id, project=project,
+    )
+    return system_prompt
 
 
 def _scorecard_content_prompt_suffix(session, view_context, *, user_id=None, thread_id=None, project=None):
@@ -11662,21 +11704,12 @@ def _generate_assistant_reply_anthropic(
         user=user,
         thread_id=thread_id,
     )
-    system_prompt = _build_agent_system_prompt(
-        context_summary_text=context_summary_text,
-        intake_context=intake_context,
-        view_context=view_context,
-        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
-        user_id=user_id,
-        thread_id=thread_id,
-        chat_history=chat_history,
-        readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"), project=project,
+    system_prompt = _build_shared_system_prompt(
+        session=session, chat_history=chat_history,
+        context_summary_text=context_summary_text, intake_context=intake_context,
+        view_context=view_context, readiness=readiness, user=user, user_id=user_id,
+        thread_id=thread_id, project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id, project=project)
-    _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc, project)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id, project=project)
     user_content = _anthropic_user_message_content(user_message, attachments=attachments)
     if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
         messages[-1] = {**messages[-1], "content": user_content}
@@ -11893,21 +11926,12 @@ def _stream_assistant_reply_events_anthropic(
         user=user,
         thread_id=thread_id,
     )
-    system_prompt = _build_agent_system_prompt(
-        context_summary_text=context_summary_text,
-        intake_context=intake_context,
-        view_context=view_context,
-        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
-        user_id=user_id,
-        thread_id=thread_id,
-        chat_history=chat_history,
-        readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"), project=project,
+    system_prompt = _build_shared_system_prompt(
+        session=session, chat_history=chat_history,
+        context_summary_text=context_summary_text, intake_context=intake_context,
+        view_context=view_context, readiness=readiness, user=user, user_id=user_id,
+        thread_id=thread_id, project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id, project=project)
-    _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc, project)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id, project=project)
     user_content = _anthropic_user_message_content(user_message, attachments=attachments)
     if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
         messages[-1] = {**messages[-1], "content": user_content}
@@ -12152,21 +12176,12 @@ def _generate_assistant_reply_gemini(
         user=user,
         thread_id=thread_id,
     )
-    system_prompt = _build_agent_system_prompt(
-        context_summary_text=context_summary_text,
-        intake_context=intake_context,
-        view_context=view_context,
-        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
-        user_id=user_id,
-        thread_id=thread_id,
-        chat_history=chat_history,
-        readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"), project=project,
+    system_prompt = _build_shared_system_prompt(
+        session=session, chat_history=chat_history,
+        context_summary_text=context_summary_text, intake_context=intake_context,
+        view_context=view_context, readiness=readiness, user=user, user_id=user_id,
+        thread_id=thread_id, project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id, project=project)
-    active_exec_id = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, active_exec_id, project)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id, project=project)
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
@@ -12350,21 +12365,12 @@ def _stream_assistant_reply_events_gemini(
         user=user,
         thread_id=thread_id,
     )
-    system_prompt = _build_agent_system_prompt(
-        context_summary_text=context_summary_text,
-        intake_context=intake_context,
-        view_context=view_context,
-        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
-        user_id=user_id,
-        thread_id=thread_id,
-        chat_history=chat_history,
-        readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"), project=project,
+    system_prompt = _build_shared_system_prompt(
+        session=session, chat_history=chat_history,
+        context_summary_text=context_summary_text, intake_context=intake_context,
+        view_context=view_context, readiness=readiness, user=user, user_id=user_id,
+        thread_id=thread_id, project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id, project=project)
-    active_exec_id = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, active_exec_id, project)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id, project=project)
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
@@ -15142,6 +15148,7 @@ class _TurnOperationEvidence:
                 request_fingerprint=self.request_fingerprint,
                 estimated_reservation=_preflight_credit_estimate(model_type, token_hint=token_hint),
                 cycle_marker=_meter_cycle_marker(user),
+                prompt_family='conversation',
             )
         except Exception:
             # Evidence never stops a turn. Discard only the failed claim.

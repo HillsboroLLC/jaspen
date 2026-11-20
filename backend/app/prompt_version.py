@@ -62,6 +62,7 @@ PROMPT_FAMILIES = {
     'conversation': (_AI_AGENT, (
         '_SYSTEM_PROMPT_PREFIX',
         '_build_agent_system_prompt',
+        '_build_shared_system_prompt',
         '_original_intake_prompt_suffix',
         '_context_summary_prompt_suffix',
         '_intake_context_prompt_suffix',
@@ -96,8 +97,15 @@ PROMPT_FAMILIES = {
         '_scorecard_objective_guidance',
     )),
     'execution_plan': (_STRATEGY, ('_generate_ai_wbs_suggestion', '_infer_wbs_planning_mode')),
-    'scorecard_assistant': (_STRATEGY, ('scorecard_assistant', '_scorecard_objective_guidance')),
-    'execution_assistant': (_STRATEGY, ('execution_assistant',)),
+    'scorecard_assistant': (_STRATEGY, (
+        'scorecard_assistant',
+        '_scorecard_objective_guidance',
+        'app.ai_context:SharedAssistantContext',
+    )),
+    'execution_assistant': (_STRATEGY, (
+        'execution_assistant',
+        'app.ai_context:SharedAssistantContext',
+    )),
     'analysis_chat': (_STRATEGY, ('chat_with_analysis',)),
     'portfolio_analysis': (_STRATEGY, ('portfolio_scores_agent',)),
     'batch_ranking': (_AI_AGENT, ('_rank_batch_ideas_with_ai', '_batch_ranking_prompt_payload')),

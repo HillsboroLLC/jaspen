@@ -139,6 +139,19 @@ def test_editing_listed_prompt_text_changes_the_version(app):
     assert pv.compute_prompt_version("conversation", sources=edited) != pv.compute_prompt_version("conversation")
 
 
+def test_shared_context_history_shaping_changes_workspace_assistant_versions(app):
+    edited = _edit_source(
+        "app.ai_context",
+        "    def recent_history(self, *, limit, max_chars):",
+        "    def recent_history(self, *, limit, max_chars):  ",
+    )
+    for family in ("scorecard_assistant", "execution_assistant"):
+        material = {key for key, _source in pv.family_material(family)}
+        assert "app.ai_context:SharedAssistantContext" in material
+        assert pv.compute_prompt_version(family, sources=edited) != pv.compute_prompt_version(family)
+    assert pv.compute_prompt_version("scorecard", sources=edited) == pv.compute_prompt_version("scorecard")
+
+
 def test_an_unordered_constant_hashes_identically_under_every_hash_seed(app):
     """``_DECISION_CAPTURE_TOOLS`` is a set: its runtime order depends on
     PYTHONHASHSEED. The version must not."""
@@ -213,6 +226,7 @@ _NOT_PROMPT_MATERIAL = {
         "app.intake_readiness:normalize_strategy_objective",
         "app.jira_portfolio:refresh_portfolio",
         "app.memory_context:assemble_memory_context",
+        "app.ai_context:build_shared_assistant_context",
         "app.netsuite_sync:fetch_netsuite_summary",
         "app.oracle_fusion_sync:fetch_oracle_summary",
         "app.salesforce_sync:fetch_pipeline_summary",
@@ -239,7 +253,6 @@ _NOT_PROMPT_MATERIAL = {
         "app.routes.reports:_safe_text",
         "app.routes.strategy:_collect_completed_scores",
         "app.routes.strategy:_criteria_with_supplied_information",
-        "app.routes.strategy:_load_thread_conversation",
         "app.routes.strategy:_normalize_strategy_objective",
         "app.routes.strategy:_portfolio_agent_score_rows",
         "app.routes.strategy:_resolve_session_entry",
@@ -389,9 +402,22 @@ def test_every_chat_system_prompt_section_is_in_the_conversation_family():
     assert sections <= set(pv.PROMPT_FAMILIES["conversation"][1])
 
 
+def test_workspace_shared_context_dependency_cannot_leave_prompt_version_tracking():
+    dependency = "app.ai_context:SharedAssistantContext"
+    for family, route_symbol in (
+        ("scorecard_assistant", "scorecard_assistant"),
+        ("execution_assistant", "execution_assistant"),
+    ):
+        home, entries = pv.PROMPT_FAMILIES[family]
+        assert home == "app.routes.strategy"
+        assert route_symbol in entries
+        assert dependency in entries
+
+
 _OPERATION_ENTRIES = {
     "execute_customer_operation", "execute_customer_text_operation",
     "execute_system_text_operation", "_anthropic_json_completion", "persist_operation",
+    "claim_turn_operation",
 }
 # persist_operation calls that need no family: the strategy-route recorders
 # are only ever called with persist_ai_operation=False (asserted below).
@@ -546,6 +572,21 @@ def test_closing_a_claimed_turn_never_restamps_it(app, db, solo, monkeypatch):
         assert "prompt_version_history" not in _meta(operation)
 
 
+def test_turn_claim_accepts_the_callers_prompt_family(app, db, solo):
+    from app.ai_audit import claim_turn_operation
+
+    with app.test_request_context():
+        operation_id, lifecycle = claim_turn_operation(
+            solo["user"], thread_id="t-p5c-family", prompt_family="execution_assistant",
+        )
+        _db.session.commit()
+        operation = _db.session.get(AIOperation, operation_id)
+        expected = pv.prompt_version("execution_assistant")
+        assert lifecycle["prompt_version"] == expected
+        assert _meta(operation)["prompt_version"] == expected
+        assert _meta(operation)["turn_lifecycle"]["version"] == TURN_LIFECYCLE_VERSION
+
+
 # --------------------------------------------------------------------------
 # runtime operations (execute_customer_operation)
 # --------------------------------------------------------------------------
@@ -691,5 +732,6 @@ def test_historical_rows_without_a_version_remain_readable(app, db, solo):
 
     assert classify_unclosed_operation(row)["class"] == UNCLOSED_STALE_TURN_EVIDENCE
     report = report_turn_operations(since_days=0)
-    assert any(item["operation_id"] == row.id for item in report["unclosed"])
+    [listed] = [item for item in report["unclosed"] if item["operation_id"] == row.id]
+    assert listed["prompt_version"] is None
     assert "prompt_version" not in (row.metadata_json or {})

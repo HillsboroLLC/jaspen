@@ -27,6 +27,7 @@ from app.decision_facts import (
 from app.evidence_references import attach_evidence_references, reference_supports_decision
 from app.models import Scorecard, UsageEvent, User
 from app.ai_audit import persist_operation
+from app.ai_context import build_shared_assistant_context
 from app.ai_runtime import (
     AIOperationPaymentRequired,
     execute_customer_operation,
@@ -11599,17 +11600,6 @@ def scorecard_assistant(thread_id):
         base_scorecard = payload.get('scorecard') if isinstance(payload.get('scorecard'), dict) else snapshot_state['selected_snapshot']
         base_scorecard = _normalize_scorecard_payload(base_scorecard)
 
-        recent_history = _load_thread_conversation(user_id, thread_id)
-        recent_excerpt = []
-        for item in recent_history[-8:]:
-            if not isinstance(item, dict):
-                continue
-            role = str(item.get('role') or '').strip() or 'user'
-            content = str(item.get('content') or item.get('text') or '').strip()
-            if not content:
-                continue
-            recent_excerpt.append({'role': role, 'content': content[:500]})
-
         objective = _normalize_strategy_objective(
             payload.get('strategy_objective')
             or session.get('strategy_objective')
@@ -11625,6 +11615,17 @@ def scorecard_assistant(thread_id):
         if not isinstance(view_context, dict):
             view_context = {}
         view_context = {k: v for k, v in view_context.items() if k in {'current_view', 'active_tab', 'active_scorecard_id', 'active_scenario_id', 'wbs_summary'}}
+
+        shared_context = build_shared_assistant_context(
+            user,
+            thread_id,
+            sessions=sessions,
+            project_row=_project_row,
+            session=session,
+            view_context=view_context,
+            require_write=True,
+        )
+        recent_excerpt = shared_context.recent_history(limit=8, max_chars=500)
 
         view_context_lines = []
         current_view = str(view_context.get('current_view') or '').strip()
@@ -11992,8 +11993,17 @@ def execution_assistant(thread_id):
             return jsonify({'error': 'Thread not found'}), 404
 
         all_data = _thread_scenarios(user_id, thread_id)
-        td = all_data.get(thread_id, {}) if isinstance(all_data, dict) else {}
-        project_wbs = td.get('project_wbs') if isinstance(td, dict) else None
+        shared_context = build_shared_assistant_context(
+            user,
+            thread_id,
+            sessions=sessions,
+            project_row=_project_row,
+            session=session,
+            scenarios=all_data,
+            view_context=payload.get('view_context'),
+            require_write=True,
+        )
+        project_wbs = shared_context.execution_plan
         tasks = project_wbs.get('tasks') if isinstance(project_wbs, dict) else []
         if not isinstance(tasks, list):
             tasks = []
@@ -12016,7 +12026,7 @@ def execution_assistant(thread_id):
         task_block = "\n".join(task_lines) if task_lines else "  (no tasks yet)"
 
         # Full conversation history from this session
-        full_history = _load_thread_conversation(user_id, thread_id)
+        full_history = shared_context.history
         history_lines = []
         for item in full_history[-30:]:
             if not isinstance(item, dict):

@@ -517,7 +517,7 @@ def _bounded_client_key(value):
 def claim_turn_operation(user, *, thread_id, route=None, streaming=None,
                          project_organization_id=None, client_idempotency_key=None,
                          request_fingerprint=None, estimated_reservation=None,
-                         cycle_marker=None):
+                         cycle_marker=None, prompt_family='conversation'):
     """Insert this turn's operation as 'started' and commit it by itself.
 
     Called immediately before the turn reserves. It commits only when the
@@ -532,7 +532,7 @@ def claim_turn_operation(user, *, thread_id, route=None, streaming=None,
     now = datetime.utcnow()
     # P5b: the prompt version is part of the claim, so it survives every
     # close path. It is a new key; the lifecycle ``version`` is unchanged.
-    turn_prompt_version = prompt_version('conversation')
+    turn_prompt_version = prompt_version(prompt_family)
     lifecycle = {
         'version': TURN_LIFECYCLE_VERSION,
         'route': route,
@@ -788,6 +788,7 @@ def report_turn_operations(*, now=None, max_turn_seconds=DEFAULT_MAX_TURN_SECOND
             'operation_id': op.id, 'operation_type': op.operation_type, 'status': op.status,
             'conversation_turn': _turn_lifecycle(op) is not None,
             'user_id': op.user_id, 'organization_id': op.organization_id, 'thread_id': op.thread_id,
+            'prompt_version': (op.metadata_json or {}).get(PROMPT_VERSION_KEY),
             'age_seconds': int((now - op.created_at).total_seconds()),
             'estimated_reservation': (_turn_lifecycle(op) or {}).get('estimated_reservation'),
             'class': classified['class'],
@@ -845,6 +846,7 @@ def report_turn_operations(*, now=None, max_turn_seconds=DEFAULT_MAX_TURN_SECOND
             findings.append({
                 'operation_id': op.id, 'thread_id': op.thread_id, 'user_id': op.user_id,
                 'organization_id': op.organization_id, 'status': op.status, 'outcome': outcome,
+                'prompt_version': (op.metadata_json or {}).get(PROMPT_VERSION_KEY),
                 'charged_credits': int(op.charged_credits or 0), 'usage_charged_credits': usage_charged,
                 'reserved_credits': lifecycle.get('reserved_credits'),
                 'settled_credits': lifecycle.get('settled_credits'),
