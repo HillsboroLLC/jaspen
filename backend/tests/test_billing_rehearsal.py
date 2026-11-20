@@ -382,7 +382,8 @@ def test_reports_are_pure_reads(db):
 
 def test_phase15_rehearsal_has_no_live_callers():
     callers = sorted(str(p.relative_to(BACKEND)) for p in (BACKEND / "app").rglob("*.py")
-                     if p.name != "billing_rehearsal.py" and "billing_rehearsal" in p.read_text())
+                     # Phase 16 shadow comparison is inactive and read only.
+                     if p.name not in ("billing_rehearsal.py", "billing_shadow.py") and "billing_rehearsal" in p.read_text())
     assert callers == []
     assert [p for p in (BACKEND / "scripts").rglob("*.py") if "billing_rehearsal" in p.read_text()] == []
 

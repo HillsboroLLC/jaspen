@@ -921,6 +921,8 @@ PHASE13_MODULE = "app/billing_projections.py"
 PHASE14_MODULE = "app/billing_migration.py"
 # Phase 15 rehearsal reports read them too (inactive; D16 reconciliation reports).
 PHASE15_MODULE = "app/billing_rehearsal.py"
+# Phase 16 shadow comparison reads them too (inactive, read only).
+PHASE16_MODULE = "app/billing_shadow.py"
 
 
 def phase13_live_importers(backend):
@@ -933,7 +935,8 @@ def phase13_live_importers(backend):
     """
     return sorted(
         str(path.relative_to(backend)) for path in (backend / "app").rglob("*.py")
-        if str(path.relative_to(backend)) not in (PHASE13_MODULE, PHASE14_MODULE, PHASE15_MODULE)
+        if str(path.relative_to(backend)) not in (PHASE13_MODULE, PHASE14_MODULE, PHASE15_MODULE,
+                                                    PHASE16_MODULE)
         and "billing_projections" in path.read_text()
     )
 

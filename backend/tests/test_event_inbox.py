@@ -213,6 +213,7 @@ def test_inbox_has_no_live_runtime_importers():
             "billing_outbox.py", "models_billing_phase5.py", "models.py",
             # Phase 13 projections (inactive) read financial cases only.
             "billing_projections.py",
+            "billing_shadow.py",  # Phase 16 shadow comparison (inactive) reads financial cases only.
         }:
             continue
         text = path.read_text()

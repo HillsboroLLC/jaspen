@@ -1144,7 +1144,8 @@ def test_phase14_backfill_has_no_live_callers():
     callers = sorted(
         str(path.relative_to(BACKEND)) for path in (BACKEND / "app").rglob("*.py")
         if path.name not in {"billing_migration.py", "models_billing_phase14.py", "models.py", "billing_projections.py",
-                              "billing_rehearsal.py"}  # Phase 15 rehearsal is inactive
+                              "billing_rehearsal.py",  # Phase 15 rehearsal is inactive
+                              "billing_shadow.py"}  # Phase 16 shadow comparison is inactive and read only
         and ("billing_migration" in path.read_text() or "models_billing_phase14" in path.read_text())
     )
     assert callers == []

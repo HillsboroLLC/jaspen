@@ -268,10 +268,10 @@ realized margin were not accessed or verified.
   writer on the billing line and the unified line. Nothing is written, no
   migration is added, and live readers are unchanged until Phase 17. See the
   Phase 13 record in the traceability document.
-- Phase 14 legacy backfill is implemented locally, inactive, on the accepted
-  Phase 13 checkpoint `26468456` (migration `d2f4a6c8e0b3`); its independent
-  acceptance returned FAIL (B1, B2) and the remediation is ready for narrow
-  re-acceptance. Gate 1: legacy stored integers and ledger integers are the
+- Phase 14 legacy backfill is independently accepted (re-acceptance PASS,
+  2026-11-19) and inactive, on the accepted Phase 13 checkpoint `26468456`
+  (migration `d2f4a6c8e0b3`); local checkpoint `b68cd58e`. The first
+  acceptance FAIL (B1, B2) was remediated before that. Gate 1: legacy stored integers and ledger integers are the
   same internal unit (1,000 per displayed credit; 3,600,000 per provider
   dollar), copied as stored. Each organization's billing account, payer, and
   payment receipts are established once from ranked evidence; then
@@ -288,9 +288,9 @@ realized margin were not accessed or verified.
   details left unresolved for a later, separately authorized Stripe read. No
   production data, Stripe, or AI provider is touched. See the Phase 14 record
   in the traceability document.
-- Phase 15 local rehearsal is implemented locally, inactive, on the accepted
-  Phase 14 checkpoint `b68cd58e` (no migration); independent acceptance
-  CONDITIONAL PASS, C1-C4 remediated, awaiting narrow re-acceptance. It runs the Phase 14 commands in order (archive, establish,
+- Phase 15 local rehearsal is accepted and inactive, on the accepted Phase 14
+  checkpoint `b68cd58e` (no migration); local checkpoint `72f86c96`, after
+  C1-C4 remediation, re-acceptance, and the R1 verification PASS. It runs the Phase 14 commands in order (archive, establish,
   backfill, map) on a verified local test database or an approved restore
   copy only (never in a production runtime), one run never building on
   another's records, with
@@ -299,6 +299,25 @@ realized margin were not accessed or verified.
   the founder test-credit separation (test credits kept as opened, excluded
   from customer revenue and genuine purchased credit; unverified stays
   unverified). See the Phase 15 record in the traceability document.
+- Phase 16 shadow calculation and reconciliation is implemented locally,
+  inactive and uncommitted, on the accepted Phase 15 checkpoint `72f86c96`
+  (no migration, no table); awaiting independent acceptance. It
+  independently re-computes what the legacy runtime would report (without
+  its write-on-read resets) and what the authoritative records say, for
+  balances, funding by source, credit periods, plans and schedules, seats,
+  reservations and holds, AI usage and attribution, refunds and disputes,
+  payment attribution and founder-test separation, and pricing and capacity
+  versions. Every comparison keeps both values, their evidence, the exact
+  variance, and one of match, mismatch (genuine, approved policy, D16
+  explained, or legacy activity since the snapshot), unresolved, or not
+  applicable. It runs in a database-enforced read-only transaction on local
+  fixtures only in this assignment; production-like evidence remains a
+  separately authorized gate, and `restore_copy` is refused until an approved
+  restore-copy authorization mechanism exists. Review N1-N4 remediation:
+  blocking global comparisons fail a gate and `cutover_ready` needs every gate
+  to pass; every section is scoped to the target organizations; missing
+  team-pool evidence is unresolved, never an approved policy. See the Phase 16
+  record in the traceability document.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type

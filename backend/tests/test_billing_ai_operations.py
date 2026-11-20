@@ -1040,7 +1040,8 @@ def test_phase12_service_has_no_live_runtime_callers():
         # Phase 13 projections are themselves inactive and only read Phase 12 records; the inactive Phase 14
         # backfill reads only the pricing conversion key to verify the internal-unit rate.
         if path.name not in {"billing_ai_operations.py", "models_billing_phase12.py", "models.py", "billing_projections.py",
-                             "billing_migration.py"}
+                             "billing_migration.py",
+                             "billing_shadow.py"}  # Phase 16 shadow comparison is inactive and read only
         and ("billing_ai_operations" in path.read_text() or "models_billing_phase12" in path.read_text())
     ]
     assert callers == []

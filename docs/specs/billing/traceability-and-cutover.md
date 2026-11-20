@@ -1075,6 +1075,43 @@ line (the inventory check fails on the Phase 14 checkpoint too).
 Local verification is not acceptance and does not authorize commit,
 integration, deployment, activation, or a production migration.
 
+### Phase 16 implementation record — shadow calculation and reconciliation
+
+Status: **implemented locally on the accepted Phase 15 checkpoint `72f86c96`;
+inactive; uncommitted; awaiting independent acceptance.** No migration, no
+table, no model change, and no change to any accepted Phase 1-15 module.
+`app/billing_shadow.py` has no live caller. Only the local fixture portion of
+D18 row 16 is implemented and verified; the production-like authorized
+environment it names was not authorized for this assignment and remains an
+evidence gate.
+
+| Requirement | Component/contract | Regression coverage |
+|---|---|---|
+| Independent legacy calculation, no write on read | `legacy_member_outcome` (mirrors `get_usage_meter_state`, reporting a due cycle as `reset_due` instead of resetting), `legacy_effective_plan`, `legacy_seat_usage`, `legacy_persistent_balance`; legacy writers never called | `test_the_legacy_calculator_equals_the_legacy_reader_without_writing` |
+| Authoritative calculation, independently re-checked | Phase 13 projections plus raw-entry sums (`ledger_movements`, `account_held_total`, `available_and_held_from_raw_entries`); policy versions resolved by their own dates | `test_an_open_reservation_and_a_dispute_hold_reconcile_to_the_raw_ledger`; `test_policy_versions_are_resolved_independently_and_a_wrong_binding_is_a_genuine_mismatch` |
+| Comparison record | Account, organization, period, both values with evidence, exact integer variance, classification (`match`, `mismatch`, `unresolved`, `not_applicable`), mismatch `difference` (`genuine_discrepancy`, `approved_policy_difference` with the approval, `d16_explained_difference`, `legacy_activity_since_snapshot`), subsystem, migration run and result, operation, `blocks_cutover` | `test_every_comparison_carries_identity_period_evidence_variance_and_reproducibility` |
+| Domains | migration evidence, balances, funding by source, credit periods, plans and schedules, seats, reservations and holds, AI usage and attribution, financial cases, payment attribution, policy versions, ledger integrity | the 34 tests of `tests/test_billing_shadow.py` |
+| Nothing forced to agree | Missing, quarantined, or deferred evidence is `unresolved` or `not_applicable`; ledger value without legacy evidence is never matched | `test_missing_or_conflicting_evidence_is_unresolved_never_a_false_match`; `test_unexplained_ledger_value_is_a_genuine_discrepancy_never_forced_to_agree` |
+| Approved policy differences kept apart | `APPROVED_POLICY_DIFFERENCES`: delivered-only billing (P24), dispute holds (P11), proportional refunds (P05), term-bound packs, founder-test complete attestation (C2). The C2 policy applies to a pool only for a policy basis (`POOL_POLICY_BASES`); a missing or unknown basis is `unresolved` and blocks (`team_pool_evidence_missing`, review N3) | `test_an_undelivered_operation_charged_by_legacy_is_an_approved_policy_difference`; `test_a_conservatively_unverified_attested_pool_is_an_approved_policy_difference`; `test_missing_team_pool_evidence_is_unresolved_and_blocking_never_an_approved_policy_n3[4]` |
+| Stale is not released (P4.1 X1 seam) | `operation_classifier` hook; a `started` operation is always `unresolved` (`in_flight_operation` or `stale_operation_not_released`) | `test_a_legacy_in_flight_operation_is_unresolved_and_a_stale_label_never_releases` |
+| Founder-test separation | Each migrated purchased or pool lot's funding checked against its archived payments; pool members re-checked independently of the plan mapping; genuine revenue 0 | `test_founder_test_credit_stays_identified_and_genuine_revenue_stays_zero`; `test_a_pool_with_another_paying_member_labelled_founder_test_is_a_genuine_discrepancy` |
+| Read-only execution | `run_shadow_reconciliation`: one connection, PostgreSQL `REPEATABLE READ READ ONLY` or SQLite `PRAGMA query_only`, always rolled back (SQLite connection discarded); Phase 15 environment rule applied to that connection; any write attempt raises `ShadowWriteAttemptError`; `restore_copy` refused before any connection opens until an approved restore-copy authorization mechanism exists (review N4) | `test_restore_copy_is_refused_before_any_connection_until_an_authorization_mechanism_is_approved_n4`; `test_the_read_only_transaction_is_enforced_by_the_database`; `test_a_write_attempted_inside_the_shadow_fails_closed_and_writes_nothing`; `test_postgres_a_write_inside_the_shadow_is_refused_by_the_database`; `test_a_production_runtime_or_an_unknown_environment_is_refused` |
+| Determinism and retries | `report_fingerprint` over everything but `generated_at`; `shadow_repeat_proof` (census based, L2); `export_shadow_report` canonical JSON | `test_two_runs_over_the_same_state_are_identical_and_write_nothing`; `test_a_failure_releases_the_connection_and_a_retry_reproduces_the_report`; `test_postgres_shadow_runs_in_a_read_only_repeatable_read_snapshot_and_reruns_identically` |
+| Phase 17 evidence | `phase17_gates`: computed (genuine discrepancies, writer freeze proven per account (N2), blocked accounts, blocking global comparisons (`global_comparisons_resolved`, review N1), drained operations, approved definitions, processor verification) and open gates; `cutover_ready` only when every gate passes | `test_a_global_blocking_comparison_fails_a_gate_and_the_report_is_never_cutover_ready_n1`; `test_cutover_ready_is_derived_from_every_gate`; gate assertions across the file |
+| Target scope (review N2, FR-1) | Payments, attestation, revenue, per-operation policy bindings, founder-test totals, pre-boundary history, renewal and plan rows, and gate counts cover only records the target organizations own by Phase 14-15 evidence; membership never establishes ownership. `payment_owner`: the Phase 14 payment attribution, else the legacy payment's account link (the two must agree), else the payer's Phase 14 value owner. `operation_owner`: the Phase 12 billing account, else the user's value owner for a personal meter; a pooled debit location is unresolved. A related record whose owner is unresolved is listed by identifier only, blocks, and counts in no total; another organization's records are left out. Population-wide evidence is aggregate counts only (`population_counts`) | `test_another_organizations_payments_operations_and_history_never_appear_in_a_targeted_report_n2`; `test_fr1_a_members_payment_owned_by_their_personal_organization_never_appears_in_a`; `test_fr1_the_same_payment_belongs_only_to_its_own_organization_and_is_never_counted_twice`; `test_fr1_history_and_gate_counts_follow_ownership_not_membership`; `test_fr1_missing_or_ambiguous_ownership_is_unresolved_blocking_and_never_counted`; `test_fr1_conflicting_payment_ownership_evidence_is_unresolved` |
+
+Carried items: L1 (`ledger_movements`), L2 (`shadow_repeat_proof`), I1 (the
+Phase 14 pool rule, through `plan_account_backfill`), I2
+(`SHADOW_CENSUS_TABLES` includes `credit_reservations` and the Phase 4-12
+tables), I3 (README Phase 14 bullet corrected), N2 (writer freeze proven from
+recomputed evidence fingerprints, `writer_freeze_proven`), N4 (the
+attestation is a required argument; without it, archived test activity is
+`unresolved`). The Phase 15 functions themselves are unchanged.
+
+Test-side updates (the established pattern): one allowlist entry for the
+inactive module in the Phase 4, 5.1, 5.2, 12, 13, 14, and 15 live-caller
+guards.
+
 ## D18 Phase dependency and cutover map
 
 The original 18 phases are the authoritative implementation sequence because
@@ -1099,8 +1136,8 @@ useful **program gates**, not a competing sequence. This map authorizes nothing.
 | 12 | AI reservations and settlements | 2D AI | Pricing/capacity binding, fallback, tools, checkpoint/resume, delivery-based billability, absorbed-usage evidence, and exact settlement tests pass (accepted, local checkpoint `4efabb05`, inactive; activation gated on Phase 17 reliable delivery). |
 | 13 | Inventory and reconciliation | 2B | Pure projections, all writer/reader inventory, compatibility field proofs (independently accepted on `4efabb05`, inactive; local checkpoint `26468456`). |
 | 14 | Backfill | 2B/2C | Evidence-ranked deterministic migration; no unexplained account cut over. |
-| 15 | Local rehearsal | 2C | Exact reports, failure injection, downgrade/rollback, rerun no-op (implemented locally on `b68cd58e`, inactive; acceptance CONDITIONAL PASS, C1-C4 remediated, awaiting narrow re-acceptance). |
-| 16 | Shadow verification | 2B/2F | Production-like authorized environment only; projected/legacy comparisons, pricing/capacity telemetry, zero customer impact. |
+| 15 | Local rehearsal | 2C | Exact reports, failure injection, downgrade/rollback, rerun no-op (accepted after C1-C4 remediation and the R1 verification PASS; inactive; local checkpoint `72f86c96`). |
+| 16 | Shadow verification | 2B/2F | Production-like authorized environment only; projected/legacy comparisons, pricing/capacity telemetry, zero customer impact (local fixture portion implemented on `72f86c96`, inactive, uncommitted, awaiting independent acceptance; the production-like evidence run is a separately authorized gate). |
 | 17 | Controlled cutover | 2D then 2E | Command families cut over in dependency order, then readers; explicit separate authorization and rollback gates. |
 | 18 | Legacy retirement | 2F/2G | Observation proves zero legacy writes/drift; consumer inventory empty; PR #27 disposition separately decided. |
 
