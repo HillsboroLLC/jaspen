@@ -1145,6 +1145,7 @@ def _classify_decision_kit(user_message, model_selection):
         temperature=0,
         model_selection=model_selection,
         operation_type="decision_kit_classification",
+        prompt_family='decision_kit_classification',
     )
     return _validated_decision_kit_judgment(payload, user_message)
 
@@ -2701,6 +2702,7 @@ def extract_and_update_user_memory(user_id, project_name, problem_statement, sco
             messages=[{"role": "user", "content": content}],
             system_prompt=_MEMORY_EXTRACT_PROMPT,
             operation_type='user_memory_extraction',
+            prompt_family='user_memory_extraction',
             model_type='pluto',
             legacy_model=_provider_model_id("claude_haiku") or "claude-haiku-4-5-20251001",
             max_tokens=300,
@@ -6056,6 +6058,7 @@ def _summarize_conversation_segment(messages, model_name, *, user=None, thread_i
                 messages=[{'role': 'user', 'content': user_prompt}],
                 system_prompt=system_prompt,
                 operation_type='context_summarization',
+                prompt_family='context_summarization',
                 model_type='pluto',
                 legacy_model=model_name,
                 max_tokens=700,
@@ -6071,6 +6074,7 @@ def _summarize_conversation_segment(messages, model_name, *, user=None, thread_i
                 model_name=model_name,
                 max_tokens=700,
                 temperature=0.1,
+                prompt_family='context_summarization',
             )
         summary_text = str(payload.get("summary") or payload.get("context_summary") or "").strip()
         if summary_text:
@@ -10176,6 +10180,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     option_name=requested_name,
                 ),
                 operation_type="score_next",
+                prompt_family='scorecard',
                 request_payload={
                     "thread_id": thread_id,
                     "description": idea_description,
@@ -11156,6 +11161,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             }
         generated, _usage, _settlement = execute_customer_operation(
             user, generate=generate_plan, operation_type="execution_plan",
+            prompt_family='execution_plan',
             request_payload={"thread_id": thread_id, "scorecard_id": target_idea_id, "instruction": instruction},
             model_type=model_selection["model_type"], max_tokens=8000, thread_id=thread_id,
         )
@@ -13655,6 +13661,9 @@ def _record_usage(
                 error_code=error_code,
                 idempotency_key=audit_idempotency_key,
                 request_fingerprint=request_fingerprint,
+                # P5b: an unclaimed chat close is stamped as a conversation;
+                # a claimed turn keeps the version its claim recorded.
+                prompt_family="conversation",
             )
     except Exception:
         current_app.logger.exception("Failed queuing usage event persistence")
@@ -14533,6 +14542,7 @@ def _anthropic_json_completion(
     temperature=0.2,
     model_selection=None,
     operation_type='structured_generation',
+    prompt_family=None,
 ):
     if isinstance(model_selection, dict):
         text, usage = _generate_routed_chat_reply(
@@ -14548,6 +14558,7 @@ def _anthropic_json_completion(
         messages=[{"role": "user", "content": user_prompt}],
         system_prompt=system_prompt,
         operation_type=operation_type,
+        prompt_family=prompt_family,
         model_type='orbit',
         legacy_model=model_name,
         max_tokens=max_tokens,
@@ -14591,6 +14602,7 @@ def _rank_batch_ideas_with_ai(batch, ideas, model_selection):
         temperature=0.1,
         model_selection=model_selection,
         operation_type='batch_ranking',
+        prompt_family='batch_ranking',
     )
     ranked_rows = ranking_payload.get("ranked_ideas") if isinstance(ranking_payload, dict) else []
     if not isinstance(ranked_rows, list):
@@ -14645,6 +14657,7 @@ def _reevaluate_batch_idea_with_ai(batch, idea, model_selection):
         temperature=0.1,
         model_selection=model_selection,
         operation_type='batch_clarification',
+        prompt_family='batch_clarification',
     )
     return payload, usage
 
@@ -14713,6 +14726,7 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
                 routing_signals=routing_signals,
             ),
             operation_type='scorecard_generation',
+            prompt_family='scorecard',
             request_payload={
                 'batch_id': batch.id,
                 'idea_id': idea.get('idea_id'),
@@ -14977,6 +14991,7 @@ Return concise plain text with:
             messages=[{"role": "user", "content": prompt}],
             system_prompt="You are a concise strategy analytics assistant.",
             operation_type='data_insights',
+            prompt_family='data_insight_text',
             model_type='orbit',
             legacy_model=_data_insights_model(),
             max_tokens=600,
@@ -16436,6 +16451,7 @@ Rules:
             messages=[{"role": "user", "content": extraction_prompt}],
             system_prompt='Extract grounded knowledge signals. Return JSON only.',
             operation_type='knowledge_refresh',
+            prompt_family='knowledge_refresh',
             model_type='pluto',
             legacy_model='claude-haiku-4-5',
             max_tokens=800,
@@ -18125,6 +18141,7 @@ def rank_batch_ideas(batch_id):
             user,
             generate=lambda: _rank_batch_ideas_with_ai(batch, ideas, model_selection),
             operation_type="batch_ranking",
+            prompt_family='batch_ranking',
             request_payload={"batch_id": batch.id, "ideas": ideas},
             model_type=model_selection["model_type"],
             max_tokens=max(900, _preflight_token_hint_for_batch_ideas(ideas, include_metadata=True) // 2),
@@ -18271,6 +18288,7 @@ def clarify_batch_idea(batch_id, idea_id):
             user,
             generate=lambda: _reevaluate_batch_idea_with_ai(batch, updated_idea, model_selection),
             operation_type="batch_clarification",
+            prompt_family='batch_clarification',
             request_payload={
                 "batch_id": batch.id,
                 "idea_id": idea_id,

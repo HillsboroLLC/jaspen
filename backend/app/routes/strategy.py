@@ -4174,6 +4174,7 @@ def analyze_project():
                     option_name=requested_name,
                 ),
                 operation_type='scorecard_generation',
+                prompt_family='scorecard',
                 request_payload={
                     'description': effective_description,
                     'strategy_objective': strategy_objective,
@@ -4599,6 +4600,7 @@ RESPONSE RULES
                 legacy_model=model_selection.get('llm_model'),
                 strategy_objective=strategy_objective,
                 operation_type='scorecard_assistant',
+                prompt_family='analysis_chat',
                 max_tokens=900,
                 temperature=0.2,
             )
@@ -4891,6 +4893,7 @@ def portfolio_scores_agent():
                 messages=routed_messages,
                 system_prompt=system_prompt,
                 operation_type='portfolio_analysis',
+                prompt_family='portfolio_analysis',
                 model_type=model_selection['model_type'],
                 legacy_model=model_selection.get('llm_model'),
                 strategy_objective=strategy_objective,
@@ -7889,6 +7892,7 @@ def score_batch_queued(thread_id):
                 user,
                 generate=generate_score_batch,
                 operation_type='score_batch',
+                prompt_family='scorecard_batch',
                 request_payload={
                     'thread_id': thread_id,
                     'ideas': ideas_to_generate,
@@ -8649,6 +8653,7 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                     if bool(payload.get('force') or payload.get('regenerate'))
                     else 'execution_plan'
                 ),
+                prompt_family='execution_plan',
                 request_payload={
                     'thread_id': thread_id,
                     'scorecard_id': scorecard_id,
@@ -11767,6 +11772,7 @@ Rules:
                 messages=[{"role": "user", "content": editor_prompt}],
                 system_prompt=system_prompt,
                 operation_type='scorecard_assistant',
+                prompt_family='scorecard_assistant',
                 model_type=model_selection['model_type'],
                 legacy_model=model_selection.get('llm_model'),
                 strategy_objective=objective,
@@ -12081,6 +12087,7 @@ If no plan changes are needed, return "uiActions": [].
                 messages=[{"role": "user", "content": editor_prompt}],
                 system_prompt=system_prompt,
                 operation_type='execution_plan_refinement',
+                prompt_family='execution_assistant',
                 model_type=model_selection.get('model_type') or 'orbit',
                 legacy_model=model_id,
                 max_tokens=1500,

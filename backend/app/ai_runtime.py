@@ -19,6 +19,7 @@ from .ai_audit import (
 )
 from .ai_governance import CREDIT_POLICY_VERSION, ROUTER_VERSION, credit_policy_mode, router_mode
 from .models import AIOperation
+from .prompt_version import PROMPT_VERSION_KEY, prompt_version, restamp_prompt_version
 
 
 class AIOperationPaymentRequired(RuntimeError):
@@ -67,7 +68,8 @@ def _fingerprint(*, user, operation_type, request_payload):
 
 
 def _claim_operation(user, *, operation_type, thread_id, customer_visible,
-                     subsidy_reason, idempotency_key, request_fingerprint):
+                     subsidy_reason, idempotency_key, request_fingerprint,
+                     prompt_version_value=None):
     if not idempotency_key:
         return None, None
     existing = AIOperation.query.filter_by(idempotency_key=idempotency_key).first()
@@ -84,6 +86,10 @@ def _claim_operation(user, *, operation_type, thread_id, customer_visible,
         existing.error_code = None
         existing.result_json = None
         existing.settled_at = None
+        # A retry generates again, under the prompt live now; an earlier,
+        # different version stays in the history (P5b).
+        if prompt_version_value:
+            existing.metadata_json = restamp_prompt_version(existing.metadata_json, prompt_version_value)
         db.session.commit()
         return existing, None
 
@@ -108,7 +114,10 @@ def _claim_operation(user, *, operation_type, thread_id, customer_visible,
         policy_version=CREDIT_POLICY_VERSION,
         projected_credits=0,
         charged_credits=0,
-        metadata_json={'idempotency_protected': True},
+        metadata_json={
+            'idempotency_protected': True,
+            **({PROMPT_VERSION_KEY: prompt_version_value} if prompt_version_value else {}),
+        },
     )
     db.session.add(operation)
     try:
@@ -123,6 +132,7 @@ def _claim_operation(user, *, operation_type, thread_id, customer_visible,
             subsidy_reason=subsidy_reason,
             idempotency_key=idempotency_key,
             request_fingerprint=request_fingerprint,
+            prompt_version_value=prompt_version_value,
         )
     return operation, None
 
@@ -130,8 +140,12 @@ def _claim_operation(user, *, operation_type, thread_id, customer_visible,
 def execute_customer_operation(user, *, generate, operation_type, request_payload,
                                model_type='orbit', max_tokens=900, thread_id=None,
                                customer_visible=True, subsidy_reason=None,
-                               idempotency_key=None, validate=None):
-    """Execute an arbitrary AI generator and settle its visible result once."""
+                               idempotency_key=None, validate=None, prompt_family=None):
+    """Execute an arbitrary AI generator and settle its visible result once.
+
+    ``prompt_family`` names the prompt the generator uses (P5b evidence only;
+    see ``app.prompt_version``). It never changes the request or the charge.
+    """
     from .routes.ai_agent import (
         _charge_for_usage,
         _release_reserved_credits,
@@ -162,6 +176,7 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
         subsidy_reason=subsidy_reason,
         idempotency_key=key,
         request_fingerprint=fingerprint,
+        prompt_version_value=prompt_version(prompt_family),
     )
     if cached is not None:
         settlement = dict(cached.get('settlement') or {})
@@ -209,6 +224,7 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
             customer_visible=customer_visible,
             idempotency_key=key,
             request_fingerprint=fingerprint,
+            prompt_family=prompt_family,
         )
         db.session.commit()
         raise
@@ -240,6 +256,7 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
                 customer_visible=customer_visible,
                 idempotency_key=key,
                 request_fingerprint=fingerprint,
+                prompt_family=prompt_family,
             )
             db.session.commit()
             raise
@@ -263,6 +280,7 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
                 customer_visible=customer_visible,
                 idempotency_key=key,
                 request_fingerprint=fingerprint,
+                prompt_family=prompt_family,
             )
             db.session.commit()
             raise AIOperationPaymentRequired(credit_settlement.get('payload'))
@@ -294,6 +312,7 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
         idempotency_key=key,
         request_fingerprint=fingerprint,
         result_json=result_json if key else None,
+        prompt_family=prompt_family,
     )
     if operation is not None:
         settlement['operation_id'] = operation.id
@@ -419,7 +438,7 @@ def execute_customer_text_operation(user, *, messages, system_prompt, operation_
                                     temperature=0.2, thread_id=None,
                                     customer_visible=True, subsidy_reason=None,
                                     idempotency_key=None, routing_signals=None,
-                                    validate=None):
+                                    validate=None, prompt_family=None):
     """Execute one routed text result through the shared operation boundary."""
     from .routes.ai_agent import _generate_routed_chat_reply
 
@@ -464,6 +483,7 @@ def execute_customer_text_operation(user, *, messages, system_prompt, operation_
         subsidy_reason=subsidy_reason,
         idempotency_key=idempotency_key,
         validate=validate,
+        prompt_family=prompt_family,
     )
 
 

@@ -615,6 +615,11 @@ def create_app():
     # Jaspen strategy blueprint
     app.logger.info("Jaspen strategy API registered successfully at /api/v1/strategy")
 
+    # P5b: compute prompt versions now, while the loaded prompt code and its
+    # source on disk agree. Evidence only; it never blocks startup.
+    from .prompt_version import warm_prompt_versions
+    warm_prompt_versions()
+
     # Session access refusals render as themselves rather than as a generic
     # 500. Registered ahead of the catch-all Exception handler so a refusal
     # that escapes a handler still reaches the client as 404 / 403 / 409 with

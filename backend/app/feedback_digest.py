@@ -262,6 +262,7 @@ def _anthropic_digest_text(items, start_at, end_at):
             messages=[{"role": "user", "content": prompt}],
             system_prompt="You write concise product-operations feedback digests for a founder.",
             operation_type='feedback_digest',
+            prompt_family='feedback_digest',
             model_type='orbit',
             legacy_model=model,
             max_tokens=1800,

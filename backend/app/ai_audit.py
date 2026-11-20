@@ -20,6 +20,7 @@ from .ai_governance import (
 )
 from .billing_config import provider_cost_usd, to_public_plan
 from .models import AIOperation, AIProviderAttempt
+from .prompt_version import PROMPT_VERSION_HISTORY_KEY, PROMPT_VERSION_KEY, prompt_version
 
 
 def new_operation_id():
@@ -148,6 +149,7 @@ def persist_operation(
     idempotency_key=None,
     request_fingerprint=None,
     result_json=None,
+    prompt_family=None,
 ):
     """Queue an idempotent operation/attempt audit record in the current DB txn."""
     usage = usage if isinstance(usage, dict) else {}
@@ -190,6 +192,9 @@ def persist_operation(
     legacy_routes = governance.get('legacy_routes') if isinstance(governance.get('legacy_routes'), list) else []
     legacy_first = legacy_routes[0] if legacy_routes and isinstance(legacy_routes[0], dict) else {}
 
+    version_evidence = _prompt_version_evidence(
+        existing, claimed_lifecycle if claimed_turn else None, prompt_family,
+    )
     operation = existing or AIOperation(id=operation_id)
     if not claimed_turn:
         # A claimed chat turn keeps the member and organization it was
@@ -273,6 +278,8 @@ def persist_operation(
             if isinstance(item, dict)
         ],
     }
+    if version_evidence:
+        operation.metadata_json = {**operation.metadata_json, **version_evidence}
     if claimed_turn:
         lifecycle = claimed_lifecycle
         if duplicate_of:
@@ -354,6 +361,28 @@ def persist_operation(
             ))
             sequence += 1
     return operation
+
+
+def _prompt_version_evidence(existing, claimed_lifecycle, prompt_family):
+    """The prompt-version keys a closing operation keeps (P5b).
+
+    The version recorded when the operation was claimed wins: a claimed turn
+    keeps its claim-time version, and a claimed runtime operation keeps the
+    one its claim (or retry) stamped. Only a row created here is stamped from
+    ``prompt_family``. A claimed turn is never re-stamped, so its version is
+    always the one the turn was generated under.
+    """
+    prior = existing.metadata_json if existing is not None and isinstance(existing.metadata_json, dict) else {}
+    if claimed_lifecycle is not None:
+        version = claimed_lifecycle.get(PROMPT_VERSION_KEY) or prior.get(PROMPT_VERSION_KEY)
+    else:
+        version = prior.get(PROMPT_VERSION_KEY) or prompt_version(prompt_family)
+    evidence = {}
+    if version:
+        evidence[PROMPT_VERSION_KEY] = version
+    if prior.get(PROMPT_VERSION_HISTORY_KEY):
+        evidence[PROMPT_VERSION_HISTORY_KEY] = list(prior[PROMPT_VERSION_HISTORY_KEY])
+    return evidence
 
 
 def _audit_status(usage, success):
@@ -501,6 +530,9 @@ def claim_turn_operation(user, *, thread_id, route=None, streaming=None,
     independent = (not clean) and db.engine.dialect.name == 'postgresql'
     classification = subsidy_classification(user, customer_visible=True)
     now = datetime.utcnow()
+    # P5b: the prompt version is part of the claim, so it survives every
+    # close path. It is a new key; the lifecycle ``version`` is unchanged.
+    turn_prompt_version = prompt_version('conversation')
     lifecycle = {
         'version': TURN_LIFECYCLE_VERSION,
         'route': route,
@@ -523,6 +555,10 @@ def claim_turn_operation(user, *, thread_id, route=None, streaming=None,
         'claim_committed': True if clean else ('independent' if independent else False),
         'outcome': None,
     }
+    metadata = {TURN_LIFECYCLE_KEY: lifecycle}
+    if turn_prompt_version:
+        lifecycle[PROMPT_VERSION_KEY] = turn_prompt_version
+        metadata[PROMPT_VERSION_KEY] = turn_prompt_version
     values = dict(
         id=operation_id,
         user_id=str(user.id) if user is not None else None,
@@ -541,7 +577,7 @@ def claim_turn_operation(user, *, thread_id, route=None, streaming=None,
         policy_version=CREDIT_POLICY_VERSION,
         projected_credits=0,
         charged_credits=0,
-        metadata_json={TURN_LIFECYCLE_KEY: lifecycle},
+        metadata_json=metadata,
         created_at=now,
         updated_at=now,
     )
@@ -596,7 +632,11 @@ def close_turn_operation_alone(operation_id, *, outcome, updates=None, error_cod
             router_version=ROUTER_VERSION,
             policy_mode=credit_policy_mode(current_app.config),
             policy_version=CREDIT_POLICY_VERSION,
-            metadata_json={TURN_LIFECYCLE_KEY: {**(claim or {}), 'claim_lost': True}},
+            metadata_json={
+                TURN_LIFECYCLE_KEY: {**(claim or {}), 'claim_lost': True},
+                **({PROMPT_VERSION_KEY: claim[PROMPT_VERSION_KEY]}
+                   if isinstance(claim, dict) and claim.get(PROMPT_VERSION_KEY) else {}),
+            },
         )
         db.session.add(operation)
     if operation.status == STARTED:

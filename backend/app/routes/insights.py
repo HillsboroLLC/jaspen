@@ -306,6 +306,7 @@ Return strict JSON with this shape:
             messages=[{'role': 'user', 'content': prompt}],
             system_prompt='You are a concise analytics assistant. Return JSON only.',
             operation_type='data_insights',
+            prompt_family='insights_analysis',
             model_type='orbit',
             legacy_model=model_name,
             max_tokens=1200,

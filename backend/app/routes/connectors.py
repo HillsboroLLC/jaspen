@@ -2245,6 +2245,7 @@ Be specific to the actual data. Do not generate generic ideas. Every idea must b
             messages=[{"role": "user", "content": user_prompt}],
             system_prompt=system_prompt,
             operation_type='connector_idea_generation',
+            prompt_family='connector_idea_generation',
             model_type='orbit',
             legacy_model=(
                 (current_app.config.get("LLM_PROVIDER_MODELS") or {}).get("claude_sonnet")

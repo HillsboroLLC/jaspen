@@ -188,6 +188,7 @@ Output requirements:
             messages=[{'role': 'user', 'content': prompt}],
             system_prompt='You are a strategy reporting assistant. Return markdown only.',
             operation_type='report_generation',
+            prompt_family='report_generation',
             model_type='orbit',
             legacy_model=model_name,
             max_tokens=1800,
