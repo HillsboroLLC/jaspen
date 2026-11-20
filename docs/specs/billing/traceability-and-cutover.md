@@ -1077,8 +1077,8 @@ integration, deployment, activation, or a production migration.
 
 ### Phase 16 implementation record — shadow calculation and reconciliation
 
-Status: **implemented locally on the accepted Phase 15 checkpoint `72f86c96`;
-inactive; uncommitted; awaiting independent acceptance.** No migration, no
+Status: **independently accepted at local checkpoint `741217c4` on the accepted
+Phase 15 checkpoint `72f86c96`; inactive.** No migration, no
 table, no model change, and no change to any accepted Phase 1-15 module.
 `app/billing_shadow.py` has no live caller. Only the local fixture portion of
 D18 row 16 is implemented and verified; the production-like authorized
@@ -1111,6 +1111,67 @@ attestation is a required argument; without it, archived test activity is
 Test-side updates (the established pattern): one allowlist entry for the
 inactive module in the Phase 4, 5.1, 5.2, 12, 13, 14, and 15 live-caller
 guards.
+
+### Phase 17 implementation record — reliable-delivery boundary (inactive)
+
+Status: **implemented locally on accepted Phase 16 checkpoint `741217c4`;
+inactive; uncommitted; targeted remediation pending re-review.** This increment
+implements inactive boundary components for the mandatory activation gate
+recorded under Phase 12; it does **not** complete that gate. No durable worker
+lifecycle exists. In particular, criteria 1, 3, and 5 still depend on a real
+worker runtime and end-to-end worker journeys. Nothing here executes the D18
+controlled cutover, switches a writer or reader, activates Phase 12, or enables
+charging.
+
+| Requirement | Gate status | Component/contract | Regression coverage |
+|---|---|---|---|
+| 1. Provider execution lifecycle is independent of the client | **OPEN — worker required** | `billing_reliable_delivery.py` exposes worker-facing heartbeat, provider-attempt append, persistence, settlement, response recovery, and sweep boundaries; it has no route or request dependency and no live caller | Boundary unit tests only; no runtime worker journey |
+| 2. Successful response is durable before settlement and remains customer-recoverable | Boundary implemented; activation still blocked | Versioned `jaspen.reliable-delivery.v1` envelope in the existing `AIOperation.result_json`; SHA-256 integrity and immutable replay; settlement is initially null | `test_response_is_recoverable_before_settlement_and_settles_once`; `test_persisted_response_is_immutable_and_integrity_checked` |
+| 3. Lease covers timeout plus heartbeat | **OPEN — worker required** | `assert_delivery_timing`; `heartbeat_reliable_delivery`; Phase 12 remains the lease authority, but no worker schedules the heartbeat | `test_delivery_timing_requires_lease_longer_than_timeout_plus_heartbeat`; Phase 12 lease-renewal tests |
+| 4. Recovery settles a persisted response before considering lease expiry; a response after lapse is delivered and never charged | Boundary implemented; activation still blocked | `settle_persisted_response`; deterministic keyset recovery with per-candidate isolation; Phase 12 `settle_delivered_operation` and `expire_ai_operation` remain the only financial finalizers | `test_recovery_sweep_settles_saved_responses_before_expiring_other_lapsed_leases`; backlog and malformed-identity recovery regressions |
+| 5. Retry, replay, restart, late response, and concurrent worker safety | **OPEN — worker required** | Existing Phase 12 locks/idempotency and immutable response replay protect the boundary, but no deployed worker/restart lifecycle exists | Boundary concurrency tests only; the required real-worker journey remains open |
+| 6. Every provider call is charged/delivering or absorbed; uncertain usage is never charged | Boundary implemented; activation still blocked | `provider_cost_reconciliation`; Phase 12 call, settlement, and absorbed-usage authorities | `test_unknown_or_estimated_usage_is_never_charged_and_reconciles_as_absorbed` |
+| 7. Operational attempts are append-only for Phase 12-bound operations and linked to financial call evidence | Boundary implemented; activation still blocked | `append_provider_attempt`; legacy `persist_operation` fails closed for bound operations; migration `f3a5c7e9b1d2` blocks mutation of bound rows and reparenting into a bound operation while preserving unbound legacy updates | SQLite and PostgreSQL migration guard regressions; `test_phase12_operational_attempts_are_append_only_and_linked_to_call_evidence` |
+| 8. Organization/member authorization is preserved in delivery and recovery | Boundary implemented; activation still blocked | Every customer path verifies durable operation/billing organization, member, and billing-account identity; recovery never uses active-organization context | `test_every_delivery_path_enforces_durable_organization_and_member_identity`; malformed-candidate recovery regression |
+
+Cross-workstream dependency record for the later P4.2 implementation:
+
+- The integrated roadmap's **P4 durable chat operation** package owns this
+  runtime work. Its **OD-1 Option C** applies without exception: one governed
+  operation covers one user-visible turn, and charging occurs only after the
+  result is kept.
+- **P4.2** cannot enable charging until roadmap **S1** corrects the current
+  ordering and release behavior (PEM-BILL 8.3 ordering, compare-and-set release,
+  releasing sweep, and meter-row locking) and failures **F2, F3, and F4** are
+  resolved. The end-to-end matrix still records these under Journey D
+  (**D2, D3, D7**) and Journey E (**E2 through E6**).
+- Roadmap decisions **D-1** (approved stale-operation financial disposition),
+  **D-2** (new `turn_lifecycle.version` plus a deliberate guarded
+  `ai_audit.classify_unclosed_operation` change), and **D-3** (production
+  Gunicorn timeout plus safety margin and a drained-traffic snapshot) remain
+  prerequisites. This boundary does not decide or implement them.
+- The end-to-end acceptance matrix says no journey has yet been executed for
+  the unified blueprint. Phase 17 therefore makes no early-charging claim and
+  cannot be activated from unit or boundary evidence alone.
+
+Phase 16 handoff disposition for this increment:
+
+1. `restore_copy` remains fail-closed; no authorization mechanism or database
+   access is introduced.
+2. Population completeness remains a Phase 16 production-like evidence gate;
+   this integration does not infer ownership or alter its census.
+3. Financial-transaction gate semantics remain those reported by Phase 16;
+   no discrepancy threshold or cutover override is invented.
+4. The separate Phase 15 founder-test pool-classification defect is not changed
+   and is not a dependency of reliable delivery.
+5. Individual fair-use allowance is capacity owned per user/organization under
+   Phase 12; it is not free recurring credit ownership. Phase 14's accepted
+   member attribution inside one organization billing account is preserved.
+   **E2 free-allowance ownership remains unresolved and explicitly deferred**;
+   ambiguous pooled ownership and payer attribution remain unresolved as well.
+6. Phase 16's canonical export, fingerprints, comparisons, and readiness gates
+   remain the durable cutover-preparation evidence. This increment consumes no
+   readiness result and performs no cutover.
 
 ## D18 Phase dependency and cutover map
 

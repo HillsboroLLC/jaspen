@@ -153,6 +153,21 @@ def persist_operation(
     existing = AIOperation.query.get(operation_id)
     if existing is None and idempotency_key:
         existing = AIOperation.query.filter_by(idempotency_key=str(idempotency_key)).first()
+    if existing is not None:
+        # Phase 12-bound operations have immutable provider-call evidence.  The
+        # legacy helper below replaces AIProviderAttempt rows on retry, which is
+        # intentionally retained for legacy operations but is forbidden once
+        # authoritative billing has bound the operation.  Phase 17 appends the
+        # operational attempt through billing_reliable_delivery instead.
+        if (
+            existing.billing_account_id is not None
+            and existing.pricing_policy_version_id is not None
+            and existing.capacity_policy_version_id is not None
+        ):
+            raise RuntimeError(
+                'Phase 12-bound provider attempts are append-only; '
+                'use append_provider_attempt().'
+            )
 
     governance = usage.get('governance') if isinstance(usage.get('governance'), dict) else {}
     failover = usage.get('failover') if isinstance(usage.get('failover'), dict) else {}

@@ -780,7 +780,7 @@ def _gate_sql(connection):
 
 def test_revision_extends_phase9_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["d2f4a6c8e0b3"]  # Phase 14 extends Phase 12; Phases 12 and 11 extend Phase 10
+    assert script.get_heads() == ["f3a5c7e9b1d2"]  # Phase 17 guard extends Phase 14 without changing Phase 10.
     assert script.get_revision(REVISION).down_revision == PARENT
 
 
@@ -1052,7 +1052,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=10, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "b4d6f8a0c2e5", "c8e0a2b4d6f1", "d2f4a6c8e0b3"}:
+    if revision not in {REVISION, "b4d6f8a0c2e5", "c8e0a2b4d6f1", "d2f4a6c8e0b3", "f3a5c7e9b1d2"}:
         engine.dispose()
         pytest.fail(f"Phase 10 migrated tests require Alembic head {REVISION} or Phase 11; found {revision!r}")
     return engine

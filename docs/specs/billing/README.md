@@ -299,9 +299,9 @@ realized margin were not accessed or verified.
   the founder test-credit separation (test credits kept as opened, excluded
   from customer revenue and genuine purchased credit; unverified stays
   unverified). See the Phase 15 record in the traceability document.
-- Phase 16 shadow calculation and reconciliation is implemented locally,
-  inactive and uncommitted, on the accepted Phase 15 checkpoint `72f86c96`
-  (no migration, no table); awaiting independent acceptance. It
+- Phase 16 shadow calculation and reconciliation is independently accepted and
+  committed locally at `741217c4`, inactive, on the accepted Phase 15
+  checkpoint `72f86c96` (no migration, no table). It
   independently re-computes what the legacy runtime would report (without
   its write-on-read resets) and what the authoritative records say, for
   balances, funding by source, credit periods, plans and schedules, seats,
@@ -318,6 +318,23 @@ realized margin were not accessed or verified.
   to pass; every section is scoped to the target organizations; missing
   team-pool evidence is unresolved, never an approved policy. See the Phase 16
   record in the traceability document.
+- Phase 17 reliable-delivery boundary components are implemented locally for
+  targeted re-review, inactive and uncommitted, on the accepted Phase 16
+  checkpoint `741217c4`. They add a worker-facing boundary that appends operational attempt
+  evidence, saves a successful response in the existing durable AI-operation
+  result before settlement, makes that response recoverable independently of
+  settlement, replays settlement through a recovery sweep, expires only
+  unanswered lapsed leases, reconciles every provider call to settlement or
+  absorbed usage, and validates that the lease exceeds provider timeout plus
+  heartbeat interval. Migration `f3a5c7e9b1d2` makes provider attempts
+  append-only only after a Phase 12 binding; legacy attempts retain their
+  existing behavior. The mandatory reliable-delivery activation gate remains
+  **open**: there is no durable worker lifecycle, heartbeat runtime, provider
+  client integration, queue, scheduler, or end-to-end concurrent-worker journey.
+  Therefore gate criteria 1, 3, and 5 are not satisfied. There is also no route,
+  deployment setting, reader/writer switch, or billing activation. The broader
+  command-family and reader cutover still requires its separately approved
+  gates and authorization; no Phase 12 charging may be enabled early.
 - Runtime prerequisite: before any Phase 4 runtime activation, the production
   backend must run Python 3.10 or later, with Python 3.12 preferred to match CI
   and the Docker image. `app/billing_entitlements.py` uses `X | None` type
