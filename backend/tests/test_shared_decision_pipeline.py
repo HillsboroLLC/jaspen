@@ -1,9 +1,26 @@
 import json
 import pytest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 
-def test_relative_deadline_uses_message_date_and_keeps_provenance(app):
+FIXED_TODAY = date(2026, 10, 11)
+
+
+def _pin_today(monkeypatch):
+    """Resolve deadline gates against a fixed date so these tests never expire."""
+    from app import decision_processing
+
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            moment = cls(FIXED_TODAY.year, FIXED_TODAY.month, FIXED_TODAY.day, 12, tzinfo=timezone.utc)
+            return moment.astimezone(tz) if tz else moment.replace(tzinfo=None)
+
+    monkeypatch.setattr(decision_processing, "datetime", _FixedDatetime)
+
+
+def test_relative_deadline_uses_message_date_and_keeps_provenance(app, monkeypatch):
+    _pin_today(monkeypatch)
     from app.decision_facts import attach_relative_reference, ground_user_evidence, normalize_fact_entry
     from app.decision_kits import get_decision_kit
 
@@ -160,6 +177,7 @@ def test_missing_gate_evidence_becomes_unknown_without_rejecting_scorecard(app, 
 
 
 def test_three_bid_rfp_dates_surety_metrics_and_verdicts(app, monkeypatch):
+    _pin_today(monkeypatch)
     from app.routes import strategy
     from app.decision_kits import get_decision_kit
 
