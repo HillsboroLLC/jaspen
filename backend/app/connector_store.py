@@ -5,7 +5,7 @@ import os
 import secrets
 import time
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -49,6 +49,7 @@ SENSITIVE_CONNECTOR_FIELDS = {
 # so future dual-purpose connectors inherit the same freshness separation.
 DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS = frozenset({"jira_sync", "smartsheet_sync"})
 EXECUTION_PM_CONNECTOR_IDS = set(DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS)
+CONNECTOR_VERIFICATION_PURPOSES = frozenset({"data_context", "plan_sync"})
 THREAD_SYNC_STATUS_VALUES = {
     "not_started",
     "tool_selected",
@@ -113,6 +114,7 @@ def _default_connector_settings(connector_id):
         "external_workspace": "",
         "last_verified_at": None,
         "data_context_verified_at": None,
+        "verification_results": {},
         "verified_instance_url": "",
 
         # Common runtime and reliability metadata
@@ -725,7 +727,6 @@ def mark_connector_sync_result(user_id, connector_id, status, error_message=""):
             "next_retry_at": None,
             "last_success_at": now_iso,
             "last_error_message": "",
-            "last_verified_at": now_iso,
             "lifecycle_status": "connected",
         }
     elif status_key == "skipped":
@@ -751,6 +752,100 @@ def mark_connector_sync_result(user_id, connector_id, status, error_message=""):
     if status_key != "failed":
         updates.setdefault("last_error_at", settings.get("last_error_at"))
 
+    return update_connector_settings(user_id, connector_id, updates)
+
+
+def _read_result_confirms_provider_response(read_result):
+    """An empty container is not evidence that a provider answered a read.
+
+    Zero-row reads remain valid when the provider response has a named result
+    shape (for example ``{"rows": []}`` or ``{"records": []}``).
+    """
+    if isinstance(read_result, dict):
+        return bool(read_result)
+    if isinstance(read_result, (list, tuple, set)):
+        return bool(read_result)
+    return read_result is not None and read_result is not False
+
+
+def _verification_timestamp_key(value):
+    try:
+        parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return float("-inf")
+
+
+def record_connector_read_result(
+    user_id,
+    connector_id,
+    purpose,
+    *,
+    succeeded,
+    read_result=None,
+    checked_at=None,
+    error_message="",
+):
+    """Record the latest authorized provider read for one connector purpose.
+
+    This is the sole owner of verification timestamps. A successful call must
+    include the provider's actual response; failures (including empty anonymous
+    responses) clear only the affected purpose. The legacy timestamps are kept
+    as derived compatibility fields for existing clients.
+    """
+    purpose_key = str(purpose or "").strip().lower()
+    if purpose_key not in CONNECTOR_VERIFICATION_PURPOSES:
+        raise ValueError(f"Unsupported connector verification purpose: {purpose}")
+
+    checked = str(checked_at or _iso_now())
+    confirmed = bool(succeeded) and _read_result_confirms_provider_response(read_result)
+    settings = get_connector_settings(user_id, connector_id)
+    results = deepcopy(settings.get("verification_results"))
+    if not isinstance(results, dict):
+        results = {}
+    next_result = {
+        "status": "success" if confirmed else "failed",
+        "checked_at": checked,
+        "verified_at": checked if confirmed else None,
+        "error_message": str(error_message or "")[:1000],
+    }
+    current_result = results.get(purpose_key)
+    if isinstance(current_result, dict):
+        current_order = _verification_timestamp_key(current_result.get("checked_at"))
+        next_order = _verification_timestamp_key(checked)
+        current_failed = current_result.get("status") != "success"
+        next_failed = next_result["status"] != "success"
+        if current_order > next_order or (
+            current_order == next_order
+            and (current_failed or not next_failed)
+        ):
+            return settings
+    results[purpose_key] = next_result
+
+    verified_values = [
+        str(entry.get("verified_at"))
+        for entry in results.values()
+        if isinstance(entry, dict)
+        and entry.get("status") == "success"
+        and entry.get("verified_at")
+    ]
+    updates = {
+        "verification_results": results,
+        "last_verified_at": (
+            max(verified_values, key=_verification_timestamp_key)
+            if verified_values
+            else None
+        ),
+    }
+    if str(connector_id or "").strip().lower() in DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS:
+        data_result = results.get("data_context")
+        updates["data_context_verified_at"] = (
+            data_result.get("verified_at")
+            if isinstance(data_result, dict) and data_result.get("status") == "success"
+            else None
+        )
     return update_connector_settings(user_id, connector_id, updates)
 
 

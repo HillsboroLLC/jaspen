@@ -251,14 +251,14 @@ def query_salesforce(user_id, soql):
 
 
 
-def fetch_pipeline_summary(user_id, lookback_days=90, max_records=200):
+def fetch_pipeline_summary(user_id, lookback_days=90, max_records=200, *, force=False):
     days = max(1, min(int(lookback_days or 90), 365))
     limit = max(1, min(int(max_records or 200), 2000))
     config = salesforce_runtime_config(user_id)
     ttl = _salesforce_pipeline_cache_ttl_seconds()
     cache_key = _salesforce_pipeline_cache_key(user_id, config, days, limit)
     now_ts = time.time()
-    if ttl > 0:
+    if ttl > 0 and not force:
         with SALESFORCE_PIPELINE_CACHE_LOCK:
             cached = SALESFORCE_PIPELINE_CACHE.get(cache_key)
             if isinstance(cached, dict) and float(cached.get("expires_at") or 0) > now_ts:

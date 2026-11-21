@@ -141,9 +141,15 @@ def test_refresh_scopes_projects_paginates_caches_and_emits_provenance(monkeypat
     }
     saved = []
     calls = []
+    verification = []
 
     monkeypatch.setattr(portfolio, "get_connector_settings", lambda *_: settings)
     monkeypatch.setattr(portfolio, "update_connector_settings", lambda *args: saved.append(args[-1]))
+    monkeypatch.setattr(
+        portfolio,
+        "record_connector_read_result",
+        lambda *args, **kwargs: verification.append((args, kwargs)),
+    )
     monkeypatch.setattr(portfolio, "_jira_runtime_config", lambda *_: {"base_url": "https://acme.atlassian.net", "email": "a@b.com", "api_token": "x"})
 
     def request(_config, method, path, payload=None, timeout=20):
@@ -172,8 +178,10 @@ def test_refresh_scopes_projects_paginates_caches_and_emits_provenance(monkeypat
     search_payload = next(row[2] for row in calls if row[1] == "/rest/api/3/search/jql")
     assert search_payload["expand"] == "changelog"
     assert saved[-1]["jira_portfolio_snapshot"]["portfolio"]["project_count"] == 1
-    assert saved[-1]["data_context_verified_at"] == "2026-10-12T16:00:00Z"
-    assert saved[-1]["last_verified_at"] == "2026-10-12T16:00:00Z"
+    assert verification[-1][0][:3] == ("user-1", "jira_sync", "data_context")
+    assert verification[-1][1]["succeeded"] is True
+    assert verification[-1][1]["read_result"] == snapshot
+    assert verification[-1][1]["checked_at"] == "2026-10-12T16:00:00Z"
 
     settings["jira_portfolio_snapshot"] = snapshot
     calls.clear()
@@ -232,8 +240,9 @@ def test_failed_refresh_with_cached_snapshot_does_not_refresh_verification(monke
         saved = connector_store.get_connector_settings("user", "jira_sync")
 
         assert result["refresh_failed"] is True
-        assert saved["last_verified_at"] == verified_at
-        assert saved["data_context_verified_at"] == verified_at
+        assert saved["last_verified_at"] is None
+        assert saved["data_context_verified_at"] is None
+        assert saved["verification_results"]["data_context"]["status"] == "failed"
         assert saved["jira_data_last_refresh_failed"] is True
     finally:
         connector_store.CONNECTORS_DIR = original_dir

@@ -14,7 +14,11 @@ from datetime import datetime, timedelta, timezone
 from statistics import median
 from urllib.parse import quote
 
-from app.connector_store import get_connector_settings, update_connector_settings
+from app.connector_store import (
+    get_connector_settings,
+    record_connector_read_result,
+    update_connector_settings,
+)
 from app.jira_sync import _jira_request, _jira_runtime_config
 
 
@@ -608,13 +612,26 @@ def refresh_portfolio(user_id, *, force=False, now=None):
         update_connector_settings(user_id, "jira_sync", {
             "jira_portfolio_snapshot": snapshot,
             "jira_data_last_refresh_failed": False,
-            "data_context_verified_at": _iso(now),
-            "last_verified_at": _iso(now),
         })
+        record_connector_read_result(
+            user_id,
+            "jira_sync",
+            "data_context",
+            succeeded=True,
+            read_result=snapshot,
+            checked_at=_iso(now),
+        )
         return snapshot
     except Exception as exc:
         refresh_error = classify_refresh_error(exc)
         logger.exception("Jira portfolio refresh failed for user %s", user_id)
+        record_connector_read_result(
+            user_id,
+            "jira_sync",
+            "data_context",
+            succeeded=False,
+            error_message=refresh_error.get("message") or str(exc),
+        )
         updates = {"jira_data_last_refresh_failed": True}
         if cached:
             stale = dict(cached)

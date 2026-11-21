@@ -10,6 +10,7 @@ import pytest
 from app import db
 from app.connector_store import (
     load_connector_state,
+    record_connector_read_result,
     update_connector_settings,
     update_thread_sync_profile,
 )
@@ -421,10 +422,41 @@ def test_webhook_follows_the_named_members_current_role(client, project, secrets
         assert task["title"] == title
         assert row.last_edited_by_user_id == user.id
         assert UserSession.query.filter_by(session_id=thread_id).count() == 1
+        connector_settings = load_connector_state(user.id)["connectors"][connector]
+        assert "plan_sync" not in connector_settings["verification_results"]
+        assert "data_context" not in connector_settings["verification_results"]
+        assert connector_settings["data_context_verified_at"] is None
         return
     expected = "not_authorized" if actor in {"viewer", "creator-now-viewer"} else "thread_not_found"
     assert payload == {"success": False, "ignored": True, "reason": expected}
     assert _world(project, thread_id) == before
+
+
+@pytest.mark.parametrize("connector", CONNECTORS)
+def test_webhook_cannot_restore_failed_outbound_plan_sync(
+    client, project, secrets, connector,
+):
+    owner = project["users"]["owner"]
+    _record_link(owner, connector, THREAD_ID)
+    record_connector_read_result(
+        owner.id,
+        connector,
+        "plan_sync",
+        succeeded=False,
+        error_message="HTTP 401",
+    )
+    path, body, title = _event(connector, owner, THREAD_ID)
+
+    response = _post(client, path, body)
+
+    assert response.status_code == 200
+    assert response.get_json()["success"] is True
+    task, _row = _task(THREAD_ID)
+    assert task["title"] == title
+    connector_settings = load_connector_state(owner.id)["connectors"][connector]
+    assert connector_settings["verification_results"]["plan_sync"]["status"] == "failed"
+    assert connector_settings["verification_results"]["plan_sync"]["error_message"] == "HTTP 401"
+    assert connector_settings["last_verified_at"] is None
 
 
 @pytest.mark.parametrize("connector", CONNECTORS)

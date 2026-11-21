@@ -318,6 +318,7 @@ _NOT_PROMPT_MATERIAL = {
         "app.project_scope:authorized_thread_scope",
         "app.routes.ai_agent:_public_usage_payload",
         "app.routes.ai_agent:_save_user_memory",
+        "app.routes.connectors:_record_data_context_verification",
         "app.routes.sessions:save_one_project",
         "app.routes.strategy:_audit_strategy_event",
         "app.routes.strategy:_persist_generated_plan",

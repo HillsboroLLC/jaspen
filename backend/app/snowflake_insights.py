@@ -347,7 +347,7 @@ def test_snowflake_connection(user_id):
         return False, str(exc)
 
 
-def run_allowlisted_query(user_id, table, *, columns=None, date_column=None, date_from=None, date_to=None, filters=None, order_by=None, limit=200):
+def run_allowlisted_query(user_id, table, *, columns=None, date_column=None, date_from=None, date_to=None, filters=None, order_by=None, limit=200, force=False):
     config = snowflake_runtime_config(user_id)
     missing = snowflake_missing_config(config)
     if missing:
@@ -374,7 +374,7 @@ def run_allowlisted_query(user_id, table, *, columns=None, date_column=None, dat
     cache_key = _snowflake_cache_key(user_id, config, query, params, safe_limit)
     ttl = _snowflake_cache_ttl_seconds()
     now_ts = time.time()
-    if ttl > 0:
+    if ttl > 0 and not force:
         with SNOWFLAKE_CACHE_LOCK:
             _prune_snowflake_cache(now_ts=now_ts)
             cached = SNOWFLAKE_QUERY_CACHE.get(cache_key)

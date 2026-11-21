@@ -2,6 +2,7 @@ import re
 from datetime import datetime, timedelta
 
 from app import db
+from app.connector_store import record_connector_read_result
 from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync import jira_adapter
@@ -669,6 +670,19 @@ def push_binding(binding, plan=None, trigger="send", only_task_ids=None):
     db.session.commit()
     result["success"] = not result["errors"]
     result["binding"] = binding.to_dict()
+    provider_interaction = bool(tasks) or any(
+        int(result.get(key) or 0) > 0
+        for key in ("created", "updated", "dependencies", "failed")
+    )
+    if provider_interaction:
+        record_connector_read_result(
+            binding.user_id,
+            binding.connector_id,
+            "plan_sync",
+            succeeded=result["success"],
+            read_result=result if result["success"] else None,
+            error_message=(result.get("errors") or [""])[0],
+        )
     return result
 
 

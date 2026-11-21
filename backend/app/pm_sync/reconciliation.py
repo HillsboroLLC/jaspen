@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import db
+from app.connector_store import record_connector_read_result
 from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncLink
 from app.pm_sync.provider import get_provider
@@ -392,6 +393,19 @@ def reconcile_binding(binding, trigger="sync_now"):
     _log(binding, trigger, result); db.session.commit()
     result["success"] = not result["errors"] and not result["conflicts"]
     result["binding"] = binding.to_dict()
+    provider_interaction = bool(all_links) or any(
+        int(result.get(key) or 0) > 0
+        for key in ("created", "pulled", "pushed", "deleted", "failed")
+    )
+    if provider_interaction:
+        record_connector_read_result(
+            binding.user_id,
+            binding.connector_id,
+            "plan_sync",
+            succeeded=result["success"],
+            read_result=result if result["success"] else None,
+            error_message=(result.get("errors") or result.get("conflicts") or [""])[0],
+        )
     return result
 
 

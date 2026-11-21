@@ -8,7 +8,13 @@ import textwrap
 import pytest
 
 from app import db
-from app.connector_store import get_thread_sync_profile
+from app.connector_store import (
+    get_connector_settings,
+    get_thread_sync_profile,
+    record_connector_read_result,
+    update_connector_settings,
+    update_thread_sync_profile,
+)
 from app.models import OrgAccessShadowEvent, UserSession
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync.reconciliation import FIELDS
@@ -323,6 +329,7 @@ def test_legacy_import_checks_access_before_external_work(
     client, jira_project, monkeypatch, actor,
 ):
     calls = []
+    verification = []
     monkeypatch.setattr(
         "app.routes.connectors.get_connector_settings",
         lambda user_id, connector_id: calls.append(("settings", str(user_id), connector_id)) or {"lifecycle_status": "connected"},
@@ -339,6 +346,10 @@ def test_legacy_import_checks_access_before_external_work(
             "external_id_map": {"imported-task": "JPT-99"},
         },
     )
+    monkeypatch.setattr(
+        "app.routes.connectors.record_connector_read_result",
+        lambda *args, **kwargs: verification.append((args, kwargs)),
+    )
 
     response = _request(
         client, jira_project, actor, "POST", f"/api/v1/connectors/threads/{THREAD_ID}/jira_sync/import", {},
@@ -347,6 +358,8 @@ def test_legacy_import_checks_access_before_external_work(
     if actor == "editor":
         assert response.status_code == 200
         assert [call[0] for call in calls] == ["settings", "jira_import"]
+        assert verification[0][0][1:3] == ("jira_sync", "plan_sync")
+        assert verification[0][1]["succeeded"] is True
         db.session.expire_all()
         row = UserSession.query.filter_by(session_id=THREAD_ID).one()
         assert any(task.get("title") == f"Imported {MARKER}" for task in row.scenarios_json["project_wbs"]["tasks"])
@@ -356,6 +369,7 @@ def test_legacy_import_checks_access_before_external_work(
         expected = 403 if actor in READERS else 404
         assert response.status_code == expected
         assert calls == []
+        assert verification == []
 
 
 @pytest.mark.parametrize("actor", ["viewer", "creator-now-viewer", "former-member", "other-org"])
@@ -378,6 +392,66 @@ def test_legacy_smartsheet_send_refuses_before_call_or_sync_lock(
     assert calls == []
     assert get_thread_sync_profile(user.id, THREAD_ID) == before
     assert get_thread_sync_profile(user.id, THREAD_ID)["sync_lock_acquired_at"] is None
+
+
+def test_later_authenticated_smartsheet_sync_recovers_failed_plan_verification(
+    client, jira_project, monkeypatch,
+):
+    owner = jira_project["users"]["owner"]
+    update_connector_settings(owner.id, "smartsheet_sync", {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+    })
+    update_thread_sync_profile(owner.id, THREAD_ID, {
+        "preferred_pm_tool": "smartsheet_sync",
+        "connector_ids": ["smartsheet_sync"],
+        "sync_mode": "push",
+        "thread_sync_status": "ready",
+    })
+    record_connector_read_result(
+        owner.id,
+        "smartsheet_sync",
+        "plan_sync",
+        succeeded=False,
+        error_message="HTTP 401",
+    )
+
+    class ImmediateThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    class ImmediateThreading:
+        Thread = ImmediateThread
+
+    monkeypatch.setattr("app.routes.connectors.threading", ImmediateThreading)
+    monkeypatch.setattr(
+        "app.routes.connectors.sync_wbs_to_smartsheet",
+        lambda _user_id, _thread_id, project_wbs, **_kwargs: {
+            "success": True,
+            "skipped": False,
+            "provider_interaction_succeeded": True,
+            "project_wbs": project_wbs,
+        },
+    )
+
+    response = _request(
+        client,
+        jira_project,
+        "owner",
+        "POST",
+        f"/api/v1/connectors/threads/{THREAD_ID}/smartsheet/sync",
+        {},
+    )
+
+    assert response.status_code == 202
+    assert response.get_json()["status"] == "syncing"
+    settings = get_connector_settings(owner.id, "smartsheet_sync")
+    assert settings["verification_results"]["plan_sync"]["status"] == "success"
+    assert "data_context" not in settings["verification_results"]
+    assert settings["data_context_verified_at"] is None
 
 
 @pytest.mark.parametrize("actor", ["owner", "administrator", "editor", "viewer", "creator-now-viewer", "other-org"])

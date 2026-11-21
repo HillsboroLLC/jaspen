@@ -5,6 +5,7 @@ from unittest.mock import call, patch
 import pytest
 
 from app import db as app_db
+from app.connector_store import get_connector_settings, record_connector_read_result
 from app.models import ConnectorSyncLog, Organization, OrganizationMember, User
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync.service import (
@@ -417,6 +418,13 @@ def test_three_way_pull_and_push_are_field_scoped(test_user):
         "field_updated_at": {"title": "2026-10-11T12:00:00"}, "updated_at": "2026-10-11T12:00:00"}]}
     provider = _Provider({"deleted": False, "values": {**base, "status": "done"},
         "changed_at": {"status": "2026-10-11T13:00:00"}, "version": "2026-10-11T13:00:00"})
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "plan_sync",
+        succeeded=False,
+        error_message="HTTP 401",
+    )
     with patch("app.pm_sync.reconciliation.get_plan", return_value=(plan, "score-1")), patch(
         "app.pm_sync.reconciliation.get_provider", return_value=provider), patch(
         "app.pm_sync.reconciliation._save_plan") as save:
@@ -428,6 +436,10 @@ def test_three_way_pull_and_push_are_field_scoped(test_user):
     assert save.called
     assert link.base_snapshot["title"] == "Local title"
     assert link.base_snapshot["status"] == "done"
+    verification = get_connector_settings(test_user.id, "jira_sync")
+    assert verification["verification_results"]["plan_sync"]["status"] == "success"
+    assert "data_context" not in verification["verification_results"]
+    assert verification["data_context_verified_at"] is None
 
 
 def test_empty_values_do_not_create_false_changes_and_one_edit_pushes_one_task(test_user):
@@ -1142,7 +1154,8 @@ def test_connection_is_validated_before_save_and_secret_is_not_returned(client, 
         assert saved_fields["jira_base_url"] == payload["jira_base_url"]
         assert saved_fields["jira_email"] == payload["jira_email"]
         assert saved_fields["jira_api_token"] == payload["jira_api_token"]
-        assert saved_fields["last_verified_at"]
+        assert "last_verified_at" not in saved_fields
+        assert "verification_results" not in saved_fields
         assert "top-secret" not in connected.get_data(as_text=True)
 
 

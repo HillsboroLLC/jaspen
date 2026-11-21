@@ -2,7 +2,13 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
 from app import db
-from app.connector_store import append_sync_audit_event, encrypt_token, get_connector_settings, update_connector_settings
+from app.connector_store import (
+    append_sync_audit_event,
+    encrypt_token,
+    get_connector_settings,
+    record_connector_read_result,
+    update_connector_settings,
+)
 from app.models import User
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync.jira_adapter import create_project, list_projects, test_connection
@@ -122,7 +128,6 @@ def jira_connect():
             "jira_email": str(payload.get("jira_email") or "").strip(),
             "jira_api_token": token,
             "connection_status": "connected", "lifecycle_status": "connected",
-            "last_verified_at": __import__("datetime").datetime.utcnow().isoformat(),
         })
         from app.pm_sync.access import resume_personal_bindings
         resume_personal_bindings(user.id, "jira_sync")
@@ -309,6 +314,13 @@ def sync_binding(binding_id):
         return _paused(binding, exc)
     except Exception as exc:
         db.session.rollback()
+        record_connector_read_result(
+            user.id,
+            binding.connector_id,
+            "plan_sync",
+            succeeded=False,
+            error_message=str(exc),
+        )
         if _jira_auth_failure(exc):
             return _reconnect_response(user, binding)
         return _error(exc, 502)
