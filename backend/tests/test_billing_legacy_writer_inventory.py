@@ -9,15 +9,15 @@ mutator, without being listed here. It also fails when a listed entry no
 longer exists, so the list cannot drift. The human-readable form is D04 in
 ``docs/specs/billing/current-state-inventory.md``.
 
-Two code lines exist until they are merged. They fork at ``0cf97e7c``: the
-billing line (this tree) and the unified line (F1 ``3d0b71d5`` onward, read at
-``d05e9c0f``; the uncommitted P3 tree at that base scans identically). Each
-entry is tagged ``both``, ``billing_line`` or ``unified_line``. On this tree
-the scan must equal the ``both`` + ``billing_line`` entries. Set
-``JASPEN_UNIFIED_LINE_BACKEND`` to a unified-line ``backend/`` directory to
-check that the scan there equals ``both`` + ``unified_line``. After the merge
-the merged tree must pass with its entries re-tagged; a new or removed writer
-is an inventory change to review, never a silent pass.
+The billing line and the unified line forked at ``0cf97e7c`` and were merged
+in the P0-P6 B5 integration onto develop ``2e61ed81``. Before the merge each
+entry was tagged ``both``, ``billing_line`` or ``unified_line``; at the merge
+every surviving entry was re-tagged ``both``, and the 27 ``billing_line``
+per-route chat credit references in ``conversation_start``,
+``conversation_continue`` and ``conversation_regenerate`` (and their
+``event_stream`` closures) were removed because the unified line replaced
+them with the single binding below. The scan must equal the ``both`` entries;
+a new or removed writer is an inventory change to review, never a silent pass.
 
 The unified line binds the legacy credit functions into ``TurnBilling`` in
 ``ai_agent._conversation_turn`` (reserve, price, settle, release,
@@ -29,7 +29,6 @@ credit writer like the rest.
 """
 
 import ast
-import os
 from pathlib import Path
 import re
 
@@ -316,15 +315,15 @@ LEGACY_FIELD_WRITERS = (
     # P4.0 chat operation evidence (unified line 04f60590): the turn's claim,
     # and its close when the claim never became durable. Evidence rows only;
     # neither changes a balance.
-    ("app/ai_audit.py", "claim_turn_operation", "AIOperation()", "unified_line"),
-    ("app/ai_audit.py", "close_turn_operation_alone", "AIOperation()", "unified_line"),
+    ("app/ai_audit.py", "claim_turn_operation", "AIOperation()", "both"),
+    ("app/ai_audit.py", "close_turn_operation_alone", "AIOperation()", "both"),
     ("app/ai_audit.py", "persist_operation", "AIOperation()", "both"),
     ("app/ai_audit.py", "persist_operation", "charged_credits", "both"),
     ("app/ai_runtime.py", "_claim_operation", "AIOperation()", "both"),
     ("app/ai_runtime.py", "finalize_batch_charge_allocation", "charged_credits", "both"),
     ("app/ai_runtime.py", "reverse_customer_operation_charge", "charged_credits", "both"),
-    ("app/billing_ai_operations.py", "_finalize", "setattr(dynamic)", "billing_line"),
-    ("app/billing_ai_operations.py", "authorize_ai_operation", "setattr(dynamic)", "billing_line"),
+    ("app/billing_ai_operations.py", "_finalize", "setattr(dynamic)", "both"),
+    ("app/billing_ai_operations.py", "authorize_ai_operation", "setattr(dynamic)", "both"),
     ("app/billing_config.py", "_resolve_org_pool", "thinking_power", "both"),
     ("app/billing_config.py", "_resolve_user_pool", "credits_remaining", "both"),
     ("app/billing_config.py", "_resolve_user_pool", "credits_reset_at", "both"),
@@ -346,10 +345,10 @@ LEGACY_FIELD_WRITERS = (
     ("app/billing_config.py", "release_consumed_credits", "thinking_power", "both"),
     ("app/billing_config.py", "reset_user_monthly_credits", "credits_remaining", "both"),
     ("app/billing_config.py", "reset_user_monthly_credits", "credits_reset_at", "both"),
-    ("app/billing_enterprise_contracts.py", "_transition", "setattr(dynamic)", "billing_line"),
-    ("app/billing_projections.py", "_meter", "thinking_power", "billing_line"),
-    ("app/conversation_turn.py", "ConversationTurn.__init__", "credits_charged", "unified_line"),
-    ("app/conversation_turn.py", "ConversationTurn.settle", "credits_charged", "unified_line"),
+    ("app/billing_enterprise_contracts.py", "_transition", "setattr(dynamic)", "both"),
+    ("app/billing_projections.py", "_meter", "thinking_power", "both"),
+    ("app/conversation_turn.py", "ConversationTurn.__init__", "credits_charged", "both"),
+    ("app/conversation_turn.py", "ConversationTurn.settle", "credits_charged", "both"),
     ("app/decision_asset_email_service.py", "record_telemetry", "UsageEvent()", "both"),
     ("app/founder_entitlements.py", "consume_persistent_credits", "PersistentCreditTransaction()", "both"),
     ("app/founder_entitlements.py", "consume_persistent_credits", "remaining_amount", "both"),
@@ -376,7 +375,7 @@ LEGACY_FIELD_WRITERS = (
     ("app/routes/admin.py", "patch_user", "credits_remaining", "both"),
     ("app/routes/admin.py", "patch_user", "subscription_plan", "both"),
     # P4.0: reads the meter's last reset into the claim (read only, no write).
-    ("app/routes/ai_agent.py", "_meter_cycle_marker", "thinking_power", "unified_line"),
+    ("app/routes/ai_agent.py", "_meter_cycle_marker", "thinking_power", "both"),
     ("app/routes/ai_agent.py", "_persist_credit_deduction", "credits_remaining", "both"),
     ("app/routes/ai_agent.py", "_record_usage", "UsageEvent()", "both"),
     ("app/routes/auth.py", "_sso_user_and_membership", "User()", "both"),
@@ -420,7 +419,7 @@ LEGACY_MUTATOR_REFERENCES = (
     ("app/billing_config.py", "release_consumed_credits", "refund_persistent_usage", "both"),
     ("app/billing_config.py", "reset_user_monthly_credits", "_resolve_org_pool", "both"),
     ("app/billing_config.py", "reset_user_monthly_credits", "_resolve_user_pool", "both"),
-    ("app/conversation_turn.py", "ConversationTurn.settle", "settle", "unified_line"),
+    ("app/conversation_turn.py", "ConversationTurn.settle", "settle", "both"),
     ("app/decision_asset_email_service.py", "process_delivery", "record_telemetry", "both"),
     ("app/founder_entitlements.py", "<module>", "reverse_limited_time_300k_credits", "both"),
     ("app/founder_entitlements.py", "grant_founder_offer", "grant_limited_time_300k_offer", "both"),
@@ -433,20 +432,20 @@ LEGACY_MUTATOR_REFERENCES = (
     # P4.0 (unified line 04f60590) moved the TurnBilling binding of the legacy
     # credit functions out of ``_conversation_turn`` into the evidence
     # wrapper's methods, with the same arguments and results.
-    ("app/routes/ai_agent.py", "_TurnOperationEvidence.close_alone", "close_turn_operation_alone", "unified_line"),
-    ("app/routes/ai_agent.py", "_TurnOperationEvidence.persist_balance", "_persist_credit_deduction", "unified_line"),
-    ("app/routes/ai_agent.py", "_TurnOperationEvidence.release", "_release_reserved_credits", "unified_line"),
-    ("app/routes/ai_agent.py", "_TurnOperationEvidence.reserve", "_reserve_preflight_credits", "unified_line"),
-    ("app/routes/ai_agent.py", "_TurnOperationEvidence.reserve", "claim_turn_operation", "unified_line"),
-    ("app/routes/ai_agent.py", "_TurnOperationEvidence.settle", "_settle_reserved_credits", "unified_line"),
-    ("app/routes/ai_agent.py", "_conversation_turn", "settle", "unified_line"),
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.close_alone", "close_turn_operation_alone", "both"),
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.persist_balance", "_persist_credit_deduction", "both"),
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.release", "_release_reserved_credits", "both"),
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.reserve", "_reserve_preflight_credits", "both"),
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.reserve", "claim_turn_operation", "both"),
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.settle", "_settle_reserved_credits", "both"),
+    ("app/routes/ai_agent.py", "_conversation_turn", "settle", "both"),
     ("app/routes/ai_agent.py", "_execute_mutation_tool", "_record_claude_operation", "both"),
     ("app/routes/ai_agent.py", "_execute_mutation_tool", "reverse_customer_operation_charge", "both"),
     ("app/routes/ai_agent.py", "_execute_mutation_tool._reverse_plan_charge", "reverse_customer_operation_charge", "both"),
-    ("app/routes/ai_agent.py", "_finish_conversation_turn", "_record_usage", "unified_line"),
-    ("app/routes/ai_agent.py", "_finish_conversation_turn", "settle", "unified_line"),
-    ("app/routes/ai_agent.py", "_finish_regenerated_turn", "_record_usage", "unified_line"),
-    ("app/routes/ai_agent.py", "_finish_regenerated_turn", "settle", "unified_line"),
+    ("app/routes/ai_agent.py", "_finish_conversation_turn", "_record_usage", "both"),
+    ("app/routes/ai_agent.py", "_finish_conversation_turn", "settle", "both"),
+    ("app/routes/ai_agent.py", "_finish_regenerated_turn", "_record_usage", "both"),
+    ("app/routes/ai_agent.py", "_finish_regenerated_turn", "settle", "both"),
     ("app/routes/ai_agent.py", "_insufficient_credits_payload", "get_usage_meter_state", "both"),
     ("app/routes/ai_agent.py", "_record_failed_chat_usage", "_record_usage", "both"),
     ("app/routes/ai_agent.py", "_record_usage", "persist_operation", "both"),
@@ -456,36 +455,9 @@ LEGACY_MUTATOR_REFERENCES = (
     ("app/routes/ai_agent.py", "_settle_reserved_credits", "consume_credits", "both"),
     ("app/routes/ai_agent.py", "_settle_reserved_credits", "release_consumed_credits", "both"),
     ("app/routes/ai_agent.py", "clarify_batch_idea", "bootstrap_legacy_credits", "both"),
-    ("app/routes/ai_agent.py", "conversation_continue", "_persist_credit_deduction", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_continue", "_record_usage", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_continue", "_release_reserved_credits", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_continue", "_reserve_preflight_credits", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_continue", "_settle_reserved_credits", "billing_line"),
     ("app/routes/ai_agent.py", "conversation_continue", "bootstrap_legacy_credits", "both"),
-    ("app/routes/ai_agent.py", "conversation_continue.event_stream", "_persist_credit_deduction", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_continue.event_stream", "_record_usage", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_continue.event_stream", "_release_reserved_credits", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_continue.event_stream", "_settle_reserved_credits", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_regenerate", "_persist_credit_deduction", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_regenerate", "_record_usage", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_regenerate", "_release_reserved_credits", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_regenerate", "_reserve_preflight_credits", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_regenerate", "_settle_reserved_credits", "billing_line"),
     ("app/routes/ai_agent.py", "conversation_regenerate", "bootstrap_legacy_credits", "both"),
-    ("app/routes/ai_agent.py", "conversation_regenerate.event_stream", "_persist_credit_deduction", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_regenerate.event_stream", "_record_usage", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_regenerate.event_stream", "_release_reserved_credits", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_regenerate.event_stream", "_settle_reserved_credits", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_start", "_persist_credit_deduction", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_start", "_record_usage", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_start", "_release_reserved_credits", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_start", "_reserve_preflight_credits", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_start", "_settle_reserved_credits", "billing_line"),
     ("app/routes/ai_agent.py", "conversation_start", "bootstrap_legacy_credits", "both"),
-    ("app/routes/ai_agent.py", "conversation_start.event_stream", "_persist_credit_deduction", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_start.event_stream", "_record_usage", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_start.event_stream", "_release_reserved_credits", "billing_line"),
-    ("app/routes/ai_agent.py", "conversation_start.event_stream", "_settle_reserved_credits", "billing_line"),
     ("app/routes/ai_agent.py", "promote_all_batch_ideas", "bootstrap_legacy_credits", "both"),
     ("app/routes/ai_agent.py", "promote_batch_idea", "bootstrap_legacy_credits", "both"),
     ("app/routes/ai_agent.py", "rank_batch_ideas", "bootstrap_legacy_credits", "both"),
@@ -563,17 +535,11 @@ def test_inventory_entries_are_unique_and_tagged():
     for inventory in (LEGACY_FIELD_WRITERS, LEGACY_MUTATOR_REFERENCES):
         keys = [entry[:3] for entry in inventory]
         assert len(keys) == len(set(keys))
-        assert {entry[3] for entry in inventory} <= {"both", "billing_line", "unified_line"}
+        assert {entry[3] for entry in inventory} == {"both"}
 
 
 def test_every_legacy_billing_writer_on_this_line_is_inventoried():
-    _assert_matches(BACKEND, "billing_line")
-
-
-@pytest.mark.skipif(not os.environ.get("JASPEN_UNIFIED_LINE_BACKEND"),
-                    reason="no unified-line backend directory configured")
-def test_every_legacy_billing_writer_on_the_unified_line_is_inventoried():
-    _assert_matches(Path(os.environ["JASPEN_UNIFIED_LINE_BACKEND"]).resolve(), "unified_line")
+    _assert_matches(BACKEND, "both")
 
 
 # ---------------------------------------------------------------------------

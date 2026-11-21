@@ -179,15 +179,16 @@ credit mutator without being listed, and when a listed entry disappears.
 Migrations (historical data rewrites such as `f8d5c3b0e2a7`) and tests are
 outside the scan.
 
-Line tags: `both` (identical on both lines), `billing_line` (only here),
-`unified_line` (only after F1). The unified line replaces the six per-route
+Line tags: the billing and unified lines forked at `0cf97e7c` and were merged
+in the P0-P6 B5 integration onto develop `2e61ed81`; every surviving row is
+now `both`. The unified line replaced the six per-route
 copies of the chat credit sequence in `ai_agent.conversation_start`,
 `conversation_continue` and `conversation_regenerate` (and their
 `event_stream` closures) with one `TurnBilling` binding in
-`ai_agent._conversation_turn`; `conversation_turn.ConversationTurn` records the
+`ai_agent._conversation_turn`, so those 27 `billing_line` references were
+removed at the merge; `conversation_turn.ConversationTurn` records the
 turn's charge. That binding is the legacy credit writer Phase 17 replaces
-with the Phase 12 ledger. After the merge, the merged tree is re-tagged and
-must pass the same guard.
+with the Phase 12 ledger.
 
 Found beyond the intent tables above: `ai_audit.persist_operation` and
 `ai_runtime.finalize_batch_charge_allocation` / `reverse_customer_operation_charge`
@@ -223,14 +224,14 @@ dynamic writes):
 
 | Function | Writes | Line |
 |---|---|---|
-| `app/ai_audit.py` `claim_turn_operation` | `AIOperation()` | unified_line |
-| `app/ai_audit.py` `close_turn_operation_alone` | `AIOperation()` | unified_line |
+| `app/ai_audit.py` `claim_turn_operation` | `AIOperation()` | both |
+| `app/ai_audit.py` `close_turn_operation_alone` | `AIOperation()` | both |
 | `app/ai_audit.py` `persist_operation` | `AIOperation()`, `charged_credits` | both |
 | `app/ai_runtime.py` `_claim_operation` | `AIOperation()` | both |
 | `app/ai_runtime.py` `finalize_batch_charge_allocation` | `charged_credits` | both |
 | `app/ai_runtime.py` `reverse_customer_operation_charge` | `charged_credits` | both |
-| `app/billing_ai_operations.py` `_finalize` | `setattr(dynamic)` | billing_line |
-| `app/billing_ai_operations.py` `authorize_ai_operation` | `setattr(dynamic)` | billing_line |
+| `app/billing_ai_operations.py` `_finalize` | `setattr(dynamic)` | both |
+| `app/billing_ai_operations.py` `authorize_ai_operation` | `setattr(dynamic)` | both |
 | `app/billing_config.py` `_resolve_org_pool` | `thinking_power` | both |
 | `app/billing_config.py` `_resolve_user_pool` | `credits_remaining`, `credits_reset_at`, `thinking_power` | both |
 | `app/billing_config.py` `add_credits` | `credits_remaining`, `credits_reset_at`, `thinking_power` | both |
@@ -240,10 +241,10 @@ dynamic writes):
 | `app/billing_config.py` `consume_credits` | `credits_remaining`, `credits_reset_at`, `thinking_power` | both |
 | `app/billing_config.py` `release_consumed_credits` | `credits_remaining`, `thinking_power` | both |
 | `app/billing_config.py` `reset_user_monthly_credits` | `credits_remaining`, `credits_reset_at` | both |
-| `app/billing_enterprise_contracts.py` `_transition` | `setattr(dynamic)` | billing_line |
-| `app/billing_projections.py` `_meter` | `thinking_power` | billing_line |
-| `app/conversation_turn.py` `ConversationTurn.__init__` | `credits_charged` | unified_line |
-| `app/conversation_turn.py` `ConversationTurn.settle` | `credits_charged` | unified_line |
+| `app/billing_enterprise_contracts.py` `_transition` | `setattr(dynamic)` | both |
+| `app/billing_projections.py` `_meter` | `thinking_power` | both |
+| `app/conversation_turn.py` `ConversationTurn.__init__` | `credits_charged` | both |
+| `app/conversation_turn.py` `ConversationTurn.settle` | `credits_charged` | both |
 | `app/decision_asset_email_service.py` `record_telemetry` | `UsageEvent()` | both |
 | `app/founder_entitlements.py` `consume_persistent_credits` | `PersistentCreditTransaction()`, `remaining_amount` | both |
 | `app/founder_entitlements.py` `grant_limited_time_300k_offer` | `AccountEntitlement()`, `PersistentCreditGrant()`, `PersistentCreditTransaction()` | both |
@@ -256,7 +257,7 @@ dynamic writes):
 | `app/orgs.py` `sync_org_plan_from_owner` | `plan_key` | both |
 | `app/routes/admin.py` `adjust_user_credits` | `credits_remaining` | both |
 | `app/routes/admin.py` `patch_user` | `credits_remaining`, `subscription_plan` | both |
-| `app/routes/ai_agent.py` `_meter_cycle_marker` | `thinking_power` (read only) | unified_line |
+| `app/routes/ai_agent.py` `_meter_cycle_marker` | `thinking_power` (read only) | both |
 | `app/routes/ai_agent.py` `_persist_credit_deduction` | `credits_remaining` | both |
 | `app/routes/ai_agent.py` `_record_usage` | `UsageEvent()` | both |
 | `app/routes/auth.py` `_sso_user_and_membership` | `User()` | both |
@@ -291,7 +292,7 @@ which writes on read):
 | `app/billing_config.py` `get_usage_meter_state` | `_resolve_org_pool`, `_resolve_user_pool` | both |
 | `app/billing_config.py` `release_consumed_credits` | `_resolve_org_pool`, `refund_persistent_usage` | both |
 | `app/billing_config.py` `reset_user_monthly_credits` | `_resolve_org_pool`, `_resolve_user_pool` | both |
-| `app/conversation_turn.py` `ConversationTurn.settle` | `settle` | unified_line |
+| `app/conversation_turn.py` `ConversationTurn.settle` | `settle` | both |
 | `app/decision_asset_email_service.py` `process_delivery` | `record_telemetry` | both |
 | `app/founder_entitlements.py` `<module>` | `reverse_limited_time_300k_credits` | both |
 | `app/founder_entitlements.py` `grant_founder_offer` | `grant_limited_time_300k_offer` | both |
@@ -301,16 +302,16 @@ which writes on read):
 | `app/routes/admin.py` `adjust_user_credits` | `apply_plan_to_user` | both |
 | `app/routes/admin.py` `force_plan` | `apply_plan_to_user` | both |
 | `app/routes/admin.py` `run_user_recovery` | `apply_plan_to_user` | both |
-| `app/routes/ai_agent.py` `_TurnOperationEvidence.close_alone` | `close_turn_operation_alone` | unified_line |
-| `app/routes/ai_agent.py` `_TurnOperationEvidence.persist_balance` | `_persist_credit_deduction` | unified_line |
-| `app/routes/ai_agent.py` `_TurnOperationEvidence.release` | `_release_reserved_credits` | unified_line |
-| `app/routes/ai_agent.py` `_TurnOperationEvidence.reserve` | `_reserve_preflight_credits`, `claim_turn_operation` | unified_line |
-| `app/routes/ai_agent.py` `_TurnOperationEvidence.settle` | `_settle_reserved_credits` | unified_line |
-| `app/routes/ai_agent.py` `_conversation_turn` | `settle` | unified_line |
+| `app/routes/ai_agent.py` `_TurnOperationEvidence.close_alone` | `close_turn_operation_alone` | both |
+| `app/routes/ai_agent.py` `_TurnOperationEvidence.persist_balance` | `_persist_credit_deduction` | both |
+| `app/routes/ai_agent.py` `_TurnOperationEvidence.release` | `_release_reserved_credits` | both |
+| `app/routes/ai_agent.py` `_TurnOperationEvidence.reserve` | `_reserve_preflight_credits`, `claim_turn_operation` | both |
+| `app/routes/ai_agent.py` `_TurnOperationEvidence.settle` | `_settle_reserved_credits` | both |
+| `app/routes/ai_agent.py` `_conversation_turn` | `settle` | both |
 | `app/routes/ai_agent.py` `_execute_mutation_tool` | `_record_claude_operation`, `reverse_customer_operation_charge` | both |
 | `app/routes/ai_agent.py` `_execute_mutation_tool._reverse_plan_charge` | `reverse_customer_operation_charge` | both |
-| `app/routes/ai_agent.py` `_finish_conversation_turn` | `_record_usage`, `settle` | unified_line |
-| `app/routes/ai_agent.py` `_finish_regenerated_turn` | `_record_usage`, `settle` | unified_line |
+| `app/routes/ai_agent.py` `_finish_conversation_turn` | `_record_usage`, `settle` | both |
+| `app/routes/ai_agent.py` `_finish_regenerated_turn` | `_record_usage`, `settle` | both |
 | `app/routes/ai_agent.py` `_insufficient_credits_payload` | `get_usage_meter_state` | both |
 | `app/routes/ai_agent.py` `_record_failed_chat_usage` | `_record_usage` | both |
 | `app/routes/ai_agent.py` `_record_usage` | `persist_operation` | both |
@@ -319,12 +320,9 @@ which writes on read):
 | `app/routes/ai_agent.py` `_rollback_promoted_session` | `release_consumed_credits` | both |
 | `app/routes/ai_agent.py` `_settle_reserved_credits` | `consume_credits`, `release_consumed_credits` | both |
 | `app/routes/ai_agent.py` `clarify_batch_idea` | `bootstrap_legacy_credits` | both |
-| `app/routes/ai_agent.py` `conversation_continue` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_reserve_preflight_credits`, `_settle_reserved_credits`, `bootstrap_legacy_credits` | billing_line, both |
-| `app/routes/ai_agent.py` `conversation_continue.event_stream` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_settle_reserved_credits` | billing_line |
-| `app/routes/ai_agent.py` `conversation_regenerate` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_reserve_preflight_credits`, `_settle_reserved_credits`, `bootstrap_legacy_credits` | billing_line, both |
-| `app/routes/ai_agent.py` `conversation_regenerate.event_stream` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_settle_reserved_credits` | billing_line |
-| `app/routes/ai_agent.py` `conversation_start` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_reserve_preflight_credits`, `_settle_reserved_credits`, `bootstrap_legacy_credits` | billing_line, both |
-| `app/routes/ai_agent.py` `conversation_start.event_stream` | `_persist_credit_deduction`, `_record_usage`, `_release_reserved_credits`, `_settle_reserved_credits` | billing_line |
+| `app/routes/ai_agent.py` `conversation_continue` | `bootstrap_legacy_credits` | both |
+| `app/routes/ai_agent.py` `conversation_regenerate` | `bootstrap_legacy_credits` | both |
+| `app/routes/ai_agent.py` `conversation_start` | `bootstrap_legacy_credits` | both |
 | `app/routes/ai_agent.py` `promote_all_batch_ideas` | `bootstrap_legacy_credits` | both |
 | `app/routes/ai_agent.py` `promote_batch_idea` | `bootstrap_legacy_credits` | both |
 | `app/routes/ai_agent.py` `rank_batch_ideas` | `bootstrap_legacy_credits` | both |
