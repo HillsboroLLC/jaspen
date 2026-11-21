@@ -30,6 +30,12 @@ NOW = datetime.now(timezone.utc)
 _REVISION_MODULES = {}
 
 
+@pytest.fixture(autouse=True)
+def _fresh_now(monkeypatch):
+    """Database lease guards use the real clock, so each test needs a current NOW."""
+    monkeypatch.setitem(globals(), "NOW", datetime.now(timezone.utc))
+
+
 def _revision(revision=REVISION):
     if revision not in _REVISION_MODULES:
         _REVISION_MODULES[revision] = ScriptDirectory(MIGRATIONS_DIR).get_revision(revision).module
@@ -113,7 +119,8 @@ def postgres_engine(validate_test_database_url, postgres_schema_url):
         yield engine
 
 
-def _stripe_event(event_id="evt_financial001", object_id="in_financial001", created=NOW):
+def _stripe_event(event_id="evt_financial001", object_id="in_financial001", created=None):
+    created = NOW if created is None else created
     event = {
         "id": event_id,
         "object": "event",
@@ -134,9 +141,10 @@ def _stripe_event(event_id="evt_financial001", object_id="in_financial001", crea
 
 
 def _seed_account_and_event(
-    engine, *, account="account-one", event_id="evt_financial001", created=NOW,
+    engine, *, account="account-one", event_id="evt_financial001", created=None,
     mark_processed=True,
 ):
+    created = NOW if created is None else created
     with engine.begin() as connection:
         connection.execute(sa.text(
             "INSERT INTO billing_accounts (id,currency) VALUES (:id,'usd')"
