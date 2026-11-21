@@ -151,3 +151,67 @@ def test_normalization_replaces_stale_model_summary_with_current_arithmetic():
     assert f"scores {normalized['jaspen_score']}/100" in normalized["executive_summary"]
     assert "not the probability of a successful outcome" in normalized["executive_summary"]
     assert normalized["section_provenance"]["executive_summary"] == "deterministic"
+
+
+def test_workspace_read_preserves_persisted_grounded_gate_assessment():
+    strategy = _strategy()
+    payload = {
+        "analysis_id": "legacy-rfp",
+        "project_name": "Adams County",
+        "jaspen_score": 54,
+        "decision_kit": "rfp_bid",
+        "decision_kit_version": 1,
+        "scoring_rubric": {
+            "status": "approved",
+            "criteria": [{
+                "key": "submission_deadline",
+                "label": "Able to submit by deadline",
+                "gate": True,
+                "weight": 0,
+            }],
+        },
+        "gates": [{
+            "key": "submission_deadline",
+            "label": "Able to submit by deadline",
+            "status": "pass",
+            "source": "user",
+            "confidence": "medium",
+            "evidence": ["The team can submit by November 20."],
+        }],
+        "recommendation": {"label": "Bid with conditions", "verdict_key": "advance_with_conditions"},
+    }
+
+    normalized = strategy._normalize_scorecard_payload(payload)
+
+    assert normalized["gates"][0]["status"] == "pass"
+
+
+def test_score_time_empty_corpus_cannot_confirm_a_gate():
+    strategy = _strategy()
+    payload = {
+        "analysis_id": "new-rfp",
+        "project_name": "New bid",
+        "jaspen_score": 54,
+        "decision_kit": "rfp_bid",
+        "decision_kit_version": 1,
+        "_evidence_corpus": "",
+        "scoring_rubric": {
+            "status": "approved",
+            "criteria": [{
+                "key": "submission_deadline",
+                "label": "Able to submit by deadline",
+                "gate": True,
+                "weight": 0,
+            }],
+        },
+        "gates": [{
+            "key": "submission_deadline",
+            "status": "pass",
+            "source": "user",
+            "evidence": ["An unsupported citation"],
+        }],
+    }
+
+    normalized = strategy._normalize_scorecard_payload(payload)
+
+    assert normalized["gates"][0]["status"] == "unknown"

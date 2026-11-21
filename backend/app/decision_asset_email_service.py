@@ -26,8 +26,9 @@ from app.routes.export import (
     _scorecard_record_for_export,
     _wbs_xlsx_bytes,
 )
-from app.routes.sessions import load_user_sessions
-from app.routes.strategy import _load_scenarios, _resolve_thread_wbs
+from app.project_scope import authorized_thread_scope, scenarios_for_thread
+from app.routes.strategy import _resolve_thread_wbs
+from app.session_access import SessionNotFound
 from app.scorecards import collect_peer_scorecards
 
 
@@ -525,7 +526,17 @@ def render_scorecard_detail_email(summary):
 
 
 def load_authorized_context(user, thread_id, scorecard_id=None):
-    sessions = load_user_sessions(user.id) or {}
+    """The organization's project for an emailed asset, after the access check.
+
+    Runs when the email is requested and again when it is sent, so the send
+    follows the member's current membership and role: any member who may
+    read the project may email its assets to themself (spec 2.3). An unknown
+    or unreadable project is ``thread_not_found``.
+    """
+    try:
+        _actor, sessions, project_row = authorized_thread_scope(user.id, thread_id)
+    except SessionNotFound as exc:
+        raise DeliveryError("thread_not_found") from exc
     session = _resolve_thread_session(sessions, thread_id)
     if not isinstance(session, dict):
         raise DeliveryError("thread_not_found")
@@ -534,13 +545,15 @@ def load_authorized_context(user, thread_id, scorecard_id=None):
     if organization_id and not active_membership_for_user(organization_id, user.id):
         raise DeliveryError("workspace_access_denied")
 
-    scenario_data = _load_scenarios(user.id) or {}
+    scenario_data = scenarios_for_thread(user, thread_id)
     thread_data = scenario_data.get(thread_id) if isinstance(scenario_data, dict) else {}
+    thread_data = thread_data if isinstance(thread_data, dict) else {}
     peers = collect_peer_scorecards(
         user.id,
         thread_id,
         legacy_session=session,
-        legacy_thread_data=thread_data or {},
+        legacy_thread_data=thread_data,
+        project_row=project_row,
     )
     ranked = sorted([peer for peer in peers if isinstance(peer, dict)], key=_score, reverse=True)
     effective_scorecard_id = str(scorecard_id or "").strip() or None
@@ -552,6 +565,8 @@ def load_authorized_context(user, thread_id, scorecard_id=None):
         thread_id,
         scorecard_id=effective_scorecard_id,
         user_id=user.id,
+        project_row=project_row,
+        thread_data=thread_data,
     )
     if error_response:
         status = error_response[1] if isinstance(error_response, tuple) and len(error_response) > 1 else 404

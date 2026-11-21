@@ -143,9 +143,22 @@ def mark_option_scored(session, option_key, display_name=None):
             try:
                 from .models import Scorecard
                 thread_id = str(session.get("session_id") or "").strip()
-                candidates = Scorecard.query.filter_by(thread_id=thread_id).order_by(
-                    Scorecard.created_at.asc(), Scorecard.id.asc(),
-                ).all() if thread_id else []
+                # This project's rows only: the id is unique per organization.
+                candidates = []
+                if thread_id:
+                    query = Scorecard.query.filter_by(thread_id=thread_id)
+                    if session.get("organization_id"):
+                        query = query.filter_by(organization_id=str(session["organization_id"]))
+                    elif session.get("user_id"):
+                        query = query.filter(
+                            Scorecard.organization_id.is_(None),
+                            Scorecard.user_id == str(session["user_id"]),
+                        )
+                    else:
+                        query = None
+                    candidates = query.order_by(
+                        Scorecard.created_at.asc(), Scorecard.id.asc(),
+                    ).all() if query is not None else []
                 row = next((
                     item for item in candidates
                     if str((item.data or {}).get("option_key") or f"scorecard:{item.id}") == key

@@ -6,7 +6,7 @@ import { Jaspen } from './JaspenClient';
 jest.mock('./JaspenClient', () => ({ Jaspen: {
   listPmSyncBindings: jest.fn(), listJiraProjects: jest.fn(), previewPmSync: jest.fn(),
   createPmSyncBinding: jest.fn(), syncPmBinding: jest.fn(), updatePmSyncBinding: jest.fn(),
-  recreateMissingPmLinks: jest.fn(), unlinkPmBinding: jest.fn(),
+  recreateMissingPmLinks: jest.fn(), unlinkPmBinding: jest.fn(), resumePmBinding: jest.fn(),
   getPmSyncBinding: jest.fn(), testJiraConnection: jest.fn(), connectJira: jest.fn(), createJiraProject: jest.fn(),
 } }));
 
@@ -302,6 +302,111 @@ it('shows the approved authorization and departed-owner warnings', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent(
     'Sync is paused because the person who connected Jira no longer has access.'
   );
+});
+
+it('shows the approved read-only owner pause and keeps the departed-owner sentence', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValueOnce({ bindings: [{
+    id:'bind-read-only', status:'paused', mode:'two_way',
+    pause_reason:'sync_owner_read_only', sync_warning_code:'sync_owner_read_only',
+    sync_owner:{ name:'Avery', available:true },
+  }] });
+  const { unmount } = render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Jira sync is paused because the person who connected it no longer has permission to make changes to this project.'
+  );
+  unmount();
+
+  for (const reason of ['sync_owner_left_organization', 'sync_owner_unavailable']) {
+    Jaspen.listPmSyncBindings.mockResolvedValueOnce({ bindings: [{
+      id:`bind-${reason}`, status:'paused', mode:'two_way', pause_reason:reason,
+      sync_owner:{ name:'Former teammate', available:true },
+    }] });
+    const view = render(<PmSyncPanel threadId={`thread-${reason}`} planKey="score-2" taskCount={3} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sync is paused because the person who connected Jira no longer has access.');
+    view.unmount();
+  }
+});
+
+const pausedError = (reason) => Object.assign(new Error('This Jira sync is paused.'), {
+  status: 409,
+  data: { error:'This Jira sync is paused.', code:'PM_SYNC_PAUSED', pause_reason:reason, binding:{
+    id:'bind-1', status:'paused', mode:'two_way', pause_reason:reason, sync_warning_code:reason,
+    sync_owner:{ name:'Avery', available:true },
+  } },
+});
+
+it('shows the approved sentence, never the reason code, when a sync is refused as paused', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValueOnce({ bindings: [{
+    id:'bind-1', status:'active', mode:'two_way', sync_owner:{ name:'Avery', available:true },
+  }] });
+  Jaspen.syncPmBinding.mockRejectedValue(pausedError('sync_owner_read_only'));
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+
+  expect(await screen.findByText('Jira sync is paused because the person who connected it no longer has permission to make changes to this project.')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name:/Sync now/i }));
+  await waitFor(() => expect(Jaspen.syncPmBinding).toHaveBeenCalledTimes(2));
+  const alerts = screen.getAllByRole('alert').map((node) => node.textContent);
+  expect(alerts).toEqual(['Jira sync is paused because the person who connected it no longer has permission to make changes to this project.']);
+  expect(screen.queryByText(/sync_owner_read_only/)).not.toBeInTheDocument();
+  expect(screen.queryByText('This Jira sync is paused.')).not.toBeInTheDocument();
+});
+
+it('offers an explicit Resume that the owner must choose', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValueOnce({ bindings: [{
+    id:'bind-1', status:'paused', mode:'two_way', pause_reason:'sync_owner_read_only',
+    sync_warning_code:'sync_owner_read_only', sync_owner:{ name:'Avery', available:true },
+  }] });
+  Jaspen.resumePmBinding.mockRejectedValueOnce(pausedError('sync_owner_read_only'));
+  Jaspen.resumePmBinding.mockResolvedValueOnce({ binding:{ id:'bind-1', status:'active', mode:'two_way',
+    sync_owner:{ name:'Avery', available:true } }, logs:[] });
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+
+  fireEvent.click(await screen.findByRole('button', { name:'Resume sync' }));
+  await waitFor(() => expect(Jaspen.resumePmBinding).toHaveBeenCalledWith('bind-1'));
+  expect(screen.getAllByRole('alert').map((node) => node.textContent)).toEqual(['Jira sync is paused because the person who connected it no longer has permission to make changes to this project.']);
+  expect(Jaspen.syncPmBinding).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.getByRole('button', { name:'Resume sync' })).not.toBeDisabled());
+
+  fireEvent.click(screen.getByRole('button', { name:'Resume sync' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name:'Resume sync' })).not.toBeInTheDocument());
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(Jaspen.resumePmBinding).toHaveBeenCalledTimes(2);
+});
+
+it('reconnecting while still read-only keeps the pause and shows its approved sentence', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValueOnce({ bindings: [{
+    id:'bind-1', status:'paused', mode:'two_way', pause_reason:'credential_disconnected',
+    sync_warning_code:'credential_disconnected', sync_owner:{ name:'Avery', available:true },
+  }] });
+  Jaspen.testJiraConnection.mockResolvedValue({ ok:true });
+  Jaspen.connectJira.mockResolvedValue({ success:true, base_url:'https://acme.atlassian.net' });
+  Jaspen.updatePmSyncBinding.mockRejectedValueOnce(pausedError('sync_owner_read_only'));
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+
+  fireEvent.click(await screen.findByRole('button', { name:/Reconnect Jira/i }));
+  fireEvent.change(await screen.findByLabelText('Jira site URL'), { target:{ value:'https://acme.atlassian.net' } });
+  fireEvent.change(screen.getByLabelText('Jira email'), { target:{ value:'avery@acme.test' } });
+  fireEvent.change(screen.getByLabelText('Jira API token'), { target:{ value:'new-token' } });
+  fireEvent.click(screen.getByRole('button', { name:'Test connection' }));
+  await waitFor(() => expect(screen.getByRole('button', { name:'Save and continue' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name:'Save and continue' }));
+
+  await waitFor(() => expect(Jaspen.updatePmSyncBinding).toHaveBeenCalledWith('bind-1', { status:'active' }));
+  expect(await screen.findByText('Jira sync is paused because the person who connected it no longer has permission to make changes to this project.')).toBeInTheDocument();
+  expect(screen.getAllByRole('alert').map((node) => node.textContent)).toEqual(['Jira sync is paused because the person who connected it no longer has permission to make changes to this project.']);
+  expect(screen.getByRole('button', { name:'Resume sync' })).toBeInTheDocument();
+  expect(Jaspen.syncPmBinding).not.toHaveBeenCalled();
+});
+
+it('does not offer Resume for a disconnected credential; reconnect stays the path', async () => {
+  Jaspen.listPmSyncBindings.mockResolvedValueOnce({ bindings: [{
+    id:'bind-1', status:'paused', mode:'two_way', pause_reason:'credential_disconnected',
+    sync_warning_code:'credential_disconnected', sync_owner:{ name:'Avery', available:true },
+  }] });
+  render(<PmSyncPanel threadId="thread-1" planKey="score-1" taskCount={3} />);
+
+  expect(await screen.findByRole('button', { name:/Reconnect Jira/i })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name:'Resume sync' })).not.toBeInTheDocument();
 });
 
 it('explains missing Jira issues and offers recreate or unlink without retry advice', async () => {

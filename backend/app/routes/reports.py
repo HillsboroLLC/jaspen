@@ -9,9 +9,9 @@ from datetime import datetime
 from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
-from .sessions import load_user_sessions
 from app.ai_runtime import AIOperationPaymentRequired, execute_customer_text_operation
 from app.models import User
+from app.project_scope import authorized_export_scope
 
 reports_bp = Blueprint('reports', __name__)
 
@@ -188,6 +188,7 @@ Output requirements:
             messages=[{'role': 'user', 'content': prompt}],
             system_prompt='You are a strategy reporting assistant. Return markdown only.',
             operation_type='report_generation',
+            prompt_family='report_generation',
             model_type='orbit',
             legacy_model=model_name,
             max_tokens=1800,
@@ -317,7 +318,9 @@ def generate_report():
     if report_type not in REPORT_TYPE_DEFS:
         return jsonify({'error': 'report_type must be executive_summary, detailed, or portfolio'}), 400
 
-    sessions = load_user_sessions(user_id) or {}
+    # The organization's project, authorized before anything is read or the
+    # model is asked (SessionAccessError renders 404 / 403).
+    _actor, sessions, _project_row = authorized_export_scope(user_id, thread_id)
     session = _resolve_thread_session(sessions, thread_id)
     if not isinstance(session, dict):
         return jsonify({'error': 'Thread not found'}), 404

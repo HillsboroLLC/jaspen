@@ -187,18 +187,15 @@ def test_free_user_can_export_excel_and_csv_for_selected_scorecard(
     }
     monkeypatch.setattr(
         export_routes,
-        "load_user_sessions",
-        lambda _user_id: {"thread-1": {"session_id": "thread-1", "name": "Launch Program"}},
-    )
-    monkeypatch.setattr(
-        export_routes,
-        "_load_scenarios",
-        lambda _user_id: {
-            "thread-1": {
+        "_export_project",
+        lambda _user, _thread_id: (
+            {"session_id": "thread-1", "name": "Launch Program"},
+            None,
+            {
                 "project_wbs": other_wbs,
                 "wbs_by_scorecard": {"idea-1": selected_wbs},
-            }
-        },
+            },
+        ),
     )
 
     excel_response = client.get(
@@ -230,13 +227,13 @@ def test_free_user_can_download_scorecard_pdf_and_editable_powerpoint(
 ):
     monkeypatch.setattr(
         export_routes,
-        "load_user_sessions",
-        lambda _user_id: {"thread-1": {"session_id": "thread-1", "name": "Launch Program"}},
+        "_export_project",
+        lambda _user, _thread_id: ({"session_id": "thread-1", "name": "Launch Program"}, None, {}),
     )
     monkeypatch.setattr(
         export_routes,
         "_scorecard_record_for_export",
-        lambda _session, _thread_id, scorecard_id=None, user_id=None: (_sample_scorecard(), None),
+        lambda _session, _thread_id, scorecard_id=None, user_id=None, **_project: (_sample_scorecard(), None),
     )
 
     pdf_response = client.get(

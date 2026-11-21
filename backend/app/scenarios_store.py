@@ -6,10 +6,12 @@ from sqlalchemy.orm.attributes import set_committed_value
 from app import db
 from app.models import UserSession
 from app.session_access import (
+    LostRace,
     RevisionConflict,
     SessionForbidden,
     can_write_session,
     check_revision,
+    lock_project_row,
     revision_required_for,
 )
 
@@ -225,6 +227,10 @@ def save_project_scenarios_data(
                 db.session.commit()
                 return int(row.revision or 1)
 
+            # Decide against what is stored now, locked until this transaction
+            # ends (P3, session_access.lock_project_row), and decide access on
+            # that locked row.
+            lock_project_row(row)
             if not can_write_session(row, actor):
                 raise SessionForbidden()
 
@@ -249,7 +255,7 @@ def save_project_scenarios_data(
             if changed != 1:
                 db.session.rollback()
                 current_row = db.session.get(UserSession, row.id)
-                conflict = RevisionConflict(
+                conflict = LostRace(
                     expected,
                     int(current_row.revision or 1) if current_row is not None else None,
                     session_id=row.session_id,

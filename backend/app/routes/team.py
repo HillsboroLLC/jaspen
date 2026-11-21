@@ -10,6 +10,7 @@ organization explicitly by id and owns invitation and member management.
 Roles, seat accounting, capacity and the collaboration entitlement all live in
 app.orgs and must stay there -- see the note in app.routes.teams.
 """
+import copy
 import secrets
 from datetime import datetime
 
@@ -43,7 +44,7 @@ from app.orgs import (
     touch_member_activity,
 )
 from app.models import Organization, OrganizationInvitation, OrganizationMember, User, UserSession
-from app.session_access import can_read_session, can_write_session, is_hidden_for
+from app.session_access import can_read_session, can_write_session, is_hidden_for, lock_project_row
 
 
 team_bp = Blueprint("team", __name__)
@@ -205,6 +206,20 @@ def _can_access_project(row, user_id):
     if user is None:
         return False
     return can_read_session(row, user)
+
+
+def _locked_payload(row):
+    """The project's stored payload, re-read and locked until this request commits.
+
+    Comments, sharing and the activity feed write the payload here rather than
+    through the project store. Reading it locked (PostgreSQL row lock) means a
+    project save that committed meanwhile is kept instead of overwritten, and a
+    save that starts meanwhile waits and then applies only its own changes on
+    top (P3). Returns a copy, so assigning it back is always seen as a change.
+    """
+    lock_project_row(row)
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    return copy.deepcopy(payload)
 
 
 def _append_activity(row, actor, action, details=None):
@@ -715,6 +730,9 @@ def update_project_sharing(session_id):
     row = _get_project_row(org.id, session_id)
     if not row:
         return jsonify({"error": "Project session not found"}), 404
+    # Lock first: access, the current sharing and the payload all come from
+    # the locked row, so a concurrent save or sharing change is never undone.
+    payload = _locked_payload(row)
     if not _can_access_project(row, user.id):
         return jsonify({"error": "Not authorized for this project"}), 403
     if not (can_manage_org(membership.role) or can_edit_projects(membership.role)):
@@ -747,7 +765,6 @@ def update_project_sharing(session_id):
 
     row.visibility = next_visibility
     row.shared_with_user_ids = shared_ids
-    payload = row.payload if isinstance(row.payload, dict) else {}
     payload["visibility"] = next_visibility
     payload["shared_with_user_ids"] = shared_ids
     row.payload = payload
@@ -817,7 +834,11 @@ def add_project_comment(session_id):
     if len(body) > 3000:
         return jsonify({"error": "Comment is too long"}), 400
 
-    payload = row.payload if isinstance(row.payload, dict) else {}
+    # Lock first, then decide access on the locked row: someone unshared a
+    # moment ago cannot comment.
+    payload = _locked_payload(row)
+    if not _can_access_project(row, user.id):
+        return jsonify({"error": "Not authorized for this project"}), 403
     comments = payload.get("comments")
     if not isinstance(comments, list):
         comments = []

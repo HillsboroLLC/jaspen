@@ -95,7 +95,7 @@ PUBLIC_RESPONSE_FIELDS = frozenset({
 })
 PUBLIC_SNAPSHOT_FIELDS = frozenset({
     'scorecard', 'scorecards', 'context', 'presentation', 'strategy_objective',
-    'portfolio_summary',
+    'portfolio_summary', 'recorded_decision',
 })
 
 # Verbatim passages of the user's own words. Removed everywhere in the
@@ -622,9 +622,22 @@ def _report_context(strategy_objective, decision_kit, data_sources):
     return context
 
 
+def _recorded_decision_for_share(value):
+    """Allow only the human decision fields the report intentionally shows."""
+    source = value if isinstance(value, dict) else {}
+    clean = {
+        key: str(source.get(key) or '').strip()
+        for key in ('option_name', 'final_decision', 'display_text', 'disposition', 'source')
+        if str(source.get(key) or '').strip()
+    }
+    if 'plan_decision' in source:
+        clean['plan_decision'] = source.get('plan_decision') is True
+    return clean or None
+
+
 def build_snapshot(*, artifact_type, cards, include_evidence, scorecard_id=None,
                    thread_name=None, strategy_objective=None, portfolio_summary=None,
-                   decision_kit=None, data_sources=None):
+                   decision_kit=None, data_sources=None, recorded_decision=None):
     """Return (snapshot, title, source_id, evidence_available) or raise ValueError."""
     cards = [card for card in (cards or []) if isinstance(card, dict)]
     context = _report_context(strategy_objective, decision_kit, data_sources)
@@ -641,6 +654,9 @@ def build_snapshot(*, artifact_type, cards, include_evidence, scorecard_id=None,
         }
         if context:
             snapshot['context'] = context
+        shared_decision = _recorded_decision_for_share(recorded_decision)
+        if shared_decision:
+            snapshot['recorded_decision'] = shared_decision
         # A share made from the scorecard carries the owner's Workspace edits.
         overrides = card.get('display_overrides') if isinstance(card.get('display_overrides'), dict) else {}
         try:

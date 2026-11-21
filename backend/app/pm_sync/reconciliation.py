@@ -4,15 +4,17 @@ from datetime import datetime, timezone
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import db
+from app.connector_store import record_connector_read_result
 from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncLink
 from app.pm_sync.provider import get_provider
 from app.pm_sync import jira_adapter
+from app.pm_sync.access import binding_scenarios
 from app.pm_sync.service import (
     _consume_binding_note, _sync_phases, ensure_start_date_field,
     ensure_task_parent, get_plan, push_binding,
 )
-from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
+from app.scenarios_store import save_project_scenarios_data
 from app.task_history import mark_task_pm_synced, record_task_changes
 
 FIELDS = ("title", "description", "owner", "owner_email", "status", "start_date", "due_date")
@@ -73,9 +75,11 @@ def resolve_conflict(policy, local_time=None, remote_time=None):
 
 
 def _save_plan(binding, plan):
-    data = load_scenarios_data(binding.user_id)
+    # The binding's own project only (N1): read and write the row in the
+    # binding's organization, never whatever the owner has active.
+    data, row = binding_scenarios(binding)
     thread = data.get(binding.thread_id)
-    if not isinstance(thread, dict):
+    if row is None or not isinstance(thread, dict):
         raise LookupError("Thread not found.")
     by_scorecard = thread.get("wbs_by_scorecard") if isinstance(thread.get("wbs_by_scorecard"), dict) else {}
     if binding.plan_key in by_scorecard:
@@ -107,12 +111,13 @@ def _log(binding, trigger, result):
 
 
 def reconcile_binding(binding, trigger="sync_now"):
-    from app.pm_sync.access import enforce_binding_owner, mark_binding
+    from app.pm_sync.access import enforce_binding_owner, ensure_not_paused, mark_binding
 
     enforce_binding_owner(binding)
+    ensure_not_paused(binding)
     if binding.mode == "push_only":
         return push_binding(binding, trigger=trigger)
-    plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key)
+    plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key, binding=binding)
     provider = get_provider(binding.connector_id)
     config = provider.assert_connected(binding.user_id, binding.external_container_id)
     ensure_start_date_field(binding, config)
@@ -388,6 +393,19 @@ def reconcile_binding(binding, trigger="sync_now"):
     _log(binding, trigger, result); db.session.commit()
     result["success"] = not result["errors"] and not result["conflicts"]
     result["binding"] = binding.to_dict()
+    provider_interaction = bool(all_links) or any(
+        int(result.get(key) or 0) > 0
+        for key in ("created", "pulled", "pushed", "deleted", "failed")
+    )
+    if provider_interaction:
+        record_connector_read_result(
+            binding.user_id,
+            binding.connector_id,
+            "plan_sync",
+            succeeded=result["success"],
+            read_result=result if result["success"] else None,
+            error_message=(result.get("errors") or result.get("conflicts") or [""])[0],
+        )
     return result
 
 

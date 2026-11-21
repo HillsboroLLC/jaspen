@@ -340,9 +340,11 @@ def test_agent_reads_seven_canonical_cards_and_current_rescore(app, db, test_use
 
 def test_queue_keeps_seven_and_never_leaks_continuation(app, db, test_user, monkeypatch):
     _, agent = modules()
-    monkeypatch.setattr(agent, 'load_user_sessions', lambda uid: {'seven': {'session_id': 'seven'}})
+    # P2a: tools read the turn's project through _project_sessions, not the
+    # caller's personal session list.
+    monkeypatch.setattr(agent, '_project_sessions', lambda *_a, **_k: {'seven': {'session_id': 'seven'}})
     saved = []
-    monkeypatch.setattr(agent, 'save_user_sessions', lambda uid, sessions: saved.append(sessions) or True)
+    monkeypatch.setattr(agent, 'save_one_project', lambda uid, sessions, key, **_k: saved.append({key: sessions[key]}) or True)
     result = agent._execute_mutation_tool('queue_scorecards', {'ideas': [{'name': f'Option {i}'} for i in range(7)]}, user=test_user, user_id=test_user.id, thread_id='seven')
     assert result['ok'], result
     assert len(result['queue']) == 7 and result['overflow_count'] == 0
@@ -2640,7 +2642,7 @@ def test_rfp_queue_stops_when_canonical_fact_persistence_fails(app, db, test_use
     sessions = load_user_sessions(test_user.id)
     sessions[tid]['chat_history'] = [{'role': 'user', 'content': 'Option A: Contract value $14M.'}]
     assert save_user_sessions(test_user.id, sessions)
-    monkeypatch.setattr(agent, 'save_user_sessions', lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(agent, 'save_one_project', lambda *_args, **_kwargs: False)
 
     result = agent._execute_mutation_tool(
         'queue_scorecards',
@@ -2977,7 +2979,7 @@ def test_streaming_single_score_failure_suppresses_normal_looking_narration(app,
 
     monkeypatch.setattr(agent, '_anthropic_api_key', lambda: 'test-key')
     monkeypatch.setattr(agent, '_prepare_context_window', lambda *a, **k: ([{'role': 'user', 'content': 'Score Aurora'}], '', {}))
-    monkeypatch.setattr(agent, '_build_agent_system_prompt', lambda **k: 'Test')
+    monkeypatch.setattr(agent, '_build_shared_system_prompt', lambda **k: 'Test')
     monkeypatch.setattr(agent, '_wbs_content_prompt_suffix', lambda *a: '')
     monkeypatch.setattr(agent, '_anthropic_message_create', lambda *a, **k: (streams.pop(0), 'test-model'))
     monkeypatch.setattr(agent, '_execute_local_tool', lambda *a, **k: (failure, 0))
@@ -3511,7 +3513,7 @@ def test_narration_failure_keeps_completed_action_but_marks_degraded(app, test_u
     _, agent = modules()
     monkeypatch.setattr(agent, '_anthropic_api_key', lambda: 'test-key')
     monkeypatch.setattr(agent, '_prepare_context_window', lambda *a, **k: ([{'role': 'user', 'content': 'Score all 7 now'}], '', {}))
-    monkeypatch.setattr(agent, '_build_agent_system_prompt', lambda **k: 'Test')
+    monkeypatch.setattr(agent, '_build_shared_system_prompt', lambda **k: 'Test')
     monkeypatch.setattr(agent, '_wbs_content_prompt_suffix', lambda *a: '')
     monkeypatch.setattr(agent, '_maybe_capture_turn_undo_snapshot', lambda *a, **k: None)
     monkeypatch.setattr(agent, '_execute_local_tool', lambda *a, **k: ({'ok': True, 'tool': 'queue_scorecards', 'confirmation': 'Queued all seven.'}, 1))
@@ -3969,6 +3971,52 @@ def test_execution_assistant_persists_edits_before_returning_success(
     assert response.get_json()['uiActions'] == []
     saved = strategy._load_scenarios(test_user.id)[tid]['project_wbs']
     assert saved['tasks'][0]['title'] == 'Approved title'
+
+
+def test_execution_assistant_adds_first_task_when_no_plan_exists(
+    client, db, test_user, auth_headers, monkeypatch
+):
+    strategy, _ = modules()
+    tid = 'plan-refinement-first-edit'
+    seed_thread(test_user, tid)
+    monkeypatch.setattr(
+        strategy,
+        'execute_customer_text_operation',
+        lambda *a, **k: (
+            json.dumps({
+                'reply': 'Added the first task.',
+                'uiActions': [{
+                    'type': 'WBS_ADD_TASK',
+                    'payload': {
+                        'id': 'task-first',
+                        'title': 'Confirm launch owner',
+                        'status': 'todo',
+                    },
+                }],
+            }),
+            {'provider': 'test'},
+            {'charged_credits': 9, 'operation_id': 'op-first-edit'},
+        ),
+    )
+    reversals = []
+    monkeypatch.setattr(
+        strategy,
+        'reverse_customer_operation_charge',
+        lambda *args, **kwargs: reversals.append((args, kwargs)),
+    )
+
+    response = client.post(
+        f'/api/v1/strategy/threads/{tid}/execution-assistant',
+        headers=auth_headers,
+        json={'instruction': 'Add Confirm launch owner as the first task.'},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()['appliedActions'] == 1
+    assert reversals == []
+    saved = strategy._load_scenarios(test_user.id)[tid]['project_wbs']
+    assert saved['tasks'][0]['id'] == 'task-first'
+    assert saved['tasks'][0]['title'] == 'Confirm launch owner'
 
 
 def test_plan_route_rejects_invalid_task_date_without_partial_save(

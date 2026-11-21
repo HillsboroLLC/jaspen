@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from app import connector_store
-from app.connector_store import append_sync_audit_event, mark_connector_sync_result, update_connector_settings
+from app.connector_store import (
+    append_sync_audit_event,
+    mark_connector_sync_result,
+    record_connector_read_result,
+    update_connector_settings,
+)
 from app.models import AIOperation, ConnectorSyncLog
 
 def test_connector_status_returns_catalog(client, auth_headers):
@@ -63,18 +68,30 @@ def test_connector_status_reports_fresh_and_stale_confirmations(client, auth_hea
         lifecycle_status="connected",
         last_success_at=fresh_success.isoformat(),
         last_verified_at=older_verification.isoformat(),
+        verification_results={"plan_sync": {
+            "status": "success",
+            "checked_at": older_verification.isoformat(),
+            "verified_at": older_verification.isoformat(),
+            "error_message": "",
+        }},
     )
 
     fresh = _jira_status(client, auth_headers)
 
     assert fresh["freshness"] == "confirmed"
-    assert fresh["last_confirmed_at"] == fresh_success.isoformat().replace("+00:00", "Z")
+    assert fresh["last_confirmed_at"] == older_verification.isoformat().replace("+00:00", "Z")
 
     stale_success = now - timedelta(days=8)
     _store_connector_status(
         test_user.id,
         last_success_at=stale_success.isoformat(),
-        last_verified_at=None,
+        last_verified_at=stale_success.isoformat(),
+        verification_results={"plan_sync": {
+            "status": "success",
+            "checked_at": stale_success.isoformat(),
+            "verified_at": stale_success.isoformat(),
+            "error_message": "",
+        }},
     )
 
     stale = _jira_status(client, auth_headers)
@@ -96,6 +113,22 @@ def test_dual_purpose_connector_reports_data_context_freshness_separately(
         last_success_at=execution_success.isoformat(),
         last_verified_at=execution_success.isoformat(),
         data_context_verified_at=data_read.isoformat(),
+    )
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "plan_sync",
+        succeeded=True,
+        read_result={"tasks": []},
+        checked_at=execution_success.isoformat(),
+    )
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=True,
+        read_result={"projects": []},
+        checked_at=data_read.isoformat(),
     )
 
     jira = _jira_status(client, auth_headers)
@@ -130,6 +163,14 @@ def test_failed_jira_portfolio_refresh_unconfirms_data_context_until_next_succes
         jira_data_enabled=True,
         jira_portfolio_snapshot=cached,
         jira_data_last_refresh_failed=False,
+    )
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=True,
+        read_result={"projects": cached["projects"]},
+        checked_at=confirmed_at.isoformat(),
     )
 
     assert _jira_status(client, auth_headers)["data_context_freshness"] == "confirmed"
@@ -166,6 +207,7 @@ def test_connector_status_reports_never_confirmed_problem_and_disconnected_state
         lifecycle_status="connected",
         last_success_at=None,
         last_verified_at=None,
+        verification_results={},
     )
     never = _jira_status(client, auth_headers)
     assert never["freshness"] == "unconfirmed"
@@ -178,7 +220,7 @@ def test_connector_status_reports_never_confirmed_problem_and_disconnected_state
     )
     degraded = _jira_status(client, auth_headers)
     assert degraded["freshness"] == "degraded"
-    assert degraded["last_confirmed_at"] == now.isoformat().replace("+00:00", "Z")
+    assert degraded["last_confirmed_at"] is None
 
     _store_connector_status(
         test_user.id,
@@ -265,6 +307,12 @@ def test_connector_activity_deduplicates_store_and_persisted_log(client, auth_he
 def test_connector_status_normalizes_naive_utc_timestamps(client, auth_headers, test_user):
     update_connector_settings(test_user.id, "jira_sync", {
         "last_verified_at": "2026-10-13T01:26:45",
+        "verification_results": {"plan_sync": {
+            "status": "success",
+            "checked_at": "2026-10-13T01:26:45",
+            "verified_at": "2026-10-13T01:26:45",
+            "error_message": "",
+        }},
         "last_sync_at": "2026-10-13T01:20:00",
     })
 
@@ -326,6 +374,107 @@ def test_data_context_check_ignores_incomplete_jira_execution_config_and_is_thro
     assert jira["data_context_freshness"] == "confirmed"
 
 
+def test_throttled_check_never_replays_success_after_newer_failure(
+    client, auth_headers, test_user, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    update_connector_settings(test_user.id, "jira_sync", {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+        "jira_data_enabled": True,
+    })
+    calls = []
+    monkeypatch.setattr(
+        connector_routes,
+        "refresh_portfolio",
+        lambda *_args, **_kwargs: calls.append("read") or {
+            "projects": [], "stale": False, "refresh_failed": False,
+        },
+    )
+
+    first = client.get("/api/v1/connectors/jira_sync/data-context/check", headers=auth_headers)
+    first_result = connector_store.get_connector_settings(
+        test_user.id, "jira_sync"
+    )["verification_results"]["data_context"]
+    failed_at = (
+        datetime.fromisoformat(first_result["checked_at"].replace("Z", "+00:00"))
+        + timedelta(seconds=1)
+    ).isoformat()
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=False,
+        checked_at=failed_at,
+        error_message="newer provider failure",
+    )
+
+    throttled = client.get(
+        "/api/v1/connectors/jira_sync/data-context/check", headers=auth_headers
+    )
+
+    assert first.get_json()["status"] == "confirmed"
+    assert throttled.get_json() == {
+        "connector_id": "jira_sync",
+        "status": "failed",
+        "throttled": True,
+        "last_verified_at": None,
+        "error": "newer provider failure",
+    }
+    assert calls == ["read"]
+    saved = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert saved["verification_results"]["data_context"]["status"] == "failed"
+    assert saved["data_context_verified_at"] is None
+
+
+def test_disconnect_reconnect_does_not_reuse_throttled_verification(
+    client, auth_headers, test_user, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    update_connector_settings(test_user.id, "jira_sync", {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+        "jira_base_url": "https://synthetic.atlassian.test",
+        "jira_email": "dev@example.test",
+        "jira_api_token": "synthetic-token",
+        "jira_project_key": "EXEC",
+        "jira_data_enabled": True,
+    })
+    calls = []
+    monkeypatch.setattr(
+        connector_routes,
+        "refresh_portfolio",
+        lambda *_args, **_kwargs: calls.append("read") or {
+            "projects": [], "stale": False, "refresh_failed": False,
+        },
+    )
+
+    first = client.get("/api/v1/connectors/jira_sync/data-context/check", headers=auth_headers)
+    disconnected = client.patch(
+        "/api/v1/connectors/jira_sync",
+        headers=auth_headers,
+        json={"connection_status": "disconnected"},
+    )
+    reconnected = client.patch(
+        "/api/v1/connectors/jira_sync",
+        headers=auth_headers,
+        json={"connection_status": "connected"},
+    )
+    throttled = client.get(
+        "/api/v1/connectors/jira_sync/data-context/check", headers=auth_headers
+    )
+
+    assert first.get_json()["status"] == "confirmed"
+    assert disconnected.status_code == 200, disconnected.get_json()
+    assert reconnected.status_code == 200, reconnected.get_json()
+    assert throttled.get_json()["status"] == "failed"
+    assert throttled.get_json()["throttled"] is True
+    assert calls == ["read"]
+    saved = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert saved["verification_results"]["data_context"]["status"] == "failed"
+    assert saved["data_context_verified_at"] is None
+
+
 def test_jira_context_summary_updates_sync_health_for_success_and_failure(
     client, auth_headers, test_user, monkeypatch,
 ):
@@ -345,7 +494,7 @@ def test_jira_context_summary_updates_sync_health_for_success_and_failure(
     assert settings["health_status"] == "healthy"
     assert settings["consecutive_failures"] == 0
     assert settings["last_success_at"]
-    assert settings["last_verified_at"]
+    assert settings["last_verified_at"] is None
 
     failed_snapshot = {
         **successful_snapshot,
@@ -411,8 +560,9 @@ def test_expired_jira_auth_keeps_last_good_snapshot_and_records_failed_reads(
     assert calls == ["/rest/api/3/myself", "/rest/api/3/myself"]
 
     settings = connector_store.get_connector_settings(test_user.id, "jira_sync")
-    assert settings["last_verified_at"] == verified_at
-    assert settings["data_context_verified_at"] == verified_at
+    assert settings["last_verified_at"] is None
+    assert settings["data_context_verified_at"] is None
+    assert settings["verification_results"]["data_context"]["status"] == "failed"
     assert settings["jira_data_last_refresh_failed"] is True
     assert settings["jira_portfolio_snapshot"]["projects"] == cached["projects"]
     assert settings["last_sync_result"] == "failed"
@@ -440,6 +590,23 @@ def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
         "jira_data_selected_projects": ["DATA"],
     }
     _store_connector_status(test_user.id, **original)
+    plan_verified_at = "2026-11-20T12:00:00Z"
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "plan_sync",
+        succeeded=True,
+        read_result={"tasks": []},
+        checked_at=plan_verified_at,
+    )
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=True,
+        read_result={"projects": [{"key": "DATA"}]},
+        checked_at=original["data_context_verified_at"],
+    )
 
     def fail_read(*_args, **_kwargs):
         raise RuntimeError("synthetic data read failed")
@@ -459,8 +626,10 @@ def test_failed_jira_data_context_check_does_not_change_plan_sync_state(
         "jira_field_mapping", "jira_data_project_scope", "jira_data_selected_projects",
     ):
         assert settings[field] == original[field]
-    assert settings["last_verified_at"] == original["last_verified_at"]
-    assert settings["data_context_verified_at"] == original["data_context_verified_at"]
+    assert settings["last_verified_at"] == plan_verified_at
+    assert settings["data_context_verified_at"] is None
+    assert settings["verification_results"]["plan_sync"]["status"] == "success"
+    assert settings["verification_results"]["data_context"]["status"] == "failed"
 
 
 def test_salesforce_data_context_failure_uses_safe_reason_and_throttles_it(
@@ -798,10 +967,10 @@ def test_execution_result_used_by_plan_sync_import_and_webhooks_does_not_verify_
     assert settings["last_sync_result"] == "success"
     assert settings["last_sync_at"]
     assert settings["last_success_at"]
-    assert settings["last_verified_at"]
+    assert settings["last_verified_at"] is None
     assert settings["data_context_verified_at"] is None
     status = _connector_status(client, auth_headers, connector_id)
-    assert status["freshness"] == "confirmed"
+    assert status["freshness"] == "unconfirmed"
     assert status["data_context_freshness"] == "unconfirmed"
 
 
@@ -830,7 +999,7 @@ def test_jira_credential_health_and_setup_checks_do_not_verify_data_context(
     assert health.status_code == 200
     assert setup.status_code == 200, setup.get_json()
     settings = connector_store.get_connector_settings(test_user.id, "jira_sync")
-    assert settings["last_verified_at"]
+    assert settings["last_verified_at"] is None
     assert settings["data_context_verified_at"] is None
     assert _jira_status(client, auth_headers)["data_context_freshness"] == "unconfirmed"
 
@@ -860,7 +1029,7 @@ def test_salesforce_setup_check_verifies_with_minimal_data_read(
     )
 
     assert response.status_code == 200, response.get_json()
-    assert calls == [((test_user.id,), {"lookback_days": 1, "max_records": 1})]
+    assert calls == [((test_user.id,), {"lookback_days": 1, "max_records": 1, "force": True})]
     settings = connector_store.get_connector_settings(test_user.id, "salesforce_insights")
     assert settings["connection_status"] == "connected"
     assert settings["lifecycle_status"] == "connected"
@@ -932,8 +1101,34 @@ def test_smartsheet_data_context_read_updates_analysis_and_data_sources_freshnes
     assert status["data_context_freshness"] == "confirmed"
 
 
+def test_smartsheet_empty_object_is_not_a_verified_read(
+    client, auth_headers, test_user, monkeypatch,
+):
+    connector_routes = importlib.import_module("app.routes.connectors")
+    update_connector_settings(test_user.id, "smartsheet_sync", {
+        "connection_status": "connected",
+        "lifecycle_status": "connected",
+        "smartsheet_base_url": "https://synthetic.smartsheet.test",
+        "smartsheet_sheet_id": "sheet-1",
+        "smartsheet_api_token": "synthetic-token",
+        "smartsheet_data_enabled": True,
+    })
+    monkeypatch.setattr(connector_routes, "smartsheet_get_sheet", lambda *_args, **_kwargs: {})
+
+    response = client.get(
+        "/api/v1/connectors/smartsheet_sync/data-context/check", headers=auth_headers
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "failed"
+    settings = connector_store.get_connector_settings(test_user.id, "smartsheet_sync")
+    assert settings["last_verified_at"] is None
+    assert settings["data_context_verified_at"] is None
+    assert settings["verification_results"]["data_context"]["status"] == "failed"
+
+
 @pytest.mark.parametrize("connector_id", ["salesforce_insights", "snowflake_insights"])
-def test_data_only_connector_success_keeps_existing_freshness_rule(
+def test_sync_success_without_a_read_does_not_verify_data_only_connector(
     client, auth_headers, test_user, connector_id,
 ):
     update_connector_settings(test_user.id, connector_id, {
@@ -944,7 +1139,7 @@ def test_data_only_connector_success_keeps_existing_freshness_rule(
     mark_connector_sync_result(test_user.id, connector_id, "success")
 
     status = _connector_status(client, auth_headers, connector_id)
-    assert status["freshness"] == "confirmed"
+    assert status["freshness"] == "unconfirmed"
     assert "data_context_freshness" not in status
 
 
@@ -968,6 +1163,197 @@ def test_connected_settings_save_does_not_refresh_last_verified_at(test_user):
 
 
 @pytest.mark.parametrize(
+    "connector_id",
+    [
+        "jira_sync",
+        "smartsheet_sync",
+        "salesforce_insights",
+        "snowflake_insights",
+        "oracle_fusion_insights",
+        "servicenow_insights",
+        "netsuite_insights",
+    ],
+)
+def test_verification_owner_uses_latest_real_read_result(test_user, connector_id):
+    record_connector_read_result(
+        test_user.id,
+        connector_id,
+        "data_context",
+        succeeded=True,
+        read_result={"rows": []},
+        checked_at="2026-11-21T12:00:00Z",
+    )
+
+    verified = connector_store.get_connector_settings(test_user.id, connector_id)
+    assert verified["last_verified_at"] == "2026-11-21T12:00:00Z"
+    assert verified["verification_results"]["data_context"]["status"] == "success"
+
+    record_connector_read_result(
+        test_user.id,
+        connector_id,
+        "data_context",
+        succeeded=False,
+        error_message="synthetic provider failure",
+        checked_at="2026-11-21T12:01:00Z",
+    )
+
+    failed = connector_store.get_connector_settings(test_user.id, connector_id)
+    assert failed["last_verified_at"] is None
+    assert failed["verification_results"]["data_context"] == {
+        "status": "failed",
+        "checked_at": "2026-11-21T12:01:00Z",
+        "verified_at": None,
+        "error_message": "synthetic provider failure",
+    }
+
+
+def test_verification_owner_rejects_out_of_order_results_and_failure_wins_ties(test_user):
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=True,
+        read_result={"projects": []},
+        checked_at="2026-11-21T12:00:00Z",
+    )
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=False,
+        error_message="newer failure",
+        checked_at="2026-11-21T12:05:00Z",
+    )
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=True,
+        read_result={"projects": [{"key": "LATE"}]},
+        checked_at="2026-11-21T12:00:00Z",
+    )
+
+    newer_failure = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert newer_failure["verification_results"]["data_context"]["status"] == "failed"
+    assert newer_failure["verification_results"]["data_context"]["checked_at"] == "2026-11-21T12:05:00Z"
+
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=True,
+        read_result={"projects": []},
+        checked_at="2026-11-21T12:10:00Z",
+    )
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=False,
+        error_message="older failure",
+        checked_at="2026-11-21T12:09:00Z",
+    )
+    newer_success = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert newer_success["verification_results"]["data_context"]["status"] == "success"
+    assert newer_success["verification_results"]["data_context"]["checked_at"] == "2026-11-21T12:10:00Z"
+
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=False,
+        error_message="tied failure",
+        checked_at="2026-11-21T12:10:00Z",
+    )
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=True,
+        read_result={"projects": []},
+        checked_at="2026-11-21T12:10:00Z",
+    )
+    tied = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert tied["verification_results"]["data_context"]["status"] == "failed"
+    assert tied["verification_results"]["data_context"]["error_message"] == "tied failure"
+
+
+def test_empty_anonymous_result_never_verifies_and_purposes_remain_isolated(test_user):
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "plan_sync",
+        succeeded=True,
+        read_result={"tasks": []},
+        checked_at="2026-11-21T12:00:00Z",
+    )
+    record_connector_read_result(
+        test_user.id,
+        "jira_sync",
+        "data_context",
+        succeeded=True,
+        read_result={},
+        checked_at="2026-11-21T12:01:00Z",
+    )
+
+    settings = connector_store.get_connector_settings(test_user.id, "jira_sync")
+    assert settings["last_verified_at"] == "2026-11-21T12:00:00Z"
+    assert settings["data_context_verified_at"] is None
+    assert settings["verification_results"]["plan_sync"]["status"] == "success"
+    assert settings["verification_results"]["data_context"]["status"] == "failed"
+
+
+def test_verification_results_are_tenant_isolated(test_user):
+    other_user_id = "other-tenant-user"
+    record_connector_read_result(
+        test_user.id,
+        "snowflake_insights",
+        "data_context",
+        succeeded=True,
+        read_result={"rows": []},
+    )
+
+    assert connector_store.get_connector_settings(test_user.id, "snowflake_insights")["last_verified_at"]
+    assert connector_store.get_connector_settings(other_user_id, "snowflake_insights")["last_verified_at"] is None
+
+
+@pytest.mark.parametrize(
+    ("connector_id", "settings"),
+    [
+        ("oracle_fusion_insights", {
+            "oracle_fusion_base_url": "https://oracle.test",
+            "oracle_fusion_username": "user",
+            "oracle_fusion_password": "secret",
+        }),
+        ("servicenow_insights", {
+            "servicenow_instance_url": "https://servicenow.test",
+            "servicenow_username": "user",
+            "servicenow_password": "secret",
+        }),
+        ("netsuite_insights", {
+            "netsuite_account_id": "account",
+            "netsuite_consumer_key": "key",
+            "netsuite_consumer_secret": "secret",
+            "netsuite_token_id": "token",
+            "netsuite_token_secret": "token-secret",
+        }),
+    ],
+)
+def test_generic_setup_check_never_stamps_verification(
+    client, auth_headers, test_user, connector_id, settings,
+):
+    update_connector_settings(test_user.id, connector_id, settings)
+
+    response = client.get(f"/api/v1/connectors/{connector_id}/check", headers=auth_headers)
+
+    assert response.status_code == 200, response.get_json()
+    saved = connector_store.get_connector_settings(test_user.id, connector_id)
+    assert saved["connection_status"] == "connected"
+    assert saved["last_verified_at"] is None
+    assert saved["verification_results"] == {}
+
+
+@pytest.mark.parametrize(
     ("connector_id", "settings", "probe_name"),
     [
         ("jira_sync", {"jira_data_enabled": True}, "refresh_portfolio"),
@@ -988,3 +1374,7 @@ def test_each_discovery_source_uses_a_live_read(app, monkeypatch, connector_id, 
     connector_routes._verify_data_context_read("user-1", connector_id, settings)
 
     assert len(calls) == 1
+    if connector_id == "jira_sync":
+        assert calls[0][1]["force"] is True
+    elif connector_id in {"salesforce_insights", "snowflake_insights"}:
+        assert calls[0][1]["force"] is True

@@ -17,6 +17,7 @@ from ..models import User
 from ..models_decision_record import DecisionRecord
 from ..decision_records import (
     can_read_record,
+    can_write_record,
     clear_supersession,
     create_or_refresh_record,
     current_state,
@@ -24,6 +25,8 @@ from ..decision_records import (
     current_option_decisions,
     decision_signals_for,
     option_dispositions,
+    option_decision_display_text,
+    record_project_row,
     option_decision_history,
     record_option_decision,
     supersede_record,
@@ -43,7 +46,11 @@ from ..decision_retrieval import (
     search,
     summarize,
 )
-from ..session_access import can_write_session, canonical_row
+from ..session_access import (
+    SessionForbidden,
+    SessionNotFound,
+    resolve_session_for_actor,
+)
 
 decision_records_bp = Blueprint('decision_records', __name__)
 
@@ -51,8 +58,9 @@ decision_records_bp = Blueprint('decision_records', __name__)
 def _decision_view(record, user, option_key=None):
     """A record plus the two things the UI cannot compute for itself:
     its derived current state, and whether THIS caller may change it."""
-    row = canonical_row(user, record.thread_id, include_archived=True)
-    can_edit = True if row is None else can_write_session(row, user)
+    # Record-bound (P2e-C1): the record's own project decides, not the
+    # caller's active organization.
+    can_edit = can_write_record(record, user)
     payload = record.to_dict(include_record=False)
     payload['current_state'] = current_state(record)
     payload['can_edit'] = bool(can_edit)
@@ -91,6 +99,7 @@ def _decision_view(record, user, option_key=None):
         payload['current_state'] = 'unknown'
         if option_row is not None:
             option_payload = option_row.to_dict()
+            option_payload['display_text'] = option_decision_display_text(option_row)
             option_payload['current_state'] = 'current'
             option_payload['replaces_earlier_decision'] = bool(option_row.supersedes_id)
             option_payload['history'] = [
@@ -167,10 +176,38 @@ def _writable_record_or_none(record_id, user):
     record = _owned_record_or_404(record_id, user)
     if record is None:
         return None, 404
-    row = canonical_row(user, record.thread_id, include_archived=True)
-    if row is not None and not can_write_session(row, user):
+    # Record-bound (P2e-C1): write access to the record's OWN project
+    # (record_project_row). Resolving the thread id through the caller's
+    # active organization let a same-id project elsewhere grant the write.
+    if not can_write_record(record, user):
         return None, 403
     return record, None
+
+
+def _authorize_thread_write(user, thread_id):
+    """Authorize a write to one project's record, before any side effect.
+
+    The access seam decides (resolve_session_for_actor): a project the caller
+    cannot read (unknown id, former member under enforcement, another
+    organization) answers 404 exactly as an unknown thread always has, so ids
+    cannot be probed; a reader without an editing role answers 403.
+
+    Returns (row, None) or (None, response).
+    """
+    try:
+        row, _membership = resolve_session_for_actor(
+            user, thread_id, require_write=True, include_archived=True,
+        )
+    except SessionNotFound:
+        return None, (jsonify({
+            'error': f'No conversation or analysis found for thread {thread_id}',
+        }), 404)
+    except SessionForbidden:
+        return None, (jsonify({
+            'error': 'Your role on this project is read-only',
+            'code': 'forbidden',
+        }), 403)
+    return row, None
 
 
 @decision_records_bp.route('/from-thread/<thread_id>', methods=['POST'])
@@ -184,14 +221,11 @@ def create_from_thread(thread_id):
     user = _current_user()
     if not user:
         return jsonify({'error': 'User not found'}), 404
-    row = canonical_row(user, thread_id, include_archived=True)
-    if row is not None and not can_write_session(row, user):
-        return jsonify({
-            'error': 'Your role on this project is read-only',
-            'code': 'forbidden',
-        }), 403
+    row, refusal = _authorize_thread_write(user, thread_id)
+    if refusal is not None:
+        return refusal
     try:
-        record, created = create_or_refresh_record(user, thread_id)
+        record, created = create_or_refresh_record(user, thread_id, session_row=row)
     except LookupError as exc:
         return jsonify({'error': str(exc)}), 404
     return jsonify({'record': record.to_dict(), 'created': created}), 201 if created else 200
@@ -281,8 +315,8 @@ def get_record(record_id):
         return jsonify({'error': 'Decision record not found'}), 404
     full = record.to_dict()
     full['current_state'] = current_state(record)
-    row = canonical_row(user, record.thread_id, include_archived=True)
-    full['can_edit'] = True if row is None else bool(can_write_session(row, user))
+    row = record_project_row(record)
+    full['can_edit'] = can_write_record(record, user, session_row=row, session_loaded=True)
     full['option_dispositions'] = option_dispositions(record, session=row)
     full['decision_signals'] = [item.to_dict() for item in decision_signals_for(record)]
     return jsonify({'record': full})
@@ -509,15 +543,12 @@ def add_accepted_exposure(thread_id):
     user = _current_user()
     if not user:
         return jsonify({'error': 'User not found'}), 404
-    row = canonical_row(user, thread_id, include_archived=True)
-    if row is not None and not can_write_session(row, user):
-        return jsonify({
-            'error': 'Your role on this project is read-only',
-            'code': 'forbidden',
-        }), 403
+    row, refusal = _authorize_thread_write(user, thread_id)
+    if refusal is not None:
+        return refusal
     data = request.get_json(silent=True) or {}
     try:
-        record, _ = create_or_refresh_record(user, thread_id)
+        record, _ = create_or_refresh_record(user, thread_id, session_row=row)
         entry, created = accept_exposure(
             record,
             user,

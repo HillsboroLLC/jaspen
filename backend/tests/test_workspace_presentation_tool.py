@@ -22,6 +22,13 @@ def _card(card_id, name='Workspace option'):
 
 
 def _save_card(user_id, card_id):
+    """A scorecard of this user's project (OD-6 A: a card never stands on its
+    own outside a project, so the project row is part of the fixture)."""
+    from app.routes.sessions import load_user_sessions, save_user_sessions
+    if THREAD_ID not in (load_user_sessions(user_id) or {}):
+        assert save_user_sessions(user_id, {THREAD_ID: {
+            'session_id': THREAD_ID, 'name': 'Workspace project', 'chat_history': [],
+        }})
     upsert_scorecard(
         user_id=user_id,
         thread_id=THREAD_ID,
@@ -315,13 +322,13 @@ def test_session_card_save_writes_only_its_own_project(app, db, client, test_use
     _seed_session_card(test_user.id, thread_id='other-project', card_id='other-card')
     import app.routes.strategy as strategy
     seen = []
-    real = strategy.save_user_sessions
+    real = strategy.save_one_project
 
-    def spy(user_id, sessions, *args, **kwargs):
-        seen.append(sorted(sessions))
-        return real(user_id, sessions, *args, **kwargs)
+    def spy(user_id, sessions, key, *args, **kwargs):
+        seen.append([key])
+        return real(user_id, sessions, key, *args, **kwargs)
 
-    monkeypatch.setattr(strategy, 'save_user_sessions', spy)
+    monkeypatch.setattr(strategy, 'save_one_project', spy)
     assert client.patch(url, json=EDIT, headers=auth_headers).status_code == 200
     assert seen == [['persist-thread']]
 
@@ -329,7 +336,7 @@ def test_session_card_save_writes_only_its_own_project(app, db, client, test_use
 def test_a_failed_write_is_reported_not_claimed(app, db, client, test_user, auth_headers, monkeypatch):
     url = _seed_session_card(test_user.id)
     import app.routes.strategy as strategy
-    monkeypatch.setattr(strategy, 'save_user_sessions', lambda *a, **k: False)
+    monkeypatch.setattr(strategy, 'save_one_project', lambda *a, **k: False)
     response = client.patch(url, json=EDIT, headers=auth_headers)
     assert response.status_code == 500
     assert response.get_json() == {
@@ -353,20 +360,20 @@ def test_in_place_edit_saves_only_its_project_and_survives_a_reload(app, db, cli
     url = _seed_session_card(test_user.id)
     _seed_session_card(test_user.id, thread_id='other-project', card_id='other-card')
     seen = []
-    real = strategy.save_user_sessions
+    real = strategy.save_one_project
 
-    def spy(user_id, sessions, *args, **kwargs):
-        seen.append(sorted(sessions))
-        return real(user_id, sessions, *args, **kwargs)
+    def spy(user_id, sessions, key, *args, **kwargs):
+        seen.append([key])
+        return real(user_id, sessions, key, *args, **kwargs)
 
-    monkeypatch.setattr(strategy, 'save_user_sessions', spy)
+    monkeypatch.setattr(strategy, 'save_one_project', spy)
     card = apply_scorecard_edit_in_place(
         test_user.id, 'persist-thread', 'persist-card',
         lambda current: {**current, 'executive_summary': 'Edited in place.'},
     )
     assert card['executive_summary'] == 'Edited in place.'
     assert seen == [['persist-thread']]
-    monkeypatch.setattr(strategy, 'save_user_sessions', real)
+    monkeypatch.setattr(strategy, 'save_one_project', real)
     workspace = client.get(url.rsplit('/overrides', 1)[0], headers=auth_headers).get_json()
     assert workspace['scorecard']['executive_summary'] == 'Edited in place.'
 
@@ -375,7 +382,7 @@ def test_in_place_edit_that_cannot_be_stored_raises(app, db, test_user, monkeypa
     import pytest
     import app.routes.strategy as strategy
     _seed_session_card(test_user.id)
-    monkeypatch.setattr(strategy, 'save_user_sessions', lambda *a, **k: False)
+    monkeypatch.setattr(strategy, 'save_one_project', lambda *a, **k: False)
     with pytest.raises(strategy.OverridesSaveFailed):
         strategy.apply_scorecard_edit_in_place(
             test_user.id, 'persist-thread', 'persist-card',
@@ -387,7 +394,7 @@ def test_patch_scorecard_tool_reports_a_failed_save(app, db, test_user, monkeypa
     import app.routes.strategy as strategy
     from app.routes.ai_agent import _execute_mutation_tool
     _seed_session_card(test_user.id)
-    monkeypatch.setattr(strategy, 'save_user_sessions', lambda *a, **k: False)
+    monkeypatch.setattr(strategy, 'save_one_project', lambda *a, **k: False)
     result = _execute_mutation_tool(
         'patch_scorecard',
         {'scorecard_id': 'persist-card', 'executive_summary': 'Lost edit.'},

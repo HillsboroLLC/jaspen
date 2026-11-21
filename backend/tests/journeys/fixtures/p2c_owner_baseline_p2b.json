@@ -1,0 +1,132 @@
+{
+  "email/send": {
+    "attachments": [
+      {
+        "content_type": "application/pdf",
+        "filename": "title-marker-p2b-7q-scorecard.pdf",
+        "sha256": "d6744c9e411b213e77611b206760e528368768f66ae445e56a4fa7eeb7553f0e"
+      },
+      {
+        "content_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "filename": "title-marker-p2b-7q-scorecard.pptx",
+        "sha256": "d0dfcafb7f75038e989ddb4e55d362775040a0532d63ea8e7df0693ef86164ef"
+      }
+    ],
+    "html_sha256": "e03600578a73f4bd9fe0b7aa4af76e5380fdc7d33522dec20e00d286db467229",
+    "status": 202,
+    "subject": "Why this order: Shared MARKER-P2B-7Q",
+    "text_sha256": "e6ba170ca244d441f68801d630d91963d33e252028a7c32ed8d3a84fa7662ece"
+  },
+  "export/conversation-markdown": {
+    "content_type": "text/markdown; charset=utf-8; charset=utf-8",
+    "disposition": "attachment; filename=shared-marker-p2b-7q-conversation.md",
+    "sha256": "47098b008b6df4613cc9b765f864c2ef65aa52bf7935f8ef69cad5f9458a458f",
+    "status": 200
+  },
+  "export/conversation-pdf": {
+    "content_type": "application/pdf",
+    "disposition": "attachment; filename=shared-marker-p2b-7q-conversation.pdf",
+    "sha256": "e02ec94f7aa33aa7baf3e7479fc9289dfcdd6fce22ffc8848fb60dee80a926da",
+    "status": 200
+  },
+  "export/scorecard-docx": {
+    "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "disposition": "attachment; filename=title-marker-p2b-7q-scorecard.docx",
+    "sha256": "cb2d1da74beacc99fbabd148af9dd49131db7f5231e943e537b227b3b62432f8",
+    "status": 200
+  },
+  "export/scorecard-docx/default-card": {
+    "content_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "disposition": "attachment; filename=title-marker-p2b-7q-scorecard.docx",
+    "sha256": "cb2d1da74beacc99fbabd148af9dd49131db7f5231e943e537b227b3b62432f8",
+    "status": 200
+  },
+  "export/scorecard-pdf": {
+    "content_type": "application/pdf",
+    "disposition": "attachment; filename=title-marker-p2b-7q-scorecard.pdf",
+    "sha256": "d6744c9e411b213e77611b206760e528368768f66ae445e56a4fa7eeb7553f0e",
+    "status": 200
+  },
+  "export/scorecard-pdf/default-card": {
+    "content_type": "application/pdf",
+    "disposition": "attachment; filename=title-marker-p2b-7q-scorecard.pdf",
+    "sha256": "d6744c9e411b213e77611b206760e528368768f66ae445e56a4fa7eeb7553f0e",
+    "status": 200
+  },
+  "export/scorecard-pdf/unknown-card": {
+    "status": 404
+  },
+  "export/scorecard-pptx": {
+    "content_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "disposition": "attachment; filename=title-marker-p2b-7q-scorecard.pptx",
+    "sha256": "d0dfcafb7f75038e989ddb4e55d362775040a0532d63ea8e7df0693ef86164ef",
+    "status": 200
+  },
+  "export/scorecard-pptx/default-card": {
+    "content_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "disposition": "attachment; filename=title-marker-p2b-7q-scorecard.pptx",
+    "sha256": "d0dfcafb7f75038e989ddb4e55d362775040a0532d63ea8e7df0693ef86164ef",
+    "status": 200
+  },
+  "export/scorecard-xlsx": {
+    "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "disposition": "attachment; filename=title-marker-p2b-7q-scorecard.xlsx",
+    "sha256": "5b70deffaab8361b4352747559095870988ce5cc5a601d6e78dc7a71026e21c2",
+    "status": 200
+  },
+  "export/scorecard-xlsx/default-card": {
+    "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "disposition": "attachment; filename=title-marker-p2b-7q-scorecard.xlsx",
+    "sha256": "5b70deffaab8361b4352747559095870988ce5cc5a601d6e78dc7a71026e21c2",
+    "status": 200
+  },
+  "export/wbs-csv": {
+    "content_type": "text/csv; charset=utf-8; charset=utf-8",
+    "disposition": "attachment; filename=shared-marker-p2b-7q-wbs.csv",
+    "sha256": "fa50213238cd16fbdbf433ae8e2e9bcf36538409ebd80e50171e0051222d1340",
+    "status": 200
+  },
+  "export/wbs-csv/unknown-card": {
+    "status": 200
+  },
+  "export/wbs-xlsx": {
+    "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "disposition": "attachment; filename=shared-marker-p2b-7q-execution-plan.xlsx",
+    "sha256": "bf31b49be88358a4bc6226983fdc78d23742ca0a225c2b185ea3472a90038638",
+    "status": 200
+  },
+  "report/generate": {
+    "analysis": {
+      "component_scores": {},
+      "financial_impact": {},
+      "jaspen_score": 72.0,
+      "project_name": "Vendor A MARKER-P2B-7Q",
+      "score_category": null,
+      "thread_id": "t-shared",
+      "updated_at": "<time>"
+    },
+    "filename": "vendor-a-marker-p2b-7q-executive_summary.pdf",
+    "project_name": "Vendor A MARKER-P2B-7Q",
+    "status": 200
+  },
+  "share/preview": {
+    "content_type": "application/json",
+    "disposition": null,
+    "sha256": "5544f71cd2194a3dfc9b96bfa85dc222d04a4701210131de0634cfc098a9c90f",
+    "status": 200
+  },
+  "starter/create": {
+    "fields": {
+      "intake_context": {
+        "objective": "balanced"
+      },
+      "is_shared": false,
+      "lever_defaults": {},
+      "name": "Owner starter",
+      "objective": "balanced",
+      "scoring_weights": {},
+      "source_thread_id": "t-shared"
+    },
+    "status": 201
+  }
+}

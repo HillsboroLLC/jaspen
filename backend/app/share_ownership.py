@@ -51,11 +51,20 @@ def resolve(owner_user_id, thread_id):
     return classify([org_id or None for (org_id,) in rows])
 
 
-def record_for_new_link(link):
-    """Store ownership for a link being created (same transaction as the link)."""
+def record_for_new_link(link, project_row=None):
+    """Store ownership for a link being created (same transaction as the link).
+
+    ``project_row`` is the canonical project the creator was authorized to
+    share. Its organization owns the link, so a teammate's link of the
+    organization's project is the organization's, exactly like the project
+    owner's. Without it, ownership is resolved from the creator's own rows.
+    """
     if link.id is None:
         db.session.flush()
-    state, org_id = resolve(link.owner_user_id, link.thread_id)
+    if project_row is not None:
+        state, org_id = classify([project_row.organization_id or None])
+    else:
+        state, org_id = resolve(link.owner_user_id, link.thread_id)
     row = SharedArtifactOwnership(
         shared_artifact_id=link.id,
         state=state,

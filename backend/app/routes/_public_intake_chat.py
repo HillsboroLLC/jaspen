@@ -177,6 +177,7 @@ def _stream_ai_reply(user_message, prior_history, readiness, ready, *, idempoten
             messages=messages,
             system_prompt=system_prompt,
             operation_type='public_intake_chat',
+            prompt_family='public_intake_chat',
             model_type='pluto',
             legacy_model=_public_preferred_model(),
             max_tokens=_PUBLIC_MAX_TOKENS,

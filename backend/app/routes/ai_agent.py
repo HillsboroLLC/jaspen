@@ -15,6 +15,7 @@ import math
 import os
 import re
 import time
+import types
 import uuid
 from urllib.parse import unquote
 
@@ -29,7 +30,7 @@ except Exception:
 
 from app import db, limiter, mail, org_access
 from app.admin_audit import append_user_audit_event
-from app.models import BatchIdeaUpload, UsageEvent, User
+from app.models import BatchIdeaUpload, UsageEvent, User, UserSession
 from app.billing_config import (
     bootstrap_legacy_credits,
     consume_credits,
@@ -59,7 +60,26 @@ from app.ai_governance import (
     routing_decision,
     shadow_comparison,
 )
-from app.ai_audit import attach_governance, persist_operation
+from app.ai_audit import (
+    attach_governance,
+    claim_turn_operation,
+    close_turn_operation_alone,
+    note_turn_operation,
+    persist_operation,
+    session_has_uncommitted_writes,
+    transaction_counters,
+)
+from app.ai_context import build_shared_assistant_context
+from app.context_budget import (
+    ContextBudgetConfigurationError,
+    ContextBudgetOverflow,
+    context_budget_mode,
+    plan_context_request,
+    with_provider_reported_tokens,
+)
+from app.ai_providers import anthropic as anthropic_provider
+from app.ai_providers import gemini as gemini_provider
+from app.ai_providers.usage import reported_error_usage
 from app.ai_runtime import (
     AIOperationPaymentRequired,
     execute_customer_operation,
@@ -76,6 +96,7 @@ from app.tool_registry import (
     is_tool_allowed,
 )
 from sqlalchemy import or_
+from app.conversation_turn import ConversationTurn, TurnBilling, TurnStore
 from app.orgs import normalize_org_role, resolve_active_org_for_user
 from app.scenarios_store import clear_all_scenarios_data
 from app.scorecards import (
@@ -221,58 +242,242 @@ def _rate_limit_usage_count(rate_key, limit_item):
 # ─────────────────────────────────────────────────────────────────────────────
 
 from .sessions import (
+    _session_row_to_payload,
     load_user_sessions,
     load_sessions_for_thread,
-    save_user_sessions,
+    delete_user_sessions,
+    run_project_write,
+    save_one_project,
+    save_project_session,
     archive_user_session,
     restore_user_session,
     hard_delete_user_session,
 )
+from app.orgs import active_membership_for_user, can_edit_projects
+from app.scenarios_store import ScenariosData
 from app.session_access import (
     RevisionConflict,
     SessionAccessError,
+    require_can_create_session,
     SessionNotFound,
+    active_org_id_for_user,
     can_archive_session,
+    can_read_session,
+    can_write_session,
     canonical_row,
     check_revision,
     extract_base_revision,
+    is_attributed_to,
     is_hidden_for,
+    is_personal_session_id,
+    pin_active_organization,
     resolve_session_for_actor,
 )
 
 
-def _authorized_thread_scope(user_id, thread_id, *, require_write=False,
-                             include_archived=False, allow_missing=False):
-    """Authorize this caller for one thread, then return its working set.
+# Moved unchanged to app.project_scope so the workspace routes use the same
+# helper; the name stays for every existing caller in this module.
+from app.project_scope import authorized_thread_scope as _authorized_thread_scope
+from app.project_scope import project_scenarios as _project_scenarios_for_row
 
-    Returns ``(user, sessions, row)``. Authorization runs BEFORE the sessions
-    dict is assembled, so no handler downstream can build a response or a
-    prompt out of a row the caller may not read.
 
-    The returned dict is the caller's own sessions plus the organization's
-    canonical row for this thread, which keeps the existing
-    ``_resolve_user_session(sessions, thread_id)`` idiom working unchanged.
+class TurnProject:
+    """The one project an AI turn is authorized to act on.
 
-    Raises SessionAccessError; the app-level handler renders it as
-    404 / 403 / 409 with a machine-readable ``code``.
+    This is the blueprint's ProjectContext for the turn. The route resolves it
+    through the project access seam (session_access) before anything is
+    reserved or generated; tools, decision capture and the prompt builders
+    inside the turn then act on THIS project instead of looking it up again
+    among the caller's own rows. That second lookup is what made a teammate's
+    tool find no project, or the wrong one.
+
+    The context carries identity and authorization. Project content is read
+    fresh from the canonical row on each access, because tools save during the
+    turn and a later tool must see the earlier one's change. Saves still go
+    through the store, which keeps its own revision and permission checks.
     """
-    user = User.query.get(str(user_id))
-    if user is None:
+
+    __slots__ = (
+        "user", "project_id", "organization_id", "role", "can_read", "can_write",
+        "revision", "exists", "row_id",
+    )
+
+    def __init__(self, *, user, project_id, organization_id, role, can_read, can_write,
+                 revision, exists, row_id=None):
+        self.user = user
+        self.project_id = str(project_id or "").strip()
+        self.organization_id = organization_id
+        self.role = role
+        self.can_read = bool(can_read)
+        self.can_write = bool(can_write)
+        self.revision = revision
+        self.exists = bool(exists)
+        # The canonical row authorized at turn entry. Later reads load THIS
+        # row, never "whatever row the member's active organization resolves
+        # to now", so a mid-turn organization switch cannot swap projects.
+        self.row_id = row_id
+
+    @property
+    def actor_user_id(self):
+        return str(self.user.id) if self.user is not None else None
+
+    def matches(self, thread_id):
+        return bool(self.project_id) and self.project_id == str(thread_id or "").strip()
+
+    def row(self):
+        """The canonical row as it is now, or None when there is no row yet or
+        this member can no longer read it."""
+        if self.user is None or not self.project_id or not self.can_read:
+            return None
+        if self.row_id is not None:
+            row = db.session.get(UserSession, self.row_id)
+            if (
+                row is None or row.archived_at is not None
+                or str(row.session_id) != self.project_id
+            ):
+                return None
+        else:
+            # No row at turn entry (a new conversation): the row this turn
+            # creates, in the organization the turn authorized, bound once.
+            query = UserSession.query.filter_by(session_id=self.project_id).filter(
+                UserSession.archived_at.is_(None),
+            )
+            if self.organization_id:
+                query = query.filter_by(organization_id=str(self.organization_id))
+            else:
+                query = query.filter(
+                    UserSession.organization_id.is_(None),
+                    UserSession.user_id == self.actor_user_id,
+                )
+            row = query.order_by(UserSession.created_at.asc(), UserSession.id.asc()).first()
+            if row is None:
+                return None
+            self.row_id = row.id
+        if is_hidden_for(row, self.actor_user_id):
+            return None
+        if not can_read_session(row, self.user):
+            return None
+        return row
+
+    def sessions(self):
+        """``{key: payload}`` holding exactly this project, or ``{}``.
+
+        Same shape the tool code always worked with, so the existing
+        ``_resolve_user_session(sessions, thread_id)`` idiom is unchanged, and a
+        save of this dictionary writes this one project only.
+        """
+        row = self.row()
+        if row is None:
+            return {}
+        payload = _session_row_to_payload(row)
+        return {str(payload.get("session_id") or row.session_id): payload}
+
+    def scenarios(self):
+        """This project's scorecard and plan data, in the store's snapshot form.
+
+        Mirrors ``scenarios_store.load_scenarios_data`` for the one canonical
+        row, so a later ``_save_project_scenarios`` applies only this request's
+        change on top of the row (the store's delta merge), never a stale copy.
+        """
+        return _project_scenarios_for_row(self.row())
+
+
+def _build_turn_project(user, thread_id):
+    """Resolve and authorize one project for an AI turn.
+
+    An existing project is authorized against its canonical row; a member who
+    cannot read it gets SessionNotFound (404, so ids cannot be probed). A
+    project that does not exist yet (the first turn of a new conversation) is
+    authorized against the member's organization role, as creation is.
+    """
+    if user is not None and not isinstance(user, User):
+        user = User.query.get(str(user))
+    project_id = str(thread_id or "").strip()
+    if user is None or not project_id:
         raise SessionNotFound()
-    try:
-        row, _membership = resolve_session_for_actor(
-            user, thread_id, require_write=require_write, include_archived=include_archived
+
+    row = canonical_row(user, project_id)
+    if row is None:
+        organization_id = active_org_id_for_user(user)
+        membership = (
+            active_membership_for_user(organization_id, str(user.id))
+            if organization_id and not is_personal_session_id(project_id) else None
         )
-    except SessionNotFound as exc:
-        # allow_missing preserves endpoints that can still answer for a thread
-        # with no session row (e.g. usage assembled from UsageEvent rows).
-        # A FORBIDDEN or unreadable row is never softened -- only a genuinely
-        # absent one.
-        if not allow_missing or exc.denied:
-            raise
-        row = None
-    sessions = load_sessions_for_thread(user, thread_id, include_archived=include_archived)
-    return user, sessions, row
+        role = normalize_org_role(membership.role) if membership is not None else None
+        return TurnProject(
+            user=user, project_id=project_id, organization_id=organization_id, role=role,
+            can_read=True,
+            can_write=(can_edit_projects(role) if membership is not None else True),
+            revision=None, exists=False,
+        )
+
+    row, membership = resolve_session_for_actor(user, project_id)
+    role = normalize_org_role(membership.role) if membership is not None else (
+        "owner" if is_attributed_to(row, str(user.id)) else None
+    )
+    return TurnProject(
+        user=user, project_id=project_id, organization_id=row.organization_id, role=role,
+        can_read=True, can_write=can_write_session(row, user, membership=membership),
+        revision=int(row.revision or 1), exists=True, row_id=row.id,
+    )
+
+
+def _authorize_turn_project(user, thread_id):
+    """Build the turn's project and hold its organization for the request.
+
+    Called by the turn routes once they have authorized the project, before
+    anything is reserved or generated.
+    """
+    project = _build_turn_project(user, thread_id)
+    pin_active_organization(project.actor_user_id, project.organization_id)
+    return project
+
+
+def _turn_project(user, thread_id, project=None):
+    """The turn's project: the one the route authorized, or (for callers that
+    run a tool outside a turn) the same project resolved through the same
+    access seam. Never a lookup among the caller's personal rows."""
+    if isinstance(project, TurnProject) and project.matches(thread_id):
+        return project
+    return _build_turn_project(user, thread_id)
+
+
+def _scorecard_project(user_id, thread_id, project=None):
+    """The project whose scorecards a read may use, failing closed.
+
+    A member who may not read the project gets a project with no readable row,
+    so scorecard selection returns nothing rather than falling back to an
+    unscoped lookup.
+    """
+    try:
+        return _turn_project(user_id, thread_id, project)
+    except SessionAccessError:
+        return TurnProject(
+            user=None, project_id=thread_id, organization_id=None, role=None,
+            can_read=False, can_write=False, revision=None, exists=True,
+        )
+
+
+def _project_sessions(user_id, thread_id, project=None):
+    """``{key: payload}`` for exactly the turn's project (see TurnProject).
+
+    A member who may not read the project gets nothing, exactly as a project
+    missing from their own rows used to give nothing.
+    """
+    try:
+        return _turn_project(user_id, thread_id, project).sessions()
+    except SessionAccessError:
+        return {}
+
+
+def _project_scenarios(user_id, thread_id, project=None):
+    """Scorecard and plan data for exactly the turn's project (or none)."""
+    try:
+        return _turn_project(user_id, thread_id, project).scenarios()
+    except SessionAccessError:
+        return ScenariosData()
+
+
 from app.idea_ledger import (
     distill_session_to_ledger_row,
     mark_ledger_archived,
@@ -659,7 +864,6 @@ _SYSTEM_PROMPT_LEAK_FRAGMENTS = [
     "_context_summary_prompt_suffix",
     "_intake_context_prompt_suffix",
 ]
-_GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 _ROUTING_MATRIX = {
     "pluto": {
         # Keep Pluto anchored to its linked backbone model first, then fallback.
@@ -949,6 +1153,7 @@ def _classify_decision_kit(user_message, model_selection):
         temperature=0,
         model_selection=model_selection,
         operation_type="decision_kit_classification",
+        prompt_family='decision_kit_classification',
     )
     return _validated_decision_kit_judgment(payload, user_message)
 
@@ -1361,7 +1566,7 @@ def _rubric_card(rubric, *, kit=None):
     }
 
 
-def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
+def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message, project=None):
     """Persist and render the exact application rubric before approval."""
     if not isinstance(session, dict) or not user_id or not thread_id:
         return None
@@ -1401,12 +1606,12 @@ def _present_decision_kit_rubric(session, *, user_id, thread_id, user_message):
     presented_at = _iso_now()
     rubric = {**rubric, "presented_at": presented_at}
     session["scoring_rubric"] = rubric
-    sessions = load_user_sessions(user_id) or {}
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     key, durable = _resolve_user_session(sessions, thread_id)
     if isinstance(durable, dict):
         durable["scoring_rubric"] = rubric
         sessions[key or thread_id] = durable
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, key or thread_id):
             return None
     return {
         "card": _rubric_card(rubric, kit=kit),
@@ -2466,7 +2671,6 @@ def _save_user_memory(user_id, facts):
     if not isinstance(facts, dict) or not facts:
         return
     try:
-        from app.routes.sessions import save_user_sessions as _sav
         sessions = load_user_sessions(str(user_id)) or {}
         sentinel = sessions.get(_USER_MEMORY_SESSION_KEY) or {}
         sentinel["session_id"] = _USER_MEMORY_SESSION_KEY
@@ -2477,7 +2681,7 @@ def _save_user_memory(user_id, facts):
         sentinel["memory_facts"] = facts
         sentinel["timestamp"] = datetime.utcnow().isoformat()
         sessions[_USER_MEMORY_SESSION_KEY] = sentinel
-        _sav(str(user_id), sessions)
+        save_one_project(str(user_id), sessions, _USER_MEMORY_SESSION_KEY)
     except Exception:
         current_app.logger.exception("Failed saving user memory for user %s", user_id)
 
@@ -2506,6 +2710,7 @@ def extract_and_update_user_memory(user_id, project_name, problem_statement, sco
             messages=[{"role": "user", "content": content}],
             system_prompt=_MEMORY_EXTRACT_PROMPT,
             operation_type='user_memory_extraction',
+            prompt_family='user_memory_extraction',
             model_type='pluto',
             legacy_model=_provider_model_id("claude_haiku") or "claude-haiku-4-5-20251001",
             max_tokens=300,
@@ -2560,11 +2765,11 @@ def _thread_session_record(sessions, thread_id):
     return None
 
 
-def _thread_scorecard_summary(user_id, thread_id):
+def _thread_scorecard_summary(user_id, thread_id, project=None):
     if not user_id or not thread_id:
         return {"has_scorecard": False, "scenario_count": 0, "low_components": []}
 
-    session = _thread_session_record(load_user_sessions(user_id), thread_id)
+    session = _thread_session_record(_project_sessions(user_id, thread_id, project), thread_id)
     if not isinstance(session, dict):
         return {"has_scorecard": False, "scenario_count": 0, "low_components": []}
 
@@ -2598,8 +2803,7 @@ def _thread_scorecard_summary(user_id, thread_id):
 
     scenario_count = 0
     try:
-        from .strategy import _load_scenarios
-        all_data = _load_scenarios(user_id) if user_id else {}
+        all_data = _project_scenarios(user_id, thread_id, project) if user_id else {}
         thread_entry = all_data.get(thread_id) if isinstance(all_data, dict) else {}
         scenarios = thread_entry.get("scenarios") if isinstance(thread_entry, dict) else []
         if isinstance(scenarios, list):
@@ -2614,8 +2818,8 @@ def _thread_scorecard_summary(user_id, thread_id):
     }
 
 
-def _scenario_modeling_prompt_suffix(user_id, thread_id):
-    summary = _thread_scorecard_summary(user_id, thread_id)
+def _scenario_modeling_prompt_suffix(user_id, thread_id, project=None):
+    summary = _thread_scorecard_summary(user_id, thread_id, project=project)
     if not summary.get("has_scorecard"):
         return ""
 
@@ -3109,46 +3313,11 @@ def _serialize_chat_attachment(attachment):
 
 
 def _conversation_attachment_blocks(attachments):
-    blocks = []
-    for attachment in attachments if isinstance(attachments, list) else []:
-        if not isinstance(attachment, dict):
-            continue
-        encoded = str(attachment.get("data") or "").strip()
-        media_type = str(attachment.get("type") or "").strip()
-        kind = str(attachment.get("kind") or "").strip().lower()
-        if not encoded or not media_type or not kind:
-            continue
-        if kind == "image":
-            blocks.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": encoded,
-                },
-            })
-        elif kind == "pdf":
-            blocks.append({
-                "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": encoded,
-                },
-            })
-        elif kind in ("word", "data"):
-            extracted_text = str(attachment.get("text_content") or "").strip()
-            attachment_name = _safe_attachment_name(attachment.get("name") or "document")
-            label = "Word Document" if kind == "word" else "Uploaded File (cell/row content)"
-            if extracted_text:
-                blocks.append({
-                    "type": "text",
-                    "text": (
-                        f"[{label}: {attachment_name}]\n"
-                        f"{extracted_text[:MAX_CONVERSATION_ATTACHMENT_TEXT_CHARS]}"
-                    ),
-                })
-    return blocks
+    return anthropic_provider.attachment_blocks(
+        attachments,
+        safe_name=_safe_attachment_name,
+        max_text_chars=MAX_CONVERSATION_ATTACHMENT_TEXT_CHARS,
+    )
 
 
 def _turn_capture_note():
@@ -3586,11 +3755,11 @@ def _successful_scoring_action(executed_actions):
     return False
 
 
-def _criteria_card_after_scoring(user_id, thread_id):
+def _criteria_card_after_scoring(user_id, thread_id, project=None):
     """Show the criteria behind the first scoring once, as the rubric card."""
     if not user_id or not thread_id:
         return None
-    sessions = load_user_sessions(user_id) or {}
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     key, session = _resolve_user_session(sessions, thread_id)
     if not isinstance(session, dict):
         return None
@@ -3604,7 +3773,7 @@ def _criteria_card_after_scoring(user_id, thread_id):
     rubric = {**rubric, "criteria_summary_presented_at": _iso_now()}
     session["scoring_rubric"] = rubric
     sessions[key or thread_id] = session
-    if not save_user_sessions(user_id, sessions):
+    if not save_one_project(user_id, sessions, key or thread_id):
         return None
     kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version")) if session.get("decision_kit") else None
     return _rubric_card(rubric, kit=kit)
@@ -3758,36 +3927,184 @@ def _is_mutation_tool(tool_name):
     return str(tool_name or "").strip() in _MUTATION_TOOLS
 
 
+def _canonical_project_scenarios(user_id, thread_id):
+    """The scenario data of the project a turn works on, read from the
+    organization's canonical row (the row continue and its tools write), so an
+    editor's turn on a shared project snapshots that project and not an empty
+    personal copy. Returns ``(row_id, data)``; ``row_id`` is None when the
+    project has no row yet and ``data`` is None when it has no scenario data."""
+    from app.models import UserSession
+    from ..session_access import canonical_row
+
+    user = User.query.get(str(user_id)) if user_id else None
+    row = canonical_row(user, str(thread_id), include_archived=True) if user else None
+    if row is None:
+        return None, None
+    current = (
+        db.session.query(UserSession.scenarios_json)
+        .filter(UserSession.id == row.id)
+        .scalar()
+    )
+    return row.id, (_clone_json_payload(current) if isinstance(current, dict) and current else None)
+
+
 def _capture_thread_mutation_snapshot(user_id, thread_id):
     if not user_id or not thread_id:
         return None
-    from .strategy import _load_scenarios
+    row_id, existing = _canonical_project_scenarios(user_id, thread_id)
+    if row_id is None:
+        from .strategy import _load_scenarios
 
-    all_data = _load_scenarios(user_id)
-    existing = all_data.get(str(thread_id))
+        existing = _load_scenarios(user_id).get(str(thread_id))
     return {
         "thread_id": str(thread_id),
+        "row_id": row_id,
         "thread_data": _clone_json_payload(existing) if isinstance(existing, dict) else None,
         "captured_at": _iso_now(),
     }
 
 
+def _committed_project_scenarios_row(conn, *, row_id, thread_id, organization_id, user_id):
+    """Read a project's COMMITTED scenario data on ``conn``.
+
+    Resolves the canonical row the same way session_access.canonical_row does
+    (the organization's oldest row, else the caller's own) when the turn
+    created the project and no row id was known at capture time.
+    Returns ``(found, data)``.
+    """
+    from sqlalchemy import select
+    from app.models import UserSession
+
+    table = UserSession.__table__
+    if row_id is None:
+        candidates = []
+        if organization_id:
+            candidates.append(
+                select(table.c.id)
+                .where(table.c.session_id == str(thread_id))
+                .where(table.c.organization_id == str(organization_id))
+                .order_by(table.c.created_at.asc(), table.c.id.asc())
+                .limit(1)
+            )
+        candidates.append(
+            select(table.c.id)
+            .where(table.c.session_id == str(thread_id))
+            .where(table.c.user_id == str(user_id))
+            .limit(1)
+        )
+        for query in candidates:
+            row_id = conn.execute(query).scalar()
+            if row_id is not None:
+                break
+    if row_id is None:
+        return False, None
+    current = conn.execute(
+        select(table.c.scenarios_json).where(table.c.id == row_id)
+    ).scalar()
+    if isinstance(current, str):
+        current = json.loads(current)
+    return True, (_clone_json_payload(current) if isinstance(current, dict) and current else None)
+
+
+def _complete_turn_undo_snapshot(undo_snapshot, *, user_id, organization_id):
+    """Record the project's scenario data as the turn left it.
+
+    Undo reverts exactly what the turn changed (before -> after). Knowing the
+    after-state lets undo keep every change made since by anyone else, and
+    refuse rather than overwrite when someone has since changed the same
+    thing the turn changed.
+
+    This is supplemental evidence and must never decide the turn's outcome. It
+    runs before the turn is settled, reads committed data on its OWN
+    connection (so it can neither abort nor roll back the turn's transaction
+    and its unsaved reservation) and never raises. Without the evidence the
+    turn simply does not offer Undo: restoring blind could overwrite a
+    colleague's newer work.
+    """
+    if not isinstance(undo_snapshot, dict):
+        return undo_snapshot
+    thread_id = str(undo_snapshot.get("thread_id") or "").strip()
+    if not thread_id:
+        return None
+    try:
+        with db.engine.connect() as conn:
+            found, after = _committed_project_scenarios_row(
+                conn,
+                row_id=undo_snapshot.get("row_id"),
+                thread_id=thread_id,
+                organization_id=organization_id,
+                user_id=user_id,
+            )
+    except Exception:
+        current_app.logger.warning(
+            "undo after-state unavailable for thread %s; Undo not offered for this turn",
+            thread_id, exc_info=True,
+        )
+        return None
+    if not found:
+        return None
+    completed = dict(undo_snapshot)
+    completed["thread_data_after"] = after
+    return completed
+
+
+_UNDO_MISSING = object()
+
+
+def _undo_conflicts(before, after, current):
+    """True when something the turn changed has been changed again since."""
+    if isinstance(before, dict) and isinstance(after, dict):
+        current_dict = current if isinstance(current, dict) else None
+        for key in set(before) | set(after):
+            was = before.get(key, _UNDO_MISSING)
+            became = after.get(key, _UNDO_MISSING)
+            if was == became:
+                continue
+            now = current_dict.get(key, _UNDO_MISSING) if current_dict is not None else _UNDO_MISSING
+            if isinstance(was, dict) and isinstance(became, dict) and isinstance(now, dict):
+                if _undo_conflicts(was, became, now):
+                    return True
+            elif now != became:
+                return True
+        return False
+    return current != after
+
+
 def _restore_thread_mutation_snapshot(user_id, undo_state):
+    """Revert one turn's scenario changes on the project's canonical row.
+
+    Writes exactly one project through the project-scoped scenario store,
+    committing together with any session change the caller has staged (one
+    compare-and-swap; a lost race rolls both back). Raises RevisionConflict,
+    with nothing written, when a change the turn made has been changed again
+    since. Records written before the after-state was kept restore the
+    snapshot whole, as before.
+    """
     if not user_id or not isinstance(undo_state, dict):
         return False
     thread_id = str(undo_state.get("thread_id") or "").strip()
     if not thread_id:
         return False
 
-    from .strategy import _load_scenarios, _save_project_scenarios
+    from ..scenarios_store import _apply_snapshot_delta, save_session_and_project_scenarios_data
+    from ..session_access import RevisionConflict
 
-    all_data = _load_scenarios(user_id)
-    snapshot_thread = undo_state.get("thread_data")
-    if isinstance(snapshot_thread, dict):
-        all_data[thread_id] = _clone_json_payload(snapshot_thread)
-    else:
-        all_data.pop(thread_id, None)
-    return _save_project_scenarios(user_id, all_data, thread_id)
+    def _as_data(value):
+        return _clone_json_payload(value) if isinstance(value, dict) else {}
+
+    before = _as_data(undo_state.get("thread_data"))
+    has_after = "thread_data_after" in undo_state
+    after = _as_data(undo_state.get("thread_data_after"))
+
+    def _revert(current):
+        if not has_after:
+            return before
+        if _undo_conflicts(before, after, current):
+            raise RevisionConflict(None, None, session_id=thread_id)
+        return _apply_snapshot_delta(after, before, current)
+
+    save_session_and_project_scenarios_data(user_id, thread_id, updater=_revert)
+    return True
 
 
 def _maybe_capture_turn_undo_snapshot(current_snapshot, *, tool_name, user_id, thread_id):
@@ -3989,7 +4306,7 @@ def _readiness_phase_prompt_suffix(readiness):
     )
 
 
-def _organizational_memory_prompt_suffix(user_id, thread_id):
+def _organizational_memory_prompt_suffix(user_id, thread_id, project=None):
     """PHASE 7. Prior organizational decisions relevant to this one.
 
     This is the only cross-thread context channel. Raw recent conversations and
@@ -4006,7 +4323,7 @@ def _organizational_memory_prompt_suffix(user_id, thread_id):
         if user is None or not thread_id:
             return ""
 
-        sessions = load_sessions_for_thread(user, thread_id)
+        sessions = _project_sessions(user, thread_id, project)
         _key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return ""
@@ -4025,9 +4342,9 @@ def _organizational_memory_prompt_suffix(user_id, thread_id):
         return ""
 
 
-def _decision_kit_prompt_suffix(user_id, thread_id):
+def _decision_kit_prompt_suffix(user_id, thread_id, project=None):
     try:
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         _key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return ""
@@ -4079,7 +4396,7 @@ def _decision_kit_prompt_suffix(user_id, thread_id):
         return ""
 
 
-def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id, chat_history=None, readiness=None, data_context_connector_ids=None):
+def _build_agent_system_prompt(*, context_summary_text, intake_context, view_context, connector_context_snapshot, user_id, thread_id, chat_history=None, readiness=None, data_context_connector_ids=None, project=None):
     return (
         f"{_SYSTEM_PROMPT_PREFIX}"
         f"{_original_intake_prompt_suffix(chat_history)}"
@@ -4089,16 +4406,57 @@ def _build_agent_system_prompt(*, context_summary_text, intake_context, view_con
         f"{_connector_context_prompt_suffix(connector_context_snapshot)}"
         f"{_jira_portfolio_prompt_suffix(user_id, data_context_connector_ids)}"
         f"{_cross_session_memory_prompt_suffix(user_id, thread_id)}"
-        f"{_organizational_memory_prompt_suffix(user_id, thread_id)}"
-        f"{_batch_promotion_prompt_suffix(user_id, thread_id)}"
-        f"{_scenario_modeling_prompt_suffix(user_id, thread_id)}"
+        f"{_organizational_memory_prompt_suffix(user_id, thread_id, project=project)}"
+        f"{_batch_promotion_prompt_suffix(user_id, thread_id, project=project)}"
+        f"{_scenario_modeling_prompt_suffix(user_id, thread_id, project=project)}"
         f"{_monitoring_prompt_suffix(user_id)}"
         f"{_readiness_phase_prompt_suffix(readiness)}"
-        f"{_decision_kit_prompt_suffix(user_id, thread_id)}"
+        f"{_decision_kit_prompt_suffix(user_id, thread_id, project=project)}"
     )
 
 
-def _scorecard_content_prompt_suffix(session, view_context, *, user_id=None, thread_id=None):
+def _build_shared_system_prompt(*, session, chat_history, context_summary_text,
+                                intake_context, view_context, readiness, user,
+                                user_id, thread_id, project):
+    """Build the unchanged conversation prompt from the shared project context."""
+    shared = build_shared_assistant_context(
+        user or user_id,
+        thread_id,
+        sessions={thread_id: session} if isinstance(session, dict) else {},
+        project=project,
+        session=session,
+        history=chat_history,
+        view_context=view_context,
+    )
+    system_prompt = _build_agent_system_prompt(
+        context_summary_text=context_summary_text,
+        intake_context=intake_context,
+        view_context=shared.view_context,
+        connector_context_snapshot=shared.session.get("connector_context_snapshot"),
+        user_id=user_id,
+        thread_id=thread_id,
+        chat_history=chat_history,
+        readiness=readiness,
+        data_context_connector_ids=shared.session.get("data_context_connector_ids"),
+        project=project,
+    )
+    system_prompt += _scorecard_content_prompt_suffix(
+        shared.session, shared.view_context,
+        user_id=user_id, thread_id=thread_id, project=project,
+    )
+    active_scorecard_id = str(
+        (_sanitize_view_context(shared.view_context) or {}).get("active_scorecard_id") or ""
+    ).strip() or None
+    system_prompt += _wbs_content_prompt_suffix(
+        user_id, thread_id, active_scorecard_id, project,
+    )
+    system_prompt += _decision_facts_prompt_suffix(
+        user_id, thread_id, project=project,
+    )
+    return system_prompt
+
+
+def _scorecard_content_prompt_suffix(session, view_context, *, user_id=None, thread_id=None, project=None):
     """Inject every scorecard the user has generated in this thread (compact
     form) so the chat agent can answer comparison questions like 'which of
     these are duplicates?' without needing to re-score. Scorecards are
@@ -4110,7 +4468,12 @@ def _scorecard_content_prompt_suffix(session, view_context, *, user_id=None, thr
     enough for the model to detect near-duplicates and answer ranking
     questions, without exploding the context.
     """
-    snapshots = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+    if user_id is not None and thread_id:
+        try:
+            project = _turn_project(user_id, thread_id, project)
+        except SessionAccessError:
+            return ""
+    snapshots = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=project)
     if not snapshots:
         return ""
 
@@ -4172,7 +4535,7 @@ def _scorecard_content_prompt_suffix(session, view_context, *, user_id=None, thr
     )
 
 
-def _wbs_content_prompt_suffix(user_id, thread_id, active_scorecard_id=None):
+def _wbs_content_prompt_suffix(user_id, thread_id, active_scorecard_id=None, project=None):
     """Inject every option-scoped execution plan so chat can address the plan
     the customer names, even when another option is open in the view.
 
@@ -4184,18 +4547,15 @@ def _wbs_content_prompt_suffix(user_id, thread_id, active_scorecard_id=None):
     """
     try:
         from ..decision_records import execution_option_key
-        from .sessions import load_user_sessions
-        from .strategy import _load_scenarios
-
-        all_data = _load_scenarios(user_id)
-        sessions = load_user_sessions(user_id) or {}
+        all_data = _project_scenarios(user_id, thread_id, project)
+        sessions = _project_sessions(user_id, thread_id, project) or {}
     except Exception:
         return ""
     td = all_data.get(thread_id) if isinstance(all_data, dict) else None
     if not isinstance(td, dict):
         return ""
     _session_key, session = _resolve_user_session(sessions, thread_id)
-    cards = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+    cards = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=project)
     open_scorecard_id = (
         str(active_scorecard_id or "").strip()
         or str(td.get("active_execution_scorecard_id") or "").strip()
@@ -4215,7 +4575,7 @@ def _wbs_content_prompt_suffix(user_id, thread_id, active_scorecard_id=None):
             continue
         resolved_id, project_wbs = _resolve_option_plan(
             user_id, thread_id, cards, option_key, open_scorecard_id,
-            thread_data=td,
+            thread_data=td, project=project,
         )
         if resolved_id != scorecard_id or not isinstance(project_wbs, dict):
             continue
@@ -4306,7 +4666,7 @@ def _user_turn_count(session):
     return sum(1 for turn in (history or []) if isinstance(turn, dict) and turn.get("role") == "user")
 
 
-def _decision_facts_prompt_suffix(user_id, thread_id):
+def _decision_facts_prompt_suffix(user_id, thread_id, project=None):
     """Stored decision state for this session only: facts, never wording."""
     if not user_id or not thread_id:
         return ""
@@ -4316,7 +4676,14 @@ def _decision_facts_prompt_suffix(user_id, thread_id):
         user = User.query.get(user_id)
         if user is None:
             return ""
-        facts = decision_facts(user, thread_id)
+        try:
+            project = _turn_project(user, thread_id, project)
+        except SessionAccessError:
+            return ""
+        session_row = project.row()
+        if project.exists and session_row is None:
+            return ""
+        facts = decision_facts(user, thread_id, session_row=session_row)
         turn = getattr(g, "turn_capture", None) if has_request_context() else None
         if isinstance(turn, dict) and turn.get("thread_id") == str(thread_id) and turn.get("summary") is not None:
             # What the capture step saved (or could not save) from this message.
@@ -4334,9 +4701,18 @@ def _decision_facts_prompt_suffix(user_id, thread_id):
         return ""
 
 
-def _collect_session_scorecards(session, *, user_id=None, thread_id=None):
+def _collect_session_scorecards(session, *, user_id=None, thread_id=None, project=None,
+                                own_rows_only=False):
     """Return every scorecard payload in this thread: baseline + every
-    scenario-derived snapshot. Order: oldest → newest. De-duped by id."""
+    scenario-derived snapshot. Order: oldest → newest. De-duped by id.
+
+    With the turn's ``project``, indexed scorecards come from that canonical
+    project only (scorecards.project_scorecard_query): never from a same-id
+    project in another organization, and never through an unscoped lookup.
+    An existing project this member can no longer read contributes nothing; a
+    project with no row yet has no indexed scorecards. ``own_rows_only`` keeps
+    this member's own rows, for code that rewrites a card under its author.
+    """
     if not isinstance(session, dict):
         return []
     out = []
@@ -4366,10 +4742,28 @@ def _collect_session_scorecards(session, *, user_id=None, thread_id=None):
             inner = scen.get("result") or scen.get("scorecard") or scen.get("analysis_result")
             if isinstance(inner, dict):
                 _push(inner)
-    if user_id is not None and thread_id:
-        legacy = {"result": {**out[0], "scorecard_snapshots": out[1:]}} if out else {}
-        return collect_peer_scorecards(user_id, thread_id, legacy_session=legacy)
-    return out
+    if user_id is None or not thread_id:
+        # No index lookup at all: only the cards carried by this session.
+        return out
+    project_row = None
+    if isinstance(project, TurnProject):
+        project_row = project.row()
+        if project_row is None:
+            if project.exists or not project.can_read:
+                # An existing project this member cannot read: nothing.
+                return []
+            # No project row yet: this member's own rows in the project's
+            # organization (or, for personal work, with no organization).
+            project_row = types.SimpleNamespace(
+                session_id=str(thread_id), user_id=str(user_id),
+                organization_id=project.organization_id,
+            )
+            own_rows_only = True
+    legacy = {"result": {**out[0], "scorecard_snapshots": out[1:]}} if out else {}
+    return collect_peer_scorecards(
+        user_id, thread_id, legacy_session=legacy, project_row=project_row,
+        own_rows_only=own_rows_only,
+    )
 
 
 def _normalized_option_identity(value):
@@ -4417,7 +4811,7 @@ def _requested_name_matches_scorecard(session, scorecard, requested_name):
     }
 
 
-def _resolve_rescore_target(user_id, thread_id, session, scorecard_id, requested_name):
+def _resolve_rescore_target(user_id, thread_id, session, scorecard_id, requested_name, project=None):
     """Return the exact card eligible for an in-place re-score, or an error.
 
     A model-supplied scorecard id is never sufficient proof of identity. The
@@ -4429,7 +4823,7 @@ def _resolve_rescore_target(user_id, thread_id, session, scorecard_id, requested
     cards = _collect_session_scorecards(
         session,
         user_id=user_id,
-        thread_id=thread_id,
+        thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project), own_rows_only=True,
     )
     target = next(
         (
@@ -4787,21 +5181,17 @@ def _generate_routed_chat_reply(
                     stream=False,
                 )
                 payload = response.json()
-                choice = ((payload.get("choices") or [{}])[0]) if isinstance(payload, dict) else {}
-                message = choice.get("message") if isinstance(choice, dict) else {}
-                message = message if isinstance(message, dict) else {}
-                reply = str(message.get("content") or "").strip()
+                choice, message = gemini_provider.first_choice(payload)
+                reply = gemini_provider.message_text(message)
                 if not reply:
                     raise ValueError("invalid_response")
                 usage = _openai_usage_to_internal(payload.get("usage"), provider="gemini", model=route["model"])
-                usage["stop_reason"] = str(choice.get("finish_reason") or "").strip() or None
+                usage["stop_reason"] = gemini_provider.finish_reason(choice)
             else:
                 api_key = _anthropic_api_key()
                 if not api_key:
                     raise RuntimeError("ANTHROPIC_API_KEY not configured")
-                import anthropic
-
-                client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
+                client = anthropic_provider.create_client(api_key)
                 anthropic_request = {
                     "max_tokens": max(200, int(max_tokens or 700)),
                     "system": system_prompt,
@@ -4820,18 +5210,7 @@ def _generate_routed_chat_reply(
                 reply = _anthropic_response_text(response)
                 if not reply:
                     raise ValueError("invalid_response")
-                usage = {
-                    "input_tokens": int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0),
-                    "output_tokens": int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0),
-                    "total_tokens": int(
-                        (int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0))
-                        + (int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0))
-                    ),
-                    "provider": "anthropic",
-                    "model": actual_model,
-                    "stop_reason": str(getattr(response, "stop_reason", "") or "").strip() or None,
-                    "refused": str(getattr(response, "stop_reason", "") or "").lower() == "refusal",
-                }
+                usage = anthropic_provider.reply_usage(response, model=actual_model)
 
             usage = _attach_failover_usage(
                 usage,
@@ -4887,155 +5266,61 @@ def _generate_routed_chat_reply(
     raise RuntimeError("No provider routes available")
 
 
-def _openai_tools_from_anthropic(enable_mutation_tools=False, user_id=None, plan_key="free", include_capture_tools=True):
-    tools = []
-    for item in _anthropic_tool_definitions(
+def _openai_tools_from_anthropic(enable_mutation_tools=False, user_id=None, plan_key="free", include_capture_tools=True, definitions=None):
+    source = definitions if isinstance(definitions, list) else _anthropic_tool_definitions(
         enable_mutation_tools=enable_mutation_tools,
         user_id=user_id,
         plan_key=plan_key,
         include_capture_tools=include_capture_tools,
-    ):
-        if not isinstance(item, dict):
-            continue
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": item.get("name"),
-                "description": item.get("description"),
-                "parameters": item.get("input_schema") or {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": False,
-                },
-            },
-        })
-    return tools
+    )
+    return gemini_provider.tools_from_definitions(source)
 
 
 def _openai_messages_from_history(messages):
-    output = []
-    for item in messages or []:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "").strip().lower()
-        content = item.get("content")
-        text_content = _message_text(item)
-        if role not in {"assistant", "user", "tool"}:
-            continue
-        if isinstance(content, str):
-            payload = {
-                "role": role,
-                "content": text_content if role != "user" else _wrap_user_message_content(_unwrap_user_message_content(text_content)),
-            }
-            if role == "assistant" and isinstance(item.get("tool_calls"), list):
-                payload["tool_calls"] = item.get("tool_calls")
-            if role == "tool" and item.get("tool_call_id"):
-                payload["tool_call_id"] = item.get("tool_call_id")
-            output.append(payload)
-            continue
-        if role == "assistant" and isinstance(content, list):
-            assistant_text = _anthropic_text(content)
-            if assistant_text:
-                output.append({"role": "assistant", "content": assistant_text})
-    return output
-
-
-def _anthropic_request_timeout_seconds():
-    value = (
-        current_app.config.get("AI_AGENT_ANTHROPIC_TIMEOUT_SECONDS")
-        or os.getenv("AI_AGENT_ANTHROPIC_TIMEOUT_SECONDS")
-        or 60
+    return gemini_provider.messages_from_history(
+        messages,
+        message_text=_message_text,
+        user_content=lambda text: _wrap_user_message_content(_unwrap_user_message_content(text)),
     )
-    try:
-        return max(5.0, float(value))
-    except Exception:
-        return 60.0
 
 
-def _gemini_request_timeouts():
-    connect_value = (
-        current_app.config.get("AI_AGENT_GEMINI_CONNECT_TIMEOUT_SECONDS")
-        or os.getenv("AI_AGENT_GEMINI_CONNECT_TIMEOUT_SECONDS")
-        or 20
-    )
-    read_value = (
-        current_app.config.get("AI_AGENT_GEMINI_READ_TIMEOUT_SECONDS")
-        or os.getenv("AI_AGENT_GEMINI_READ_TIMEOUT_SECONDS")
-        or 60
-    )
-    try:
-        connect_timeout = max(5.0, float(connect_value))
-    except Exception:
-        connect_timeout = 20.0
-    try:
-        read_timeout = max(5.0, float(read_value))
-    except Exception:
-        read_timeout = 60.0
-    return (connect_timeout, read_timeout)
+# Provider code lives in app/ai_providers (P5a). The old names below stay so
+# existing imports keep working until P9 retires them.
+#
+# Patch points that still work: _anthropic_message_create,
+# _gemini_openai_request, _openai_messages_from_history,
+# _conversation_attachment_blocks, _anthropic_response_text,
+# _openai_usage_to_internal, _anthropic_api_key, _gemini_api_key. Callers in
+# this module look these names up here, so a monkeypatch of the name changes
+# what the turn does.
+#
+# Compatibility names only (a monkeypatch does NOT reach the provider code
+# that uses them): _anthropic_text, _anthropic_model_accepts_temperature (it
+# still controls the routed reply's temperature here, but not
+# message_create's), _anthropic_request_timeout_seconds,
+# _gemini_request_timeouts, _anthropic_content_to_dicts,
+# _parse_openai_tool_call_arguments. Patch the function in
+# app.ai_providers instead. tests/test_ai_providers.py checks no test relies
+# on patching these.
+_anthropic_request_timeout_seconds = anthropic_provider.request_timeout_seconds
+_gemini_request_timeouts = gemini_provider.request_timeouts
 
 
 def _gemini_openai_request(*, model_name, system_prompt, messages, tools, max_tokens, temperature, stream=False):
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            *(_openai_messages_from_history(messages)),
-        ],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
-    if tools:
-        payload["tools"] = tools
-        payload["tool_choice"] = "auto"
-    if stream:
-        payload["stream"] = True
-        payload["stream_options"] = {"include_usage": True}
-
-    response = requests.post(
-        _GEMINI_OPENAI_BASE_URL,
-        headers={
-            "Authorization": f"Bearer {_gemini_api_key()}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=_gemini_request_timeouts(),
+    return gemini_provider.chat_completion(
+        model_name=model_name,
+        system_prompt=system_prompt,
+        messages=_openai_messages_from_history(messages),
+        tools=tools,
+        max_tokens=max_tokens,
+        temperature=temperature,
         stream=stream,
+        api_key=_gemini_api_key(),
     )
-    response.raise_for_status()
-    return response
 
 
-def _parse_openai_tool_call_arguments(raw_arguments):
-    text = str(raw_arguments or "").strip()
-    if not text:
-        return {}
-    try:
-        data = json.loads(text)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def _openai_usage_to_internal(usage, *, provider, model):
-    usage = usage if isinstance(usage, dict) else {}
-    input_tokens = int(
-        usage.get("prompt_tokens")
-        or usage.get("input_tokens")
-        or 0
-    )
-    output_tokens = int(
-        usage.get("completion_tokens")
-        or usage.get("output_tokens")
-        or 0
-    )
-    total_tokens = int(usage.get("total_tokens") or (input_tokens + output_tokens))
-    return {
-        "provider": provider,
-        "model": model,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "total_tokens": total_tokens,
-    }
+_parse_openai_tool_call_arguments = gemini_provider.parse_tool_call_arguments
+_openai_usage_to_internal = gemini_provider.usage_to_internal
 
 
 def _merge_usage_totals(base_usage, extra_usage):
@@ -5048,6 +5333,52 @@ def _merge_usage_totals(base_usage, extra_usage):
         "output_tokens": int(base.get("output_tokens") or 0) + int(extra.get("output_tokens") or 0),
         "total_tokens": int(base.get("total_tokens") or 0) + int(extra.get("total_tokens") or 0),
     }
+
+
+def _completed_provider_round(*, provider, model, input_tokens, output_tokens):
+    """Audit evidence for one provider request that returned real usage."""
+    input_tokens = max(0, int(input_tokens or 0))
+    output_tokens = max(0, int(output_tokens or 0))
+    return {
+        "provider": str(provider or "unknown"),
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "raw_provider_cost_usd": provider_cost_usd(model, input_tokens, output_tokens),
+    }
+
+
+def _attach_context_budget_interruption_usage(
+    error, *, provider, model, input_tokens, output_tokens,
+    context_budget_manifest, last_request_input_tokens, completed_rounds,
+):
+    """Preserve completed provider calls when later local planning fails."""
+    if not completed_rounds:
+        return
+    usage = dict(getattr(error, "jaspen_usage", {}) or {})
+    manifest = usage.get("context_budget") or context_budget_manifest
+    usage.update({
+        "degraded": True,
+        "error_code": "context_budget_interrupted",
+        "provider": provider,
+        "model": model,
+        "input_tokens": max(0, int(input_tokens or 0)),
+        "output_tokens": max(0, int(output_tokens or 0)),
+        "total_tokens": max(0, int(input_tokens or 0)) + max(0, int(output_tokens or 0)),
+        "component_usages": [
+            {**item, "outcome": "context_budget_interrupted"}
+            for item in completed_rounds
+            if isinstance(item, dict)
+        ],
+    })
+    if manifest is not None:
+        usage["context_budget"] = with_provider_reported_tokens(
+            manifest,
+            last_request_input_tokens,
+            total_input_tokens_across_calls=input_tokens,
+        )
+    error.jaspen_usage = usage
 
 
 def _attach_failover_usage(usage, *, attempted_providers=None, final_provider=None, final_model=None):
@@ -5069,15 +5400,7 @@ def _attach_failover_usage(usage, *, attempted_providers=None, final_provider=No
 def _failed_attempt_cost_fields(exc, *, model, estimated_input_tokens, estimated_output_tokens,
                                 estimate_method):
     """Prefer provider-reported failed usage; otherwise record a conservative estimate."""
-    usage = getattr(exc, 'usage', None)
-    if usage is None:
-        usage = getattr(getattr(exc, 'response', None), 'usage', None)
-    if isinstance(usage, dict):
-        input_tokens = usage.get('input_tokens') or usage.get('prompt_tokens')
-        output_tokens = usage.get('output_tokens') or usage.get('completion_tokens')
-    else:
-        input_tokens = getattr(usage, 'input_tokens', None) if usage is not None else None
-        output_tokens = getattr(usage, 'output_tokens', None) if usage is not None else None
+    input_tokens, output_tokens = reported_error_usage(exc)
     if input_tokens is not None or output_tokens is not None:
         input_tokens = max(0, int(input_tokens or 0))
         output_tokens = max(0, int(output_tokens or 0))
@@ -5133,7 +5456,7 @@ def _execute_local_tool(tool_name, tool_input, **kwargs):
     return result
 
 
-def _execute_local_tool_inner(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn, view_context=None, user_message="", session=None):
+def _execute_local_tool_inner(tool_name, tool_input, *, readiness, user, user_id, thread_id, user_turn_count, mutations_this_turn, view_context=None, user_message="", session=None, project=None):
     if tool_name in {"get_readiness_snapshot", "get_data_contract"}:
         return _anthropic_tool_output(tool_name, readiness), mutations_this_turn
     if tool_name == "query_connector_data":
@@ -5161,16 +5484,17 @@ def _execute_local_tool_inner(tool_name, tool_input, *, readiness, user, user_id
         and rubric_is_scoring_authorized(session["scoring_rubric"])
     ):
         try:
-            sessions = load_user_sessions(user_id) or {}
+            project = _turn_project(user or user_id, thread_id, project)
+            sessions = project.sessions()
             session_key, durable_session = _resolve_user_session(sessions, thread_id)
-            if isinstance(durable_session, dict):
+            if isinstance(durable_session, dict) and project.can_write:
                 durable_session["scoring_rubric"] = session["scoring_rubric"]
                 if session.get("scoring_intent"):
                     durable_session["scoring_intent"] = session["scoring_intent"]
                 if session.get("scoring_with_proposed_rubric"):
                     durable_session["scoring_with_proposed_rubric"] = True
                 sessions[session_key or thread_id] = durable_session
-                save_user_sessions(user_id, sessions)
+                save_one_project(user_id, sessions, session_key or thread_id)
         except Exception:
             current_app.logger.exception("same-turn rubric approval persist failed")
 
@@ -5194,7 +5518,7 @@ def _execute_local_tool_inner(tool_name, tool_input, *, readiness, user, user_id
                 user_id=user_id,
                 thread_id=thread_id,
                 view_context=view_context,
-                user_message=user_message,
+                user_message=user_message, project=project,
             )
         except Exception as exc:
             if tool_name != "generate_scorecard":
@@ -5830,6 +6154,7 @@ def _summarize_conversation_segment(messages, model_name, *, user=None, thread_i
                 messages=[{'role': 'user', 'content': user_prompt}],
                 system_prompt=system_prompt,
                 operation_type='context_summarization',
+                prompt_family='context_summarization',
                 model_type='pluto',
                 legacy_model=model_name,
                 max_tokens=700,
@@ -5845,6 +6170,7 @@ def _summarize_conversation_segment(messages, model_name, *, user=None, thread_i
                 model_name=model_name,
                 max_tokens=700,
                 temperature=0.1,
+                prompt_family='context_summarization',
             )
         summary_text = str(payload.get("summary") or payload.get("context_summary") or "").strip()
         if summary_text:
@@ -5889,6 +6215,9 @@ def _prepare_context_window(
     user=None,
     thread_id=None,
 ):
+    # Existing subscription history allowances remain upper bounds. P5d uses
+    # the same deterministic selector inside that entitlement envelope; it
+    # never expands a lower tier's history as a side effect of enforcement.
     max_turns = int((context_budget or {}).get("recent_turns") or 16)
     max_turns = max(8, min(80, max_turns))
     normalized = _anthropic_messages_from_history(chat_history, max_turns=0)
@@ -5927,12 +6256,24 @@ def _prepare_context_window(
         missing_start = covered_end + 1
         missing_end = boundary - 1
         segment = normalized[missing_start:boundary]
-        summary_text, usage = _summarize_conversation_segment(
-            segment,
-            _anthropic_model_for_selection(model_selection),
-            user=user,
-            thread_id=thread_id,
-        )
+        if context_budget_mode(current_app.config) == "enforce":
+            # P5d enforcement never adds a second, model-generated operation.
+            # Shadow mode intentionally retains the exact P5c behavior.
+            summary_text = _heuristic_segment_summary(segment)
+            usage = {
+                "provider": "heuristic",
+                "model": None,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            }
+        else:
+            summary_text, usage = _summarize_conversation_segment(
+                segment,
+                _anthropic_model_for_selection(model_selection),
+                user=user,
+                thread_id=thread_id,
+            )
         if summary_text:
             new_summary = {
                 "covers_turns": [missing_start, missing_end],
@@ -7203,6 +7544,20 @@ def _trigger_post_mutation_sync(user_id, thread_id, project_wbs):
     profile_updates = {"thread_sync_status": next_status}
     if patch:
         profile_updates["wbs_task_external_ids_patch"] = patch
+        # Record the links under the organization of the project this turn
+        # authorized (the turn pins it). An automatic sync never gives an
+        # organization to a link that existed without one; only the member's
+        # own sync or import reconnects those.
+        from app.connector_store import link_organization_key
+        from app.project_scope import readable_project_row
+
+        project_row = readable_project_row(user_id, thread_id, include_archived=True)
+        if project_row is not None:
+            profile_updates["wbs_task_external_links_patch"] = {
+                "organization_key": link_organization_key(project_row.organization_id),
+                "links": patch,
+                "reconnect": False,
+            }
     update_thread_sync_profile(user_id, thread_id, profile_updates)
 
     if result.get("success"):
@@ -7220,7 +7575,7 @@ def _trigger_post_mutation_sync(user_id, thread_id, project_wbs):
 
 
 
-def _thread_user_corpus(user_id, thread_id, *, max_chars=20000):
+def _thread_user_corpus(user_id, thread_id, *, max_chars=20000, project=None):
     """The user's own words in this thread, newest-last, for evidence capture.
 
     Only `user` turns are included. Quoting the assistant back would let the
@@ -7228,7 +7583,7 @@ def _thread_user_corpus(user_id, thread_id, *, max_chars=20000):
     the circularity the verification step exists to prevent.
     """
     try:
-        sessions = load_user_sessions(str(user_id)) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         session = sessions.get(thread_id)
         if not isinstance(session, dict):
             return ""
@@ -7404,8 +7759,8 @@ def _capture_source(stored_session, user_message):
     return ("choice" if choice else "conversation"), choice
 
 
-def _load_capture_session(user_id, thread_id):
-    sessions = load_user_sessions(user_id) or {}
+def _load_capture_session(user_id, thread_id, project=None):
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     session_key, stored_session = _resolve_user_session(sessions, thread_id)
     return sessions, session_key, stored_session
 
@@ -7449,7 +7804,7 @@ def _normalize_decision_conditions(raw_conditions, user_message):
     return conditions
 
 
-def _execute_record_option_decision(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message):
+def _execute_record_option_decision(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, project=None):
     from ..decision_records import (
         create_or_refresh_record,
         execution_option_key,
@@ -7480,13 +7835,13 @@ def _execute_record_option_decision(tool_input, *, user, user_id, thread_id, vie
             continue
         entry["conditions"] = normalized
 
-    sessions, session_key, stored_session = _load_capture_session(user_id, thread_id)
+    sessions, session_key, stored_session = _load_capture_session(user_id, thread_id, project=project)
     if not isinstance(stored_session, dict):
         return _tool_error(
             "No open decision context was found for this conversation.",
             code="decision_context_required",
         )
-    cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id)
+    cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
     active_scorecard_id = (
         view_active_scorecard_id
         or str(stored_session.get("active_evaluation_scorecard_id") or "").strip()
@@ -7586,7 +7941,9 @@ def _execute_record_option_decision(tool_input, *, user, user_id, thread_id, vie
             metadata["conditional"] = True
         if record is None:
             try:
-                record, _created = create_or_refresh_record(user, thread_id)
+                record, _created = create_or_refresh_record(
+                    user, thread_id, session_row=_scorecard_project(user, thread_id, project).row(),
+                )
             except LookupError:
                 return _tool_error(
                     "No decision record is available for this conversation. Nothing was recorded.",
@@ -7673,11 +8030,11 @@ def _execute_record_option_decision(tool_input, *, user, user_id, thread_id, vie
     })
 
 
-def _capture_record_and_option(tool_input, *, user, user_id, thread_id):
+def _capture_record_and_option(tool_input, *, user, user_id, thread_id, project=None):
     """The thread's record plus an optional resolved option (strict matching)."""
     from ..decision_records import create_or_refresh_record, execution_option_key
 
-    sessions, session_key, stored_session = _load_capture_session(user_id, thread_id)
+    sessions, session_key, stored_session = _load_capture_session(user_id, thread_id, project=project)
     if not isinstance(stored_session, dict):
         return None, None, None, None, _tool_error(
             "No open decision context was found for this conversation.",
@@ -7687,7 +8044,7 @@ def _capture_record_and_option(tool_input, *, user, user_id, thread_id):
     option_name = str(tool_input.get("option_name") or "").strip()
     scorecard = None
     if option_key or option_name:
-        cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id)
+        cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
         scorecard, failure = _resolve_option_card(
             cards, option_key=option_key, option_name=option_name, allow_fallback=False,
         )
@@ -7697,7 +8054,9 @@ def _capture_record_and_option(tool_input, *, user, user_id, thread_id):
                 code=failure["code"],
             ) | {"non_blocking": True, "option_names": failure.get("option_names") or []}
     try:
-        record, _created = create_or_refresh_record(user, thread_id)
+        record, _created = create_or_refresh_record(
+            user, thread_id, session_row=_scorecard_project(user, thread_id, project).row(),
+        )
     except LookupError:
         return None, None, stored_session, None, _tool_error(
             "No decision record is available for this conversation.",
@@ -7709,6 +8068,7 @@ def _capture_record_and_option(tool_input, *, user, user_id, thread_id):
 
 def _resolve_option_plan(
     user_id, thread_id, cards, option_key, active_scorecard_id, *, thread_data=None,
+    project=None,
 ):
     """Return ``(scorecard_id, plan)`` for an explicit option or the open plan.
 
@@ -7716,11 +8076,11 @@ def _resolve_option_plan(
     shared by decision capture, prompt context, and the main chat plan tools.
     """
     from ..decision_records import execution_option_key
-    from .strategy import _load_scenarios, _resolve_thread_wbs
+    from .strategy import _resolve_thread_wbs
 
     td = thread_data
     if td is None:
-        all_data = _load_scenarios(user_id)
+        all_data = _project_scenarios(user_id, thread_id, project)
         td = all_data.get(thread_id) if isinstance(all_data, dict) else None
     if not isinstance(td, dict):
         return None, None
@@ -7739,20 +8099,20 @@ def _resolve_option_plan(
     return scorecard_id, _resolve_thread_wbs(td, scorecard_id)
 
 
-def _resolve_explicit_option_plan(user_id, thread_id, td, option_key):
+def _resolve_explicit_option_plan(user_id, thread_id, td, option_key, project=None):
     """Resolve a chat tool's explicit option key without cross-option fallback."""
     from ..decision_records import execution_option_key
 
-    sessions = load_user_sessions(user_id) or {}
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     _session_key, session = _resolve_user_session(sessions, thread_id)
-    cards = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+    cards = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
     if not any(execution_option_key(card) == option_key for card in cards):
         return None, None, _tool_error(
             "That option is not part of this session. Nothing changed.",
             code="option_not_found",
         )
     scorecard_id, plan = _resolve_option_plan(
-        user_id, thread_id, cards, option_key, None, thread_data=td,
+        user_id, thread_id, cards, option_key, None, thread_data=td, project=project,
     )
     if not isinstance(plan, dict):
         return None, None, _tool_error(
@@ -7798,7 +8158,7 @@ def _commit_plan_task(user_id, thread_id, scorecard_id, plan, task_id, apply):
     }, None
 
 
-def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key):
+def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key, project=None):
     from ..decision_capture import normalize_iso_date
     from ..decision_records import (
         DECISION_SIGNAL_KINDS,
@@ -7853,7 +8213,7 @@ def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, vi
         return _tool_error("content is required. Nothing was recorded.", code="content_required")
 
     record, _scorecard, stored_session, option_key, failure = _capture_record_and_option(
-        tool_input, user=user, user_id=user_id, thread_id=thread_id,
+        tool_input, user=user, user_id=user_id, thread_id=thread_id, project=project,
     )
     if failure:
         return failure
@@ -7938,11 +8298,12 @@ def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, vi
         elif not is_tool_allowed(plan_key, "wbs_write", "write"):
             payload["task_commitment"] = {"status": "not_recorded", "code": "tool_not_allowed"}
         else:
-            sessions = load_user_sessions(user_id) or {}
+            sessions = _project_sessions(user_id, thread_id, project) or {}
             _key, live = _resolve_user_session(sessions, thread_id)
-            cards = _collect_session_scorecards(live, user_id=user_id, thread_id=thread_id)
+            cards = _collect_session_scorecards(live, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
             scorecard_id, plan = _resolve_option_plan(
                 user_id, thread_id, cards, option_key, view_active_scorecard_id,
+                project=project,
             )
             if not isinstance(plan, dict):
                 payload["task_commitment"] = {"status": "not_recorded", "code": "no_plan"}
@@ -7974,7 +8335,7 @@ def _execute_record_decision_context(tool_input, *, user, user_id, thread_id, vi
     return _tool_success(payload)
 
 
-def _execute_confirm_task_commitment(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key):
+def _execute_confirm_task_commitment(tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key, project=None):
     from ..decision_records import execution_option_key
     from ..task_history import confirm_task_commitment
 
@@ -7989,13 +8350,15 @@ def _execute_confirm_task_commitment(tool_input, *, user, user_id, thread_id, vi
     task_id = str(tool_input.get("task_id") or "").strip()
     if not task_id:
         return _tool_error("task_id is required. Nothing was recorded.", code="task_not_found")
-    sessions = load_user_sessions(user_id) or {}
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     _key, live = _resolve_user_session(sessions, thread_id)
-    cards = _collect_session_scorecards(live, user_id=user_id, thread_id=thread_id) if isinstance(live, dict) else []
+    cards = _collect_session_scorecards(live, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project)) if isinstance(live, dict) else []
     option_key = str(tool_input.get("option_key") or "").strip() or None
     if option_key and not any(execution_option_key(card) == option_key for card in cards):
         return _tool_error("That option is not part of this session. Nothing was recorded.", code="decision_option_required")
-    scorecard_id, plan = _resolve_option_plan(user_id, thread_id, cards, option_key, view_active_scorecard_id)
+    scorecard_id, plan = _resolve_option_plan(
+        user_id, thread_id, cards, option_key, view_active_scorecard_id, project=project,
+    )
     if not isinstance(plan, dict):
         return _tool_error("There is no execution plan for that option. Nothing was recorded.", code="no_plan")
     outcome, error = _commit_plan_task(
@@ -8142,11 +8505,19 @@ def _execute_record_lesson(tool_input, *, user, user_id, thread_id, user_message
     })
 
 
-def _execute_decision_capture_tool(tool_name, tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key):
+def _execute_decision_capture_tool(tool_name, tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key, project=None):
+    # A capture writes the turn's project and its decision records: editing
+    # role required, checked before anything is written.
+    try:
+        project = _turn_project(user, thread_id, project)
+    except SessionAccessError:
+        return _tool_error("Thread not found.", code="thread_not_found")
+    if not project.can_write:
+        return _tool_error("Your role on this project is read-only.", code="project_read_only")
     try:
         return _dispatch_decision_capture_tool(
             tool_name, tool_input, user=user, user_id=user_id, thread_id=thread_id,
-            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key,
+            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key, project=project,
         )
     except Exception as exc:
         # A capture write must never fail the turn. Anything already committed
@@ -8158,21 +8529,21 @@ def _execute_decision_capture_tool(tool_name, tool_input, *, user, user_id, thre
         ) | {"failure_state": True, "error_type": type(exc).__name__}
 
 
-def _dispatch_decision_capture_tool(tool_name, tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key):
+def _dispatch_decision_capture_tool(tool_name, tool_input, *, user, user_id, thread_id, view_active_scorecard_id, user_message, plan_key, project=None):
     if tool_name == "record_option_decision":
         return _execute_record_option_decision(
             tool_input, user=user, user_id=user_id, thread_id=thread_id,
-            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message,
+            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, project=project,
         )
     if tool_name == "record_decision_context":
         return _execute_record_decision_context(
             tool_input, user=user, user_id=user_id, thread_id=thread_id,
-            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key,
+            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key, project=project,
         )
     if tool_name == "confirm_task_commitment":
         return _execute_confirm_task_commitment(
             tool_input, user=user, user_id=user_id, thread_id=thread_id,
-            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key,
+            view_active_scorecard_id=view_active_scorecard_id, user_message=user_message, plan_key=plan_key, project=project,
         )
     if tool_name == "record_outcome":
         return _execute_record_outcome(
@@ -8399,7 +8770,7 @@ def _capture_signal_exists(record, *, kind, option_key, quote, content=None):
     return False
 
 
-def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=None):
+def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=None, project=None):
     """Run the capture step for this turn. Returns {actions, summary, usage}."""
     from ..decision_capture import decision_facts, find_thread_record
     from ..decision_records import current_option_decision
@@ -8410,18 +8781,19 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
     api_key = _anthropic_api_key()
     if not api_key:
         return empty
-    _sessions, _key, stored_session = _load_capture_session(user_id, thread_id)
+    _sessions, _key, stored_session = _load_capture_session(user_id, thread_id, project=project)
     if not isinstance(stored_session, dict):
         return empty
-    cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id)
+    cards = _collect_session_scorecards(stored_session, user_id=user_id, thread_id=thread_id, project=project)
     options = _capture_pass_options(cards)
     if not options:
         return empty
 
     messages_list = _capture_recent_user_messages(stored_session, user_message)
     by_number = {item["number"]: item for item in messages_list}
-    facts = decision_facts(user, thread_id) or {}
-    plan_context = _wbs_content_prompt_suffix(user_id, thread_id, None)
+    capture_row = project.row() if isinstance(project, TurnProject) else None
+    facts = decision_facts(user, thread_id, session_row=capture_row) or {}
+    plan_context = _wbs_content_prompt_suffix(user_id, thread_id, None, project)
     today = datetime.utcnow().date()
     context = {
         "today": today.isoformat(),
@@ -8463,9 +8835,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         decision=governance_decision, legacy_routes=legacy_routes, operation_type="decision_capture",
     )
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
+        client = anthropic_provider.create_client(api_key)
         forced = not str(model_name).lower().startswith(("claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-mythos-5-1"))
         response, resolved = _anthropic_message_create(
             client,
@@ -8478,8 +8848,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
             messages=[{"role": "user", "content": user_content}],
         )
         usage["model"] = resolved
-        usage["input_tokens"] = int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0)
-        usage["output_tokens"] = int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0)
+        usage["input_tokens"], usage["output_tokens"] = anthropic_provider.usage_counts(response)
     except Exception:
         current_app.logger.exception("turn capture call failed thread=%s", thread_id)
         return {**empty, "summary": {"capture_unavailable": True}}
@@ -8522,7 +8891,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
     def run(tool_name, tool_input, message):
         result = _execute_decision_capture_tool(
             tool_name, tool_input, user=user, user_id=user_id, thread_id=thread_id,
-            view_active_scorecard_id=view_active, user_message=message["text"], plan_key=plan_key,
+            view_active_scorecard_id=view_active, user_message=message["text"], plan_key=plan_key, project=project,
         )
         actions.append({"tool": tool_name, "input": tool_input, "result": result, "capture_pass": True})
         return result
@@ -8747,7 +9116,7 @@ def _run_turn_capture(*, user, user_id, thread_id, user_message, view_context=No
         if stated_at is None:
             return True
         _scorecard_id, plan = _resolve_option_plan(
-            user_id, thread_id, cards, str(item.get("option_key") or "").strip() or None, view_active,
+            user_id, thread_id, cards, str(item.get("option_key") or "").strip() or None, view_active, project=project,
         )
         if not isinstance(plan, dict):
             return False
@@ -8878,11 +9247,20 @@ def _capture_entry_exists(record, option_key, bucket, quote, message_text=""):
     return False
 
 
-def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None, user_message=""):
+def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, view_context=None, user_message="", project=None):
     if not user:
         return _tool_error("User context missing.")
     if not thread_id:
         return _tool_error("thread_id is required for mutation tools.", code="missing_thread")
+    # Every tool here changes the turn's project, so it needs an editing role
+    # on THAT project. The turn's routes already refuse a read-only member
+    # before anything is reserved; this keeps the rule for any other caller.
+    try:
+        project = _turn_project(user, thread_id, project)
+    except SessionAccessError:
+        return _tool_error("Thread not found.", code="thread_not_found")
+    if not project.can_write:
+        return _tool_error("Your role on this project is read-only.", code="project_read_only")
 
     # Freeze the intake baseline before the agent begins scoring
     # (docs/DECISION_IMPACT_REPORT_SPEC.md §3.4). This is the agent's single
@@ -8913,7 +9291,6 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         _normalize_scorecard_payload,
         _generate_ai_wbs_suggestion,
         get_llm_client,
-        _load_scenarios,
         _materialize_ai_wbs,
         InvalidTaskDate,
         _normalize_project_wbs,
@@ -8934,7 +9311,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         return _execute_decision_capture_tool(
             tool_name, tool_input, user=user, user_id=user_id, thread_id=thread_id,
             view_active_scorecard_id=view_active_scorecard_id, user_message=user_message,
-            plan_key=plan_key,
+            plan_key=plan_key, project=project,
         )
 
     if tool_name == "approve_presented_rubric":
@@ -8944,7 +9321,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 "Quote the user's approval exactly from their latest message, then ask them to approve the shown rubric if needed.",
                 code="rubric_approval_quote_required",
             )
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         session_key, session = _resolve_user_session(sessions, thread_id)
         rubric = session.get("scoring_rubric") if isinstance(session, dict) else None
         if (
@@ -8962,7 +9339,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         approved["approved_by_user_at"] = _iso_now()
         session["scoring_rubric"] = approved
         sessions[session_key or thread_id] = session
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, session_key or thread_id):
             return _tool_error(
                 "The rubric approval could not be saved. Ask the user to try again.",
                 code="rubric_approval_save_failed",
@@ -8976,7 +9353,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         }
 
     if tool_name == "show_scoring_rubric":
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         _session_key, stored_session = _resolve_user_session(sessions, thread_id)
         if not isinstance(stored_session, dict):
             return _tool_error(
@@ -8987,7 +9364,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             stored_session,
             user_id=user_id,
             thread_id=thread_id,
-            user_message=user_message,
+            user_message=user_message, project=project,
         )
         rubric = stored_session.get("scoring_rubric")
         if not rendered or not isinstance(rubric, dict):
@@ -9101,7 +9478,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         for c in criteria:
             c["weight"] = 0.0 if c.get("gate") else round(c["weight"] / total, 4)
 
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         _key, _sess = _resolve_user_session(sessions, thread_id)
         active_kit = (
             get_decision_kit(_sess.get("decision_kit"), _sess.get("decision_kit_version"))
@@ -9129,7 +9506,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             if isinstance(_sess, dict) and not same_as_existing:
                 _sess["rubric_proposal"] = proposal
                 sessions[_key or thread_id] = _sess
-                save_user_sessions(user_id, sessions)
+                save_one_project(user_id, sessions, _key or thread_id)
             return {
                 "ok": True,
                 "tool": tool_name,
@@ -9168,7 +9545,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             if isinstance(_sess, dict):
                 _sess["scoring_rubric"] = rubric_obj
                 sessions[_key or thread_id] = _sess
-                save_user_sessions(user_id, sessions)
+                save_one_project(user_id, sessions, _key or thread_id)
         except Exception:
             current_app.logger.exception("set_scoring_rubric best-effort persist failed")
 
@@ -9209,14 +9586,14 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         fields = tool_input.get("fields")
         if not option or not isinstance(fields, list):
             return _tool_error("Provide an option and its structured fields.", code="invalid_option_attributes")
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         session_key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return _tool_error("Thread not found.", code="thread_not_found")
         kit = get_decision_kit(session.get("decision_kit"), session.get("decision_kit_version")) if session.get("decision_kit") else None
         explicit_target_id = str(tool_input.get("scorecard_id") or "").strip()
         session_scorecards = _collect_session_scorecards(
-            session, user_id=user_id, thread_id=thread_id,
+            session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project), own_rows_only=True,
         )
         scorecards_by_id = {
             str(card.get("id") or card.get("analysis_id") or "").strip(): card
@@ -9268,7 +9645,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         )
         if target_attributes:
             store_option_attributes(session, option_key, target_attributes, option)
-        corpus = _thread_user_corpus(user_id, thread_id)
+        corpus = _thread_user_corpus(user_id, thread_id, project=project)
         known_names = [
             str(item.get("display_name") or "").strip()
             for item in (session.get("option_registry") or {}).values()
@@ -9347,7 +9724,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             current_app.logger.warning("Rejected %d non-canonical fact(s) for option %s", len(rejected_fields), option_identity)
         session["facts_changed"] = True
         sessions[session_key or thread_id] = session
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, session_key or thread_id):
             return _tool_error(
                 "The fact update could not be saved. The existing score remains unchanged.",
                 code="fact_update_persist_failed",
@@ -9417,7 +9794,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # keeps option facts attached even when the agent queues only names.
         _queue_session = {}
         try:
-            _queue_sessions = load_user_sessions(user_id) or {}
+            _queue_sessions = _project_sessions(user_id, thread_id, project) or {}
             _queue_key, _queue_session = _resolve_user_session(_queue_sessions, thread_id)
             if not isinstance(_queue_session, dict):
                 _queue_session = {}
@@ -9425,7 +9802,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             _queue_session = {}
         queue = []
         seen = set()
-        queue_corpus = _thread_user_corpus(user_id, thread_id)
+        queue_corpus = _thread_user_corpus(user_id, thread_id, project=project)
         queue_names = [
             str(candidate.get("name") or candidate.get("idea") or candidate.get("label")
                 or candidate.get("title") or candidate.get("option") or "").strip()
@@ -9560,7 +9937,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         # Canonical option facts must exist durably before any queued score runs.
         persisted_queue = False
         try:
-            sessions = load_user_sessions(user_id) or {}
+            sessions = _project_sessions(user_id, thread_id, project) or {}
             _key, _sess = _resolve_user_session(sessions, thread_id)
             if isinstance(_sess, dict):
                 _sess["scorecard_queue"] = queue
@@ -9569,7 +9946,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                         _sess[key] = _queue_session[key]
                 # Clear overflow left by earlier versions; this queue is complete.
                 _sess["scorecard_queue_overflow"] = overflow
-                persisted_queue = bool(save_user_sessions(user_id, sessions))
+                persisted_queue = bool(save_one_project(user_id, sessions, _key or thread_id))
         except Exception:
             current_app.logger.exception("queue_scorecards canonical fact persist failed")
         if not persisted_queue:
@@ -9615,7 +9992,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             )
         requested_name = _compact_scorecard_title(requested_name or "Untitled Idea")
 
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         session_key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return _tool_error("Thread not found.", code="thread_not_found")
@@ -9638,6 +10015,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 session,
                 rescore_id,
                 requested_name,
+                project=project,
             )
             if rescore_error:
                 return rescore_error
@@ -9650,13 +10028,22 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         else:
             evaluation_id = evaluation_id_for_new_scorecard(session, user_id=user_id)
         if not rescore_id:
-            legacy_thread_data = (_load_scenarios(user_id) or {}).get(thread_id) or {}
-            current_peers = collect_peer_scorecards(
-                user_id,
-                thread_id,
-                legacy_session=session,
-                legacy_thread_data=legacy_thread_data,
-            )
+            legacy_thread_data = (_project_scenarios(user_id, thread_id, project) or {}).get(thread_id) or {}
+            peer_project_row = _scorecard_project(user_id, thread_id, project).row()
+            if peer_project_row is not None:
+                current_peers = collect_peer_scorecards(
+                    user_id,
+                    thread_id,
+                    legacy_session=session,
+                    legacy_thread_data=legacy_thread_data,
+                    project_row=peer_project_row,
+                    own_rows_only=True,
+                )
+            else:
+                # No readable project row yet: only this session's own cards,
+                # never an unscoped index lookup by user and thread id.
+                from ..scorecards import _legacy_scorecards
+                current_peers = list(_legacy_scorecards(session, legacy_thread_data, thread_id))
             view_limit = scorecard_limit_for(user, plan_key)
             if len(current_peers) >= view_limit:
                 return _tool_error(
@@ -9668,9 +10055,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         decision_kit = session.get("decision_kit")
         decision_kit_version = session.get("decision_kit_version")
         kit = get_decision_kit(decision_kit, decision_kit_version) if decision_kit else None
-        evidence_corpus = _thread_user_corpus(user_id, thread_id)
+        evidence_corpus = _thread_user_corpus(user_id, thread_id, project=project)
         existing_scorecards = _collect_session_scorecards(
-            session, user_id=user_id, thread_id=thread_id,
+            session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project), own_rows_only=True,
         )
         known_option_names = [
             str(item.get("name") or "").strip()
@@ -9790,7 +10177,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             session["rejected_option_attributes"] = rejected_store
             current_app.logger.warning("Rejected %d non-canonical fact(s) while scoring option %s", len(rejected_fields), option_identity)
         sessions[session_key or thread_id] = session
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, session_key or thread_id):
             error = _tool_error(
                 "The canonical facts could not be saved, so scoring was not started. Try again.",
                 code="canonical_fact_persist_failed",
@@ -9904,6 +10291,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                     option_name=requested_name,
                 ),
                 operation_type="score_next",
+                prompt_family='scorecard',
                 request_payload={
                     "thread_id": thread_id,
                     "description": idea_description,
@@ -10089,7 +10477,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 from ..decision_state import mark_option_scored
                 mark_option_scored(session, option_key, requested_name)
                 sessions[session_key or thread_id] = session
-                if not save_user_sessions(user_id, sessions):
+                if not save_one_project(user_id, sessions, session_key or thread_id):
                     reverse_customer_operation_charge(
                         user, ai_settlement, error_code='scorecard_persistence_failed',
                     )
@@ -10196,7 +10584,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         session["completed_at"] = generated_at
         session["timestamp"] = generated_at
         sessions[session_key or thread_id] = session
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, session_key or thread_id):
             return _tool_error("Failed to persist generated scorecard.", code="persist_failed")
         _refresh_decision_record_after_score(user, thread_id)
 
@@ -10213,7 +10601,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         })
 
     if tool_name == "generate_tradeoff_comparison":
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         _session_key, session = _resolve_user_session(sessions, thread_id)
         if not isinstance(session, dict):
             return _tool_error("Thread not found.", code="thread_not_found")
@@ -10224,7 +10612,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             if str(item).strip()
         ]
         selected_ids = set(scorecard_ids)
-        snapshots = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+        snapshots = _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
         if selected_ids:
             snapshots = [
                 snap for snap in snapshots
@@ -10336,7 +10724,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             return _tool_error("new_name is required.", code="invalid_name")
         next_name = next_name[:180]
 
-        sessions = load_user_sessions(user_id) or {}
+        sessions = _project_sessions(user_id, thread_id, project) or {}
         target_key = None
         target_session = None
         if thread_id in sessions and isinstance(sessions.get(thread_id), dict):
@@ -10368,10 +10756,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             target_session["result"] = result_blob
         target_session["timestamp"] = datetime.utcnow().isoformat()
         sessions[target_key or thread_id] = target_session
-        if not save_user_sessions(user_id, sessions):
+        if not save_one_project(user_id, sessions, target_key or thread_id):
             return _tool_error("Failed to persist thread rename.", code="persist_failed")
 
-        all_data = _load_scenarios(user_id) or {}
+        all_data = _project_scenarios(user_id, thread_id, project) or {}
         if thread_id in all_data and isinstance(all_data.get(thread_id), dict):
             td = all_data[thread_id]
             td["name"] = next_name
@@ -10739,7 +11127,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             from ..decision_records import execution_option_key as _plan_option_key
 
             named_cards = [
-                card for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id)
+                card for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project))
                 if _plan_option_key(card) == named_option_key
             ]
             if not named_cards:
@@ -10750,7 +11138,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             scorecard = named_cards[-1]
             target_idea_id = str(scorecard.get("id") or scorecard.get("analysis_id") or "").strip() or None
         if target_idea_id and scorecard is None:
-            for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id):
+            for card in _collect_session_scorecards(session, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project)):
                 cid = str(card.get("id") or card.get("analysis_id") or "")
                 if cid and cid == target_idea_id:
                     scorecard = card
@@ -10884,6 +11272,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
             }
         generated, _usage, _settlement = execute_customer_operation(
             user, generate=generate_plan, operation_type="execution_plan",
+            prompt_family='execution_plan',
             request_payload={"thread_id": thread_id, "scorecard_id": target_idea_id, "instruction": instruction},
             model_type=model_selection["model_type"], max_tokens=8000, thread_id=thread_id,
         )
@@ -11054,7 +11443,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not new_start_date or _parse_wbs_start_date(new_start_date) is None:
             return _tool_error("start_date must be a valid ISO date (YYYY-MM-DD).", code="invalid_start_date")
 
-        all_data = _load_scenarios(user_id)
+        all_data = _project_scenarios(user_id, thread_id, project)
         td = all_data.get(thread_id) if isinstance(all_data, dict) else None
         if not isinstance(td, dict):
             return _tool_error("No execution plan found for this thread yet.", code="no_plan")
@@ -11068,7 +11457,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         option_key = str(tool_input.get("option_key") or "").strip()
         if option_key:
             active_scorecard_id, resolved_wbs, target_error = _resolve_explicit_option_plan(
-                user_id, thread_id, td, option_key,
+                user_id, thread_id, td, option_key, project=project,
             )
             if target_error:
                 return target_error
@@ -11124,9 +11513,9 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         if not is_tool_allowed(plan_key, "wbs_write", "write"):
             return _tool_error("WBS write actions are not allowed on your current plan.", code="tool_not_allowed")
 
-        from .strategy import _load_scenarios, _thread_entry
+        from .strategy import _thread_entry
 
-        all_data = _load_scenarios(user_id)
+        all_data = _project_scenarios(user_id, thread_id, project)
         if thread_id not in all_data or not isinstance(all_data.get(thread_id), dict):
             all_data[thread_id] = _thread_entry()
         td = all_data[thread_id]
@@ -11142,7 +11531,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
         option_key = str(tool_input.get("option_key") or "").strip()
         if option_key:
             active_scorecard_id, resolved_wbs, target_error = _resolve_explicit_option_plan(
-                user_id, thread_id, td, option_key,
+                user_id, thread_id, td, option_key, project=project,
             )
             if target_error:
                 return target_error
@@ -11292,44 +11681,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
     return _tool_error(f"Unsupported tool '{tool_name}'.", code="unknown_tool")
 
 
-def _anthropic_content_to_dicts(content_blocks):
-    """Normalize SDK content blocks to dicts containing ONLY the canonical
-    fields the Anthropic API accepts on round-trip. model_dump() can include
-    extra fields (e.g. parsed_output on newer Haiku models) that the API
-    rejects with 'Extra inputs are not permitted'."""
-    normalized = []
-    for block in (content_blocks or []):
-        block_type = (
-            block.get("type") if isinstance(block, dict)
-            else getattr(block, "type", "text")
-        )
-        if block_type == "text":
-            text_val = (
-                block.get("text") if isinstance(block, dict)
-                else getattr(block, "text", "")
-            )
-            normalized.append({"type": "text", "text": str(text_val or "")})
-        elif block_type == "tool_use":
-            tu_id = block.get("id") if isinstance(block, dict) else getattr(block, "id", None)
-            tu_name = block.get("name") if isinstance(block, dict) else getattr(block, "name", None)
-            tu_input = block.get("input") if isinstance(block, dict) else getattr(block, "input", None)
-            normalized.append({
-                "type": "tool_use",
-                "id": tu_id,
-                "name": tu_name,
-                "input": tu_input if isinstance(tu_input, (dict, list)) else {},
-            })
-        elif block_type == "tool_result":
-            tr_id = block.get("tool_use_id") if isinstance(block, dict) else getattr(block, "tool_use_id", None)
-            tr_content = block.get("content") if isinstance(block, dict) else getattr(block, "content", "")
-            normalized.append({
-                "type": "tool_result",
-                "tool_use_id": tr_id,
-                "content": tr_content if isinstance(tr_content, str) else json.dumps(tr_content),
-            })
-        # silently drop unknown block types (thinking, etc.) — they aren't
-        # accepted as input by the API anyway
-    return normalized
+_anthropic_content_to_dicts = anthropic_provider.content_to_dicts
 
 
 def _entitlement_plan_key(user):
@@ -11358,28 +11710,8 @@ def _entitlement_plan_key(user):
     return to_public_plan(getattr(user, "subscription_plan", None))
 
 
-def _anthropic_text(content_blocks):
-    out = []
-    for block in (content_blocks or []):
-        if isinstance(block, dict):
-            if block.get("type") == "text" and block.get("text"):
-                out.append(str(block.get("text")))
-            continue
-        if getattr(block, "type", None) == "text":
-            text = getattr(block, "text", "")
-            if text:
-                out.append(str(text))
-    return "\n".join(out).strip()
-
-
-def _anthropic_response_text(response):
-    """Return visible text while treating an HTTP-200 refusal as a result."""
-    text = _anthropic_text(getattr(response, "content", None))
-    if text:
-        return text
-    if str(getattr(response, "stop_reason", "") or "").strip().lower() == "refusal":
-        return "I’m unable to help with that request."
-    return ""
+_anthropic_text = anthropic_provider.text
+_anthropic_response_text = anthropic_provider.response_text
 
 
 def _sse_payload(payload):
@@ -11387,47 +11719,15 @@ def _sse_payload(payload):
 
 
 def _anthropic_message_create(client, *, model_name, stream=False, strict_model=False, **kwargs):
-    last_error = None
     candidates = (
         [_anthropic_model_for_selection({"llm_model": model_name})]
         if strict_model
         else _anthropic_model_candidates(model_name)
     )
-    for candidate in candidates:
-        if not candidate:
-            continue
-        try:
-            request_kwargs = dict(kwargs)
-            if not _anthropic_model_accepts_temperature(candidate):
-                request_kwargs.pop("temperature", None)
-                request_kwargs.pop("top_p", None)
-                request_kwargs.pop("top_k", None)
-            if str(candidate).strip().lower().startswith("claude-sonnet-5"):
-                # Preserve pre-migration latency, output budgets, and economics.
-                # Adaptive thinking can be benchmarked and enabled separately.
-                request_kwargs["thinking"] = {"type": "disabled"}
-            if stream:
-                return client.messages.stream(model=candidate, **request_kwargs), candidate
-            return client.messages.create(model=candidate, **request_kwargs), candidate
-        except Exception as exc:
-            last_error = exc
-            continue
-    if last_error:
-        raise last_error
-    raise RuntimeError("No valid Anthropic model candidates configured")
+    return anthropic_provider.message_create(client, candidates=candidates, stream=stream, **kwargs)
 
 
-def _anthropic_model_accepts_temperature(model_name):
-    """Return False for current Claude generations that reject temperature."""
-    normalized = str(model_name or "").strip().lower()
-    return not (
-        normalized.startswith("claude-sonnet-5")
-        or normalized.startswith("claude-fable-5")
-        or normalized.startswith("claude-opus-4-7")
-        or normalized.startswith("claude-opus-4-8")
-        or normalized.startswith("claude-opus-5")
-        or normalized.startswith("claude-mythos-5")
-    )
+_anthropic_model_accepts_temperature = anthropic_provider.model_accepts_temperature
 
 
 def _generate_assistant_reply_anthropic(
@@ -11445,6 +11745,7 @@ def _generate_assistant_reply_anthropic(
     attachments=None,
     disable_mutations=False,
     allow_failover=False,
+    project=None,
 ):
     fallback_reply = ""
     api_key = _anthropic_api_key()
@@ -11452,7 +11753,7 @@ def _generate_assistant_reply_anthropic(
         return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
 
     try:
-        import anthropic
+        anthropic_provider.load_sdk()
     except Exception:
         return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
 
@@ -11472,28 +11773,19 @@ def _generate_assistant_reply_anthropic(
         user=user,
         thread_id=thread_id,
     )
-    system_prompt = _build_agent_system_prompt(
-        context_summary_text=context_summary_text,
-        intake_context=intake_context,
-        view_context=view_context,
-        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
-        user_id=user_id,
-        thread_id=thread_id,
-        chat_history=chat_history,
-        readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
+    system_prompt = _build_shared_system_prompt(
+        session=session, chat_history=chat_history,
+        context_summary_text=context_summary_text, intake_context=intake_context,
+        view_context=view_context, readiness=readiness, user=user, user_id=user_id,
+        thread_id=thread_id, project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
-    _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id)
     user_content = _anthropic_user_message_content(user_message, attachments=attachments)
     if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
         messages[-1] = {**messages[-1], "content": user_content}
     elif not messages:
         messages = [{"role": "user", "content": user_content}]
 
-    client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
+    client = anthropic_provider.create_client(api_key)
     can_mutate = (
         not disable_mutations
         and bool(thread_id)
@@ -11508,8 +11800,23 @@ def _generate_assistant_reply_anthropic(
         plan_key=plan_key,
         include_capture_tools=False,
     )
+    base_system_prompt = system_prompt
+    budget_result = plan_context_request(
+        system_prompt=base_system_prompt,
+        messages=messages,
+        tools=tools,
+        model=model_name,
+        max_output_tokens=max_tokens,
+        config=current_app.config,
+    )
+    system_prompt = budget_result.system_prompt
+    messages = list(budget_result.messages)
+    tools = list(budget_result.tools)
+    context_budget_manifest = budget_result.manifest
     total_input_tokens = 0
     total_output_tokens = 0
+    last_request_input_tokens = 0
+    completed_provider_rounds = []
     executed_actions = []
     executed_mutations = []
     undo_snapshot = None
@@ -11531,26 +11838,24 @@ def _generate_assistant_reply_anthropic(
             tools=tools,
             messages=messages,
         )
-        total_input_tokens += int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0)
-        total_output_tokens += int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0)
+        response_input_tokens, response_output_tokens = anthropic_provider.usage_counts(response)
+        last_request_input_tokens = response_input_tokens
+        total_input_tokens += response_input_tokens
+        total_output_tokens += response_output_tokens
+        completed_provider_rounds.append(_completed_provider_round(
+            provider="anthropic", model=resolved_model_name,
+            input_tokens=response_input_tokens, output_tokens=response_output_tokens,
+        ))
 
         # Tool loop: allow Claude to call local readiness/data-contract tools.
         for _ in range(3):
-            tool_blocks = [b for b in (response.content or []) if getattr(b, "type", None) == "tool_use" or (isinstance(b, dict) and b.get("type") == "tool_use")]
+            tool_blocks = anthropic_provider.tool_use_blocks(response.content)
             if not tool_blocks:
                 break
 
             tool_results = []
             for block in tool_blocks:
-                if isinstance(block, dict):
-                    tool_name = str(block.get("name") or "").strip()
-                    tool_use_id = block.get("id")
-                    tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
-                else:
-                    tool_name = str(getattr(block, "name", "") or "").strip()
-                    tool_use_id = getattr(block, "id", None)
-                    raw_input = getattr(block, "input", None)
-                    tool_input = raw_input if isinstance(raw_input, dict) else {}
+                tool_name, tool_use_id, tool_input = anthropic_provider.tool_use_call(block)
 
                 is_mutation = _is_mutation_tool(tool_name)
                 if is_mutation:
@@ -11571,7 +11876,7 @@ def _generate_assistant_reply_anthropic(
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
                     user_message=user_message,
-                    session=session,
+                    session=session, project=project,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -11590,14 +11895,20 @@ def _generate_assistant_reply_anthropic(
                         "error": result_payload.get("error"),
                         "code": result_payload.get("code"),
                     })
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "content": json.dumps(result_payload),
-                })
+                tool_results.append(anthropic_provider.tool_result_block(tool_use_id, result_payload))
 
-            messages.append({"role": "assistant", "content": _anthropic_content_to_dicts(response.content)})
-            messages.append({"role": "user", "content": tool_results})
+            messages.extend(anthropic_provider.tool_round_messages(response.content, tool_results))
+            budget_result = plan_context_request(
+                system_prompt=base_system_prompt,
+                messages=messages,
+                tools=tools,
+                model=model_name,
+                max_output_tokens=max_tokens,
+                config=current_app.config,
+            )
+            system_prompt = budget_result.system_prompt
+            messages = list(budget_result.messages)
+            context_budget_manifest = budget_result.manifest
             response, resolved_model_name = _anthropic_message_create(
                 client,
                 model_name=model_name,
@@ -11607,8 +11918,14 @@ def _generate_assistant_reply_anthropic(
                 tools=tools,
                 messages=messages,
             )
-            total_input_tokens += int(getattr(getattr(response, "usage", None), "input_tokens", 0) or 0)
-            total_output_tokens += int(getattr(getattr(response, "usage", None), "output_tokens", 0) or 0)
+            response_input_tokens, response_output_tokens = anthropic_provider.usage_counts(response)
+            last_request_input_tokens = response_input_tokens
+            total_input_tokens += response_input_tokens
+            total_output_tokens += response_output_tokens
+            completed_provider_rounds.append(_completed_provider_round(
+                provider="anthropic", model=resolved_model_name,
+                input_tokens=response_input_tokens, output_tokens=response_output_tokens,
+            ))
 
         if not _anthropic_response_text(response).strip() and not _has_successful_mutations(executed_mutations):
             raise ValueError("invalid_response")
@@ -11626,8 +11943,28 @@ def _generate_assistant_reply_anthropic(
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,
             "total_tokens": total_input_tokens + total_output_tokens,
+            "context_budget": with_provider_reported_tokens(
+                context_budget_manifest, last_request_input_tokens,
+                total_input_tokens_across_calls=total_input_tokens,
+            ),
         }
         return reply, usage, executed_actions, executed_mutations, undo_snapshot
+    except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+        _attach_context_budget_interruption_usage(
+            exc, provider="anthropic", model=resolved_model_name,
+            input_tokens=total_input_tokens, output_tokens=total_output_tokens,
+            context_budget_manifest=context_budget_manifest,
+            last_request_input_tokens=last_request_input_tokens,
+            completed_rounds=completed_provider_rounds,
+        )
+        if _has_successful_mutations(executed_mutations):
+            usage = dict(getattr(exc, "jaspen_usage", {}) or {})
+            reply = _finalize_agent_reply(
+                _anthropic_response_text(response), fallback_reply, tool_confirmations,
+                executed_actions=executed_actions, user_id=user_id, thread_id=thread_id,
+            )
+            return reply, usage, executed_actions, executed_mutations, undo_snapshot
+        raise
     except Exception:
         current_app.logger.exception("ai_agent anthropic generation failed")
         if _has_successful_mutations(executed_mutations):
@@ -11651,6 +11988,10 @@ def _generate_assistant_reply_anthropic(
                 "input_tokens": total_input_tokens,
                 "output_tokens": total_output_tokens,
                 "total_tokens": total_input_tokens + total_output_tokens,
+                "context_budget": with_provider_reported_tokens(
+                    context_budget_manifest, last_request_input_tokens,
+                    total_input_tokens_across_calls=total_input_tokens,
+                ),
             }
             return reply, usage, executed_actions, executed_mutations, undo_snapshot
         if allow_failover:
@@ -11675,6 +12016,7 @@ def _stream_assistant_reply_events_anthropic(
     attachments=None,
     disable_mutations=False,
     allow_failover=False,
+    project=None,
 ):
     state = state if isinstance(state, dict) else {}
     fallback_reply = ""
@@ -11692,7 +12034,7 @@ def _stream_assistant_reply_events_anthropic(
         return
 
     try:
-        import anthropic
+        anthropic_provider.load_sdk()
     except Exception:
         yield {"type": "delta", "text": fallback_reply}
         return
@@ -11713,28 +12055,19 @@ def _stream_assistant_reply_events_anthropic(
         user=user,
         thread_id=thread_id,
     )
-    system_prompt = _build_agent_system_prompt(
-        context_summary_text=context_summary_text,
-        intake_context=intake_context,
-        view_context=view_context,
-        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
-        user_id=user_id,
-        thread_id=thread_id,
-        chat_history=chat_history,
-        readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
+    system_prompt = _build_shared_system_prompt(
+        session=session, chat_history=chat_history,
+        context_summary_text=context_summary_text, intake_context=intake_context,
+        view_context=view_context, readiness=readiness, user=user, user_id=user_id,
+        thread_id=thread_id, project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
-    _active_exec_sc = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, _active_exec_sc)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id)
     user_content = _anthropic_user_message_content(user_message, attachments=attachments)
     if messages and str(messages[-1].get("role") or "").strip().lower() == "user":
         messages[-1] = {**messages[-1], "content": user_content}
     elif not messages:
         messages = [{"role": "user", "content": user_content}]
 
-    client = anthropic.Anthropic(api_key=api_key, timeout=_anthropic_request_timeout_seconds())
+    client = anthropic_provider.create_client(api_key)
     can_mutate = (
         not disable_mutations
         and bool(thread_id)
@@ -11749,8 +12082,23 @@ def _stream_assistant_reply_events_anthropic(
         plan_key=plan_key,
         include_capture_tools=False,
     )
+    base_system_prompt = system_prompt
+    budget_result = plan_context_request(
+        system_prompt=base_system_prompt,
+        messages=messages,
+        tools=tools,
+        model=model_name,
+        max_output_tokens=max_tokens,
+        config=current_app.config,
+    )
+    system_prompt = budget_result.system_prompt
+    messages = list(budget_result.messages)
+    tools = list(budget_result.tools)
+    context_budget_manifest = budget_result.manifest
     total_input_tokens = 0
     total_output_tokens = 0
+    last_request_input_tokens = 0
+    completed_provider_rounds = []
     executed_actions = []
     executed_mutations = []
     undo_snapshot = None
@@ -11777,29 +12125,28 @@ def _stream_assistant_reply_events_anthropic(
                 messages=messages,
             )
             with manager as stream:
-                for event in stream:
-                    if event.type == "content_block_delta" and getattr(event.delta, "type", None) == "text_delta":
-                        text = str(getattr(event.delta, "text", "") or "")
-                        if text:
-                            if _scoring_outcome_card_action(executed_actions):
-                                continue
-                            candidate_reply = "".join(streamed_reply_parts) + text
-                            if _check_response_for_leak(candidate_reply):
-                                leak_detected = True
-                                current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
-                                continue
-                            streamed_reply_parts.append(text)
-                            yield {"type": "delta", "text": text}
+                for text in anthropic_provider.iter_text_deltas(stream):
+                    if _scoring_outcome_card_action(executed_actions):
+                        continue
+                    candidate_reply = "".join(streamed_reply_parts) + text
+                    if _check_response_for_leak(candidate_reply):
+                        leak_detected = True
+                        current_app.logger.warning("System prompt leak detected | user=%s thread=%s", user_id, thread_id)
+                        continue
+                    streamed_reply_parts.append(text)
+                    yield {"type": "delta", "text": text}
                 final_message = stream.get_final_message()
 
-            usage = getattr(final_message, "usage", None)
-            total_input_tokens += int(getattr(usage, "input_tokens", 0) or 0)
-            total_output_tokens += int(getattr(usage, "output_tokens", 0) or 0)
+            message_input_tokens, message_output_tokens = anthropic_provider.usage_counts(final_message)
+            last_request_input_tokens = message_input_tokens
+            total_input_tokens += message_input_tokens
+            total_output_tokens += message_output_tokens
+            completed_provider_rounds.append(_completed_provider_round(
+                provider="anthropic", model=resolved_model_name,
+                input_tokens=message_input_tokens, output_tokens=message_output_tokens,
+            ))
 
-            tool_blocks = [
-                block for block in (getattr(final_message, "content", None) or [])
-                if getattr(block, "type", None) == "tool_use" or (isinstance(block, dict) and block.get("type") == "tool_use")
-            ]
+            tool_blocks = anthropic_provider.tool_use_blocks(getattr(final_message, "content", None))
             if not tool_blocks:
                 if not _anthropic_response_text(final_message).strip() and not _has_successful_mutations(executed_mutations):
                     raise ValueError("invalid_response")
@@ -11819,6 +12166,10 @@ def _stream_assistant_reply_events_anthropic(
                         "input_tokens": total_input_tokens,
                         "output_tokens": total_output_tokens,
                         "total_tokens": total_input_tokens + total_output_tokens,
+                        "context_budget": with_provider_reported_tokens(
+                            context_budget_manifest, last_request_input_tokens,
+                            total_input_tokens_across_calls=total_input_tokens,
+                        ),
                     },
                     "actions": executed_actions,
                     "mutations": executed_mutations,
@@ -11828,15 +12179,7 @@ def _stream_assistant_reply_events_anthropic(
 
             tool_results = []
             for block in tool_blocks:
-                if isinstance(block, dict):
-                    tool_name = str(block.get("name") or "").strip()
-                    tool_use_id = block.get("id")
-                    tool_input = block.get("input") if isinstance(block.get("input"), dict) else {}
-                else:
-                    tool_name = str(getattr(block, "name", "") or "").strip()
-                    tool_use_id = getattr(block, "id", None)
-                    raw_input = getattr(block, "input", None)
-                    tool_input = raw_input if isinstance(raw_input, dict) else {}
+                tool_name, tool_use_id, tool_input = anthropic_provider.tool_use_call(block)
 
                 yield {"type": "tool_use", "tool": tool_name, "input": tool_input}
                 is_mutation = _is_mutation_tool(tool_name)
@@ -11858,7 +12201,7 @@ def _stream_assistant_reply_events_anthropic(
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
                     user_message=user_message,
-                    session=session,
+                    session=session, project=project,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -11878,14 +12221,20 @@ def _stream_assistant_reply_events_anthropic(
                         "code": result_payload.get("code"),
                     })
                 yield {"type": "tool_result", "tool": tool_name, "result": result_payload}
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "content": json.dumps(result_payload),
-                })
+                tool_results.append(anthropic_provider.tool_result_block(tool_use_id, result_payload))
 
-            messages.append({"role": "assistant", "content": _anthropic_content_to_dicts(getattr(final_message, "content", None))})
-            messages.append({"role": "user", "content": tool_results})
+            messages.extend(anthropic_provider.tool_round_messages(getattr(final_message, "content", None), tool_results))
+            budget_result = plan_context_request(
+                system_prompt=base_system_prompt,
+                messages=messages,
+                tools=tools,
+                model=model_name,
+                max_output_tokens=max_tokens,
+                config=current_app.config,
+            )
+            system_prompt = budget_result.system_prompt
+            messages = list(budget_result.messages)
+            context_budget_manifest = budget_result.manifest
         reply = _finalize_agent_reply(
             "" if leak_detected else "".join(streamed_reply_parts).strip(),
             fallback_reply,
@@ -11902,11 +12251,40 @@ def _stream_assistant_reply_events_anthropic(
                 "input_tokens": total_input_tokens,
                 "output_tokens": total_output_tokens,
                 "total_tokens": total_input_tokens + total_output_tokens,
+                "context_budget": with_provider_reported_tokens(
+                    context_budget_manifest, last_request_input_tokens,
+                    total_input_tokens_across_calls=total_input_tokens,
+                ),
             },
             "actions": executed_actions,
             "mutations": executed_mutations,
             "undo_snapshot": undo_snapshot,
         })
+    except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+        _attach_context_budget_interruption_usage(
+            exc, provider="anthropic", model=resolved_model_name,
+            input_tokens=total_input_tokens, output_tokens=total_output_tokens,
+            context_budget_manifest=context_budget_manifest,
+            last_request_input_tokens=last_request_input_tokens,
+            completed_rounds=completed_provider_rounds,
+        )
+        if _has_successful_mutations(executed_mutations):
+            reply = _finalize_agent_reply(
+                "" if leak_detected else "".join(streamed_reply_parts).strip(),
+                fallback_reply, tool_confirmations, executed_actions=executed_actions,
+                user_id=user_id, thread_id=thread_id,
+            )
+            if not streamed_reply_parts:
+                yield {"type": "delta", "text": reply}
+            state.update({
+                "reply": reply,
+                "usage": dict(getattr(exc, "jaspen_usage", {}) or {}),
+                "actions": executed_actions,
+                "mutations": executed_mutations,
+                "undo_snapshot": undo_snapshot,
+            })
+            return
+        raise
     except Exception:
         current_app.logger.exception("ai_agent anthropic streaming failed")
         if _has_successful_mutations(executed_mutations):
@@ -11931,10 +12309,14 @@ def _stream_assistant_reply_events_anthropic(
                     "degraded": True, "error_code": "narration_failed",
                 "provider": "anthropic",
                     "model": resolved_model_name,
-                    "refused": str(getattr(final_message, "stop_reason", "") or "").lower() == "refusal",
+                    "refused": anthropic_provider.is_refusal(final_message),
                     "input_tokens": total_input_tokens,
                     "output_tokens": total_output_tokens,
                     "total_tokens": total_input_tokens + total_output_tokens,
+                    "context_budget": with_provider_reported_tokens(
+                        context_budget_manifest, last_request_input_tokens,
+                        total_input_tokens_across_calls=total_input_tokens,
+                    ),
                 },
                 "actions": executed_actions,
                 "mutations": executed_mutations,
@@ -11977,6 +12359,7 @@ def _generate_assistant_reply_gemini(
     attachments=None,
     disable_mutations=False,
     allow_failover=False,
+    project=None,
 ):
     if not _gemini_api_key():
         raise RuntimeError("GEMINI_API_KEY not configured")
@@ -11990,21 +12373,12 @@ def _generate_assistant_reply_gemini(
         user=user,
         thread_id=thread_id,
     )
-    system_prompt = _build_agent_system_prompt(
-        context_summary_text=context_summary_text,
-        intake_context=intake_context,
-        view_context=view_context,
-        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
-        user_id=user_id,
-        thread_id=thread_id,
-        chat_history=chat_history,
-        readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
+    system_prompt = _build_shared_system_prompt(
+        session=session, chat_history=chat_history,
+        context_summary_text=context_summary_text, intake_context=intake_context,
+        view_context=view_context, readiness=readiness, user=user, user_id=user_id,
+        thread_id=thread_id, project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
-    active_exec_id = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, active_exec_id)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id)
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
@@ -12023,12 +12397,13 @@ def _generate_assistant_reply_gemini(
             or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _openai_tools_from_anthropic(
+    semantic_tools = _anthropic_tool_definitions(
         enable_mutation_tools=can_mutate,
         user_id=user_id,
         plan_key=plan_key,
         include_capture_tools=False,
     )
+    tools = _openai_tools_from_anthropic(definitions=semantic_tools)
     total_usage = {
         "provider": "gemini",
         "model": model_selection.get("llm_model"),
@@ -12046,27 +12421,43 @@ def _generate_assistant_reply_gemini(
 
     openai_messages = list(messages)
     assistant_text = ""
+    context_budget_manifest = None
+    last_request_input_tokens = 0
+    completed_provider_rounds = []
     try:
         for _ in range(3):
-            response = _gemini_openai_request(
-                model_name=model_name,
+            budget_result = plan_context_request(
                 system_prompt=system_prompt,
                 messages=openai_messages,
+                tools=semantic_tools,
+                model=model_name,
+                max_output_tokens=max_tokens,
+                config=current_app.config,
+            )
+            context_budget_manifest = budget_result.manifest
+            response = _gemini_openai_request(
+                model_name=model_name,
+                system_prompt=budget_result.system_prompt,
+                messages=budget_result.messages,
                 tools=tools,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 stream=False,
             )
             payload = response.json()
-            total_usage = _merge_usage_totals(
-                total_usage,
-                _openai_usage_to_internal(payload.get("usage"), provider="gemini", model=model_name),
+            round_usage = _openai_usage_to_internal(
+                payload.get("usage"), provider="gemini", model=model_name,
             )
-            choice = ((payload.get("choices") or [{}])[0]) if isinstance(payload, dict) else {}
-            message = choice.get("message") if isinstance(choice, dict) else {}
-            message = message if isinstance(message, dict) else {}
-            tool_calls = message.get("tool_calls") if isinstance(message.get("tool_calls"), list) else []
-            assistant_text = str(message.get("content") or "").strip()
+            last_request_input_tokens = int(round_usage.get("input_tokens") or 0)
+            total_usage = _merge_usage_totals(total_usage, round_usage)
+            completed_provider_rounds.append(_completed_provider_round(
+                provider="gemini", model=model_name,
+                input_tokens=round_usage.get("input_tokens"),
+                output_tokens=round_usage.get("output_tokens"),
+            ))
+            choice, message = gemini_provider.first_choice(payload)
+            tool_calls = gemini_provider.message_tool_calls(message)
+            assistant_text = gemini_provider.message_text(message)
 
             if not tool_calls:
                 if not assistant_text and not _has_successful_mutations(executed_mutations):
@@ -12081,18 +12472,16 @@ def _generate_assistant_reply_gemini(
                 )
                 total_usage["provider"] = "gemini"
                 total_usage["model"] = model_name
+                total_usage["context_budget"] = with_provider_reported_tokens(
+                    context_budget_manifest, last_request_input_tokens,
+                    total_input_tokens_across_calls=total_usage.get("input_tokens"),
+                )
                 return reply, total_usage, executed_actions, executed_mutations, undo_snapshot
 
-            openai_messages.append({
-                "role": "assistant",
-                "content": message.get("content"),
-                "tool_calls": tool_calls,
-            })
+            openai_messages.append(gemini_provider.assistant_tool_call_message(message.get("content"), tool_calls))
 
             for tool_call in tool_calls:
-                function = tool_call.get("function") if isinstance(tool_call, dict) else {}
-                tool_name = str((function or {}).get("name") or "").strip()
-                tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
+                tool_name, tool_input = gemini_provider.tool_call_request(tool_call)
                 undo_snapshot = _maybe_capture_turn_undo_snapshot(
                     undo_snapshot,
                     tool_name=tool_name,
@@ -12110,7 +12499,7 @@ def _generate_assistant_reply_gemini(
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
                     user_message=user_message,
-                    session=session,
+                    session=session, project=project,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -12129,11 +12518,26 @@ def _generate_assistant_reply_gemini(
                         "error": result_payload.get("error"),
                         "code": result_payload.get("code"),
                     })
-                openai_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.get("id"),
-                    "content": json.dumps(result_payload),
-                })
+                openai_messages.append(gemini_provider.tool_result_message(tool_call, result_payload))
+    except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+        _attach_context_budget_interruption_usage(
+            exc, provider="gemini", model=model_name,
+            input_tokens=total_usage.get("input_tokens"),
+            output_tokens=total_usage.get("output_tokens"),
+            context_budget_manifest=context_budget_manifest,
+            last_request_input_tokens=last_request_input_tokens,
+            completed_rounds=completed_provider_rounds,
+        )
+        if _has_successful_mutations(executed_mutations):
+            reply = _finalize_agent_reply(
+                assistant_text, fallback_reply, tool_confirmations,
+                executed_actions=executed_actions, user_id=user_id, thread_id=thread_id,
+            )
+            return (
+                reply, dict(getattr(exc, "jaspen_usage", {}) or {}),
+                executed_actions, executed_mutations, undo_snapshot,
+            )
+        raise
     except Exception:
         current_app.logger.exception("ai_agent gemini generation failed")
         if _has_successful_mutations(executed_mutations):
@@ -12145,6 +12549,10 @@ def _generate_assistant_reply_gemini(
             )
             total_usage["provider"] = "gemini"
             total_usage["model"] = model_name
+            total_usage["context_budget"] = with_provider_reported_tokens(
+                context_budget_manifest, last_request_input_tokens,
+                total_input_tokens_across_calls=total_usage.get("input_tokens"),
+            )
             reply = _finalize_agent_reply(
                 assistant_text,
                 fallback_reply,
@@ -12157,6 +12565,11 @@ def _generate_assistant_reply_gemini(
         if allow_failover:
             raise
 
+    if context_budget_manifest is not None:
+        total_usage["context_budget"] = with_provider_reported_tokens(
+            context_budget_manifest, last_request_input_tokens,
+            total_input_tokens_across_calls=total_usage.get("input_tokens"),
+        )
     return fallback_reply, total_usage, executed_actions, executed_mutations, undo_snapshot
 
 
@@ -12177,6 +12590,7 @@ def _stream_assistant_reply_events_gemini(
     attachments=None,
     disable_mutations=False,
     allow_failover=False,
+    project=None,
 ):
     if not _gemini_api_key():
         raise RuntimeError("GEMINI_API_KEY not configured")
@@ -12199,21 +12613,12 @@ def _stream_assistant_reply_events_gemini(
         user=user,
         thread_id=thread_id,
     )
-    system_prompt = _build_agent_system_prompt(
-        context_summary_text=context_summary_text,
-        intake_context=intake_context,
-        view_context=view_context,
-        connector_context_snapshot=(session or {}).get("connector_context_snapshot"),
-        user_id=user_id,
-        thread_id=thread_id,
-        chat_history=chat_history,
-        readiness=readiness,
-        data_context_connector_ids=(session or {}).get("data_context_connector_ids"),
+    system_prompt = _build_shared_system_prompt(
+        session=session, chat_history=chat_history,
+        context_summary_text=context_summary_text, intake_context=intake_context,
+        view_context=view_context, readiness=readiness, user=user, user_id=user_id,
+        thread_id=thread_id, project=project,
     )
-    system_prompt += _scorecard_content_prompt_suffix(session, view_context, user_id=user_id, thread_id=thread_id)
-    active_exec_id = str((_sanitize_view_context(view_context) or {}).get('active_scorecard_id') or '').strip() or None
-    system_prompt += _wbs_content_prompt_suffix(user_id, thread_id, active_exec_id)
-    system_prompt += _decision_facts_prompt_suffix(user_id, thread_id)
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
@@ -12232,12 +12637,13 @@ def _stream_assistant_reply_events_gemini(
             or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _openai_tools_from_anthropic(
+    semantic_tools = _anthropic_tool_definitions(
         enable_mutation_tools=can_mutate,
         user_id=user_id,
         plan_key=plan_key,
         include_capture_tools=False,
     )
+    tools = _openai_tools_from_anthropic(definitions=semantic_tools)
     total_usage = {
         "provider": "gemini",
         "model": model_selection.get("llm_model"),
@@ -12254,37 +12660,39 @@ def _stream_assistant_reply_events_gemini(
     model_name = str((model_selection or {}).get("llm_model") or "").strip()
     openai_messages = list(messages)
     streamed_parts = []
+    context_budget_manifest = None
+    last_request_input_tokens = 0
+    completed_provider_rounds = []
     try:
         for _ in range(3):
             streamed_parts = []
             tool_calls_by_index = {}
             usage_payload = {}
-            response = _gemini_openai_request(
-                model_name=model_name,
+            budget_result = plan_context_request(
                 system_prompt=system_prompt,
                 messages=openai_messages,
+                tools=semantic_tools,
+                model=model_name,
+                max_output_tokens=max_tokens,
+                config=current_app.config,
+            )
+            context_budget_manifest = budget_result.manifest
+            response = _gemini_openai_request(
+                model_name=model_name,
+                system_prompt=budget_result.system_prompt,
+                messages=budget_result.messages,
                 tools=tools,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 stream=True,
             )
-            for raw_line in response.iter_lines(decode_unicode=True):
-                line = str(raw_line or "").strip()
-                if not line.startswith("data:"):
+            for payload in gemini_provider.iter_stream_payloads(response):
+                chunk_usage, delta = gemini_provider.stream_chunk(payload)
+                if chunk_usage is not None:
+                    usage_payload = chunk_usage
+                if delta is None:
                     continue
-                data_text = line[5:].strip()
-                if not data_text or data_text == "[DONE]":
-                    continue
-                payload = json.loads(data_text)
-                if isinstance(payload.get("usage"), dict):
-                    usage_payload = payload.get("usage") or {}
-                choices = payload.get("choices") if isinstance(payload, dict) else None
-                if not isinstance(choices, list) or not choices:
-                    continue
-                delta = (choices[0] or {}).get("delta") if isinstance(choices[0], dict) else {}
-                if not isinstance(delta, dict):
-                    continue
-                text = str(delta.get("content") or "")
+                text = gemini_provider.delta_text(delta)
                 if text:
                     if _scoring_outcome_card_action(executed_actions):
                         continue
@@ -12294,25 +12702,19 @@ def _stream_assistant_reply_events_gemini(
                         continue
                     streamed_parts.append(text)
                     yield {"type": "delta", "text": text}
-                for tool_delta in delta.get("tool_calls") if isinstance(delta.get("tool_calls"), list) else []:
-                    idx = int(tool_delta.get("index", len(tool_calls_by_index)))
-                    existing = tool_calls_by_index.setdefault(idx, {
-                        "id": tool_delta.get("id"),
-                        "type": "function",
-                        "function": {"name": "", "arguments": ""},
-                    })
-                    if tool_delta.get("id"):
-                        existing["id"] = tool_delta.get("id")
-                    function = tool_delta.get("function") if isinstance(tool_delta.get("function"), dict) else {}
-                    if function.get("name"):
-                        existing["function"]["name"] = str(function.get("name"))
-                    if function.get("arguments"):
-                        existing["function"]["arguments"] += str(function.get("arguments"))
+                for tool_delta in gemini_provider.delta_tool_calls(delta):
+                    gemini_provider.merge_tool_call_delta(tool_calls_by_index, tool_delta)
 
-            total_usage = _merge_usage_totals(
-                total_usage,
-                _openai_usage_to_internal(usage_payload, provider="gemini", model=model_name),
+            round_usage = _openai_usage_to_internal(
+                usage_payload, provider="gemini", model=model_name,
             )
+            last_request_input_tokens = int(round_usage.get("input_tokens") or 0)
+            total_usage = _merge_usage_totals(total_usage, round_usage)
+            completed_provider_rounds.append(_completed_provider_round(
+                provider="gemini", model=model_name,
+                input_tokens=round_usage.get("input_tokens"),
+                output_tokens=round_usage.get("output_tokens"),
+            ))
             tool_calls = [tool_calls_by_index[idx] for idx in sorted(tool_calls_by_index.keys())]
             if not tool_calls:
                 if not "".join(streamed_parts).strip() and not _has_successful_mutations(executed_mutations):
@@ -12327,22 +12729,22 @@ def _stream_assistant_reply_events_gemini(
                 )
                 state.update({
                     "reply": reply,
-                    "usage": total_usage,
+                    "usage": {
+                        **total_usage,
+                        "context_budget": with_provider_reported_tokens(
+                            context_budget_manifest, last_request_input_tokens,
+                            total_input_tokens_across_calls=total_usage.get("input_tokens"),
+                        ),
+                    },
                     "actions": executed_actions,
                     "mutations": executed_mutations,
                     "undo_snapshot": undo_snapshot,
                 })
                 return
 
-            openai_messages.append({
-                "role": "assistant",
-                "content": "".join(streamed_parts) or None,
-                "tool_calls": tool_calls,
-            })
+            openai_messages.append(gemini_provider.assistant_tool_call_message("".join(streamed_parts) or None, tool_calls))
             for tool_call in tool_calls:
-                function = tool_call.get("function") if isinstance(tool_call, dict) else {}
-                tool_name = str((function or {}).get("name") or "").strip()
-                tool_input = _parse_openai_tool_call_arguments((function or {}).get("arguments"))
+                tool_name, tool_input = gemini_provider.tool_call_request(tool_call)
                 yield {"type": "tool_use", "tool": tool_name, "input": tool_input}
                 undo_snapshot = _maybe_capture_turn_undo_snapshot(
                     undo_snapshot,
@@ -12361,7 +12763,7 @@ def _stream_assistant_reply_events_gemini(
                     mutations_this_turn=mutations_this_turn,
                     view_context=view_context,
                     user_message=user_message,
-                    session=session,
+                    session=session, project=project,
                 )
                 if isinstance(result_payload, dict) and result_payload.get("ok") and not result_payload.get("artifact"):
                     confirmation = str(result_payload.get("confirmation") or "").strip()
@@ -12381,11 +12783,32 @@ def _stream_assistant_reply_events_gemini(
                         "code": result_payload.get("code"),
                     })
                 yield {"type": "tool_result", "tool": tool_name, "result": result_payload}
-                openai_messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.get("id"),
-                    "content": json.dumps(result_payload),
-                })
+                openai_messages.append(gemini_provider.tool_result_message(tool_call, result_payload))
+    except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+        _attach_context_budget_interruption_usage(
+            exc, provider="gemini", model=model_name,
+            input_tokens=total_usage.get("input_tokens"),
+            output_tokens=total_usage.get("output_tokens"),
+            context_budget_manifest=context_budget_manifest,
+            last_request_input_tokens=last_request_input_tokens,
+            completed_rounds=completed_provider_rounds,
+        )
+        if _has_successful_mutations(executed_mutations):
+            reply = _finalize_agent_reply(
+                "".join(streamed_parts).strip(), fallback_reply, tool_confirmations,
+                executed_actions=executed_actions, user_id=user_id, thread_id=thread_id,
+            )
+            if not streamed_parts:
+                yield {"type": "delta", "text": reply}
+            state.update({
+                "reply": reply,
+                "usage": dict(getattr(exc, "jaspen_usage", {}) or {}),
+                "actions": executed_actions,
+                "mutations": executed_mutations,
+                "undo_snapshot": undo_snapshot,
+            })
+            return
+        raise
     except Exception:
         current_app.logger.exception("ai_agent gemini streaming failed")
         if _has_successful_mutations(executed_mutations):
@@ -12407,7 +12830,13 @@ def _stream_assistant_reply_events_gemini(
                 yield {"type": "delta", "text": reply}
             state.update({
                 "reply": reply,
-                "usage": total_usage,
+                "usage": {
+                    **total_usage,
+                    "context_budget": with_provider_reported_tokens(
+                        context_budget_manifest, last_request_input_tokens,
+                        total_input_tokens_across_calls=total_usage.get("input_tokens"),
+                    ),
+                },
                 "actions": executed_actions,
                 "mutations": executed_mutations,
                 "undo_snapshot": undo_snapshot,
@@ -12425,7 +12854,15 @@ def _stream_assistant_reply_events_gemini(
             user_id=user_id,
             thread_id=thread_id,
         ),
-        "usage": total_usage,
+        "usage": {
+            **total_usage,
+            **({
+                "context_budget": with_provider_reported_tokens(
+                    context_budget_manifest, last_request_input_tokens,
+                    total_input_tokens_across_calls=total_usage.get("input_tokens"),
+                )
+            } if context_budget_manifest is not None else {}),
+        },
         "actions": executed_actions,
         "mutations": executed_mutations,
         "undo_snapshot": undo_snapshot,
@@ -12514,10 +12951,10 @@ def _numeric_claim_supported(sentence, claim, sources):
     return False
 
 
-def _canonical_gate_results(session=None, actions=None, user_id=None, thread_id=None):
+def _canonical_gate_results(session=None, actions=None, user_id=None, thread_id=None, project=None):
     cards = []
     try:
-        cards.extend(_collect_session_scorecards(session or {}, user_id=user_id, thread_id=thread_id))
+        cards.extend(_collect_session_scorecards(session or {}, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project)))
     except Exception:
         pass
     for action in actions or []:
@@ -12533,8 +12970,8 @@ def _canonical_gate_results(session=None, actions=None, user_id=None, thread_id=
     return gates
 
 
-def _sanitize_gate_narration(text, *, session=None, actions=None, user_id=None, thread_id=None):
-    gates = _canonical_gate_results(session, actions, user_id, thread_id)
+def _sanitize_gate_narration(text, *, session=None, actions=None, user_id=None, thread_id=None, project=None):
+    gates = _canonical_gate_results(session, actions, user_id, thread_id, project=project)
     claim_re = re.compile(
         r"\b(?:gate|mandatory requirement)\b.*\b(?:passes?|passed|fails?|failed|met|not met|unknown)\b"
         r"|\b(?:passes?|passed|fails?|failed)\b.*\b(?:gate|mandatory requirement)\b",
@@ -12580,7 +13017,7 @@ def _sanitize_gate_narration(text, *, session=None, actions=None, user_id=None, 
     return "\n".join(out_lines).strip()
 
 
-def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, user_id=None, thread_id=None, actions=None):
+def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, user_id=None, thread_id=None, actions=None, project=None):
     """Remove prose sentences containing numbers absent from canonical inputs.
 
     Criterion judgments and scorecard arithmetic are rendered from artifacts.
@@ -12590,7 +13027,7 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
     text = str(reply or "").strip()
     if not text:
         return text
-    sources = [str(user_message or ""), _thread_user_corpus(user_id, thread_id)]
+    sources = [str(user_message or ""), _thread_user_corpus(user_id, thread_id, project=project)]
     # Persisted rubrics are application-owned state. Render their normalized
     # weights in the same percent form shown to users so the prose guard keeps
     # those exact values while continuing to reject provider arithmetic.
@@ -12615,7 +13052,7 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
             sources.append(json.dumps(result, default=str))
     try:
         cards = _collect_session_scorecards(
-            session or {}, user_id=user_id, thread_id=thread_id
+            session or {}, user_id=user_id, thread_id=thread_id, project=_scorecard_project(user_id, thread_id, project),
         )
         sources.append(json.dumps(cards, default=str))
     except Exception:
@@ -12694,18 +13131,19 @@ def _sanitize_assistant_numeric_claims(reply, *, user_message="", session=None, 
     cleaned = text if not removed else (cleaned_text or "Open the scorecard for Jaspen’s verified calculations.")
     return _sanitize_gate_narration(
         cleaned, session=session, actions=actions, user_id=user_id, thread_id=thread_id,
+        project=project,
     )
 
 
 
-def _begin_turn_capture(*, user, user_id, thread_id, user_message, view_context, disable_mutations):
+def _begin_turn_capture(*, user, user_id, thread_id, user_message, view_context, disable_mutations, project=None):
     """Run the capture step before the reply and publish its summary for the prompt."""
     if disable_mutations or not thread_id or user is None:
         return None
     try:
         capture = _run_turn_capture(
             user=user, user_id=user_id, thread_id=thread_id,
-            user_message=user_message, view_context=view_context,
+            user_message=user_message, view_context=view_context, project=project,
         )
     except Exception:  # noqa: BLE001 - capture never blocks the reply
         db.session.rollback()
@@ -12773,17 +13211,18 @@ def _generate_assistant_reply(
     view_context=None,
     attachments=None,
     disable_mutations=False,
+    project=None,
 ):
     capture = _begin_turn_capture(
         user=user, user_id=user_id, thread_id=thread_id, user_message=user_message,
-        view_context=view_context, disable_mutations=disable_mutations,
+        view_context=view_context, disable_mutations=disable_mutations, project=project,
     )
     try:
         reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply_core(
             user_message, chat_history, readiness, model_selection,
             context_budget=context_budget, session=session, user=user, user_id=user_id,
             thread_id=thread_id, intake_context=intake_context, view_context=view_context,
-            attachments=attachments, disable_mutations=disable_mutations,
+            attachments=attachments, disable_mutations=disable_mutations, project=project,
         )
     finally:
         _end_turn_capture()
@@ -12810,10 +13249,11 @@ def _stream_assistant_reply_events(
     state=None,
     attachments=None,
     disable_mutations=False,
+    project=None,
 ):
     capture = _begin_turn_capture(
         user=user, user_id=user_id, thread_id=thread_id, user_message=user_message,
-        view_context=view_context, disable_mutations=disable_mutations,
+        view_context=view_context, disable_mutations=disable_mutations, project=project,
     )
     try:
         yield from _stream_assistant_reply_events_core(
@@ -12821,7 +13261,7 @@ def _stream_assistant_reply_events(
             session=session, user=user, user_id=user_id, thread_id=thread_id,
             intake_context=intake_context, view_context=view_context,
             context_budget=context_budget, state=state, attachments=attachments,
-            disable_mutations=disable_mutations,
+            disable_mutations=disable_mutations, project=project,
         )
     finally:
         _end_turn_capture()
@@ -12844,6 +13284,7 @@ def _generate_assistant_reply_core(
     view_context=None,
     attachments=None,
     disable_mutations=False,
+    project=None,
 ):
     if isinstance(session, dict):
         session.pop("_fact_update_failure", None)
@@ -12885,7 +13326,7 @@ def _generate_assistant_reply_core(
             intake_context=intake_context,
             view_context=view_context,
             attachments=attachments,
-            disable_mutations=disable_mutations,
+            disable_mutations=disable_mutations, project=project,
         )
         reply, usage, actions, mutations, undo_snapshot = result
         usage = attach_governance(
@@ -12896,7 +13337,7 @@ def _generate_assistant_reply_core(
         )
         reply = _sanitize_assistant_numeric_claims(
             reply, user_message=user_message, session=session,
-            user_id=user_id, thread_id=thread_id, actions=actions,
+            user_id=user_id, thread_id=thread_id, actions=actions, project=project,
         )
         return reply, usage, actions, mutations, undo_snapshot
     objective = normalize_strategy_objective(
@@ -12931,7 +13372,7 @@ def _generate_assistant_reply_core(
                     view_context=view_context,
                     attachments=attachments,
                     disable_mutations=disable_mutations,
-                    allow_failover=True,
+                    allow_failover=True, project=project,
                 )
             else:
                 result = _generate_assistant_reply_anthropic(
@@ -12948,7 +13389,7 @@ def _generate_assistant_reply_core(
                     view_context=view_context,
                     attachments=attachments,
                     disable_mutations=disable_mutations,
-                    allow_failover=True,
+                    allow_failover=True, project=project,
                 )
 
             reply, usage, actions, mutations, undo_snapshot = result
@@ -12976,9 +13417,22 @@ def _generate_assistant_reply_core(
                 )
             reply = _sanitize_assistant_numeric_claims(
                 reply, user_message=user_message, session=session,
-                user_id=user_id, thread_id=thread_id, actions=actions,
+                user_id=user_id, thread_id=thread_id, actions=actions, project=project,
             )
             return reply, usage, actions, mutations, undo_snapshot
+        except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+            # Keep earlier real failures and any completed calls carried by
+            # this provider, but never add the local budget failure as an
+            # attempted provider request.
+            usage = dict(getattr(exc, "jaspen_usage", {}) or {})
+            existing_failover = usage.get("failover") if isinstance(usage.get("failover"), dict) else {}
+            earlier_attempts = list(existing_failover.get("attempted_providers") or [])
+            if failover_log or earlier_attempts:
+                exc.jaspen_usage = _attach_failover_usage(
+                    usage,
+                    attempted_providers=[*failover_log, *earlier_attempts],
+                )
+            raise
         except Exception as exc:
             last_error = exc
             elapsed_ms = int((time.monotonic() - started_at) * 1000)
@@ -13041,6 +13495,7 @@ def _stream_assistant_reply_events_core(
     state=None,
     attachments=None,
     disable_mutations=False,
+    project=None,
 ):
     if isinstance(session, dict):
         session.pop("_fact_update_failure", None)
@@ -13083,13 +13538,13 @@ def _stream_assistant_reply_events_core(
             context_budget=context_budget,
             state=state,
             attachments=attachments,
-            disable_mutations=disable_mutations,
+            disable_mutations=disable_mutations, project=project,
         ))
         if isinstance(state, dict):
             original_reply = str(state.get("reply") or "")
             state["reply"] = _sanitize_assistant_numeric_claims(
                 original_reply, user_message=user_message, session=session,
-                user_id=user_id, thread_id=thread_id, actions=state.get("actions"),
+                user_id=user_id, thread_id=thread_id, actions=state.get("actions"), project=project,
             )
             if state["reply"] == original_reply:
                 for payload in buffered:
@@ -13138,7 +13593,7 @@ def _stream_assistant_reply_events_core(
                     state=state,
                     attachments=attachments,
                     disable_mutations=disable_mutations,
-                    allow_failover=True,
+                    allow_failover=True, project=project,
                 )
             else:
                 generator = _stream_assistant_reply_events_anthropic(
@@ -13156,14 +13611,14 @@ def _stream_assistant_reply_events_core(
                     state=state,
                     attachments=attachments,
                     disable_mutations=disable_mutations,
-                    allow_failover=True,
+                    allow_failover=True, project=project,
                 )
             buffered = list(generator)
             if isinstance(state, dict):
                 original_reply = str(state.get("reply") or "")
                 state["reply"] = _sanitize_assistant_numeric_claims(
                     original_reply, user_message=user_message, session=session,
-                    user_id=user_id, thread_id=thread_id, actions=state.get("actions"),
+                    user_id=user_id, thread_id=thread_id, actions=state.get("actions"), project=project,
                 )
             for payload in buffered:
                 yielded_any = yielded_any or (payload.get("type") == "delta" and bool(payload.get("text")))
@@ -13197,6 +13652,16 @@ def _stream_assistant_reply_events_core(
                     len(failover_log),
                 )
             return
+        except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+            usage = dict(getattr(exc, "jaspen_usage", {}) or {})
+            existing_failover = usage.get("failover") if isinstance(usage.get("failover"), dict) else {}
+            earlier_attempts = list(existing_failover.get("attempted_providers") or [])
+            if failover_log or earlier_attempts:
+                exc.jaspen_usage = _attach_failover_usage(
+                    usage,
+                    attempted_providers=[*failover_log, *earlier_attempts],
+                )
+            raise
         except Exception as exc:
                 last_error = exc
                 if yielded_any:
@@ -13396,6 +13861,8 @@ def _record_usage(
     error_code=None,
     idempotency_key=None,
     request_fingerprint=None,
+    operation_id=None,
+    acting_user=None,
 ):
     if not isinstance(session, dict):
         return
@@ -13487,10 +13954,15 @@ def _record_usage(
 
     try:
         thread_id = str(session.get("session_id") or "").strip() or None
-        if user_id:
-            usage_user = User.query.get(user_id)
+        # P4.1 D2: the usage belongs to the member who took the turn (and was
+        # charged), not the project owner whose id the session carries. The
+        # project's organization still comes first. Without an acting member
+        # (no caller today) the previous owner attribution is kept.
+        usage_user = acting_user if acting_user is not None else (User.query.get(user_id) if user_id else None)
+        usage_user_id = str(getattr(usage_user, "id", "") or "").strip() or user_id
+        if usage_user_id:
             db.session.add(UsageEvent(
-                user_id=user_id,
+                user_id=usage_user_id,
                 organization_id=session.get('organization_id') or getattr(usage_user, 'active_organization_id', None),
                 thread_id=thread_id,
                 evaluation_id=evaluation_id,
@@ -13515,12 +13987,14 @@ def _record_usage(
                 metadata_json={
                     'retry_attempts_recorded': 0,
                     'idempotency_protected': bool(idempotency_key),
+                    **({'operation_id': operation_id} if operation_id else {}),
                 },
                 is_failover=bool(failover),
             ))
             persist_operation(
                 usage_user,
-                usage=usage,
+                # A claimed chat turn (P4.0) closes its own operation row.
+                usage={**usage, 'operation_id': operation_id} if operation_id else usage,
                 charged_credits=int(credits_charged or 0),
                 operation_type=operation_type,
                 thread_id=thread_id,
@@ -13528,13 +14002,17 @@ def _record_usage(
                 error_code=error_code,
                 idempotency_key=audit_idempotency_key,
                 request_fingerprint=request_fingerprint,
+                # P5b: an unclaimed chat close is stamped as a conversation;
+                # a claimed turn keeps the version its claim recorded.
+                prompt_family="conversation",
             )
     except Exception:
         current_app.logger.exception("Failed queuing usage event persistence")
 
 
-def _record_failed_chat_usage(session, error, *, regenerated=False, attachments=None):
+def _record_failed_chat_usage(session, error, *, regenerated=False, attachments=None, turn=None):
     usage = dict(getattr(error, 'jaspen_usage', {}) or {})
+    evidence = getattr(turn, "operation_evidence", None)
     _record_usage(
         session,
         usage,
@@ -13543,14 +14021,24 @@ def _record_failed_chat_usage(session, error, *, regenerated=False, attachments=
         regenerated=regenerated,
         success=False,
         error_code=usage.get('error_code') or type(error).__name__,
+        operation_id=evidence.operation_id if evidence else None,
+        acting_user=getattr(turn, "user", None),
     )
+    if evidence is not None:
+        evidence.note_close(
+            "provider_unavailable" if isinstance(error, ConversationProviderUnavailable) else "generation_failed",
+            turn, error_code=usage.get('error_code') or type(error).__name__,
+        )
     db.session.commit()
 
 
 def _persist_failed_conversation_turn(
-    *, session, sessions, thread_id, user_id, chat_history, readiness,
+    *, turn, chat_history, readiness,
     user_message, error, attachments=None, name=None, model_type=None,
 ):
+    """Keep the user's message when no provider could answer, so they can
+    retry. Saves through the turn, so only this turn's project is written."""
+    session = turn.session
     session["chat_history"] = list(chat_history)
     session["timestamp"] = _iso_now()
     session["status"] = "in_progress"
@@ -13560,9 +14048,8 @@ def _persist_failed_conversation_turn(
         session["name"] = name
     if model_type:
         session["model_type"] = model_type
-    _record_failed_chat_usage(session, error, attachments=attachments)
-    sessions[thread_id] = session
-    return bool(save_user_sessions(user_id, sessions))
+    _record_failed_chat_usage(session, error, attachments=attachments, turn=turn)
+    return turn.save()
 
 
 def _analysis_unavailable_stream_payload(user, thread_id):
@@ -13622,6 +14109,27 @@ def _resolve_user_session(sessions, thread_id):
         if str((candidate or {}).get("session_id", "")) == thread_id:
             return key, candidate
     return None, None
+
+
+def _authorized_thread_session_for_write(user, thread_id):
+    """The organization's canonical project for a write to an existing thread.
+
+    Loads exactly as conversation/continue does (the caller's own projects plus
+    the canonical organization row they may read) and authorizes through
+    session_access, the single access rule. Returns ``(sessions, key, session)``
+    with ``session`` None when the caller cannot see the thread; raises
+    SessionForbidden (403, read-only) for a member without an editing role.
+    """
+    sessions = load_sessions_for_thread(user, thread_id) or {}
+    session_key, session = _resolve_user_session(sessions, thread_id)
+    if not isinstance(session, dict):
+        return sessions, None, None
+    resolve_session_for_actor(
+        user,
+        str(session.get("session_id") or session_key or thread_id),
+        require_write=True,
+    )
+    return sessions, session_key, session
 
 
 def _session_chat_history(session):
@@ -14375,6 +14883,7 @@ def _anthropic_json_completion(
     temperature=0.2,
     model_selection=None,
     operation_type='structured_generation',
+    prompt_family=None,
 ):
     if isinstance(model_selection, dict):
         text, usage = _generate_routed_chat_reply(
@@ -14390,6 +14899,7 @@ def _anthropic_json_completion(
         messages=[{"role": "user", "content": user_prompt}],
         system_prompt=system_prompt,
         operation_type=operation_type,
+        prompt_family=prompt_family,
         model_type='orbit',
         legacy_model=model_name,
         max_tokens=max_tokens,
@@ -14433,6 +14943,7 @@ def _rank_batch_ideas_with_ai(batch, ideas, model_selection):
         temperature=0.1,
         model_selection=model_selection,
         operation_type='batch_ranking',
+        prompt_family='batch_ranking',
     )
     ranked_rows = ranking_payload.get("ranked_ideas") if isinstance(ranking_payload, dict) else []
     if not isinstance(ranked_rows, list):
@@ -14487,6 +14998,7 @@ def _reevaluate_batch_idea_with_ai(batch, idea, model_selection):
         temperature=0.1,
         model_selection=model_selection,
         operation_type='batch_clarification',
+        prompt_family='batch_clarification',
     )
     return payload, usage
 
@@ -14507,10 +15019,10 @@ def _batch_idea_summary_text(idea):
     return "\n".join(lines)
 
 
-def _batch_promotion_prompt_suffix(user_id, thread_id):
+def _batch_promotion_prompt_suffix(user_id, thread_id, project=None):
     if not user_id or not thread_id:
         return ""
-    sessions = load_user_sessions(user_id) or {}
+    sessions = _project_sessions(user_id, thread_id, project) or {}
     _key, session = _resolve_user_session(sessions, thread_id)
     batch_ctx = session.get("batch_promotion") if isinstance(session, dict) and isinstance(session.get("batch_promotion"), dict) else {}
     if not batch_ctx:
@@ -14555,6 +15067,7 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
                 routing_signals=routing_signals,
             ),
             operation_type='scorecard_generation',
+            prompt_family='scorecard',
             request_payload={
                 'batch_id': batch.id,
                 'idea_id': idea.get('idea_id'),
@@ -14644,7 +15157,7 @@ def _promote_batch_idea_to_thread(user, batch, idea, model_selection):
 
     sessions = load_user_sessions(user.id) or {}
     sessions[thread_id] = session
-    if not save_user_sessions(user.id, sessions):
+    if not save_one_project(user.id, sessions, thread_id):
         return None, {"error": "Failed to persist promoted thread."}, 500
 
     return {
@@ -14664,8 +15177,7 @@ def _rollback_promoted_session(user, thread_id, credits_to_refund=0):
         session_key, _session = _resolve_user_session(sessions, thread_id)
         target_key = session_key or str(thread_id)
         if target_key in sessions:
-            sessions.pop(target_key, None)
-            save_user_sessions(user.id, sessions, session_ids_to_delete=[target_key])
+            delete_user_sessions(user.id, [target_key])
     except Exception:
         current_app.logger.exception("Rollback failed while removing promoted session")
     try:
@@ -14820,6 +15332,7 @@ Return concise plain text with:
             messages=[{"role": "user", "content": prompt}],
             system_prompt="You are a concise strategy analytics assistant.",
             operation_type='data_insights',
+            prompt_family='data_insight_text',
             model_type='orbit',
             legacy_model=_data_insights_model(),
             max_tokens=600,
@@ -14836,37 +15349,740 @@ Return concise plain text with:
 
 
 def _persist_thread_insight(user_id, thread_id, filename, insight_payload, summary_text):
-    sessions = load_user_sessions(user_id) or {}
-    session_key, session = _resolve_user_session(sessions, thread_id)
-    if not isinstance(session, dict):
-        session = _new_session(user_id, thread_id, f"Data Upload: {filename}")
-        session_key = thread_id
+    """Record one data insight on its project, through the project store.
 
-    insights = session.get("ai_insights")
-    if not isinstance(insights, list):
-        insights = []
+    The store applies only this insight to the stored project (another
+    member's save meanwhile is kept), and a lost race re-runs the unit on fresh
+    data (run_project_write). Returns the event, or None when it was not saved.
+    """
+    def _unit():
+        _user, sessions, _row = _authorized_thread_scope(
+            user_id, thread_id, require_write=True
+        )
+        session_key, session = _resolve_user_session(sessions, thread_id)
+        if not isinstance(session, dict):
+            current_app.logger.warning(
+                "[analyze_data] project %s could not be resolved for persistence",
+                thread_id,
+            )
+            return None
 
-    event = {
-        "id": f"ins_{uuid.uuid4().hex[:10]}",
-        "timestamp": _iso_now(),
-        "file_name": filename,
-        "summary": summary_text,
-        "insight": insight_payload,
+        insights = session.get("ai_insights")
+        if not isinstance(insights, list):
+            insights = []
+
+        event = {
+            "id": f"ins_{uuid.uuid4().hex[:10]}",
+            "timestamp": _iso_now(),
+            "file_name": filename,
+            "summary": summary_text,
+            "insight": insight_payload,
+        }
+        session["ai_insights"] = [
+            event,
+            *[item for item in insights if isinstance(item, dict)],
+        ][:20]
+
+        chat_history = list(_session_chat_history(session))
+        chat_history.append({
+            "role": "assistant",
+            "content": f"[AI Data Insights] {summary_text}",
+            "timestamp": _iso_now(),
+        })
+        session["chat_history"] = chat_history
+        session["timestamp"] = _iso_now()
+        if not save_project_session(user_id, session_key or thread_id, session):
+            current_app.logger.warning(
+                "[analyze_data] failed to persist insight for project %s",
+                thread_id,
+            )
+            return None
+        return event
+
+    try:
+        return run_project_write(_unit)
+    except RevisionConflict:
+        db.session.rollback()
+        current_app.logger.warning(
+            "[analyze_data] insight not saved for project %s: the project changed",
+            thread_id,
+        )
+        return None
+    except SessionAccessError:
+        db.session.rollback()
+        current_app.logger.warning(
+            "[analyze_data] access lost before insight persistence for project %s",
+            thread_id,
+        )
+        return None
+
+
+def _save_turn_project(user_id, sessions, **kwargs):
+    """The turn store's write: the turn's one project, through the store."""
+    projects = [(key, value) for key, value in (sessions or {}).items() if isinstance(value, dict)]
+    if len(projects) != 1:
+        raise ValueError("A conversation turn saves exactly one project.")
+    key, payload = projects[0]
+    return save_project_session(user_id, key, payload, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Conversation-turn lifecycle
+#
+# Every chat turn (start, continue, regenerate; streamed or not) reserves,
+# generates, settles and saves through ONE ConversationTurn. The rules live in
+# app/conversation_turn.py; the functions below are the only callers.
+# ---------------------------------------------------------------------------
+
+_NO_USAGE = {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+    "Connection": "keep-alive",
+}
+
+
+class _TurnOperationEvidence:
+    """Durable evidence for one chat turn's AI operation (P4.0, stage S0).
+
+    Wraps the billing binding WITHOUT changing a call: the legacy functions
+    receive the same arguments and their results are returned untouched. It
+    claims the turn's ``AIOperation`` immediately before ``reserve`` (committed
+    by itself while the session holds no other write), remembers what the
+    meter reported, and records it on the same row at the turn's existing
+    terminal step. It adds no commit between reserve and that step.
+    """
+
+    def __init__(self, *, user, thread_id, session, route, streaming,
+                 idempotency_key, request_fingerprint):
+        self.user = user
+        self.thread_id = thread_id
+        self.project_session = session
+        self.route = route
+        self.streaming = streaming
+        self.idempotency_key = idempotency_key
+        self.request_fingerprint = request_fingerprint
+        self.operation_id = None
+        self.claim = None
+        self.facts = {}
+        self._at_reserve = None
+        self._at_settle = None
+
+    # -- binding wrappers (same arguments, same results) -----------------
+
+    def reserve(self, user, model_type, *, token_hint=None):
+        was_clean = not session_has_uncommitted_writes()
+        try:
+            self.operation_id, self.claim = claim_turn_operation(
+                user,
+                thread_id=self.thread_id,
+                route=self.route,
+                streaming=self.streaming,
+                project_organization_id=(self.project_session or {}).get("organization_id"),
+                client_idempotency_key=self.idempotency_key,
+                request_fingerprint=self.request_fingerprint,
+                estimated_reservation=_preflight_credit_estimate(model_type, token_hint=token_hint),
+                cycle_marker=_meter_cycle_marker(user),
+                prompt_family='conversation',
+            )
+        except Exception:
+            # Evidence never stops a turn. Discard only the failed claim.
+            current_app.logger.exception("[p4.0] turn operation claim failed")
+            if was_clean:
+                db.session.rollback()  # only the failed claim was pending
+            self.operation_id = None
+        self._at_reserve = transaction_counters()
+        result = _reserve_preflight_credits(user, model_type, token_hint=token_hint)
+        self.facts.update({
+            "model_type": model_type,
+            "reservation_ok": bool(result.get("ok")),
+            "reserved_credits": int(result.get("reserved") or 0),
+            "required_credits": int(result.get("required") or 0),
+        })
+        if not result.get("ok"):
+            self.close_alone("refused_at_reserve", error_code="thinking_power_exhausted")
+        return result
+
+    def settle(self, user, *, reserved_credits, actual_credits):
+        self._at_settle = transaction_counters()
+        result = _settle_reserved_credits(
+            user, reserved_credits=reserved_credits, actual_credits=actual_credits,
+        )
+        self.facts.update({
+            "actual_credits": int(actual_credits or 0),
+            "settlement_ok": bool(result.get("ok")),
+            "settled_credits": int(result.get("charged") or 0),
+        })
+        return result
+
+    def release(self, user, reserved_credits):
+        self.facts["released_credits"] = int(reserved_credits or 0)
+        return _release_reserved_credits(user, reserved_credits)
+
+    def persist_balance(self, user_id, remaining):
+        self.facts.setdefault("balance_persist_calls", 0)
+        self.facts["balance_persist_calls"] += 1
+        before = transaction_counters()["commits"]
+        try:
+            return _persist_credit_deduction(user_id, remaining)
+        finally:
+            # The single signal that the charge is durable (R1). Observed,
+            # not assumed: the legacy helper swallows its own failures and
+            # can return without committing. Absent means not observed.
+            if transaction_counters()["commits"] > before:
+                self.facts["balance_committed"] = True
+
+    # -- closing ---------------------------------------------------------
+
+    def _window(self, turn):
+        """Commits and rollbacks the session saw while the turn generated."""
+        if self._at_reserve is None:
+            return {}
+        end = self._at_settle or transaction_counters()
+        return {
+            "generation_commits": end["commits"] - self._at_reserve["commits"],
+            "generation_rollbacks": end["rollbacks"] - self._at_reserve["rollbacks"],
+            "settled": bool(getattr(turn, "settled", False)),
+        }
+
+    def _facts(self, turn, outcome, **extra):
+        return {
+            **self.facts,
+            **self._window(turn),
+            **extra,
+            "outcome": outcome,
+            "closed_at": datetime.utcnow().isoformat(),
+        }
+
+    def note_close(self, outcome, turn, **extra):
+        """Record the outcome in the transaction the terminal step commits."""
+        if not self.operation_id:
+            return
+        try:
+            note_turn_operation(self.operation_id, self._facts(turn, outcome, **extra))
+        except Exception:
+            current_app.logger.exception("[p4.0] turn operation note failed")
+
+    def close_alone(self, outcome, turn=None, *, error_code=None, **extra):
+        """Close where today's path ends without a commit (see ai_audit)."""
+        if not self.operation_id:
+            return
+        try:
+            close_turn_operation_alone(
+                self.operation_id,
+                outcome=outcome,
+                updates=self._facts(turn, outcome, **extra),
+                error_code=error_code,
+                claim=self.claim,
+                user=self.user,
+                thread_id=self.thread_id,
+            )
+        except Exception:
+            current_app.logger.exception("[p4.0] turn operation close failed")
+            db.session.rollback()
+
+
+def _meter_cycle_marker(user):
+    """The meter's last reset, read without touching the meter."""
+    marker = {"user_credits_reset_at": None, "organization_cycle_reset_at": None}
+    try:
+        reset_at = getattr(user, "credits_reset_at", None)
+        marker["user_credits_reset_at"] = reset_at.isoformat() if reset_at else None
+        org_id = str(getattr(user, "active_organization_id", "") or "").strip()
+        if org_id:
+            from app.models import Organization
+            org = db.session.get(Organization, org_id)
+            settings = org.settings if org is not None and isinstance(org.settings, dict) else {}
+            meter = settings.get("thinking_power") if isinstance(settings.get("thinking_power"), dict) else {}
+            marker["organization_cycle_reset_at"] = meter.get("cycle_reset_at")
+    except Exception:
+        current_app.logger.exception("[p4.0] cycle marker read failed")
+    return marker
+
+
+def _conversation_turn(*, user, user_id, thread_id, session, sessions, model_type, session_key=None,
+                       route=None, streaming=None, idempotency_key=None, request_fingerprint=None):
+    """Bind one turn to today's billing and storage.
+
+    This is the single binding to replace when the authoritative ledger takes
+    over AI settlement (billing Phase 12). Each function is looked up when it
+    is called, so tests that substitute one of them still take effect.
+
+    P4.0: the binding also carries the turn's durable operation evidence
+    (``_TurnOperationEvidence``). It passes every billing call through
+    unchanged.
+    """
+    evidence = _TurnOperationEvidence(
+        user=user, thread_id=thread_id, session=session, route=route, streaming=streaming,
+        idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
+    )
+    turn = ConversationTurn(
+        user=user,
+        user_id=user_id,
+        thread_id=thread_id,
+        session=session,
+        sessions=sessions,
+        model_type=model_type,
+        session_key=session_key,
+        billing=TurnBilling(
+            reserve=lambda *a, **k: evidence.reserve(*a, **k),
+            price=lambda *a, **k: _charge_for_usage(*a, **k),
+            settle=lambda *a, **k: evidence.settle(*a, **k),
+            release=lambda *a, **k: evidence.release(*a, **k),
+            persist_balance=lambda *a, **k: evidence.persist_balance(*a, **k),
+            insufficient_payload=lambda *a, **k: _insufficient_credits_payload(*a, **k),
+        ),
+        store=TurnStore(save=lambda *a, **k: _save_turn_project(*a, **k)),
+    )
+    turn.operation_evidence = evidence
+    return turn
+
+
+def _turn_operation_id(turn):
+    evidence = getattr(turn, "operation_evidence", None)
+    return evidence.operation_id if evidence else None
+
+
+def _note_turn(turn, outcome, **extra):
+    evidence = getattr(turn, "operation_evidence", None)
+    if evidence is not None:
+        evidence.note_close(outcome, turn, **extra)
+
+
+def _close_turn_alone(turn, outcome, **extra):
+    evidence = getattr(turn, "operation_evidence", None)
+    if evidence is not None:
+        evidence.close_alone(outcome, turn, **extra)
+
+
+def _close_turn_on_unexpected_error(turn, error):
+    """C1: an unhandled exception in a JSON finish path ends in a 500 with no
+    commit, so the row is closed alone. Charges are untouched; the row records
+    whether the charge was already durable (``balance_committed``)."""
+    _close_turn_alone(turn, "failed_unexpectedly", error_code=type(error).__name__)
+
+
+class _TurnRequest:
+    """What a start/continue route worked out before generation begins."""
+
+    __slots__ = (
+        "route", "user_message", "attachments", "chat_history",
+        "previous_readiness", "readiness", "context_budget", "model_selection",
+        "idempotency_key", "request_fingerprint", "session_created", "name",
+        "project",
+    )
+
+    def __init__(self, *, route, user_message, attachments, chat_history,
+                 previous_readiness, readiness, context_budget, model_selection,
+                 idempotency_key, request_fingerprint, session_created, name=None,
+                 project=None):
+        self.route = route                      # "conversation_start" | "conversation_continue"
+        self.user_message = user_message
+        self.attachments = attachments
+        self.chat_history = chat_history        # includes this turn's user message
+        self.previous_readiness = previous_readiness
+        self.readiness = readiness
+        self.context_budget = context_budget
+        self.model_selection = model_selection
+        self.idempotency_key = idempotency_key
+        self.request_fingerprint = request_fingerprint
+        self.session_created = session_created
+        self.name = name                        # conversation/start only
+        self.project = project                  # TurnProject authorized by the route
+
+
+def _turn_readiness_payload(final_readiness):
+    return {
+        "percent": final_readiness["overall"]["percent"],
+        "categories": final_readiness["categories"],
+        "items": final_readiness.get("items", []),
+        "checklist_summary": final_readiness.get("checklist_summary", {}),
+        "version": final_readiness.get("version"),
+        "updated_at": _iso_now(),
     }
-    insights = [event, *[item for item in insights if isinstance(item, dict)]][:20]
-    session["ai_insights"] = insights
 
-    chat_history = _session_chat_history(session)
-    chat_history.append({
-        "role": "assistant",
-        "content": f"[AI Data Insights] {summary_text}",
-        "timestamp": _iso_now(),
+
+def _finish_conversation_turn(turn, req, *, reply, usage, actions, mutations, undo_snapshot, streaming):
+    """Settle, save and describe a generated start/continue turn.
+
+    Returns ``(payload, None)`` on success, or ``(None, (body, http_status))``
+    when the turn has to be refused or could not be saved.
+
+    Two orderings are inherited from the code this replaced and are kept on
+    purpose, because changing either changes live charging:
+
+    * a JSON turn makes its charge durable BEFORE saving the project; a
+      streamed turn does it AFTER;
+    * a streamed turn applies artifact and rubric actions before settling; a
+      JSON turn after.
+    """
+    user, user_id, thread_id, session = turn.user, turn.user_id, turn.thread_id, turn.session
+    model_selection = req.model_selection
+    is_start = req.route == "conversation_start"
+
+    reply, usage, scoring_failure = _apply_scoring_failure_state(reply, usage, actions)
+    reply, _decision_failure = _apply_option_decision_failure_state(reply, actions)
+    usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
+    if _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict):
+        # Before anything is settled or charged; failure-safe by construction.
+        undo_snapshot = _complete_turn_undo_snapshot(
+            undo_snapshot,
+            user_id=user_id,
+            organization_id=session.get("organization_id"),
+        )
+
+    def apply_artifacts():
+        entries = _artifact_entries_from_actions(
+            actions, user_message=req.user_message, user_id=user_id, thread_id=thread_id, reply=reply,
+        )
+        _apply_rubric_action_to_session(session, actions)
+        return entries
+
+    if streaming:
+        artifact_messages = apply_artifacts()
+
+    refusal = turn.settle(usage)
+    if refusal is not None:
+        _close_turn_alone(turn, "refused_at_settle", error_code="thinking_power_exhausted")
+        return None, (refusal, 402)
+
+    if not streaming:
+        turn.persist_balance()
+        artifact_messages = apply_artifacts()
+
+    credits_charged, remaining = turn.credits_charged, turn.remaining
+    undo_available = _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict)
+    final_chat_history = list(req.chat_history)
+    final_chat_history.append(_assistant_chat_entry(
+        reply,
+        mutations=mutations,
+        undo={"available": True} if undo_available else None,
+    ))
+    assistant_message_index = len(final_chat_history) - 1
+    if artifact_messages:
+        final_chat_history.extend(artifact_messages)
+    final_readiness = _clamp_readiness_with_delta(
+        req.previous_readiness,
+        _compute_readiness(final_chat_history, session.get("strategy_objective")),
+    )
+    ready = _is_ready_to_analyze(final_readiness)
+
+    session["chat_history"] = final_chat_history
+    if undo_available:
+        session[PENDING_MUTATION_UNDO_KEY] = {
+            "message_index": assistant_message_index,
+            "snapshot": undo_snapshot,
+        }
+    else:
+        session.pop(PENDING_MUTATION_UNDO_KEY, None)
+    if is_start:
+        session["name"] = req.name
+    session["model_type"] = model_selection["model_type"]
+    session["timestamp"] = _iso_now()
+    session["status"] = "in_progress" if is_start or not ready else "ready_to_analyze"
+    session["readiness"] = final_readiness
+    _record_usage(
+        session,
+        usage,
+        credits_charged,
+        actions=actions,
+        attachments=req.attachments,
+        idempotency_key=req.idempotency_key,
+        request_fingerprint=req.request_fingerprint,
+        success=not bool(scoring_failure),
+        error_code=scoring_failure.get("code") if scoring_failure else None,
+        operation_type="score_next" if scoring_failure else None,
+        operation_id=_turn_operation_id(turn),
+        acting_user=turn.user,
+    )
+    _note_turn(turn, "settled")
+    if not turn.save():
+        _close_turn_alone(turn, "reply_not_saved", error_code="reply_not_saved")
+        return None, ({"error": "Failed to persist conversation state"}, 500)
+
+    if streaming:
+        turn.persist_balance()
+
+    if req.session_created:
+        _audit_ai_agent_event(
+            "session.created",
+            user=user,
+            details={
+                "thread_id": thread_id,
+                "name": req.name if is_start else (session.get("name") or "Jaspen Intake"),
+                "model_type": model_selection["model_type"],
+                "stream": bool(streaming),
+                "source": req.route,
+            },
+        )
+
+    public_mutations = mutations if isinstance(mutations, list) else []
+    payload = {"type": "done"} if streaming else {}
+    payload.update({
+        "thread_id": thread_id,
+        "session_id": thread_id,
+        "reply": reply,
+        "message": reply,
+        "assistant_message_index": assistant_message_index,
+        "model_type": model_selection["model_type"],
+        "allowed_model_types": model_selection["allowed_model_types"],
+        "actions": actions if isinstance(actions, list) else [],
+        "mutations": public_mutations,
+        "tool_results": public_mutations,
+        "artifact_messages": artifact_messages,
+        "undo_available": undo_available,
+        "usage": _public_usage_payload(
+            usage,
+            model_type=model_selection["model_type"],
+            credits_charged=credits_charged,
+            credits_remaining=remaining,
+            user=user,
+        ),
+        "context_budget": req.context_budget,
+        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
+        "readiness": _turn_readiness_payload(final_readiness),
+        "status": "ready_to_analyze" if ready else "gathering_info",
+        "strategy_objective": session.get("strategy_objective") or "balanced",
+        "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+        "organization_id": session.get("organization_id"),
+        "visibility": session.get("visibility") or "private",
+        "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
     })
+    if is_start:
+        payload.update({
+            "decision_kit": session.get("decision_kit"),
+            "decision_kit_family": session.get("decision_kit_family"),
+            "decision_kit_suggestion": session.get("decision_kit_suggestion"),
+        })
+    if scoring_failure:
+        payload.update({
+            "success": False,
+            "failure_state": True,
+            "code": scoring_failure.get("code"),
+            "retryable": True,
+            "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
+            "message_saved": True,
+        })
+    _remember_conversation_payload(
+        session, req.idempotency_key, req.request_fingerprint, payload,
+    )
+    if not turn.save():
+        _close_turn_alone(turn, "replay_cache_not_saved")
+        return None, ({"error": "Failed to persist idempotency state"}, 500)
+    return payload, None
+
+
+def _conversation_turn_failed(turn, req, error):
+    """Shared failure path for a start/continue turn.
+
+    Gives back an unsettled reservation, then either keeps the user's message
+    for a retry (provider outage) or records the failed attempt. Returns
+    ``(body, http_status)`` when the failure was turned into a customer
+    response, or ``None`` when the caller should surface the error itself.
+    """
+    turn.release_unsettled()
+    if isinstance(error, ConversationProviderUnavailable):
+        persisted = _persist_failed_conversation_turn(
+            turn=turn,
+            chat_history=req.chat_history,
+            readiness=req.readiness,
+            user_message=req.user_message,
+            error=error,
+            attachments=req.attachments,
+            name=req.name,
+            model_type=req.model_selection["model_type"],
+        )
+        if persisted:
+            return _analysis_unavailable_stream_payload(turn.user, turn.thread_id), 503
+        return {"error": "Failed to save your message", "retryable": True}, 500
+    if not turn.settled:
+        _record_failed_chat_usage(turn.session, error, attachments=req.attachments, turn=turn)
+    else:
+        _close_turn_alone(turn, "failed_after_settle", error_code=type(error).__name__)
+    return None
+
+
+def _turn_generation_kwargs(turn, req):
+    return dict(
+        context_budget=req.context_budget,
+        session=turn.session,
+        user=turn.user,
+        user_id=turn.user_id,
+        thread_id=turn.thread_id,
+        intake_context=turn.session.get("intake_context"),
+        view_context=turn.session.get("view_context"),
+        attachments=req.attachments,
+        project=req.project,
+    )
+
+
+def _stream_conversation_turn(turn, req):
+    """Run a reserved start/continue turn as a server-sent event stream."""
+
+    @stream_with_context
+    def event_stream():
+        state = {}
+        try:
+            for payload in _stream_assistant_reply_events(
+                req.user_message, req.chat_history, req.readiness, req.model_selection,
+                state=state, **_turn_generation_kwargs(turn, req),
+            ):
+                yield _sse_payload(payload)
+            done_payload, error = _finish_conversation_turn(
+                turn,
+                req,
+                reply=str(state.get("reply") or "").strip(),
+                usage=state.get("usage") if isinstance(state.get("usage"), dict) else dict(_NO_USAGE),
+                actions=state.get("actions") if isinstance(state.get("actions"), list) else [],
+                mutations=state.get("mutations") if isinstance(state.get("mutations"), list) else [],
+                undo_snapshot=state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None,
+                streaming=True,
+            )
+            if error is not None:
+                yield _sse_payload({"type": "error", **error[0]})
+                return
+            yield _sse_payload(done_payload)
+        except GeneratorExit:
+            # The client went away mid-stream. Today's path has no cleanup
+            # and no commit; record the interruption on the row alone.
+            _close_turn_alone(turn, "interrupted", error_code="client_disconnected")
+            raise
+        except Exception as generation_error:
+            handled = _conversation_turn_failed(turn, req, generation_error)
+            if handled is not None:
+                body, status = handled
+                if status == 503:
+                    current_app.logger.warning("%s providers unavailable; user message preserved", req.route)
+                    yield _sse_payload(body)
+                else:
+                    yield _sse_payload({"type": "error", **body})
+                return
+            current_app.logger.exception("%s stream failed", req.route)
+            yield _sse_payload({"type": "error", "error": "Streaming failed"})
+            return
+
+    return Response(event_stream(), mimetype="text/event-stream", headers=dict(_SSE_HEADERS))
+
+
+def _run_conversation_turn(turn, req):
+    """Run a reserved start/continue turn and answer with one JSON response."""
+    try:
+        reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
+            req.user_message, req.chat_history, req.readiness, req.model_selection,
+            **_turn_generation_kwargs(turn, req),
+        )
+    except Exception as generation_error:
+        handled = _conversation_turn_failed(turn, req, generation_error)
+        if handled is not None:
+            return jsonify(handled[0]), handled[1]
+        raise
+
+    try:
+        payload, error = _finish_conversation_turn(
+            turn, req, reply=reply, usage=usage, actions=actions, mutations=mutations,
+            undo_snapshot=undo_snapshot, streaming=False,
+        )
+    except Exception as finish_error:
+        _close_turn_on_unexpected_error(turn, finish_error)
+        raise
+    if error is not None:
+        return jsonify(error[0]), error[1]
+    return jsonify(payload), 200
+
+
+def _finish_regenerated_turn(turn, *, reply, usage, chat_history, last_msg, old_response,
+                             previous_readiness, context_budget, model_selection,
+                             idempotency_key, request_fingerprint, streaming):
+    """Settle, save and describe a regenerated reply.
+
+    Same return contract as ``_finish_conversation_turn``. A regenerated turn
+    makes its charge durable before saving on both the streamed and the JSON
+    path; that inherited order is kept.
+    """
+    user, thread_id, session = turn.user, turn.thread_id, turn.session
+
+    refusal = turn.settle(usage)
+    if refusal is not None:
+        _close_turn_alone(turn, "refused_at_settle", error_code="thinking_power_exhausted")
+        return None, (refusal, 402)
+    turn.persist_balance()
+    credits_charged, remaining = turn.credits_charged, turn.remaining
+
+    alternatives = [
+        old_response,
+        *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else []),
+    ]
+    new_msg = _assistant_chat_entry(reply, regenerated=True, alternatives=alternatives)
+    chat_history[-1] = new_msg
+    assistant_message_index = len(chat_history) - 1
+    final_readiness = _clamp_readiness_with_delta(
+        previous_readiness,
+        _compute_readiness(chat_history, session.get("strategy_objective")),
+    )
+
     session["chat_history"] = chat_history
     session["timestamp"] = _iso_now()
-    sessions[session_key or thread_id] = session
-    save_user_sessions(user_id, sessions)
-    return event
+    session["readiness"] = final_readiness
+    _record_usage(
+        session,
+        usage,
+        credits_charged,
+        regenerated=True,
+        idempotency_key=idempotency_key,
+        request_fingerprint=request_fingerprint,
+        operation_id=_turn_operation_id(turn),
+        acting_user=turn.user,
+    )
+    _note_turn(turn, "settled")
+    if not turn.save():
+        _close_turn_alone(turn, "reply_not_saved", error_code="reply_not_saved")
+        return None, ({"error": "Failed to persist regenerated response"}, 500)
+
+    _audit_ai_agent_event(
+        "message.regenerated",
+        user=user,
+        details={
+            "thread_id": str(session.get("session_id") or turn.session_key),
+            "message_index": assistant_message_index,
+            "alternatives_count": len(new_msg.get("alternatives") or []),
+        },
+    )
+
+    payload = {"type": "done"} if streaming else {}
+    payload.update({
+        "thread_id": thread_id,
+        "session_id": thread_id,
+        "reply": reply,
+        "message": reply,
+        "assistant_message_index": assistant_message_index,
+        "regenerated": True,
+        "alternatives_count": len(new_msg.get("alternatives") or []),
+        "model_type": model_selection["model_type"],
+        "allowed_model_types": model_selection["allowed_model_types"],
+        "mutations": [],
+        "tool_results": [],
+        "usage": _public_usage_payload(
+            usage,
+            model_type=model_selection["model_type"],
+            credits_charged=credits_charged,
+            credits_remaining=remaining,
+            user=user,
+        ),
+        "context_budget": context_budget,
+        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
+        "readiness": _turn_readiness_payload(final_readiness),
+        "strategy_objective": session.get("strategy_objective") or "balanced",
+        "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
+        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
+        "organization_id": session.get("organization_id"),
+        "visibility": session.get("visibility") or "private",
+    })
+    _remember_conversation_payload(session, idempotency_key, request_fingerprint, payload)
+    if not turn.save():
+        _close_turn_alone(turn, "replay_cache_not_saved")
+        return None, ({"error": "Failed to persist idempotency state"}, 500)
+    return payload, None
 
 
 @ai_agent_bp.route("/conversation/start", methods=["POST"])
@@ -14944,8 +16160,49 @@ def conversation_start():
             view_context_raw[key] = data.get(key)
 
     sessions = load_user_sessions(user_id)
-    existing_session = sessions.get(thread_id)
+    # Resolve the project this id names BEFORE choosing what to save. The
+    # canonical row is the project; a personal row the caller holds under the
+    # same id (a legacy fork) is never used for it. `start` re-opens only the
+    # caller's own canonical thread (the homepage handoff retries the same id);
+    # any other existing project is authorized (404 unreadable, 403 read-only)
+    # and then refused before anything is saved, reserved or generated, so
+    # existing work continues through conversation/continue.
+    existing_row = canonical_row(user, thread_id)
+    existing_session = None
+    own_session = sessions.get(thread_id)
+    if (
+        existing_row is None
+        and isinstance(own_session, dict)
+        and own_session.get("organization_id")
+    ):
+        # A report-mode attribution row may remain in the caller's personal
+        # list after they switch orgs or leave one. It is not the active
+        # project's canonical row and must never be reused for a new thread.
+        return jsonify({"error": "Thread not found", "code": "not_found"}), 404
+    if existing_row is not None:
+        resolve_session_for_actor(user, thread_id, require_write=True)
+        if not is_attributed_to(existing_row, str(user_id)):
+            return jsonify({
+                "error": "This project already exists. Open it to continue.",
+                "code": "thread_exists",
+                "thread_id": thread_id,
+            }), 409
+        existing_session = _session_row_to_payload(existing_row)
+        sessions[str(existing_session.get("session_id") or thread_id)] = existing_session
+    else:
+        # No project has this id here; a personal row under it (only possible
+        # while hidden or archived) is not re-used for a new project.
+        sessions.pop(thread_id, None)
     session_created = not isinstance(existing_session, dict)
+    if session_created:
+        # A new thread has no row for the save to authorize against, so check
+        # the role here, before anything is reserved or generated.
+        require_can_create_session(user, active_org_id)
+    # The project this turn's tools and context act on, authorized here,
+    # before anything is reserved or generated.
+    turn_project = _authorize_turn_project(user, thread_id)
+    if turn_project.exists:
+        resolve_session_for_actor(user, thread_id, require_write=True)
     session = existing_session or _new_session(
         user_id,
         thread_id,
@@ -15054,8 +16311,13 @@ def conversation_start():
     session["timestamp"] = _iso_now()
     session["status"] = "in_progress"
     session["readiness"] = readiness
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
+    turn = _conversation_turn(
+        user=user, user_id=user_id, thread_id=thread_id, session=session,
+        sessions=sessions, model_type=model_selection["model_type"],
+        route=request.endpoint, streaming=stream_requested,
+        idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
+    )
+    if not turn.save():
         return jsonify({
             "error": "The conversation could not be saved. Your scoring request was not started. Try again.",
             "code": "conversation_persist_failed",
@@ -15064,398 +16326,32 @@ def conversation_start():
             "action": {"type": "retry", "label": "Retry"},
         }), 500
     context_budget = get_context_budget(effective_plan_key(user, current_app.config))
-    preflight_token_hint = _preflight_token_hint_for_conversation(
+    refusal = turn.reserve(token_hint=_preflight_token_hint_for_conversation(
         user_message,
         chat_history=chat_history,
         attachments=attachments,
-    )
-    credit_reservation = _reserve_preflight_credits(
-        user,
-        model_selection["model_type"],
-        token_hint=preflight_token_hint,
-    )
-    if not credit_reservation["ok"]:
-        return jsonify(credit_reservation["payload"]), 402
-    reserved_credits = int(credit_reservation["reserved"] or 0)
-
-    if stream_requested:
-        @stream_with_context
-        def event_stream():
-            state = {}
-            credits_settled = False
-            try:
-                for payload in _stream_assistant_reply_events(
-                    user_message,
-                    chat_history,
-                    readiness,
-                    model_selection,
-                    context_budget=context_budget,
-                    session=session,
-                    user=user,
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    intake_context=session.get("intake_context"),
-                    view_context=session.get("view_context"),
-                    attachments=attachments,
-                    state=state,
-                ):
-                    yield _sse_payload(payload)
-                assistant_reply = str(state.get("reply") or "").strip()
-                usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-                actions = state.get("actions") if isinstance(state.get("actions"), list) else []
-                assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
-                    assistant_reply, usage, actions,
-                )
-                assistant_reply, _decision_failure = _apply_option_decision_failure_state(
-                    assistant_reply, actions,
-                )
-                mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
-                usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
-                undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
-                _apply_rubric_action_to_session(session, actions)
-
-                credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-                credit_settlement = _settle_reserved_credits(
-                    user,
-                    reserved_credits=reserved_credits,
-                    actual_credits=credits_charged,
-                )
-                credits_settled = True
-                if not credit_settlement["ok"]:
-                    yield _sse_payload({
-                        "type": "error",
-                        **(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)),
-                    })
-                    return
-                remaining = credit_settlement["remaining"]
-                credits_charged = credit_settlement["charged"]
-
-                undo_available = _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict)
-                final_chat_history = list(chat_history)
-                final_chat_history.append(_assistant_chat_entry(
-                    assistant_reply,
-                    mutations=mutations,
-                    undo={"available": True} if undo_available else None,
-                ))
-                assistant_message_index = len(final_chat_history) - 1
-                if artifact_messages:
-                    final_chat_history.extend(artifact_messages)
-                final_readiness = _clamp_readiness_with_delta(
-                    previous_readiness,
-                    _compute_readiness(final_chat_history, session.get("strategy_objective")),
-                )
-
-                session["chat_history"] = final_chat_history
-                if undo_available:
-                    session[PENDING_MUTATION_UNDO_KEY] = {
-                        "message_index": assistant_message_index,
-                        "snapshot": undo_snapshot,
-                    }
-                else:
-                    session.pop(PENDING_MUTATION_UNDO_KEY, None)
-                session["name"] = name
-                session["model_type"] = model_selection["model_type"]
-                session["timestamp"] = _iso_now()
-                session["status"] = "in_progress"
-                session["readiness"] = final_readiness
-                _record_usage(
-                    session,
-                    usage,
-                    credits_charged,
-                    actions=actions,
-                    attachments=attachments,
-                    idempotency_key=idempotency_key,
-                    request_fingerprint=request_fingerprint,
-                    success=not bool(scoring_failure),
-                    error_code=scoring_failure.get("code") if scoring_failure else None,
-                    operation_type="score_next" if scoring_failure else None,
-                )
-                sessions[thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
-                    return
-
-                _persist_credit_deduction(user_id, remaining)
-
-                if session_created:
-                    _audit_ai_agent_event(
-                        "session.created",
-                        user=user,
-                        details={
-                            "thread_id": thread_id,
-                            "name": name,
-                            "model_type": model_selection["model_type"],
-                            "stream": True,
-                            "source": "conversation_start",
-                        },
-                    )
-
-                _stream_start_actions = actions if isinstance(actions, list) else []
-
-                done_payload = {
-                    "type": "done",
-                    "thread_id": thread_id,
-                    "session_id": thread_id,
-                    "reply": assistant_reply,
-                    "message": assistant_reply,
-                    "assistant_message_index": assistant_message_index,
-                    "model_type": model_selection["model_type"],
-                    "allowed_model_types": model_selection["allowed_model_types"],
-                    "actions": _stream_start_actions,
-                    "mutations": mutations,
-                    "tool_results": mutations,
-                    "artifact_messages": artifact_messages,
-                    "undo_available": undo_available,
-                    "usage": _public_usage_payload(
-                        usage,
-                        model_type=model_selection["model_type"],
-                        credits_charged=credits_charged,
-                        credits_remaining=remaining,
-                        user=user,
-                    ),
-                    "context_budget": context_budget,
-                    "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-                    "readiness": {
-                        "percent": final_readiness["overall"]["percent"],
-                        "categories": final_readiness["categories"],
-                        "items": final_readiness.get("items", []),
-                        "checklist_summary": final_readiness.get("checklist_summary", {}),
-                        "version": final_readiness.get("version"),
-                        "updated_at": _iso_now(),
-                    },
-                    "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness) else "gathering_info",
-                    "strategy_objective": session.get("strategy_objective") or "balanced",
-                    "decision_kit": session.get("decision_kit"),
-                    "decision_kit_family": session.get("decision_kit_family"),
-            "decision_kit_suggestion": session.get("decision_kit_suggestion"),
-                    "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-                    "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-                    "organization_id": session.get("organization_id"),
-                    "visibility": session.get("visibility") or "private",
-                    "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-                }
-                if scoring_failure:
-                    done_payload.update({
-                        "success": False,
-                        "failure_state": True,
-                        "code": scoring_failure.get("code"),
-                        "retryable": True,
-                        "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
-                        "message_saved": True,
-                    })
-                _remember_conversation_payload(
-                    session, idempotency_key, request_fingerprint, done_payload,
-                )
-                sessions[thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist idempotency state"})
-                    return
-                yield _sse_payload(done_payload)
-            except Exception as generation_error:
-                if not credits_settled:
-                    _release_reserved_credits(user, reserved_credits)
-                if isinstance(generation_error, ConversationProviderUnavailable):
-                    persisted = _persist_failed_conversation_turn(
-                        session=session,
-                        sessions=sessions,
-                        thread_id=thread_id,
-                        user_id=user_id,
-                        chat_history=chat_history,
-                        readiness=readiness,
-                        user_message=user_message,
-                        error=generation_error,
-                        attachments=attachments,
-                        name=name,
-                        model_type=model_selection["model_type"],
-                    )
-                    if not persisted:
-                        yield _sse_payload({"type": "error", "error": "Failed to save your message", "retryable": True})
-                        return
-                    current_app.logger.warning("conversation_start providers unavailable; user message preserved")
-                    yield _sse_payload(_analysis_unavailable_stream_payload(user, thread_id))
-                    return
-                if not credits_settled:
-                    _record_failed_chat_usage(session, generation_error, attachments=attachments)
-                current_app.logger.exception("conversation_start stream failed")
-                yield _sse_payload({"type": "error", "error": "Streaming failed"})
-                return
-
-        return Response(
-            event_stream(),
-            mimetype="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
-        )
-
-    try:
-        assistant_reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
-            user_message,
-            chat_history,
-            readiness,
-            model_selection,
-            context_budget=context_budget,
-            session=session,
-            user=user,
-            user_id=user_id,
-            thread_id=thread_id,
-            intake_context=session.get("intake_context"),
-            view_context=session.get("view_context"),
-            attachments=attachments,
-        )
-    except Exception as generation_error:
-        _release_reserved_credits(user, reserved_credits)
-        if isinstance(generation_error, ConversationProviderUnavailable):
-            persisted = _persist_failed_conversation_turn(
-                session=session, sessions=sessions, thread_id=thread_id, user_id=user_id,
-                chat_history=chat_history, readiness=readiness, user_message=user_message,
-                error=generation_error, attachments=attachments, name=name,
-                model_type=model_selection["model_type"],
-            )
-            if persisted:
-                return jsonify(_analysis_unavailable_stream_payload(user, thread_id)), 503
-            return jsonify({"error": "Failed to save your message", "retryable": True}), 500
-        _record_failed_chat_usage(session, generation_error, attachments=attachments)
-        raise
-
-    assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
-        assistant_reply, usage, actions,
-    )
-    assistant_reply, _decision_failure = _apply_option_decision_failure_state(
-        assistant_reply, actions,
-    )
-    usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
-    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-    credit_settlement = _settle_reserved_credits(
-        user,
-        reserved_credits=reserved_credits,
-        actual_credits=credits_charged,
-    )
-    if not credit_settlement["ok"]:
-        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
-    remaining = credit_settlement["remaining"]
-    credits_charged = credit_settlement["charged"]
-    _persist_credit_deduction(user_id, remaining)
-    undo_available = _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict)
-    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
-    _apply_rubric_action_to_session(session, actions)
-    chat_history.append(_assistant_chat_entry(
-        assistant_reply,
-        mutations=mutations,
-        undo={"available": True} if undo_available else None,
     ))
-    assistant_message_index = len(chat_history) - 1
-    if artifact_messages:
-        chat_history.extend(artifact_messages)
+    if refusal is not None:
+        return jsonify(refusal), 402
 
-    session["chat_history"] = chat_history
-    if undo_available:
-        session[PENDING_MUTATION_UNDO_KEY] = {
-            "message_index": assistant_message_index,
-            "snapshot": undo_snapshot,
-        }
-    else:
-        session.pop(PENDING_MUTATION_UNDO_KEY, None)
-    session["name"] = name
-    session["model_type"] = model_selection["model_type"]
-    session["timestamp"] = _iso_now()
-    session["status"] = "in_progress"
-    final_readiness_non_stream = _clamp_readiness_with_delta(
-        previous_readiness,
-        _compute_readiness(chat_history, session.get("strategy_objective")),
-    )
-    session["readiness"] = final_readiness_non_stream
-    _record_usage(
-        session,
-        usage,
-        credits_charged,
-        actions=actions,
+    turn_request = _TurnRequest(
+        route="conversation_start",
+        user_message=user_message,
         attachments=attachments,
+        chat_history=chat_history,
+        previous_readiness=previous_readiness,
+        readiness=readiness,
+        context_budget=context_budget,
+        model_selection=model_selection,
         idempotency_key=idempotency_key,
         request_fingerprint=request_fingerprint,
-        success=not bool(scoring_failure),
-        error_code=scoring_failure.get("code") if scoring_failure else None,
-        operation_type="score_next" if scoring_failure else None,
+        session_created=session_created,
+        name=name,
+        project=turn_project,
     )
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist conversation state"}), 500
-
-    if session_created:
-        _audit_ai_agent_event(
-            "session.created",
-            user=user,
-            details={
-                "thread_id": thread_id,
-                "name": name,
-                "model_type": model_selection["model_type"],
-                "stream": False,
-                "source": "conversation_start",
-            },
-        )
-
-    _start_base_actions = actions if isinstance(actions, list) else []
-
-    response_payload = {
-        "thread_id": thread_id,
-        "session_id": thread_id,
-        "reply": assistant_reply,
-        "message": assistant_reply,
-        "assistant_message_index": assistant_message_index,
-        "model_type": model_selection["model_type"],
-        "allowed_model_types": model_selection["allowed_model_types"],
-        "actions": _start_base_actions,
-        "mutations": mutations if isinstance(mutations, list) else [],
-        "tool_results": mutations if isinstance(mutations, list) else [],
-        "artifact_messages": artifact_messages,
-        "undo_available": undo_available,
-        "usage": _public_usage_payload(
-            usage,
-            model_type=model_selection["model_type"],
-            credits_charged=credits_charged,
-            credits_remaining=remaining,
-            user=user,
-        ),
-        "context_budget": context_budget,
-        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-        "readiness": {
-            "percent": final_readiness_non_stream["overall"]["percent"],
-            "categories": final_readiness_non_stream["categories"],
-            "items": final_readiness_non_stream.get("items", []),
-            "checklist_summary": final_readiness_non_stream.get("checklist_summary", {}),
-            "version": final_readiness_non_stream.get("version"),
-            "updated_at": _iso_now(),
-        },
-        "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness_non_stream) else "gathering_info",
-        "strategy_objective": session.get("strategy_objective") or "balanced",
-        "decision_kit": session.get("decision_kit"),
-        "decision_kit_family": session.get("decision_kit_family"),
-        "decision_kit_suggestion": session.get("decision_kit_suggestion"),
-        "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-        "organization_id": session.get("organization_id"),
-        "visibility": session.get("visibility") or "private",
-        "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-    }
-    if scoring_failure:
-        response_payload.update({
-            "success": False,
-            "failure_state": True,
-            "code": scoring_failure.get("code"),
-            "retryable": True,
-            "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
-            "message_saved": True,
-        })
-    _remember_conversation_payload(
-        session, idempotency_key, request_fingerprint, response_payload,
-    )
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist idempotency state"}), 500
-    return jsonify(response_payload), 200
+    if stream_requested:
+        return _stream_conversation_turn(turn, turn_request)
+    return _run_conversation_turn(turn, turn_request)
 
 
 @ai_agent_bp.route("/conversation/continue", methods=["POST"])
@@ -15503,9 +16399,13 @@ def conversation_continue():
     # new thread has no row yet, so a miss here is normal and not a refusal.
     sessions = load_sessions_for_thread(user, thread_id)
     session = sessions.get(thread_id)
+    turn_project = None
     if session is not None:
         # Write access is required to add a turn; viewers are read-only.
         resolve_session_for_actor(user, thread_id, require_write=True)
+        # The project this turn's tools and context act on: the organization's
+        # canonical row just authorized, never a lookup among the caller's rows.
+        turn_project = _authorize_turn_project(user, thread_id)
     fallback_model_type = (session or {}).get("model_type")
     model_selection, model_error = _resolve_model_selection(
         user,
@@ -15634,8 +16534,13 @@ def conversation_continue():
     session["timestamp"] = _iso_now()
     session["status"] = "in_progress"
     session["readiness"] = readiness
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
+    turn = _conversation_turn(
+        user=user, user_id=user_id, thread_id=thread_id, session=session,
+        sessions=sessions, model_type=model_selection["model_type"],
+        route=request.endpoint, streaming=stream_requested,
+        idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
+    )
+    if not turn.save():
         return jsonify({
             "error": "The conversation could not be saved. Your scoring request was not started. Try again.",
             "code": "conversation_persist_failed",
@@ -15644,389 +16549,32 @@ def conversation_continue():
             "action": {"type": "retry", "label": "Retry"},
         }), 500
     context_budget = get_context_budget(effective_plan_key(user, current_app.config))
-    preflight_token_hint = _preflight_token_hint_for_conversation(
+    refusal = turn.reserve(token_hint=_preflight_token_hint_for_conversation(
         user_message,
         chat_history=chat_history,
         attachments=attachments,
-    )
-    credit_reservation = _reserve_preflight_credits(
-        user,
-        model_selection["model_type"],
-        token_hint=preflight_token_hint,
-    )
-    if not credit_reservation["ok"]:
-        return jsonify(credit_reservation["payload"]), 402
-    reserved_credits = int(credit_reservation["reserved"] or 0)
-
-    if stream_requested:
-        @stream_with_context
-        def event_stream():
-            state = {}
-            credits_settled = False
-            try:
-                for payload in _stream_assistant_reply_events(
-                    user_message,
-                    chat_history,
-                    readiness,
-                    model_selection,
-                    context_budget=context_budget,
-                    session=session,
-                    user=user,
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    intake_context=session.get("intake_context"),
-                    view_context=session.get("view_context"),
-                    attachments=attachments,
-                    state=state,
-                ):
-                    yield _sse_payload(payload)
-                assistant_reply = str(state.get("reply") or "").strip()
-                usage = state.get("usage") if isinstance(state.get("usage"), dict) else {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
-                actions = state.get("actions") if isinstance(state.get("actions"), list) else []
-                assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
-                    assistant_reply, usage, actions,
-                )
-                assistant_reply, _decision_failure = _apply_option_decision_failure_state(
-                    assistant_reply, actions,
-                )
-                mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
-                usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
-                undo_snapshot = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
-                artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
-                _apply_rubric_action_to_session(session, actions)
-
-                credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-                credit_settlement = _settle_reserved_credits(
-                    user,
-                    reserved_credits=reserved_credits,
-                    actual_credits=credits_charged,
-                )
-                credits_settled = True
-                if not credit_settlement["ok"]:
-                    yield _sse_payload({
-                        "type": "error",
-                        **(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)),
-                    })
-                    return
-                remaining = credit_settlement["remaining"]
-                credits_charged = credit_settlement["charged"]
-
-                undo_available = _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict)
-                final_chat_history = list(chat_history)
-                final_chat_history.append(_assistant_chat_entry(
-                    assistant_reply,
-                    mutations=mutations,
-                    undo={"available": True} if undo_available else None,
-                ))
-                assistant_message_index = len(final_chat_history) - 1
-                if artifact_messages:
-                    final_chat_history.extend(artifact_messages)
-                final_readiness = _clamp_readiness_with_delta(
-                    previous_readiness,
-                    _compute_readiness(final_chat_history, session.get("strategy_objective")),
-                )
-
-                session["chat_history"] = final_chat_history
-                if undo_available:
-                    session[PENDING_MUTATION_UNDO_KEY] = {
-                        "message_index": assistant_message_index,
-                        "snapshot": undo_snapshot,
-                    }
-                else:
-                    session.pop(PENDING_MUTATION_UNDO_KEY, None)
-                session["model_type"] = model_selection["model_type"]
-                session["timestamp"] = _iso_now()
-                session["status"] = "ready_to_analyze" if _is_ready_to_analyze(final_readiness) else "in_progress"
-                session["readiness"] = final_readiness
-                _record_usage(
-                    session,
-                    usage,
-                    credits_charged,
-                    actions=actions,
-                    attachments=attachments,
-                    idempotency_key=idempotency_key,
-                    request_fingerprint=request_fingerprint,
-                    success=not bool(scoring_failure),
-                    error_code=scoring_failure.get("code") if scoring_failure else None,
-                    operation_type="score_next" if scoring_failure else None,
-                )
-                sessions[thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist conversation state"})
-                    return
-
-                _persist_credit_deduction(user_id, remaining)
-
-                if session_created:
-                    _audit_ai_agent_event(
-                        "session.created",
-                        user=user,
-                        details={
-                            "thread_id": thread_id,
-                            "name": session.get("name") or "Jaspen Intake",
-                            "model_type": model_selection["model_type"],
-                            "stream": True,
-                            "source": "conversation_continue",
-                        },
-                    )
-
-                _stream_cont_actions = actions if isinstance(actions, list) else []
-
-                done_payload = {
-                    "type": "done",
-                    "thread_id": thread_id,
-                    "session_id": thread_id,
-                    "reply": assistant_reply,
-                    "message": assistant_reply,
-                    "assistant_message_index": assistant_message_index,
-                    "model_type": model_selection["model_type"],
-                    "allowed_model_types": model_selection["allowed_model_types"],
-                    "actions": _stream_cont_actions,
-                    "mutations": mutations,
-                    "tool_results": mutations,
-                    "artifact_messages": artifact_messages,
-                    "undo_available": undo_available,
-                    "usage": _public_usage_payload(
-                        usage,
-                        model_type=model_selection["model_type"],
-                        credits_charged=credits_charged,
-                        credits_remaining=remaining,
-                        user=user,
-                    ),
-                    "context_budget": context_budget,
-                    "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-                    "readiness": {
-                        "percent": final_readiness["overall"]["percent"],
-                        "categories": final_readiness["categories"],
-                        "items": final_readiness.get("items", []),
-                        "checklist_summary": final_readiness.get("checklist_summary", {}),
-                        "version": final_readiness.get("version"),
-                        "updated_at": _iso_now(),
-                    },
-                    "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness) else "gathering_info",
-                    "strategy_objective": session.get("strategy_objective") or "balanced",
-                    "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-                    "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-                    "organization_id": session.get("organization_id"),
-                    "visibility": session.get("visibility") or "private",
-                    "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-                }
-                if scoring_failure:
-                    done_payload.update({
-                        "success": False,
-                        "failure_state": True,
-                        "code": scoring_failure.get("code"),
-                        "retryable": True,
-                        "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
-                        "message_saved": True,
-                    })
-                _remember_conversation_payload(
-                    session, idempotency_key, request_fingerprint, done_payload,
-                )
-                sessions[thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist idempotency state"})
-                    return
-                yield _sse_payload(done_payload)
-            except Exception as generation_error:
-                if not credits_settled:
-                    _release_reserved_credits(user, reserved_credits)
-                if isinstance(generation_error, ConversationProviderUnavailable):
-                    persisted = _persist_failed_conversation_turn(
-                        session=session,
-                        sessions=sessions,
-                        thread_id=thread_id,
-                        user_id=user_id,
-                        chat_history=chat_history,
-                        readiness=readiness,
-                        user_message=user_message,
-                        error=generation_error,
-                        attachments=attachments,
-                        model_type=model_selection["model_type"],
-                    )
-                    if not persisted:
-                        yield _sse_payload({"type": "error", "error": "Failed to save your message", "retryable": True})
-                        return
-                    current_app.logger.warning("conversation_continue providers unavailable; user message preserved")
-                    yield _sse_payload(_analysis_unavailable_stream_payload(user, thread_id))
-                    return
-                if not credits_settled:
-                    _record_failed_chat_usage(session, generation_error, attachments=attachments)
-                current_app.logger.exception("conversation_continue stream failed")
-                yield _sse_payload({"type": "error", "error": "Streaming failed"})
-                return
-
-        return Response(
-            event_stream(),
-            mimetype="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
-        )
-
-    try:
-        assistant_reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
-            user_message,
-            chat_history,
-            readiness,
-            model_selection,
-            context_budget=context_budget,
-            session=session,
-            user=user,
-            user_id=user_id,
-            thread_id=thread_id,
-            intake_context=session.get("intake_context"),
-            view_context=session.get("view_context"),
-            attachments=attachments,
-        )
-    except Exception as generation_error:
-        _release_reserved_credits(user, reserved_credits)
-        if isinstance(generation_error, ConversationProviderUnavailable):
-            persisted = _persist_failed_conversation_turn(
-                session=session, sessions=sessions, thread_id=thread_id, user_id=user_id,
-                chat_history=chat_history, readiness=readiness, user_message=user_message,
-                error=generation_error, attachments=attachments,
-                model_type=model_selection["model_type"],
-            )
-            if persisted:
-                return jsonify(_analysis_unavailable_stream_payload(user, thread_id)), 503
-            return jsonify({"error": "Failed to save your message", "retryable": True}), 500
-        _record_failed_chat_usage(session, generation_error, attachments=attachments)
-        raise
-
-    assistant_reply, usage, scoring_failure = _apply_scoring_failure_state(
-        assistant_reply, usage, actions,
-    )
-    assistant_reply, _decision_failure = _apply_option_decision_failure_state(
-        assistant_reply, actions,
-    )
-    usage = _apply_charge_ownership_to_turn_usage(usage, mutations)
-    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-    credit_settlement = _settle_reserved_credits(
-        user,
-        reserved_credits=reserved_credits,
-        actual_credits=credits_charged,
-    )
-    if not credit_settlement["ok"]:
-        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
-    remaining = credit_settlement["remaining"]
-    credits_charged = credit_settlement["charged"]
-    _persist_credit_deduction(user_id, remaining)
-    undo_available = _has_undoable_mutations(mutations) and isinstance(undo_snapshot, dict)
-    artifact_messages = _artifact_entries_from_actions(actions, user_message=user_message, user_id=user_id, thread_id=thread_id, reply=assistant_reply)
-    _apply_rubric_action_to_session(session, actions)
-    chat_history.append(_assistant_chat_entry(
-        assistant_reply,
-        mutations=mutations,
-        undo={"available": True} if undo_available else None,
     ))
-    assistant_message_index = len(chat_history) - 1
-    if artifact_messages:
-        chat_history.extend(artifact_messages)
+    if refusal is not None:
+        return jsonify(refusal), 402
 
-    session["chat_history"] = chat_history
-    if undo_available:
-        session[PENDING_MUTATION_UNDO_KEY] = {
-            "message_index": assistant_message_index,
-            "snapshot": undo_snapshot,
-        }
-    else:
-        session.pop(PENDING_MUTATION_UNDO_KEY, None)
-    session["model_type"] = model_selection["model_type"]
-    session["timestamp"] = _iso_now()
-    final_readiness_non_stream = _clamp_readiness_with_delta(
-        previous_readiness,
-        _compute_readiness(chat_history, session.get("strategy_objective")),
-    )
-    session["status"] = "ready_to_analyze" if _is_ready_to_analyze(final_readiness_non_stream) else "in_progress"
-    session["readiness"] = final_readiness_non_stream
-    _record_usage(
-        session,
-        usage,
-        credits_charged,
-        actions=actions,
+    turn_request = _TurnRequest(
+        route="conversation_continue",
+        user_message=user_message,
         attachments=attachments,
+        chat_history=chat_history,
+        previous_readiness=previous_readiness,
+        readiness=readiness,
+        context_budget=context_budget,
+        model_selection=model_selection,
         idempotency_key=idempotency_key,
         request_fingerprint=request_fingerprint,
-        success=not bool(scoring_failure),
-        error_code=scoring_failure.get("code") if scoring_failure else None,
-        operation_type="score_next" if scoring_failure else None,
+        session_created=session_created,
+        name=None,
+        project=turn_project,
     )
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist conversation state"}), 500
-
-    if session_created:
-        _audit_ai_agent_event(
-            "session.created",
-            user=user,
-            details={
-                "thread_id": thread_id,
-                "name": session.get("name") or "Jaspen Intake",
-                "model_type": model_selection["model_type"],
-                "stream": False,
-                "source": "conversation_continue",
-            },
-        )
-
-    _cont_base_actions = actions if isinstance(actions, list) else []
-
-    response_payload = {
-        "thread_id": thread_id,
-        "session_id": thread_id,
-        "reply": assistant_reply,
-        "message": assistant_reply,
-        "assistant_message_index": assistant_message_index,
-        "model_type": model_selection["model_type"],
-        "allowed_model_types": model_selection["allowed_model_types"],
-        "actions": _cont_base_actions,
-        "mutations": mutations if isinstance(mutations, list) else [],
-        "tool_results": mutations if isinstance(mutations, list) else [],
-        "artifact_messages": artifact_messages,
-        "undo_available": undo_available,
-        "usage": _public_usage_payload(
-            usage,
-            model_type=model_selection["model_type"],
-            credits_charged=credits_charged,
-            credits_remaining=remaining,
-            user=user,
-        ),
-        "context_budget": context_budget,
-        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-        "readiness": {
-            "percent": final_readiness_non_stream["overall"]["percent"],
-            "categories": final_readiness_non_stream["categories"],
-            "items": final_readiness_non_stream.get("items", []),
-            "checklist_summary": final_readiness_non_stream.get("checklist_summary", {}),
-            "version": final_readiness_non_stream.get("version"),
-            "updated_at": _iso_now(),
-        },
-        "status": "ready_to_analyze" if _is_ready_to_analyze(final_readiness_non_stream) else "gathering_info",
-        "strategy_objective": session.get("strategy_objective") or "balanced",
-        "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-        "organization_id": session.get("organization_id"),
-        "visibility": session.get("visibility") or "private",
-        "objective_options": list(STRATEGY_OBJECTIVE_OPTIONS),
-    }
-    if scoring_failure:
-        response_payload.update({
-            "success": False,
-            "failure_state": True,
-            "code": scoring_failure.get("code"),
-            "retryable": True,
-            "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
-            "message_saved": True,
-        })
-    _remember_conversation_payload(
-        session, idempotency_key, request_fingerprint, response_payload,
-    )
-    sessions[thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist idempotency state"}), 500
-    return jsonify(response_payload), 200
+    if stream_requested:
+        return _stream_conversation_turn(turn, turn_request)
+    return _run_conversation_turn(turn, turn_request)
 
 
 @ai_agent_bp.route("/uploads", methods=["POST"])
@@ -16245,6 +16793,7 @@ Rules:
             messages=[{"role": "user", "content": extraction_prompt}],
             system_prompt='Extract grounded knowledge signals. Return JSON only.',
             operation_type='knowledge_refresh',
+            prompt_family='knowledge_refresh',
             model_type='pluto',
             legacy_model='claude-haiku-4-5',
             max_tokens=800,
@@ -16272,7 +16821,7 @@ Rules:
     try:
         session["knowledge_signals"] = {"signals": signals, "confidence": conf, "updated_at": _iso_now()}
         sessions[session_key] = session
-        save_user_sessions(user_id, sessions)
+        save_one_project(user_id, sessions, session_key)
     except Exception:
         pass
 
@@ -16368,7 +16917,7 @@ def reset_threads():
             else:
                 destroyable.append(sid)
 
-        save_user_sessions(user_id, {}, session_ids_to_delete=destroyable)
+        delete_user_sessions(user_id, destroyable)
         for sid in destroyable:
             try:
                 mark_ledger_purged(sid)
@@ -16741,7 +17290,7 @@ def update_thread(thread_id):
         session["created_by_user_id"] = str(user_id)
     session["timestamp"] = _iso_now()
     sessions[session_key or resolved_thread_id] = session
-    save_user_sessions(user_id, sessions)
+    save_one_project(user_id, sessions, session_key or resolved_thread_id)
     if user_profile_changed:
         db.session.commit()
 
@@ -16828,7 +17377,7 @@ def touch_thread(thread_id):
     now_iso = _iso_now()
     session["timestamp"] = now_iso
     sessions[session_key or resolved_thread_id] = session
-    save_user_sessions(user_id, sessions)
+    save_one_project(user_id, sessions, session_key or resolved_thread_id)
 
     return jsonify({
         "success": True,
@@ -17275,7 +17824,7 @@ def append_thread_messages(thread_id):
     session["timestamp"] = now_iso
     sessions[session_key or resolved_thread_id] = session
 
-    if not save_user_sessions(user_id, sessions):
+    if not save_one_project(user_id, sessions, session_key or resolved_thread_id):
         return jsonify({"error": "Failed to persist messages"}), 500
 
     return jsonify({
@@ -17325,7 +17874,7 @@ def set_thread_message_feedback(thread_id, message_index):
     session["chat_history"] = updated_chat_history
     session["timestamp"] = _iso_now()
     sessions[session_key or thread_id] = session
-    if not save_user_sessions(user_id, sessions):
+    if not save_one_project(user_id, sessions, session_key or thread_id):
         return jsonify({"error": "Failed to persist message feedback"}), 500
 
     user = User.query.get(user_id)
@@ -17365,10 +17914,15 @@ def conversation_undo_mutations():
     if not thread_id:
         return jsonify({"error": "thread_id is required"}), 400
 
-    sessions = load_user_sessions(user_id) or {}
-    session_key, session = _resolve_user_session(sessions, thread_id)
+    # Undo changes the project, so it is a write: the organization's canonical
+    # project, any member with an editing role (including undoing a
+    # colleague's latest turn), never a viewer.
+    sessions, session_key, session = _authorized_thread_session_for_write(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
+    # The revision of the chat history this request read. Undo's write is
+    # accepted only against it, so a turn saved meanwhile is never erased.
+    loaded_revision = session.get("revision")
 
     chat_history = _session_chat_history(session)
     if not chat_history:
@@ -17397,9 +17951,6 @@ def conversation_undo_mutations():
             "code": "undo_not_available",
         }), 409
 
-    if not _restore_thread_mutation_snapshot(user_id, snapshot):
-        return jsonify({"error": "Failed to restore the previous project state"}), 500
-
     updated_chat_history = list(chat_history)
     updated_last_msg = dict(last_msg)
     updated_last_msg["undo"] = {
@@ -17413,8 +17964,38 @@ def conversation_undo_mutations():
     session["timestamp"] = _iso_now()
     session.pop(PENDING_MUTATION_UNDO_KEY, None)
     sessions[session_key or thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist undo state"}), 500
+    # One project, one transaction: the chat record (checked against the
+    # revision this request loaded, enforced by the row's compare-and-swap)
+    # and the restored scenario data commit together or not at all. Either
+    # conflict leaves both members' work and the undo record untouched.
+    staged = dict(session)
+    if loaded_revision is not None:
+        staged["base_revision"] = loaded_revision
+    try:
+        if not save_project_session(user_id, session_key or thread_id, staged, commit=False):
+            db.session.rollback()
+            return jsonify({"error": "Failed to persist undo state"}), 500
+        restored = _restore_thread_mutation_snapshot(user_id, snapshot)
+    except RevisionConflict as conflict:
+        db.session.rollback()
+        row = canonical_row(user, str(session.get("session_id") or session_key or thread_id))
+        body, status = RevisionConflict(
+            conflict.expected_revision,
+            int(row.revision or 1) if row is not None else None,
+            session_id=conflict.session_id,
+        ).to_response()
+        body["undo_available"] = True
+        return jsonify(body), status
+    except SessionAccessError:
+        db.session.rollback()
+        raise
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("conversation_undo_mutations restore failed")
+        restored = False
+    if not restored:
+        db.session.rollback()
+        return jsonify({"error": "Failed to restore the previous project state"}), 500
 
     _audit_ai_agent_event(
         "message.mutations_undone",
@@ -17469,10 +18050,16 @@ def conversation_regenerate():
     if not thread_id:
         return jsonify({"error": "thread_id is required"}), 400
 
-    sessions = load_user_sessions(user_id) or {}
-    session_key, session = _resolve_user_session(sessions, thread_id)
+    # Regenerating replaces the project's latest reply, so it is a write and
+    # follows exactly the rule continue follows: the organization's canonical
+    # project, any member with an editing role, never a viewer. Authorized
+    # here, before the cached replay, model resolution and the reservation.
+    sessions, session_key, session = _authorized_thread_session_for_write(user, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404
+    # The project this regenerated reply's context comes from, held to the
+    # organization authorized here for the rest of the request.
+    turn_project = _authorize_turn_project(user, thread_id)
 
     stream_requested = str(request.args.get("stream") or "").strip().lower() in {"1", "true", "yes"}
     try:
@@ -17543,277 +18130,98 @@ def conversation_regenerate():
         user_message,
         chat_history=regen_history,
     )
-    credit_reservation = _reserve_preflight_credits(
-        user,
-        model_selection["model_type"],
-        token_hint=preflight_token_hint,
+    turn = _conversation_turn(
+        user=user, user_id=user_id, thread_id=thread_id, session=session,
+        sessions=sessions, model_type=model_selection["model_type"],
+        session_key=session_key or thread_id,
+        route=request.endpoint, streaming=stream_requested,
+        idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
     )
-    if not credit_reservation["ok"]:
-        return jsonify(credit_reservation["payload"]), 402
-    reserved_credits = int(credit_reservation["reserved"] or 0)
+    refusal = turn.reserve(token_hint=preflight_token_hint)
+    if refusal is not None:
+        return jsonify(refusal), 402
+
+    def finish(assistant_reply, usage, *, streaming):
+        return _finish_regenerated_turn(
+            turn,
+            reply=assistant_reply,
+            usage=usage,
+            chat_history=chat_history,
+            last_msg=last_msg,
+            old_response=old_response,
+            previous_readiness=previous_readiness,
+            context_budget=context_budget,
+            model_selection=model_selection,
+            idempotency_key=idempotency_key,
+            request_fingerprint=request_fingerprint,
+            streaming=streaming,
+        )
+
+    generation = dict(
+        context_budget=context_budget,
+        session=session,
+        user=user,
+        user_id=user_id,
+        thread_id=thread_id,
+        intake_context=session.get("intake_context"),
+        view_context=session.get("view_context"),
+        disable_mutations=True,
+        project=turn_project,
+    )
+
     if stream_requested:
         @stream_with_context
         def event_stream():
             state = {}
-            credits_settled = False
             try:
                 yield _sse_payload({"type": "tool_status", "status": "Generating an improved response..."})
                 for payload in _stream_assistant_reply_events(
-                    user_message,
-                    regen_history,
-                    readiness,
-                    model_selection,
-                    context_budget=context_budget,
-                    session=session,
-                    user=user,
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    intake_context=session.get("intake_context"),
-                    view_context=session.get("view_context"),
-                    state=state,
-                    disable_mutations=True,
+                    user_message, regen_history, readiness, model_selection,
+                    state=state, **generation,
                 ):
                     yield _sse_payload(payload)
 
                 yield _sse_payload({"type": "tool_status", "status": "Finalizing response..."})
-                assistant_reply = str(state.get("reply") or "").strip()
-                usage = state.get("usage") if isinstance(state.get("usage"), dict) else {
-                    "provider": "heuristic",
-                    "model": None,
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "total_tokens": 0,
-                }
-
-                credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-                credit_settlement = _settle_reserved_credits(
-                    user,
-                    reserved_credits=reserved_credits,
-                    actual_credits=credits_charged,
+                done_payload, error = finish(
+                    str(state.get("reply") or "").strip(),
+                    state.get("usage") if isinstance(state.get("usage"), dict) else dict(_NO_USAGE),
+                    streaming=True,
                 )
-                credits_settled = True
-                if not credit_settlement["ok"]:
-                    yield _sse_payload({
-                        "type": "error",
-                        **(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)),
-                    })
-                    return
-                remaining = credit_settlement["remaining"]
-                credits_charged = credit_settlement["charged"]
-                _persist_credit_deduction(user_id, remaining)
-
-                alternatives = [old_response, *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else [])]
-                new_msg = _assistant_chat_entry(
-                    assistant_reply,
-                    regenerated=True,
-                    alternatives=alternatives,
-                )
-                chat_history[-1] = new_msg
-                assistant_message_index = len(chat_history) - 1
-                final_readiness = _clamp_readiness_with_delta(
-                    previous_readiness,
-                    _compute_readiness(chat_history, session.get("strategy_objective")),
-                )
-
-                session["chat_history"] = chat_history
-                session["timestamp"] = _iso_now()
-                session["readiness"] = final_readiness
-                _record_usage(
-                    session,
-                    usage,
-                    credits_charged,
-                    regenerated=True,
-                    idempotency_key=idempotency_key,
-                    request_fingerprint=request_fingerprint,
-                )
-                sessions[session_key or thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist regenerated response"})
-                    return
-
-                _audit_ai_agent_event(
-                    "message.regenerated",
-                    user=user,
-                    details={
-                        "thread_id": str(session.get("session_id") or session_key or thread_id),
-                        "message_index": assistant_message_index,
-                        "alternatives_count": len(new_msg.get("alternatives") or []),
-                    },
-                )
-
-                done_payload = {
-                    "type": "done",
-                    "thread_id": thread_id,
-                    "session_id": thread_id,
-                    "reply": assistant_reply,
-                    "message": assistant_reply,
-                    "assistant_message_index": assistant_message_index,
-                    "regenerated": True,
-                    "alternatives_count": len(new_msg.get("alternatives") or []),
-                    "model_type": model_selection["model_type"],
-                    "allowed_model_types": model_selection["allowed_model_types"],
-                    "mutations": [],
-                    "tool_results": [],
-                    "usage": _public_usage_payload(
-                        usage,
-                        model_type=model_selection["model_type"],
-                        credits_charged=credits_charged,
-                        credits_remaining=remaining,
-                        user=user,
-                    ),
-                    "context_budget": context_budget,
-                    "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-                    "readiness": {
-                        "percent": final_readiness["overall"]["percent"],
-                        "categories": final_readiness["categories"],
-                        "items": final_readiness.get("items", []),
-                        "checklist_summary": final_readiness.get("checklist_summary", {}),
-                        "version": final_readiness.get("version"),
-                        "updated_at": _iso_now(),
-                    },
-                    "strategy_objective": session.get("strategy_objective") or "balanced",
-                    "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-                    "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-                    "organization_id": session.get("organization_id"),
-                    "visibility": session.get("visibility") or "private",
-                }
-                _remember_conversation_payload(
-                    session, idempotency_key, request_fingerprint, done_payload,
-                )
-                sessions[session_key or thread_id] = session
-                if not save_user_sessions(user_id, sessions):
-                    yield _sse_payload({"type": "error", "error": "Failed to persist idempotency state"})
+                if error is not None:
+                    yield _sse_payload({"type": "error", **error[0]})
                     return
                 yield _sse_payload(done_payload)
+            except GeneratorExit:
+                _close_turn_alone(turn, "interrupted", error_code="client_disconnected")
+                raise
             except Exception as generation_error:
-                if not credits_settled:
-                    _release_reserved_credits(user, reserved_credits)
-                    _record_failed_chat_usage(session, generation_error, regenerated=True)
+                if not turn.settled:
+                    turn.release_unsettled()
+                    _record_failed_chat_usage(session, generation_error, regenerated=True, turn=turn)
+                else:
+                    _close_turn_alone(turn, "failed_after_settle", error_code=type(generation_error).__name__)
                 current_app.logger.exception("conversation_regenerate stream failed")
                 yield _sse_payload({"type": "error", "error": "Streaming failed"})
                 return
 
-        return Response(
-            event_stream(),
-            mimetype="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
-        )
+        return Response(event_stream(), mimetype="text/event-stream", headers=dict(_SSE_HEADERS))
 
     try:
         assistant_reply, usage, _actions, _mutations, _undo_snapshot = _generate_assistant_reply(
-            user_message,
-            regen_history,
-            readiness,
-            model_selection,
-            context_budget=context_budget,
-            session=session,
-            user=user,
-            user_id=user_id,
-            thread_id=thread_id,
-            intake_context=session.get("intake_context"),
-            view_context=session.get("view_context"),
-            disable_mutations=True,
+            user_message, regen_history, readiness, model_selection, **generation,
         )
     except Exception as generation_error:
-        _release_reserved_credits(user, reserved_credits)
-        _record_failed_chat_usage(session, generation_error, regenerated=True)
+        turn.release_unsettled()
+        _record_failed_chat_usage(session, generation_error, regenerated=True, turn=turn)
         raise
 
-    credits_charged = _charge_for_usage(usage, model_selection["model_type"], user)
-    credit_settlement = _settle_reserved_credits(
-        user,
-        reserved_credits=reserved_credits,
-        actual_credits=credits_charged,
-    )
-    if not credit_settlement["ok"]:
-        return jsonify(credit_settlement["payload"] or _insufficient_credits_payload(user, credits_charged)), 402
-    remaining = credit_settlement["remaining"]
-    credits_charged = credit_settlement["charged"]
-    _persist_credit_deduction(user_id, remaining)
-
-    alternatives = [old_response, *((last_msg.get("alternatives") or []) if isinstance(last_msg.get("alternatives"), list) else [])]
-    new_msg = _assistant_chat_entry(
-        assistant_reply,
-        regenerated=True,
-        alternatives=alternatives,
-    )
-    chat_history[-1] = new_msg
-    assistant_message_index = len(chat_history) - 1
-
-    session["chat_history"] = chat_history
-    session["timestamp"] = _iso_now()
-    _record_usage(
-        session,
-        usage,
-        credits_charged,
-        regenerated=True,
-        idempotency_key=idempotency_key,
-        request_fingerprint=request_fingerprint,
-    )
-    final_readiness = _clamp_readiness_with_delta(
-        previous_readiness,
-        _compute_readiness(chat_history, session.get("strategy_objective")),
-    )
-    session["readiness"] = final_readiness
-    sessions[session_key or thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist regenerated response"}), 500
-
-    _audit_ai_agent_event(
-        "message.regenerated",
-        user=user,
-        details={
-            "thread_id": str(session.get("session_id") or session_key or thread_id),
-            "message_index": assistant_message_index,
-            "alternatives_count": len(new_msg.get("alternatives") or []),
-        },
-    )
-
-    response_payload = {
-        "thread_id": thread_id,
-        "session_id": thread_id,
-        "reply": assistant_reply,
-        "message": assistant_reply,
-        "assistant_message_index": assistant_message_index,
-        "regenerated": True,
-        "alternatives_count": len(new_msg.get("alternatives") or []),
-        "model_type": model_selection["model_type"],
-        "allowed_model_types": model_selection["allowed_model_types"],
-        "mutations": [],
-        "tool_results": [],
-        "usage": _public_usage_payload(
-            usage,
-            model_type=model_selection["model_type"],
-            credits_charged=credits_charged,
-            credits_remaining=remaining,
-            user=user,
-        ),
-        "context_budget": context_budget,
-        "credits": _public_credits_payload(charged=credits_charged, remaining=remaining),
-        "readiness": {
-            "percent": final_readiness["overall"]["percent"],
-            "categories": final_readiness["categories"],
-            "items": final_readiness.get("items", []),
-            "checklist_summary": final_readiness.get("checklist_summary", {}),
-            "version": final_readiness.get("version"),
-            "updated_at": _iso_now(),
-        },
-        "strategy_objective": session.get("strategy_objective") or "balanced",
-        "objective_explicitly_set": bool(session.get("objective_explicitly_set")),
-        "intake_context": session.get("intake_context") if isinstance(session.get("intake_context"), dict) else {},
-        "organization_id": session.get("organization_id"),
-        "visibility": session.get("visibility") or "private",
-    }
-    _remember_conversation_payload(
-        session, idempotency_key, request_fingerprint, response_payload,
-    )
-    sessions[session_key or thread_id] = session
-    if not save_user_sessions(user_id, sessions):
-        return jsonify({"error": "Failed to persist idempotency state"}), 500
+    try:
+        response_payload, error = finish(assistant_reply, usage, streaming=False)
+    except Exception as finish_error:
+        _close_turn_on_unexpected_error(turn, finish_error)
+        raise
+    if error is not None:
+        return jsonify(error[0]), error[1]
     return jsonify(response_payload), 200
 
 
@@ -17906,7 +18314,6 @@ def analyze_data():
         thread_id = str(
             request.form.get("thread_id")
             or request.args.get("thread_id")
-            or request.headers.get("X-Session-ID")
             or ""
         ).strip() or None
         user_prompt = str(request.form.get("prompt") or request.form.get("instruction") or "").strip()
@@ -17916,6 +18323,14 @@ def analyze_data():
             return jsonify({"error": "file is required (multipart/form-data)"}), 400
         if not str(getattr(uploaded, "filename", "") or "").strip():
             return jsonify({"error": "Uploaded file must have a name."}), 400
+
+        if thread_id:
+            _scoped_user, scoped_sessions, _row = _authorized_thread_scope(
+                user_id, thread_id, require_write=True
+            )
+            _session_key, scoped_session = _resolve_user_session(scoped_sessions, thread_id)
+            if not isinstance(scoped_session, dict):
+                raise SessionNotFound()
 
         df, filename = _dataset_from_upload(uploaded)
         summary = _summarize_dataset(df)
@@ -17965,6 +18380,8 @@ def analyze_data():
         return jsonify({"error": str(ve)}), 400
     except RuntimeError as re_err:
         return jsonify({"error": str(re_err)}), 500
+    except SessionAccessError:
+        raise
     except Exception as e:
         current_app.logger.error("[analyze_data] %s", e)
         return jsonify({"error": "Failed to analyze uploaded data."}), 500
@@ -18066,6 +18483,7 @@ def rank_batch_ideas(batch_id):
             user,
             generate=lambda: _rank_batch_ideas_with_ai(batch, ideas, model_selection),
             operation_type="batch_ranking",
+            prompt_family='batch_ranking',
             request_payload={"batch_id": batch.id, "ideas": ideas},
             model_type=model_selection["model_type"],
             max_tokens=max(900, _preflight_token_hint_for_batch_ideas(ideas, include_metadata=True) // 2),
@@ -18212,6 +18630,7 @@ def clarify_batch_idea(batch_id, idea_id):
             user,
             generate=lambda: _reevaluate_batch_idea_with_ai(batch, updated_idea, model_selection),
             operation_type="batch_clarification",
+            prompt_family='batch_clarification',
             request_payload={
                 "batch_id": batch.id,
                 "idea_id": idea_id,

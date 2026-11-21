@@ -384,6 +384,13 @@ def create_app():
     app.config['AI_AGENT_ANTHROPIC_MODEL'] = app.config['LLM_PROVIDER_MODELS']['claude_sonnet']
     app.config['ANTHROPIC_MODEL'] = app.config['LLM_PROVIDER_MODELS']['claude_sonnet']
     app.config['AI_AGENT_MAX_OUTPUT_TOKENS'] = int(os.getenv('AI_AGENT_MAX_OUTPUT_TOKENS', '1500'))
+    # P5d is measurement-only until a separate activation approval.  Model
+    # windows are supplied explicitly as JSON, for example
+    # {"claude-haiku-4-5": 200000}; enforcement refuses to guess one.
+    app.config['CONTEXT_BUDGET_MODE'] = os.getenv('CONTEXT_BUDGET_MODE', 'shadow')
+    app.config['AI_CONTEXT_WINDOW_TOKENS_BY_MODEL'] = os.getenv(
+        'AI_CONTEXT_WINDOW_TOKENS_BY_MODEL', '{}'
+    )
     app.config['AI_AGENT_TEMPERATURE'] = float(os.getenv('AI_AGENT_TEMPERATURE', '0.2'))
     app.config['AI_AGENT_CREDITS_PER_1K_TOKENS'] = float(os.getenv('AI_AGENT_CREDITS_PER_1K_TOKENS', '1.0'))
     app.config['AI_AGENT_MIN_CREDIT_CHARGE'] = int(os.getenv('AI_AGENT_MIN_CREDIT_CHARGE', '1'))
@@ -615,6 +622,11 @@ def create_app():
     # Jaspen strategy blueprint
     app.logger.info("Jaspen strategy API registered successfully at /api/v1/strategy")
 
+    # P5b: compute prompt versions now, while the loaded prompt code and its
+    # source on disk agree. Evidence only; it never blocks startup.
+    from .prompt_version import warm_prompt_versions
+    warm_prompt_versions()
+
     # Session access refusals render as themselves rather than as a generic
     # 500. Registered ahead of the catch-all Exception handler so a refusal
     # that escapes a handler still reaches the client as 404 / 403 / 409 with
@@ -753,6 +765,26 @@ def create_app():
             "body_preview": result.get("body", "")[:1200] if dry_run else None,
         }, default=str))
 
+    @app.cli.group("ai-operations")
+    def ai_operations_cli():
+        """AI operation evidence (report only)."""
+
+    @ai_operations_cli.command("report")
+    @click.option("--older-than-minutes", default=30, show_default=True, type=int,
+                  help="Report operations still 'started' after this long.")
+    @click.option("--since-days", default=30, show_default=True, type=int,
+                  help="Look at operations created in this many days (0 = all history).")
+    def ai_operations_report_cli(older_than_minutes, since_days):
+        """List unclosed AI operations and chat turns whose evidence does not
+        reconcile. Changes nothing: no release, no status change, no commit."""
+        from app.ai_audit import report_turn_operations
+
+        result = report_turn_operations(
+            max_turn_seconds=int(older_than_minutes) * 60, since_days=since_days,
+        )
+        db.session.rollback()
+        click.echo(json.dumps(result, sort_keys=True, default=str))
+
     @app.cli.group("decision-intelligence")
     def decision_intelligence_cli():
         """Decision-intelligence data maintenance."""
@@ -765,5 +797,35 @@ def create_app():
 
         result = backfill_decision_intelligence(dry_run=dry_run)
         click.echo(json.dumps({"dry_run": bool(dry_run), **result}, sort_keys=True))
+
+    @app.cli.group("legacy-plans")
+    def legacy_plans_cli():
+        """P2d legacy plan identifier maintenance (one-time)."""
+
+    @legacy_plans_cli.command("backfill")
+    @click.option("--dry-run", "mode", flag_value="dry_run", default=True,
+                  help="Report what would change and write nothing (the default).")
+    @click.option("--write", "mode", flag_value="write",
+                  help="Write the changes. Needs --before-image.")
+    @click.option("--rollback", "rollback_file", default=None,
+                  help="Restore the before-images in this file (dry run unless --write).")
+    @click.option("--before-image", "before_image", default=None,
+                  help="New file to record before-images in, for a write run.")
+    @click.option("--organization", "organization_id", default=None,
+                  help="Limit the job to one organization's projects.")
+    def legacy_plans_backfill_cli(mode, rollback_file, before_image, organization_id):
+        """Re-key legacy plans, register missing plan artifacts, remove orphans."""
+        from app.legacy_plan_backfill import backfill_legacy_plans, rollback_legacy_plans
+
+        write = mode == "write"
+        if rollback_file:
+            result = rollback_legacy_plans(rollback_file, write=write)
+        else:
+            if write and not before_image:
+                raise click.UsageError("--write needs --before-image <new file>.")
+            result = backfill_legacy_plans(
+                write=write, organization_id=organization_id, before_image_path=before_image,
+            )
+        click.echo(json.dumps(result, sort_keys=True, default=str, indent=2))
 
     return app

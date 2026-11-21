@@ -2,10 +2,12 @@ import re
 from datetime import datetime, timedelta
 
 from app import db
+from app.connector_store import record_connector_read_result
 from app.models import ConnectorSyncLog
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.pm_sync import jira_adapter
-from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
+from app.project_scope import authorized_thread_scope, scenarios_for_thread
+from app.scenarios_store import save_project_scenarios_data
 from sqlalchemy.orm.attributes import flag_modified
 
 MODES = {"two_way", "push_only"}
@@ -18,8 +20,24 @@ def _now():
     return datetime.utcnow()
 
 
-def get_plan(user_id, thread_id, plan_key):
-    thread = load_scenarios_data(user_id).get(thread_id)
+def get_plan(user_id, thread_id, plan_key, *, binding=None):
+    """The plan to send or sync.
+
+    Without ``binding``: the plan a member is looking at, in their active
+    organization's project (preview, creating a binding). With ``binding``:
+    the plan of the binding's own project, in the binding's organization,
+    whatever organization its owner has active (N1). Every sync of an
+    existing binding passes it.
+    """
+    if binding is not None:
+        from app.pm_sync.access import binding_scenarios
+
+        data, _row = binding_scenarios(binding)
+        return _plan_in_thread(data.get(str(binding.thread_id)), binding.plan_key)
+    return _plan_in_thread(scenarios_for_thread(user_id, thread_id).get(thread_id), plan_key)
+
+
+def _plan_in_thread(thread, plan_key):
     if not isinstance(thread, dict):
         raise LookupError("Thread not found.")
     by_scorecard = thread.get("wbs_by_scorecard") if isinstance(thread.get("wbs_by_scorecard"), dict) else {}
@@ -62,7 +80,14 @@ def _persist_task_commitments(binding, plan):
             current['project_wbs'] = target
         return current
 
-    save_project_scenarios_data(binding.user_id, binding.thread_id, updater=apply)
+    # Write the binding's own project only (N1): the remembered row pins the
+    # save, so the owner's active organization cannot redirect it.
+    from app.pm_sync.access import binding_scenarios
+
+    data, row = binding_scenarios(binding)
+    if row is None:
+        raise LookupError("Thread not found.")
+    save_project_scenarios_data(binding.user_id, binding.thread_id, updater=apply, source=data)
 
 
 def _clean_phase(value):
@@ -150,7 +175,15 @@ def create_binding(user, payload):
         raise ValueError("Choose a sync mode before sending.")
     if policy not in POLICIES:
         raise ValueError("Choose a conflict policy before sending.")
+    _scope_user, _sessions, project_row = authorized_thread_scope(
+        user.id, thread_id, require_write=True,
+    )
     plan, plan_key = get_plan(user.id, thread_id, requested_plan_key)
+    binding = PmSyncBinding.query.filter_by(
+        thread_id=thread_id, plan_key=plan_key, connector_id=connector_id,
+    ).first()
+    if binding:
+        raise ValueError("This execution plan is already bound to Jira.")
     jira = jira_adapter.assert_connected(user.id, project_key)
     config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
     try:
@@ -164,12 +197,12 @@ def create_binding(user, payload):
         "status_map": config.get("status_map") if isinstance(config.get("status_map"), dict) else {},
         "start_date_field_id": str(config.get("start_date_field_id") or start_date_field_id or ""),
     }
-    binding = PmSyncBinding.query.filter_by(thread_id=thread_id, plan_key=plan_key, connector_id=connector_id).first()
-    if binding:
-        raise ValueError("This execution plan is already bound to Jira.")
     binding = PmSyncBinding(
         user_id=user.id,
-        organization_id=getattr(user, "active_organization_id", None),
+        organization_id=(
+            getattr(project_row, "organization_id", None)
+            or getattr(user, "active_organization_id", None)
+        ),
         thread_id=thread_id,
         plan_key=plan_key,
         connector_id=connector_id,
@@ -409,13 +442,12 @@ def ensure_task_parent(
 
 
 def push_binding(binding, plan=None, trigger="send", only_task_ids=None):
-    from app.pm_sync.access import enforce_binding_owner
+    from app.pm_sync.access import enforce_binding_owner, ensure_not_paused
 
     enforce_binding_owner(binding)
-    if binding.status == "paused":
-        raise ValueError("This Jira sync is paused.")
+    ensure_not_paused(binding)
     if plan is None:
-        plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key)
+        plan, _ = get_plan(binding.user_id, binding.thread_id, binding.plan_key, binding=binding)
     config = jira_adapter.assert_connected(binding.user_id, binding.external_container_id)
     ensure_start_date_field(binding, config)
     all_tasks = [task for task in (plan.get("tasks") or []) if isinstance(task, dict) and str(task.get("id") or "").strip()]
@@ -638,14 +670,28 @@ def push_binding(binding, plan=None, trigger="send", only_task_ids=None):
     db.session.commit()
     result["success"] = not result["errors"]
     result["binding"] = binding.to_dict()
+    provider_interaction = bool(tasks) or any(
+        int(result.get(key) or 0) > 0
+        for key in ("created", "updated", "dependencies", "failed")
+    )
+    if provider_interaction:
+        record_connector_read_result(
+            binding.user_id,
+            binding.connector_id,
+            "plan_sync",
+            succeeded=result["success"],
+            read_result=result if result["success"] else None,
+            error_message=(result.get("errors") or [""])[0],
+        )
     return result
 
 
 def recreate_missing_links(binding):
     """Drop only dead Jira mappings, then create replacements with this binding's settings."""
-    from app.pm_sync.access import enforce_binding_owner
+    from app.pm_sync.access import enforce_binding_owner, ensure_not_paused
 
     enforce_binding_owner(binding)
+    ensure_not_paused(binding)
     missing = PmSyncLink.query.filter_by(binding_id=binding.id, state="missing_external").all()
     if not missing:
         raise ValueError("This plan has no missing Jira issues to recreate.")

@@ -118,16 +118,63 @@ class RevisionConflict(SessionAccessError):
         return body, status
 
 
+class LostRace(RevisionConflict):
+    """Another write landed between this write's read and its compare-and-swap.
+
+    Nothing the caller asserted was wrong, so the whole unit may be read again
+    and re-applied (``app.routes.sessions.run_project_write``). It is still a
+    RevisionConflict, so a unit that runs out of attempts, or is not retried,
+    answers with the same approved refusal. A conflict the caller asserted (a
+    stale ``base_revision`` or object basis) and a conflicting change to the
+    same object are plain RevisionConflicts and are never retried.
+    """
+
+
 # --- Organization context ----------------------------------------------------
+
+_UNPINNED = object()
+
+
+def pin_active_organization(user_id, organization_id):
+    """Hold this user's organization fixed for the rest of the request.
+
+    An AI turn authorizes one project in one organization, then spends seconds
+    generating, running tools and saving. If the member switches organization
+    in another tab meanwhile, every later resolution in this request would
+    otherwise follow the new organization and could reach a same-id project
+    there. Pinning keeps the authorized organization authoritative until the
+    request ends. Outside a request it does nothing.
+    """
+    from flask import g, has_request_context
+    if not has_request_context() or not user_id:
+        return
+    pins = getattr(g, 'pinned_active_organizations', None)
+    if pins is None:
+        pins = {}
+        g.pinned_active_organizations = pins
+    pins[str(user_id)] = organization_id or None
+
+
+def _pinned_organization(user):
+    from flask import g, has_request_context
+    if not has_request_context():
+        return _UNPINNED
+    pins = getattr(g, 'pinned_active_organizations', None) or {}
+    return pins.get(str(user.id), _UNPINNED)
+
 
 def active_org_id_for_user(user):
     """The org that owns work this user creates right now.
 
     Deliberately does NOT call resolve_active_org_for_user(), which commits.
-    Read paths must not write.
+    Read paths must not write. Inside an AI turn this is the organization the
+    turn authorized (see pin_active_organization).
     """
     if user is None:
         return None
+    pinned = _pinned_organization(user)
+    if pinned is not _UNPINNED:
+        return pinned
     return getattr(user, 'active_organization_id', None) or None
 
 
@@ -152,7 +199,15 @@ def canonical_row(user, session_id, *, include_archived=False):
       1. Personal-scope ids resolve to the caller's own row and stop.
       2. The organization-owned row, oldest created_at first, so a historical
          fork can never displace the original.
-      3. The caller's own row, for work that predates an org binding.
+      3. The caller's own row, for work outside the active organization:
+         - an unbound legacy row (work that predates an org binding) is
+           returned as is;
+         - an organization-bound row stands only for ITS organization's
+           canonical row (the oldest there for this id). When the caller's row
+           is that canonical row, legacy access is unchanged; when it is a
+           historical fork, the original is returned instead, so the fork can
+           never substitute for a project the caller may not be authorized
+           to use. Authorization then decides, as always.
 
     Returns the row or None. Performs NO authorization -- callers must use
     resolve_session_for_actor().
@@ -183,7 +238,13 @@ def canonical_row(user, session_id, *, include_archived=False):
         if row is not None:
             return row
 
-    return own
+    if own is None or not own.organization_id:
+        return own
+    return _visible(
+        UserSession.query.filter_by(organization_id=str(own.organization_id), session_id=sid)
+    ).order_by(
+        UserSession.created_at.asc(), UserSession.id.asc()
+    ).first() or own
 
 
 # --- Predicates --------------------------------------------------------------
@@ -383,6 +444,28 @@ def resolve_session_for_actor(user, session_id, *, require_write=False,
     return row, membership
 
 
+def require_can_create_session(user, organization_id):
+    """Authorize creating a NEW project in an organization, before any work.
+
+    An existing project is authorized against its row (see
+    resolve_session_for_actor). A project that does not exist yet has no row
+    to check, so the same rule is applied to the membership directly: writing
+    organization work needs an editing role, and a viewer never writes.
+
+    Callers run this before reserving credits or calling a model, so a member
+    who cannot keep the result is refused at no cost instead of being charged
+    for a reply that the save then rejects.
+    """
+    if user is None or not organization_id:
+        return
+    membership = active_membership_for_user(organization_id, str(user.id))
+    if membership is None:
+        # Not a member: the save path decides, exactly as it did before.
+        return
+    if not can_edit_projects(normalize_org_role(membership.role)):
+        raise SessionForbidden('Your role on this project is read-only.')
+
+
 # --- Optimistic concurrency --------------------------------------------------
 
 def revision_required_for(row):
@@ -428,6 +511,31 @@ def check_revision(row, base_revision):
         raise RevisionConflict(expected, current, session_id=row.session_id)
 
 
+def lock_project_row(row):
+    """Re-read ``row`` from the database, locked until the transaction ends.
+
+    Every project writer takes this lock before it reads the stored project
+    for its decision: the project store, the scenario store, and comments,
+    sharing and activity (team.py). Those last three change the payload
+    without a new revision, so a compare-and-swap cannot see them; the lock
+    makes the writers take turns instead. One project row per write unit, so
+    the lock order is always the same.
+
+    PostgreSQL: SELECT ... FOR UPDATE. Other databases have no row lock, so,
+    as in the P2d backfill, a no-op UPDATE takes the database's write lock
+    first (SQLite serializes writers on it).
+    """
+    if db.session.get_bind().dialect.name != 'postgresql':
+        table = UserSession.__table__
+        db.session.execute(
+            table.update()
+            .where(table.c.id == row.id)
+            .values(revision=table.c.revision)
+        )
+    db.session.refresh(row, with_for_update=True)
+    return row
+
+
 def stamp_write(row, user_id):
     """Record an accepted mutation with a database compare-and-swap."""
     from sqlalchemy.orm.attributes import set_committed_value
@@ -442,7 +550,7 @@ def stamp_write(row, user_id):
     ).update(values, synchronize_session=False)
     if changed != 1:
         current = db.session.get(UserSession, row.id)
-        raise RevisionConflict(
+        raise LostRace(
             expected,
             int(current.revision or 1) if current is not None else None,
             session_id=row.session_id,

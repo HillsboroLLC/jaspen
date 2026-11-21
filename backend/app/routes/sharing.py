@@ -138,23 +138,31 @@ def _current_user():
 
 
 def _load_thread_cards(user_id, thread_id):
-    """Return (session, cards) for a thread the user owns, or (None, None)."""
-    from app.routes.sessions import load_user_sessions
-    from app.routes.strategy import _load_scenarios, _resolve_session_entry
+    """Return (session, cards, project_row) for the organization's project.
+
+    The project is authorized first with read access (SessionAccessError:
+    404 for an unknown or unreadable project): any member who may read the
+    project may share it (spec 2.3). Its scorecards are the project's,
+    whoever on the team scored them. Returns
+    (None, None, None) for a project hidden from this member's history.
+    """
+    from app.project_scope import authorized_thread_scope, scenarios_for_thread
+    from app.routes.strategy import _resolve_session_entry
     from app.scorecards import collect_peer_scorecards
 
-    sessions = load_user_sessions(user_id) or {}
+    user, sessions, project_row = authorized_thread_scope(user_id, thread_id)
     _key, session = _resolve_session_entry(sessions, thread_id)
     if not isinstance(session, dict):
-        return None, None
-    thread_data = (_load_scenarios(user_id) or {}).get(thread_id) or {}
+        return None, None, None
+    thread_data = (scenarios_for_thread(user, thread_id) or {}).get(thread_id) or {}
     cards = collect_peer_scorecards(
         user_id,
         thread_id,
         legacy_session=session,
         legacy_thread_data=thread_data if isinstance(thread_data, dict) else {},
+        project_row=project_row,
     )
-    return session, cards or []
+    return session, cards or [], project_row
 
 
 def _prepare(user, body):
@@ -168,20 +176,28 @@ def _prepare(user, body):
     include_evidence = body.get('include_evidence') is True
     disclosure_settings = normalize_disclosure_settings(body.get('disclosure_settings'))
 
-    session, cards = _load_thread_cards(user.id, thread_id)
+    session, cards, project_row = _load_thread_cards(user.id, thread_id)
     if session is None:
         return None, (jsonify({'error': 'Thread not found.'}), 404)
+    scorecard_id = str(body.get('scorecard_id') or '').strip() or None
+    selected_card = next(
+        (card for card in cards if str(card.get('id') or card.get('analysis_id') or '') == scorecard_id),
+        None,
+    ) if scorecard_id else None
+    from app.decision_records import recorded_option_decision_summary
+    recorded_decision = recorded_option_decision_summary(user, thread_id, selected_card)
     try:
         raw_snapshot, title, source_id, evidence_available = build_snapshot(
             artifact_type=artifact_type,
             cards=cards,
             include_evidence=include_evidence,
-            scorecard_id=body.get('scorecard_id'),
+            scorecard_id=scorecard_id,
             thread_name=session.get('name'),
             strategy_objective=session.get('strategy_objective'),
             portfolio_summary=session.get('portfolio_summary'),
             decision_kit=session.get('decision_kit'),
             data_sources=session.get('report_data_sources'),
+            recorded_decision=recorded_decision,
         )
     except ValueError as error:
         messages = {
@@ -197,6 +213,7 @@ def _prepare(user, body):
     return {
         'artifact_type': artifact_type,
         'thread_id': thread_id,
+        'project_row': project_row,
         'source_id': source_id,
         'title': title,
         'snapshot': snapshot,
@@ -309,7 +326,7 @@ def create_share():
         view_count=0,
     )
     db.session.add(link)
-    share_ownership.record_for_new_link(link)
+    share_ownership.record_for_new_link(link, project_row=prepared['project_row'])
     db.session.commit()
     return jsonify({'link': _link_json(link), 'summary': prepared['summary']}), 201
 

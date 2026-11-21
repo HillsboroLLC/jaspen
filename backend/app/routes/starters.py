@@ -7,8 +7,7 @@ from sqlalchemy import or_
 from app import db
 from app.models import SavedStarter, User
 from app.orgs import resolve_active_org_for_user
-
-from .sessions import load_user_sessions
+from app.project_scope import authorized_thread_scope
 
 starters_bp = Blueprint("starters", __name__)
 
@@ -124,7 +123,9 @@ def create_starter():
     if not name:
         return jsonify({"error": "name is required"}), 400
 
-    sessions = load_user_sessions(user_id) or {}
+    # A starter copies the source project, so read access is enough (spec
+    # 2.3); the starter itself is the member's own.
+    _actor, sessions, _project_row = authorized_thread_scope(user_id, thread_id)
     session = _resolve_thread_session(sessions, thread_id)
     if not isinstance(session, dict):
         return jsonify({"error": "Thread not found"}), 404

@@ -32,11 +32,13 @@ from app.connector_store import (
     get_sync_audit_events,
     get_thread_sync_profile,
     mark_connector_sync_result,
+    record_connector_read_result,
     redact_connector_settings,
     update_connector_settings,
     update_thread_sync_profile,
 )
 from app.jira_sync import (
+    _normalize_jira_base_url,
     apply_jira_webhook_to_wbs,
     import_tasks_from_jira,
     jira_check_connection,
@@ -44,7 +46,10 @@ from app.jira_sync import (
 )
 from app.jira_portfolio import classify_refresh_error, list_accessible_projects, portfolio_context_text, refresh_portfolio
 from app.models import ConnectorSyncLog, User
-from app.scenarios_store import load_scenarios_data, save_project_scenarios_data
+from app.connector_store import link_organization_key
+from app.project_scope import authorized_thread_scope, scenarios_for_thread
+from app.session_access import pin_active_organization
+from app.scenarios_store import save_project_scenarios_data
 from app.safe_redirect import safe_internal_path
 from app.salesforce_sync import (
     BadSignature as SalesforceBadSignature,
@@ -159,16 +164,8 @@ def _utc_datetime(value):
     return parsed.astimezone(timezone.utc)
 
 
-def _connector_freshness(connected, lifecycle_status, last_success_at, last_verified_at):
-    confirmations = [
-        timestamp
-        for timestamp in (
-            _utc_datetime(last_success_at),
-            _utc_datetime(last_verified_at),
-        )
-        if timestamp is not None
-    ]
-    last_confirmed_at = max(confirmations) if confirmations else None
+def _connector_freshness(connected, lifecycle_status, _last_success_at, last_verified_at):
+    last_confirmed_at = _utc_datetime(last_verified_at)
     lifecycle = str(lifecycle_status or "").strip().lower()
     if lifecycle in {"error", "degraded", "reconnect_required"}:
         return lifecycle, _utc_iso(last_confirmed_at)
@@ -184,19 +181,46 @@ def _connector_freshness(connected, lifecycle_status, last_success_at, last_veri
     return freshness, _utc_iso(last_confirmed_at)
 
 
-def _data_context_verified_at(connector_id, settings):
-    if connector_id in DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS:
-        return settings.get("data_context_verified_at")
-    return settings.get("last_verified_at")
+def _purpose_verified_at(settings, purpose=None):
+    results = settings.get("verification_results")
+    if not isinstance(results, dict):
+        return None
+    entries = [results.get(purpose)] if purpose else list(results.values())
+    verified = [
+        entry.get("verified_at")
+        for entry in entries
+        if isinstance(entry, dict)
+        and entry.get("status") == "success"
+        and _utc_datetime(entry.get("verified_at")) is not None
+    ]
+    if not verified:
+        return None
+    return max(verified, key=lambda value: _utc_datetime(value))
 
 
-def _record_data_context_verification(user_id, connector_id, verified_at=None):
-    verified_at = verified_at or _iso_now()
-    updates = {"last_verified_at": verified_at}
-    if connector_id in DUAL_PURPOSE_DATA_CONTEXT_CONNECTOR_IDS:
-        updates["data_context_verified_at"] = verified_at
-    update_connector_settings(user_id, connector_id, updates)
-    return verified_at
+def _data_context_verified_at(_connector_id, settings):
+    return _purpose_verified_at(settings, "data_context")
+
+
+def _record_data_context_verification(
+    user_id,
+    connector_id,
+    *,
+    succeeded,
+    read_result=None,
+    verified_at=None,
+    error_message="",
+):
+    saved = record_connector_read_result(
+        user_id,
+        connector_id,
+        "data_context",
+        succeeded=succeeded,
+        read_result=read_result,
+        checked_at=verified_at,
+        error_message=error_message,
+    )
+    return _data_context_verified_at(connector_id, saved)
 
 
 def _frontend_base_url():
@@ -444,7 +468,7 @@ def _merge_connector_view(connector_id, entitlement, settings):
         connected,
         lifecycle_status,
         settings.get("last_success_at"),
-        settings.get("last_verified_at"),
+        _purpose_verified_at(settings),
     )
     data_context_freshness = None
     data_context_last_confirmed_at = None
@@ -453,7 +477,7 @@ def _merge_connector_view(connector_id, entitlement, settings):
             connected,
             "connected" if connected else lifecycle_status,
             None,
-            settings.get("data_context_verified_at"),
+            _purpose_verified_at(settings, "data_context"),
         )
         if connector_id == "jira_sync" and _to_bool(settings.get("jira_data_last_refresh_failed"), default=False):
             data_context_freshness = "unconfirmed"
@@ -491,7 +515,7 @@ def _merge_connector_view(connector_id, entitlement, settings):
         "last_sync_at": _utc_iso(settings.get("last_sync_at")),
         "last_sync_result": settings.get("last_sync_result") or "never",
         "updated_at": _utc_iso(settings.get("updated_at")),
-        "last_verified_at": _utc_iso(settings.get("last_verified_at")),
+        "last_verified_at": _utc_iso(_purpose_verified_at(settings)),
         "health": {
             "status": settings.get("health_status") or "unknown",
             "consecutive_failures": int(settings.get("consecutive_failures") or 0),
@@ -656,7 +680,7 @@ def _apply_field_update(updates, payload, persisted, field):
 
 
 def _load_thread_wbs(user_id, thread_id):
-    scenarios = load_scenarios_data(user_id)
+    scenarios = scenarios_for_thread(user_id, thread_id)
     thread = scenarios.get(thread_id)
     if not isinstance(thread, dict):
         return None, None, None
@@ -769,6 +793,9 @@ def _find_thread_task_by_external_id(user_id, connector_id, external_id):
 
 
 def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
+    _scope_user, _scope_sessions, project_row = authorized_thread_scope(user.id, thread_id, require_write=True)
+    # Links this sync records belong to the project it was authorized for.
+    link_org_key = link_organization_key(getattr(project_row, "organization_id", None))
     connector_id = str(connector_id or "").strip().lower()
     if connector_id not in EXECUTION_PM_CONNECTOR_IDS:
         return jsonify(_error_payload(
@@ -850,6 +877,13 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
             try:
                 _result = sync_callable(user_id_str, thread_id_str, project_wbs, thread_sync_profile=profile)
             except Exception as _exc:
+                record_connector_read_result(
+                    user_id_str,
+                    connector_id,
+                    "plan_sync",
+                    succeeded=False,
+                    error_message=str(_exc),
+                )
                 update_thread_sync_profile(user_id_str, thread_id_str, {"sync_lock_acquired_at": None, "thread_sync_status": "error"})
                 app.logger.error("[sync] %s failed for thread %s: %s", connector_id, thread_id_str, _exc)
                 return
@@ -886,6 +920,32 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
                         _ext_patch[_tid] = _ext_id
 
             mark_connector_sync_result(user_id_str, connector_id, _status, error_message=_error_msg)
+            _provider_success = bool(_result.get("provider_interaction_succeeded"))
+            if connector_id == "smartsheet_sync" and _status == "success" and not _result.get("skipped"):
+                # Smartsheet push always begins with an authenticated sheet read,
+                # including valid zero-task plans.
+                _provider_success = True
+            elif connector_id == "jira_sync" and _status == "success":
+                _provider_success = _provider_success or any(
+                    int(_result.get(field) or 0) > 0
+                    for field in ("created_issues", "updated_tasks")
+                )
+            if _status == "success" and _provider_success:
+                record_connector_read_result(
+                    user_id_str,
+                    connector_id,
+                    "plan_sync",
+                    succeeded=True,
+                    read_result=_result,
+                )
+            elif _status == "failed":
+                record_connector_read_result(
+                    user_id_str,
+                    connector_id,
+                    "plan_sync",
+                    succeeded=False,
+                    error_message=_error_msg,
+                )
             _prof_updates = {
                 "sync_lock_acquired_at": None,
                 "last_full_sync_at": _iso_now(),
@@ -893,6 +953,11 @@ def _sync_thread_with_connector(user, thread_id, connector_id, sync_callable):
             }
             if _ext_patch:
                 _prof_updates["wbs_task_external_ids_patch"] = _ext_patch
+                # The member's own sync of this project: records (and
+                # reconnects) these links under the project's organization.
+                _prof_updates["wbs_task_external_links_patch"] = {
+                    "organization_key": link_org_key, "links": _ext_patch, "reconnect": True,
+                }
             update_thread_sync_profile(user_id_str, thread_id_str, _prof_updates)
 
     bg = threading.Thread(target=_run_sync, daemon=True)
@@ -1161,7 +1226,6 @@ def update_connector(connector_id):
                     "error": "Unable to validate Smartsheet token.",
                     "connector_id": connector_id,
                 }), 400
-            updates["last_verified_at"] = _iso_now()
         if connector_id == "snowflake_insights":
             # Temporarily write candidate settings so test_snowflake_connection can read them
             update_connector_settings(user.id, connector_id, updates)
@@ -1173,9 +1237,25 @@ def update_connector(connector_id):
                     "error": f"Could not connect to Snowflake: {err_msg}",
                     "connector_id": connector_id,
                 }), 400
-            updates["last_verified_at"] = _iso_now()
 
     saved = update_connector_settings(user.id, connector_id, updates)
+    if desired_status == "disconnected":
+        record_connector_read_result(
+            user.id,
+            connector_id,
+            "data_context",
+            succeeded=False,
+            error_message="connector_disconnected",
+        )
+        if connector_id in EXECUTION_PM_CONNECTOR_IDS:
+            record_connector_read_result(
+                user.id,
+                connector_id,
+                "plan_sync",
+                succeeded=False,
+                error_message="connector_disconnected",
+            )
+        saved = get_connector_settings(user.id, connector_id)
     if connector_id == "jira_sync":
         from app.pm_sync.access import pause_personal_bindings, resume_personal_bindings
         if desired_status == "disconnected":
@@ -1275,41 +1355,53 @@ def _safe_data_context_failure_reason(connector_id, exc):
     return reason[:200]
 
 
+def _require_data_read_result(connector_id, result):
+    if not isinstance(result, dict) or not result:
+        definition = get_connector_definition(connector_id) or {}
+        label = _text(definition.get("label")) or "Data source"
+        raise RuntimeError(f"{label} returned an empty read response.")
+    return result
+
+
 def _verify_data_context_read(user_id, connector_id, settings):
     if connector_id == "jira_sync":
         if not _to_bool(settings.get("jira_data_enabled"), default=False):
             raise RuntimeError("Jira data analysis is turned off.")
-        snapshot = refresh_portfolio(user_id, force=True)
+        snapshot = _require_data_read_result(
+            connector_id, refresh_portfolio(user_id, force=True)
+        )
         if snapshot.get("stale") or snapshot.get("refresh_failed"):
             refresh_error = snapshot.get("refresh_error") if isinstance(snapshot.get("refresh_error"), dict) else {}
             error = RuntimeError(_text(refresh_error.get("message")) or "Jira data could not be refreshed.")
             error.reconnect_required = bool(refresh_error.get("reconnect_required"))
             raise error
-        return
+        return snapshot
 
     if connector_id == "smartsheet_sync":
         if not _to_bool(settings.get("smartsheet_data_enabled"), default=False):
             raise RuntimeError("Smartsheet data analysis is turned off.")
-        smartsheet_get_sheet(
+        result = smartsheet_get_sheet(
             {
                 "base_url": settings.get("smartsheet_base_url"),
                 "access_token": settings.get("smartsheet_api_token"),
             },
             settings.get("smartsheet_sheet_id") or settings.get("external_workspace"),
         )
-        return
+        return _require_data_read_result(connector_id, result)
 
     if connector_id == "salesforce_insights":
-        fetch_pipeline_summary(user_id, lookback_days=1, max_records=1)
-        return
+        result = fetch_pipeline_summary(
+            user_id, lookback_days=1, max_records=1, force=True
+        )
+        return _require_data_read_result(connector_id, result)
 
     if connector_id == "snowflake_insights":
         allowlist = settings.get("snowflake_table_allowlist") if isinstance(settings.get("snowflake_table_allowlist"), list) else []
         table = next((str(value).strip() for value in allowlist if str(value).strip()), "")
         if not table:
             raise RuntimeError("Snowflake table allowlist is empty.")
-        run_allowlisted_query(user_id, table, limit=1)
-        return
+        result = run_allowlisted_query(user_id, table, limit=1, force=True)
+        return _require_data_read_result(connector_id, result)
 
     raise RuntimeError("This source does not support data context verification.")
 
@@ -1334,22 +1426,24 @@ def check_connector_data_context(connector_id):
         now = datetime.now(timezone.utc)
         recent = _recent_data_context_check(user.id, connector_id, now)
         if recent:
-            confirmed = recent.get("status") == "success"
             settings = get_connector_settings(user.id, connector_id)
-            verified_at = _data_context_verified_at(connector_id, settings)
-            if confirmed and not verified_at:
-                verified_at = _record_data_context_verification(
-                    user.id, connector_id, recent.get("timestamp")
-                )
-            payload = {
-                "connector_id": connector_id,
-                "status": "confirmed" if confirmed else "failed",
-                "throttled": True,
-                "last_verified_at": verified_at,
-            }
-            if not confirmed:
-                payload["error"] = recent.get("message") or "Data source verification failed."
-            return jsonify(payload), 200
+            results = settings.get("verification_results")
+            current = results.get("data_context") if isinstance(results, dict) else None
+            if isinstance(current, dict) and current.get("status") in {"success", "failed"}:
+                confirmed = current.get("status") == "success"
+                payload = {
+                    "connector_id": connector_id,
+                    "status": "confirmed" if confirmed else "failed",
+                    "throttled": True,
+                    "last_verified_at": current.get("verified_at") if confirmed else None,
+                }
+                if not confirmed:
+                    payload["error"] = (
+                        current.get("error_message")
+                        or recent.get("message")
+                        or "Data source verification failed."
+                    )
+                return jsonify(payload), 200
 
         settings = get_connector_settings(user.id, connector_id)
         if str(settings.get("connection_status") or "").lower() != "connected":
@@ -1360,7 +1454,7 @@ def check_connector_data_context(connector_id):
             }), 409
 
         try:
-            _verify_data_context_read(user.id, connector_id, settings)
+            read_result = _verify_data_context_read(user.id, connector_id, settings)
         except Exception as exc:
             current_app.logger.warning(
                 "Data-context read failed for connector %s and user %s",
@@ -1372,6 +1466,12 @@ def check_connector_data_context(connector_id):
             reconnect_required = bool(getattr(exc, "reconnect_required", False))
             if connector_id == "jira_sync":
                 reconnect_required = reconnect_required or bool(classify_refresh_error(exc).get("reconnect_required"))
+            _record_data_context_verification(
+                user.id,
+                connector_id,
+                succeeded=False,
+                error_message=reason,
+            )
             append_sync_audit_event(
                 user.id,
                 connector_id,
@@ -1386,7 +1486,12 @@ def check_connector_data_context(connector_id):
                 "reconnect_required": reconnect_required,
             }), 200
 
-        verified_at = _record_data_context_verification(user.id, connector_id)
+        verified_at = _record_data_context_verification(
+            user.id,
+            connector_id,
+            succeeded=True,
+            read_result=read_result,
+        )
         append_sync_audit_event(
             user.id,
             connector_id,
@@ -1531,20 +1636,17 @@ def check_connector_setup(connector_id):
                 {
                     "connection_status": "connected",
                     "lifecycle_status": "connected",
-                    "last_verified_at": _iso_now(),
-                    "verified_instance_url": _text(settings.get("jira_base_url")),
                 },
             )
             mark_connector_sync_result(user.id, connector_id, "success")
         elif connector_id == "salesforce_insights":
-            _verify_data_context_read(user.id, connector_id, settings)
+            read_result = _verify_data_context_read(user.id, connector_id, settings)
             update_connector_settings(
                 user.id,
                 connector_id,
                 {
                     "connection_status": "connected",
                     "lifecycle_status": "connected",
-                    "last_verified_at": _iso_now(),
                     "verified_instance_url": _text(
                         settings.get("salesforce_instance_url")
                         or settings.get("salesforce_auth_base_url")
@@ -1552,6 +1654,12 @@ def check_connector_setup(connector_id):
                 },
             )
             mark_connector_sync_result(user.id, connector_id, "success")
+            _record_data_context_verification(
+                user.id,
+                connector_id,
+                succeeded=True,
+                read_result=read_result,
+            )
         elif connector_id == "snowflake_insights":
             ok, err_msg = test_snowflake_connection(user.id)
             if not ok:
@@ -1572,8 +1680,6 @@ def check_connector_setup(connector_id):
                 {
                     "connection_status": "connected",
                     "lifecycle_status": "connected",
-                    "last_verified_at": _iso_now(),
-                    "verified_instance_url": _text(settings.get("snowflake_account")),
                 },
             )
             mark_connector_sync_result(user.id, connector_id, "success")
@@ -1597,23 +1703,16 @@ def check_connector_setup(connector_id):
                 {
                     "connection_status": "connected",
                     "lifecycle_status": "connected",
-                    "last_verified_at": _iso_now(),
-                    "verified_instance_url": _text(settings.get("smartsheet_base_url")),
                 },
             )
             mark_connector_sync_result(user.id, connector_id, "success")
         else:
-            generic_instance_url = ""
-            if connector_id == "snowflake_insights":
-                generic_instance_url = _text(settings.get("snowflake_account"))
             update_connector_settings(
                 user.id,
                 connector_id,
                 {
                     "lifecycle_status": "connected",
                     "connection_status": "connected",
-                    "last_verified_at": _iso_now(),
-                    "verified_instance_url": generic_instance_url,
                 },
             )
             mark_connector_sync_result(user.id, connector_id, "success")
@@ -1623,6 +1722,13 @@ def check_connector_setup(connector_id):
             "connection_status": "disconnected",
         })
         mark_connector_sync_result(user.id, connector_id, "failed", error_message=str(exc))
+        if connector_id == "salesforce_insights":
+            _record_data_context_verification(
+                user.id,
+                connector_id,
+                succeeded=False,
+                error_message=_safe_data_context_failure_reason(connector_id, exc),
+            )
         return jsonify({
             "connector_id": connector_id,
             "lifecycle_status": "degraded",
@@ -1634,7 +1740,7 @@ def check_connector_setup(connector_id):
     return jsonify({
         "connector_id": connector_id,
         "lifecycle_status": refreshed.get("lifecycle_status") or "connected",
-        "last_verified_at": refreshed.get("last_verified_at"),
+        "last_verified_at": _purpose_verified_at(refreshed),
         "verified_instance_url": refreshed.get("verified_instance_url") or "",
     }), 200
 
@@ -1917,6 +2023,12 @@ def salesforce_pipeline_snapshot():
         )
         return jsonify({"success": True, **result}), 200
     except Exception as exc:
+        _record_data_context_verification(
+            user.id,
+            "salesforce_insights",
+            succeeded=False,
+            error_message=_safe_data_context_failure_reason("salesforce_insights", exc),
+        )
         mark_connector_sync_result(user.id, "salesforce_insights", "failed", error_message=str(exc))
         append_sync_audit_event(
             user.id,
@@ -1982,8 +2094,21 @@ def jira_data_projects():
     if not user:
         return jsonify({"error": "User not found"}), 404
     try:
-        return jsonify({"success": True, "projects": list_accessible_projects(user.id)}), 200
+        projects = list_accessible_projects(user.id)
+        _record_data_context_verification(
+            user.id,
+            "jira_sync",
+            succeeded=True,
+            read_result={"projects": projects},
+        )
+        return jsonify({"success": True, "projects": projects}), 200
     except Exception as exc:
+        _record_data_context_verification(
+            user.id,
+            "jira_sync",
+            succeeded=False,
+            error_message=_safe_data_context_failure_reason("jira_sync", exc),
+        )
         raw = str(exc)
         reconnect = "HTTP 401" in raw or "HTTP 403" in raw
         message = "Your saved Jira connection no longer works. Reconnect Jira to continue." if reconnect else raw
@@ -2030,6 +2155,12 @@ def snowflake_query():
         )
         return jsonify({"success": True, **result}), 200
     except PermissionError as exc:
+        _record_data_context_verification(
+            user.id,
+            "snowflake_insights",
+            succeeded=False,
+            error_message=_safe_data_context_failure_reason("snowflake_insights", exc),
+        )
         mark_connector_sync_result(user.id, "snowflake_insights", "failed", error_message=str(exc))
         append_sync_audit_event(
             user.id,
@@ -2041,6 +2172,12 @@ def snowflake_query():
         )
         return jsonify({"error": str(exc)}), 403
     except Exception as exc:
+        _record_data_context_verification(
+            user.id,
+            "snowflake_insights",
+            succeeded=False,
+            error_message=_safe_data_context_failure_reason("snowflake_insights", exc),
+        )
         mark_connector_sync_result(user.id, "snowflake_insights", "failed", error_message=str(exc))
         append_sync_audit_event(
             user.id,
@@ -2088,6 +2225,12 @@ def snowflake_kpis():
         )
         return jsonify({"success": True, **result}), 200
     except PermissionError as exc:
+        _record_data_context_verification(
+            user.id,
+            "snowflake_insights",
+            succeeded=False,
+            error_message=_safe_data_context_failure_reason("snowflake_insights", exc),
+        )
         mark_connector_sync_result(user.id, "snowflake_insights", "failed", error_message=str(exc))
         append_sync_audit_event(
             user.id,
@@ -2099,6 +2242,12 @@ def snowflake_kpis():
         )
         return jsonify({"error": str(exc)}), 403
     except Exception as exc:
+        _record_data_context_verification(
+            user.id,
+            "snowflake_insights",
+            succeeded=False,
+            error_message=_safe_data_context_failure_reason("snowflake_insights", exc),
+        )
         mark_connector_sync_result(user.id, "snowflake_insights", "failed", error_message=str(exc))
         append_sync_audit_event(
             user.id,
@@ -2171,6 +2320,12 @@ def generate_ideas_from_connector():
         else:
             return jsonify({"error": f"Connector '{connector_id}' does not support idea generation yet."}), 400
     except Exception as exc:
+        _record_data_context_verification(
+            user.id,
+            connector_id,
+            succeeded=False,
+            error_message=_safe_data_context_failure_reason(connector_id, exc),
+        )
         current_app.logger.exception(
             "Connector data fetch failed during idea generation for %s",
             connector_id,
@@ -2233,6 +2388,7 @@ Be specific to the actual data. Do not generate generic ideas. Every idea must b
             messages=[{"role": "user", "content": user_prompt}],
             system_prompt=system_prompt,
             operation_type='connector_idea_generation',
+            prompt_family='connector_idea_generation',
             model_type='orbit',
             legacy_model=(
                 (current_app.config.get("LLM_PROVIDER_MODELS") or {}).get("claude_sonnet")
@@ -2526,19 +2682,44 @@ def sync_thread_to_jira(thread_id):
     # durable plan-scoped binding, never the connector's default project.
     from app.models_pm_sync import PmSyncBinding
     from app.pm_sync.service import push_binding
+    from app.project_scope import readable_project_row
     plan_key = str((request.get_json(silent=True) or {}).get("plan_key") or "").strip()
+    # The project this id names for the caller, and only a binding of that
+    # project's organization (N1): a binding made in another organization
+    # under the same thread id is never picked up here.
+    project_row = readable_project_row(user, thread_id, include_archived=True)
     query = PmSyncBinding.query.filter_by(user_id=user.id, thread_id=thread_id, connector_id="jira_sync")
     if plan_key:
         query = query.filter_by(plan_key=plan_key)
-    bindings = query.all()
+    project_org = str(getattr(project_row, "organization_id", None) or "")
+    bindings = [
+        binding for binding in query.all()
+        if project_row is not None and str(binding.organization_id or "") == project_org
+    ]
     if len(bindings) != 1:
         return jsonify({
             "error": "Choose a Jira destination for this execution plan before syncing.",
             "code": "PM_SYNC_BINDING_REQUIRED",
         }), 409
+    from app.pm_sync.access import BindingPaused
     try:
         return jsonify(push_binding(bindings[0], trigger="legacy_sync_alias")), 200
+    except BindingPaused as exc:
+        db.session.rollback()
+        return jsonify({
+            "error": "This Jira sync is paused.",
+            "code": "PM_SYNC_PAUSED",
+            "pause_reason": exc.reason,
+            "binding": bindings[0].to_dict(),
+        }), 409
     except Exception as exc:
+        record_connector_read_result(
+            user.id,
+            "jira_sync",
+            "plan_sync",
+            succeeded=False,
+            error_message=str(exc),
+        )
         return jsonify({"error": str(exc), "code": "PM_SYNC_FAILED"}), 502
 
 
@@ -2558,6 +2739,7 @@ def import_thread_from_pm_tool(thread_id, connector_id):
     if not user:
         return jsonify({"error": "User not found"}), 404
 
+    _scope_user, _scope_sessions, project_row = authorized_thread_scope(user.id, thread_id, require_write=True)
     connector_id = str(connector_id or "").strip().lower()
     if connector_id not in EXECUTION_PM_CONNECTOR_IDS:
         return jsonify(_error_payload(
@@ -2600,6 +2782,13 @@ def import_thread_from_pm_tool(thread_id, connector_id):
     if not imported.get("success"):
         reason = _text(imported.get("reason")) or "Import failed"
         mark_connector_sync_result(user.id, connector_id, "failed", error_message=reason)
+        record_connector_read_result(
+            user.id,
+            connector_id,
+            "plan_sync",
+            succeeded=False,
+            error_message=reason,
+        )
         return jsonify(_error_payload(reason, "IMPORT_FAILED", connector_id=connector_id, thread_id=thread_id)), 400
 
     conflict_policy = _text(profile.get("conflict_policy") or "prefer_external").lower()
@@ -2623,9 +2812,23 @@ def import_thread_from_pm_tool(thread_id, connector_id):
             "last_full_sync_at": _iso_now(),
             "last_webhook_received_at": _iso_now(),
             "wbs_task_external_ids_patch": external_id_map,
+            # The member's own import of this project: records (and
+            # reconnects) these links under the project's organization.
+            "wbs_task_external_links_patch": {
+                "organization_key": link_organization_key(getattr(project_row, "organization_id", None)),
+                "links": external_id_map,
+                "reconnect": True,
+            },
         },
     )
     mark_connector_sync_result(user.id, connector_id, "success")
+    record_connector_read_result(
+        user.id,
+        connector_id,
+        "plan_sync",
+        succeeded=True,
+        read_result=imported,
+    )
     append_sync_audit_event(
         user.id,
         connector_id,
@@ -2646,6 +2849,96 @@ def import_thread_from_pm_tool(thread_id, connector_id):
         "imported_task_count": len(imported.get("tasks") or []),
         "project_wbs": project_wbs,
     }), 200
+
+
+def _ignored_webhook_event(reason):
+    return jsonify({"success": False, "ignored": True, "reason": reason}), 200
+
+
+def _refuse_webhook_event(connector_id, user_id, thread_id, reason):
+    """Refuse an inbound event without writing anything (H-2e-2b)."""
+    current_app.logger.warning(
+        "Webhook event refused connector=%s member=%s thread=%s reason=%s",
+        connector_id, user_id, thread_id, reason,
+    )
+    return _ignored_webhook_event(reason)
+
+
+def _url_host(value):
+    from urllib.parse import urlparse
+
+    try:
+        return (urlparse(_text(value)).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _authorize_webhook_event(connector_id, user_id, thread_id, task_id, external_id, source_url=None):
+    """Return ``(linked_task_id, refusal)`` for one inbound webhook event.
+
+    The shared secret proves only that the sender holds Jaspen's webhook
+    secret. The member and project named in the payload are trusted only when
+    (1) that member may edit the project now, and (2) Jaspen itself recorded
+    this external item for that member, project and task (the member's thread
+    sync profile, written by Jaspen's own sync and import). For Jira the event
+    must also come from the Jira site that member connected. Labels alone never
+    authorize a write.
+
+    Tenant isolation: the recorded link carries the organization that owns the
+    project it was recorded for. That organization, never the member's active
+    one, decides which project is authorized and written: the member is pinned
+    to it for the rest of the request, so the role check and the webhook's
+    read and save resolve that organization's project. A link recorded before
+    organizations were stored has no verifiable owner and is refused
+    (``link_not_scoped``) until the member reconnects it by running their own
+    sync or import of the project.
+    """
+    from app.connector_store import LINK_SCOPE_PERSONAL
+    from app.session_access import SessionForbidden, SessionNotFound
+
+    target = _text(external_id)
+    profile = get_thread_sync_profile(user_id, thread_id)
+    scoped = profile.get("wbs_task_external_links") if isinstance(profile.get("wbs_task_external_links"), dict) else {}
+    matches = sorted({
+        (_text(org_key), _text(tid))
+        for org_key, links in scoped.items() if isinstance(links, dict)
+        for tid, ext in links.items() if target and _text(ext) == target
+    })
+    if not matches:
+        ext_map = profile.get("wbs_task_external_ids") if isinstance(profile.get("wbs_task_external_ids"), dict) else {}
+        legacy = bool(target) and any(_text(ext) == target for ext in ext_map.values())
+        reason = "link_not_scoped" if legacy else "link_not_recorded"
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, reason)
+    if len(matches) != 1:
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "link_ambiguous")
+    org_key, linked_task = matches[0]
+    claimed = _text(task_id)
+    if claimed and claimed != linked_task:
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "link_not_recorded")
+
+    owning_org = None if org_key == LINK_SCOPE_PERSONAL else org_key
+    pin_active_organization(user_id, owning_org)
+    try:
+        _scope_user, _scope_sessions, project_row = authorized_thread_scope(
+            user_id, thread_id, require_write=True,
+        )
+    except SessionForbidden:
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "not_authorized")
+    except SessionNotFound:
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "thread_not_found")
+    # The pinned lookup can still fall back to a row the member holds in
+    # another organization when the owning organization has no such project.
+    if project_row is None or _text(getattr(project_row, "organization_id", None)) != _text(owning_org):
+        return None, _refuse_webhook_event(connector_id, user_id, thread_id, "thread_not_found")
+
+    if connector_id == "jira_sync":
+        settings = get_connector_settings(user_id, "jira_sync")
+        connected_host = _url_host(
+            _normalize_jira_base_url(settings.get("jira_base_url") or os.getenv("JIRA_BASE_URL"))
+        )
+        if not connected_host or _url_host(source_url) != connected_host:
+            return None, _refuse_webhook_event(connector_id, user_id, thread_id, "link_not_recorded")
+    return linked_task, None
 
 
 @connectors_bp.route("/jira/webhook", methods=["POST"])
@@ -2683,11 +2976,19 @@ def jira_webhook():
         if not task_id and resolved_task_id:
             task_id = resolved_task_id
 
+    if not thread_id:
+        return _ignored_webhook_event("missing_thread_label")
+    task_id, refusal = _authorize_webhook_event(
+        "jira_sync", user_id, thread_id, task_id, issue_key, source_url=issue.get("self"),
+    )
+    if refusal:
+        return refusal
+
     result = apply_jira_webhook_to_wbs(
         user_id=user_id,
         issue=issue,
-        enforce_thread_id=thread_id or None,
-        enforce_task_id=task_id or None,
+        enforce_thread_id=thread_id,
+        enforce_task_id=task_id,
     )
     status = "success" if result.get("success") else "skipped" if result.get("ignored") else "failed"
     mark_connector_sync_result(user_id, "jira_sync", status, error_message=result.get("reason") or "")
@@ -2751,11 +3052,17 @@ def smartsheet_webhook():
         if not task_id and resolved_task_id:
             task_id = resolved_task_id
 
+    if not thread_id:
+        return _ignored_webhook_event("missing_thread_reference")
+    task_id, refusal = _authorize_webhook_event("smartsheet_sync", user_id, thread_id, task_id, row_id)
+    if refusal:
+        return refusal
+
     result = apply_smartsheet_webhook_to_wbs(
         user_id=user_id,
         payload=payload,
-        enforce_thread_id=thread_id or None,
-        enforce_task_id=task_id or None,
+        enforce_thread_id=thread_id,
+        enforce_task_id=task_id,
     )
     status = "success" if result.get("success") else "skipped" if result.get("ignored") else "failed"
     mark_connector_sync_result(user_id, "smartsheet_sync", status, error_message=result.get("reason") or "")
