@@ -20,6 +20,7 @@ from .ai_audit import (
 from .ai_governance import CREDIT_POLICY_VERSION, ROUTER_VERSION, credit_policy_mode, router_mode
 from .models import AIOperation
 from .prompt_version import PROMPT_VERSION_KEY, prompt_version, restamp_prompt_version
+from .context_budget import plan_context_request, with_provider_reported_tokens
 
 
 class AIOperationPaymentRequired(RuntimeError):
@@ -451,18 +452,39 @@ def execute_customer_text_operation(user, *, messages, system_prompt, operation_
         ),
     }
     signals = dict(routing_signals or {})
-
     def generate():
-        return _generate_routed_chat_reply(
-            messages,
+        budget_result = None
+        if prompt_family in {'scorecard_assistant', 'execution_assistant'}:
+            # Plan inside the governed operation boundary. A configuration or
+            # protected-overflow failure is an operation failure, not a
+            # fabricated provider attempt, and carries no provider cost.
+            budget_result = plan_context_request(
+                system_prompt=system_prompt,
+                messages=messages,
+                tools=[],
+                model=selection['llm_model'],
+                max_output_tokens=max_tokens,
+                config=current_app.config,
+            )
+        value, usage = _generate_routed_chat_reply(
+            budget_result.messages if budget_result is not None else messages,
             selection,
-            system_prompt=system_prompt,
+            system_prompt=(
+                budget_result.system_prompt if budget_result is not None else system_prompt
+            ),
             strategy_objective=strategy_objective,
             operation_type=operation_type,
             max_tokens=max_tokens,
             temperature=temperature,
             routing_signals=signals,
         )
+        if budget_result is not None:
+            usage = dict(usage or {})
+            usage['context_budget'] = with_provider_reported_tokens(
+                budget_result.manifest,
+                usage.get('input_tokens'),
+            )
+        return value, usage
 
     return execute_customer_operation(
         user,

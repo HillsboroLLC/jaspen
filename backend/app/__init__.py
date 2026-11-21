@@ -384,6 +384,13 @@ def create_app():
     app.config['AI_AGENT_ANTHROPIC_MODEL'] = app.config['LLM_PROVIDER_MODELS']['claude_sonnet']
     app.config['ANTHROPIC_MODEL'] = app.config['LLM_PROVIDER_MODELS']['claude_sonnet']
     app.config['AI_AGENT_MAX_OUTPUT_TOKENS'] = int(os.getenv('AI_AGENT_MAX_OUTPUT_TOKENS', '1500'))
+    # P5d is measurement-only until a separate activation approval.  Model
+    # windows are supplied explicitly as JSON, for example
+    # {"claude-haiku-4-5": 200000}; enforcement refuses to guess one.
+    app.config['CONTEXT_BUDGET_MODE'] = os.getenv('CONTEXT_BUDGET_MODE', 'shadow')
+    app.config['AI_CONTEXT_WINDOW_TOKENS_BY_MODEL'] = os.getenv(
+        'AI_CONTEXT_WINDOW_TOKENS_BY_MODEL', '{}'
+    )
     app.config['AI_AGENT_TEMPERATURE'] = float(os.getenv('AI_AGENT_TEMPERATURE', '0.2'))
     app.config['AI_AGENT_CREDITS_PER_1K_TOKENS'] = float(os.getenv('AI_AGENT_CREDITS_PER_1K_TOKENS', '1.0'))
     app.config['AI_AGENT_MIN_CREDIT_CHARGE'] = int(os.getenv('AI_AGENT_MIN_CREDIT_CHARGE', '1'))

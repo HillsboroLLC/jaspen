@@ -70,6 +70,13 @@ from app.ai_audit import (
     transaction_counters,
 )
 from app.ai_context import build_shared_assistant_context
+from app.context_budget import (
+    ContextBudgetConfigurationError,
+    ContextBudgetOverflow,
+    context_budget_mode,
+    plan_context_request,
+    with_provider_reported_tokens,
+)
 from app.ai_providers import anthropic as anthropic_provider
 from app.ai_providers import gemini as gemini_provider
 from app.ai_providers.usage import reported_error_usage
@@ -5259,13 +5266,14 @@ def _generate_routed_chat_reply(
     raise RuntimeError("No provider routes available")
 
 
-def _openai_tools_from_anthropic(enable_mutation_tools=False, user_id=None, plan_key="free", include_capture_tools=True):
-    return gemini_provider.tools_from_definitions(_anthropic_tool_definitions(
+def _openai_tools_from_anthropic(enable_mutation_tools=False, user_id=None, plan_key="free", include_capture_tools=True, definitions=None):
+    source = definitions if isinstance(definitions, list) else _anthropic_tool_definitions(
         enable_mutation_tools=enable_mutation_tools,
         user_id=user_id,
         plan_key=plan_key,
         include_capture_tools=include_capture_tools,
-    ))
+    )
+    return gemini_provider.tools_from_definitions(source)
 
 
 def _openai_messages_from_history(messages):
@@ -5325,6 +5333,52 @@ def _merge_usage_totals(base_usage, extra_usage):
         "output_tokens": int(base.get("output_tokens") or 0) + int(extra.get("output_tokens") or 0),
         "total_tokens": int(base.get("total_tokens") or 0) + int(extra.get("total_tokens") or 0),
     }
+
+
+def _completed_provider_round(*, provider, model, input_tokens, output_tokens):
+    """Audit evidence for one provider request that returned real usage."""
+    input_tokens = max(0, int(input_tokens or 0))
+    output_tokens = max(0, int(output_tokens or 0))
+    return {
+        "provider": str(provider or "unknown"),
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "raw_provider_cost_usd": provider_cost_usd(model, input_tokens, output_tokens),
+    }
+
+
+def _attach_context_budget_interruption_usage(
+    error, *, provider, model, input_tokens, output_tokens,
+    context_budget_manifest, last_request_input_tokens, completed_rounds,
+):
+    """Preserve completed provider calls when later local planning fails."""
+    if not completed_rounds:
+        return
+    usage = dict(getattr(error, "jaspen_usage", {}) or {})
+    manifest = usage.get("context_budget") or context_budget_manifest
+    usage.update({
+        "degraded": True,
+        "error_code": "context_budget_interrupted",
+        "provider": provider,
+        "model": model,
+        "input_tokens": max(0, int(input_tokens or 0)),
+        "output_tokens": max(0, int(output_tokens or 0)),
+        "total_tokens": max(0, int(input_tokens or 0)) + max(0, int(output_tokens or 0)),
+        "component_usages": [
+            {**item, "outcome": "context_budget_interrupted"}
+            for item in completed_rounds
+            if isinstance(item, dict)
+        ],
+    })
+    if manifest is not None:
+        usage["context_budget"] = with_provider_reported_tokens(
+            manifest,
+            last_request_input_tokens,
+            total_input_tokens_across_calls=input_tokens,
+        )
+    error.jaspen_usage = usage
 
 
 def _attach_failover_usage(usage, *, attempted_providers=None, final_provider=None, final_model=None):
@@ -6161,6 +6215,9 @@ def _prepare_context_window(
     user=None,
     thread_id=None,
 ):
+    # Existing subscription history allowances remain upper bounds. P5d uses
+    # the same deterministic selector inside that entitlement envelope; it
+    # never expands a lower tier's history as a side effect of enforcement.
     max_turns = int((context_budget or {}).get("recent_turns") or 16)
     max_turns = max(8, min(80, max_turns))
     normalized = _anthropic_messages_from_history(chat_history, max_turns=0)
@@ -6199,12 +6256,24 @@ def _prepare_context_window(
         missing_start = covered_end + 1
         missing_end = boundary - 1
         segment = normalized[missing_start:boundary]
-        summary_text, usage = _summarize_conversation_segment(
-            segment,
-            _anthropic_model_for_selection(model_selection),
-            user=user,
-            thread_id=thread_id,
-        )
+        if context_budget_mode(current_app.config) == "enforce":
+            # P5d enforcement never adds a second, model-generated operation.
+            # Shadow mode intentionally retains the exact P5c behavior.
+            summary_text = _heuristic_segment_summary(segment)
+            usage = {
+                "provider": "heuristic",
+                "model": None,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            }
+        else:
+            summary_text, usage = _summarize_conversation_segment(
+                segment,
+                _anthropic_model_for_selection(model_selection),
+                user=user,
+                thread_id=thread_id,
+            )
         if summary_text:
             new_summary = {
                 "covers_turns": [missing_start, missing_end],
@@ -11731,8 +11800,23 @@ def _generate_assistant_reply_anthropic(
         plan_key=plan_key,
         include_capture_tools=False,
     )
+    base_system_prompt = system_prompt
+    budget_result = plan_context_request(
+        system_prompt=base_system_prompt,
+        messages=messages,
+        tools=tools,
+        model=model_name,
+        max_output_tokens=max_tokens,
+        config=current_app.config,
+    )
+    system_prompt = budget_result.system_prompt
+    messages = list(budget_result.messages)
+    tools = list(budget_result.tools)
+    context_budget_manifest = budget_result.manifest
     total_input_tokens = 0
     total_output_tokens = 0
+    last_request_input_tokens = 0
+    completed_provider_rounds = []
     executed_actions = []
     executed_mutations = []
     undo_snapshot = None
@@ -11755,8 +11839,13 @@ def _generate_assistant_reply_anthropic(
             messages=messages,
         )
         response_input_tokens, response_output_tokens = anthropic_provider.usage_counts(response)
+        last_request_input_tokens = response_input_tokens
         total_input_tokens += response_input_tokens
         total_output_tokens += response_output_tokens
+        completed_provider_rounds.append(_completed_provider_round(
+            provider="anthropic", model=resolved_model_name,
+            input_tokens=response_input_tokens, output_tokens=response_output_tokens,
+        ))
 
         # Tool loop: allow Claude to call local readiness/data-contract tools.
         for _ in range(3):
@@ -11809,6 +11898,17 @@ def _generate_assistant_reply_anthropic(
                 tool_results.append(anthropic_provider.tool_result_block(tool_use_id, result_payload))
 
             messages.extend(anthropic_provider.tool_round_messages(response.content, tool_results))
+            budget_result = plan_context_request(
+                system_prompt=base_system_prompt,
+                messages=messages,
+                tools=tools,
+                model=model_name,
+                max_output_tokens=max_tokens,
+                config=current_app.config,
+            )
+            system_prompt = budget_result.system_prompt
+            messages = list(budget_result.messages)
+            context_budget_manifest = budget_result.manifest
             response, resolved_model_name = _anthropic_message_create(
                 client,
                 model_name=model_name,
@@ -11819,8 +11919,13 @@ def _generate_assistant_reply_anthropic(
                 messages=messages,
             )
             response_input_tokens, response_output_tokens = anthropic_provider.usage_counts(response)
+            last_request_input_tokens = response_input_tokens
             total_input_tokens += response_input_tokens
             total_output_tokens += response_output_tokens
+            completed_provider_rounds.append(_completed_provider_round(
+                provider="anthropic", model=resolved_model_name,
+                input_tokens=response_input_tokens, output_tokens=response_output_tokens,
+            ))
 
         if not _anthropic_response_text(response).strip() and not _has_successful_mutations(executed_mutations):
             raise ValueError("invalid_response")
@@ -11838,8 +11943,28 @@ def _generate_assistant_reply_anthropic(
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,
             "total_tokens": total_input_tokens + total_output_tokens,
+            "context_budget": with_provider_reported_tokens(
+                context_budget_manifest, last_request_input_tokens,
+                total_input_tokens_across_calls=total_input_tokens,
+            ),
         }
         return reply, usage, executed_actions, executed_mutations, undo_snapshot
+    except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+        _attach_context_budget_interruption_usage(
+            exc, provider="anthropic", model=resolved_model_name,
+            input_tokens=total_input_tokens, output_tokens=total_output_tokens,
+            context_budget_manifest=context_budget_manifest,
+            last_request_input_tokens=last_request_input_tokens,
+            completed_rounds=completed_provider_rounds,
+        )
+        if _has_successful_mutations(executed_mutations):
+            usage = dict(getattr(exc, "jaspen_usage", {}) or {})
+            reply = _finalize_agent_reply(
+                _anthropic_response_text(response), fallback_reply, tool_confirmations,
+                executed_actions=executed_actions, user_id=user_id, thread_id=thread_id,
+            )
+            return reply, usage, executed_actions, executed_mutations, undo_snapshot
+        raise
     except Exception:
         current_app.logger.exception("ai_agent anthropic generation failed")
         if _has_successful_mutations(executed_mutations):
@@ -11863,6 +11988,10 @@ def _generate_assistant_reply_anthropic(
                 "input_tokens": total_input_tokens,
                 "output_tokens": total_output_tokens,
                 "total_tokens": total_input_tokens + total_output_tokens,
+                "context_budget": with_provider_reported_tokens(
+                    context_budget_manifest, last_request_input_tokens,
+                    total_input_tokens_across_calls=total_input_tokens,
+                ),
             }
             return reply, usage, executed_actions, executed_mutations, undo_snapshot
         if allow_failover:
@@ -11953,8 +12082,23 @@ def _stream_assistant_reply_events_anthropic(
         plan_key=plan_key,
         include_capture_tools=False,
     )
+    base_system_prompt = system_prompt
+    budget_result = plan_context_request(
+        system_prompt=base_system_prompt,
+        messages=messages,
+        tools=tools,
+        model=model_name,
+        max_output_tokens=max_tokens,
+        config=current_app.config,
+    )
+    system_prompt = budget_result.system_prompt
+    messages = list(budget_result.messages)
+    tools = list(budget_result.tools)
+    context_budget_manifest = budget_result.manifest
     total_input_tokens = 0
     total_output_tokens = 0
+    last_request_input_tokens = 0
+    completed_provider_rounds = []
     executed_actions = []
     executed_mutations = []
     undo_snapshot = None
@@ -11994,8 +12138,13 @@ def _stream_assistant_reply_events_anthropic(
                 final_message = stream.get_final_message()
 
             message_input_tokens, message_output_tokens = anthropic_provider.usage_counts(final_message)
+            last_request_input_tokens = message_input_tokens
             total_input_tokens += message_input_tokens
             total_output_tokens += message_output_tokens
+            completed_provider_rounds.append(_completed_provider_round(
+                provider="anthropic", model=resolved_model_name,
+                input_tokens=message_input_tokens, output_tokens=message_output_tokens,
+            ))
 
             tool_blocks = anthropic_provider.tool_use_blocks(getattr(final_message, "content", None))
             if not tool_blocks:
@@ -12017,6 +12166,10 @@ def _stream_assistant_reply_events_anthropic(
                         "input_tokens": total_input_tokens,
                         "output_tokens": total_output_tokens,
                         "total_tokens": total_input_tokens + total_output_tokens,
+                        "context_budget": with_provider_reported_tokens(
+                            context_budget_manifest, last_request_input_tokens,
+                            total_input_tokens_across_calls=total_input_tokens,
+                        ),
                     },
                     "actions": executed_actions,
                     "mutations": executed_mutations,
@@ -12071,6 +12224,17 @@ def _stream_assistant_reply_events_anthropic(
                 tool_results.append(anthropic_provider.tool_result_block(tool_use_id, result_payload))
 
             messages.extend(anthropic_provider.tool_round_messages(getattr(final_message, "content", None), tool_results))
+            budget_result = plan_context_request(
+                system_prompt=base_system_prompt,
+                messages=messages,
+                tools=tools,
+                model=model_name,
+                max_output_tokens=max_tokens,
+                config=current_app.config,
+            )
+            system_prompt = budget_result.system_prompt
+            messages = list(budget_result.messages)
+            context_budget_manifest = budget_result.manifest
         reply = _finalize_agent_reply(
             "" if leak_detected else "".join(streamed_reply_parts).strip(),
             fallback_reply,
@@ -12087,11 +12251,40 @@ def _stream_assistant_reply_events_anthropic(
                 "input_tokens": total_input_tokens,
                 "output_tokens": total_output_tokens,
                 "total_tokens": total_input_tokens + total_output_tokens,
+                "context_budget": with_provider_reported_tokens(
+                    context_budget_manifest, last_request_input_tokens,
+                    total_input_tokens_across_calls=total_input_tokens,
+                ),
             },
             "actions": executed_actions,
             "mutations": executed_mutations,
             "undo_snapshot": undo_snapshot,
         })
+    except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+        _attach_context_budget_interruption_usage(
+            exc, provider="anthropic", model=resolved_model_name,
+            input_tokens=total_input_tokens, output_tokens=total_output_tokens,
+            context_budget_manifest=context_budget_manifest,
+            last_request_input_tokens=last_request_input_tokens,
+            completed_rounds=completed_provider_rounds,
+        )
+        if _has_successful_mutations(executed_mutations):
+            reply = _finalize_agent_reply(
+                "" if leak_detected else "".join(streamed_reply_parts).strip(),
+                fallback_reply, tool_confirmations, executed_actions=executed_actions,
+                user_id=user_id, thread_id=thread_id,
+            )
+            if not streamed_reply_parts:
+                yield {"type": "delta", "text": reply}
+            state.update({
+                "reply": reply,
+                "usage": dict(getattr(exc, "jaspen_usage", {}) or {}),
+                "actions": executed_actions,
+                "mutations": executed_mutations,
+                "undo_snapshot": undo_snapshot,
+            })
+            return
+        raise
     except Exception:
         current_app.logger.exception("ai_agent anthropic streaming failed")
         if _has_successful_mutations(executed_mutations):
@@ -12120,6 +12313,10 @@ def _stream_assistant_reply_events_anthropic(
                     "input_tokens": total_input_tokens,
                     "output_tokens": total_output_tokens,
                     "total_tokens": total_input_tokens + total_output_tokens,
+                    "context_budget": with_provider_reported_tokens(
+                        context_budget_manifest, last_request_input_tokens,
+                        total_input_tokens_across_calls=total_input_tokens,
+                    ),
                 },
                 "actions": executed_actions,
                 "mutations": executed_mutations,
@@ -12200,12 +12397,13 @@ def _generate_assistant_reply_gemini(
             or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _openai_tools_from_anthropic(
+    semantic_tools = _anthropic_tool_definitions(
         enable_mutation_tools=can_mutate,
         user_id=user_id,
         plan_key=plan_key,
         include_capture_tools=False,
     )
+    tools = _openai_tools_from_anthropic(definitions=semantic_tools)
     total_usage = {
         "provider": "gemini",
         "model": model_selection.get("llm_model"),
@@ -12223,22 +12421,40 @@ def _generate_assistant_reply_gemini(
 
     openai_messages = list(messages)
     assistant_text = ""
+    context_budget_manifest = None
+    last_request_input_tokens = 0
+    completed_provider_rounds = []
     try:
         for _ in range(3):
-            response = _gemini_openai_request(
-                model_name=model_name,
+            budget_result = plan_context_request(
                 system_prompt=system_prompt,
                 messages=openai_messages,
+                tools=semantic_tools,
+                model=model_name,
+                max_output_tokens=max_tokens,
+                config=current_app.config,
+            )
+            context_budget_manifest = budget_result.manifest
+            response = _gemini_openai_request(
+                model_name=model_name,
+                system_prompt=budget_result.system_prompt,
+                messages=budget_result.messages,
                 tools=tools,
                 max_tokens=max_tokens,
                 temperature=temperature,
                 stream=False,
             )
             payload = response.json()
-            total_usage = _merge_usage_totals(
-                total_usage,
-                _openai_usage_to_internal(payload.get("usage"), provider="gemini", model=model_name),
+            round_usage = _openai_usage_to_internal(
+                payload.get("usage"), provider="gemini", model=model_name,
             )
+            last_request_input_tokens = int(round_usage.get("input_tokens") or 0)
+            total_usage = _merge_usage_totals(total_usage, round_usage)
+            completed_provider_rounds.append(_completed_provider_round(
+                provider="gemini", model=model_name,
+                input_tokens=round_usage.get("input_tokens"),
+                output_tokens=round_usage.get("output_tokens"),
+            ))
             choice, message = gemini_provider.first_choice(payload)
             tool_calls = gemini_provider.message_tool_calls(message)
             assistant_text = gemini_provider.message_text(message)
@@ -12256,6 +12472,10 @@ def _generate_assistant_reply_gemini(
                 )
                 total_usage["provider"] = "gemini"
                 total_usage["model"] = model_name
+                total_usage["context_budget"] = with_provider_reported_tokens(
+                    context_budget_manifest, last_request_input_tokens,
+                    total_input_tokens_across_calls=total_usage.get("input_tokens"),
+                )
                 return reply, total_usage, executed_actions, executed_mutations, undo_snapshot
 
             openai_messages.append(gemini_provider.assistant_tool_call_message(message.get("content"), tool_calls))
@@ -12299,6 +12519,25 @@ def _generate_assistant_reply_gemini(
                         "code": result_payload.get("code"),
                     })
                 openai_messages.append(gemini_provider.tool_result_message(tool_call, result_payload))
+    except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+        _attach_context_budget_interruption_usage(
+            exc, provider="gemini", model=model_name,
+            input_tokens=total_usage.get("input_tokens"),
+            output_tokens=total_usage.get("output_tokens"),
+            context_budget_manifest=context_budget_manifest,
+            last_request_input_tokens=last_request_input_tokens,
+            completed_rounds=completed_provider_rounds,
+        )
+        if _has_successful_mutations(executed_mutations):
+            reply = _finalize_agent_reply(
+                assistant_text, fallback_reply, tool_confirmations,
+                executed_actions=executed_actions, user_id=user_id, thread_id=thread_id,
+            )
+            return (
+                reply, dict(getattr(exc, "jaspen_usage", {}) or {}),
+                executed_actions, executed_mutations, undo_snapshot,
+            )
+        raise
     except Exception:
         current_app.logger.exception("ai_agent gemini generation failed")
         if _has_successful_mutations(executed_mutations):
@@ -12310,6 +12549,10 @@ def _generate_assistant_reply_gemini(
             )
             total_usage["provider"] = "gemini"
             total_usage["model"] = model_name
+            total_usage["context_budget"] = with_provider_reported_tokens(
+                context_budget_manifest, last_request_input_tokens,
+                total_input_tokens_across_calls=total_usage.get("input_tokens"),
+            )
             reply = _finalize_agent_reply(
                 assistant_text,
                 fallback_reply,
@@ -12322,6 +12565,11 @@ def _generate_assistant_reply_gemini(
         if allow_failover:
             raise
 
+    if context_budget_manifest is not None:
+        total_usage["context_budget"] = with_provider_reported_tokens(
+            context_budget_manifest, last_request_input_tokens,
+            total_input_tokens_across_calls=total_usage.get("input_tokens"),
+        )
     return fallback_reply, total_usage, executed_actions, executed_mutations, undo_snapshot
 
 
@@ -12389,12 +12637,13 @@ def _stream_assistant_reply_events_gemini(
             or is_tool_allowed(plan_key, "wbs_write", "write")
         )
     )
-    tools = _openai_tools_from_anthropic(
+    semantic_tools = _anthropic_tool_definitions(
         enable_mutation_tools=can_mutate,
         user_id=user_id,
         plan_key=plan_key,
         include_capture_tools=False,
     )
+    tools = _openai_tools_from_anthropic(definitions=semantic_tools)
     total_usage = {
         "provider": "gemini",
         "model": model_selection.get("llm_model"),
@@ -12411,15 +12660,27 @@ def _stream_assistant_reply_events_gemini(
     model_name = str((model_selection or {}).get("llm_model") or "").strip()
     openai_messages = list(messages)
     streamed_parts = []
+    context_budget_manifest = None
+    last_request_input_tokens = 0
+    completed_provider_rounds = []
     try:
         for _ in range(3):
             streamed_parts = []
             tool_calls_by_index = {}
             usage_payload = {}
-            response = _gemini_openai_request(
-                model_name=model_name,
+            budget_result = plan_context_request(
                 system_prompt=system_prompt,
                 messages=openai_messages,
+                tools=semantic_tools,
+                model=model_name,
+                max_output_tokens=max_tokens,
+                config=current_app.config,
+            )
+            context_budget_manifest = budget_result.manifest
+            response = _gemini_openai_request(
+                model_name=model_name,
+                system_prompt=budget_result.system_prompt,
+                messages=budget_result.messages,
                 tools=tools,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -12444,10 +12705,16 @@ def _stream_assistant_reply_events_gemini(
                 for tool_delta in gemini_provider.delta_tool_calls(delta):
                     gemini_provider.merge_tool_call_delta(tool_calls_by_index, tool_delta)
 
-            total_usage = _merge_usage_totals(
-                total_usage,
-                _openai_usage_to_internal(usage_payload, provider="gemini", model=model_name),
+            round_usage = _openai_usage_to_internal(
+                usage_payload, provider="gemini", model=model_name,
             )
+            last_request_input_tokens = int(round_usage.get("input_tokens") or 0)
+            total_usage = _merge_usage_totals(total_usage, round_usage)
+            completed_provider_rounds.append(_completed_provider_round(
+                provider="gemini", model=model_name,
+                input_tokens=round_usage.get("input_tokens"),
+                output_tokens=round_usage.get("output_tokens"),
+            ))
             tool_calls = [tool_calls_by_index[idx] for idx in sorted(tool_calls_by_index.keys())]
             if not tool_calls:
                 if not "".join(streamed_parts).strip() and not _has_successful_mutations(executed_mutations):
@@ -12462,7 +12729,13 @@ def _stream_assistant_reply_events_gemini(
                 )
                 state.update({
                     "reply": reply,
-                    "usage": total_usage,
+                    "usage": {
+                        **total_usage,
+                        "context_budget": with_provider_reported_tokens(
+                            context_budget_manifest, last_request_input_tokens,
+                            total_input_tokens_across_calls=total_usage.get("input_tokens"),
+                        ),
+                    },
                     "actions": executed_actions,
                     "mutations": executed_mutations,
                     "undo_snapshot": undo_snapshot,
@@ -12511,6 +12784,31 @@ def _stream_assistant_reply_events_gemini(
                     })
                 yield {"type": "tool_result", "tool": tool_name, "result": result_payload}
                 openai_messages.append(gemini_provider.tool_result_message(tool_call, result_payload))
+    except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+        _attach_context_budget_interruption_usage(
+            exc, provider="gemini", model=model_name,
+            input_tokens=total_usage.get("input_tokens"),
+            output_tokens=total_usage.get("output_tokens"),
+            context_budget_manifest=context_budget_manifest,
+            last_request_input_tokens=last_request_input_tokens,
+            completed_rounds=completed_provider_rounds,
+        )
+        if _has_successful_mutations(executed_mutations):
+            reply = _finalize_agent_reply(
+                "".join(streamed_parts).strip(), fallback_reply, tool_confirmations,
+                executed_actions=executed_actions, user_id=user_id, thread_id=thread_id,
+            )
+            if not streamed_parts:
+                yield {"type": "delta", "text": reply}
+            state.update({
+                "reply": reply,
+                "usage": dict(getattr(exc, "jaspen_usage", {}) or {}),
+                "actions": executed_actions,
+                "mutations": executed_mutations,
+                "undo_snapshot": undo_snapshot,
+            })
+            return
+        raise
     except Exception:
         current_app.logger.exception("ai_agent gemini streaming failed")
         if _has_successful_mutations(executed_mutations):
@@ -12532,7 +12830,13 @@ def _stream_assistant_reply_events_gemini(
                 yield {"type": "delta", "text": reply}
             state.update({
                 "reply": reply,
-                "usage": total_usage,
+                "usage": {
+                    **total_usage,
+                    "context_budget": with_provider_reported_tokens(
+                        context_budget_manifest, last_request_input_tokens,
+                        total_input_tokens_across_calls=total_usage.get("input_tokens"),
+                    ),
+                },
                 "actions": executed_actions,
                 "mutations": executed_mutations,
                 "undo_snapshot": undo_snapshot,
@@ -12550,7 +12854,15 @@ def _stream_assistant_reply_events_gemini(
             user_id=user_id,
             thread_id=thread_id,
         ),
-        "usage": total_usage,
+        "usage": {
+            **total_usage,
+            **({
+                "context_budget": with_provider_reported_tokens(
+                    context_budget_manifest, last_request_input_tokens,
+                    total_input_tokens_across_calls=total_usage.get("input_tokens"),
+                )
+            } if context_budget_manifest is not None else {}),
+        },
         "actions": executed_actions,
         "mutations": executed_mutations,
         "undo_snapshot": undo_snapshot,
@@ -13108,6 +13420,19 @@ def _generate_assistant_reply_core(
                 user_id=user_id, thread_id=thread_id, actions=actions, project=project,
             )
             return reply, usage, actions, mutations, undo_snapshot
+        except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+            # Keep earlier real failures and any completed calls carried by
+            # this provider, but never add the local budget failure as an
+            # attempted provider request.
+            usage = dict(getattr(exc, "jaspen_usage", {}) or {})
+            existing_failover = usage.get("failover") if isinstance(usage.get("failover"), dict) else {}
+            earlier_attempts = list(existing_failover.get("attempted_providers") or [])
+            if failover_log or earlier_attempts:
+                exc.jaspen_usage = _attach_failover_usage(
+                    usage,
+                    attempted_providers=[*failover_log, *earlier_attempts],
+                )
+            raise
         except Exception as exc:
             last_error = exc
             elapsed_ms = int((time.monotonic() - started_at) * 1000)
@@ -13327,6 +13652,16 @@ def _stream_assistant_reply_events_core(
                     len(failover_log),
                 )
             return
+        except (ContextBudgetConfigurationError, ContextBudgetOverflow) as exc:
+            usage = dict(getattr(exc, "jaspen_usage", {}) or {})
+            existing_failover = usage.get("failover") if isinstance(usage.get("failover"), dict) else {}
+            earlier_attempts = list(existing_failover.get("attempted_providers") or [])
+            if failover_log or earlier_attempts:
+                exc.jaspen_usage = _attach_failover_usage(
+                    usage,
+                    attempted_providers=[*failover_log, *earlier_attempts],
+                )
+            raise
         except Exception as exc:
                 last_error = exc
                 if yielded_any:

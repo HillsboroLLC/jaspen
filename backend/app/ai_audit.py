@@ -21,6 +21,7 @@ from .ai_governance import (
 from .billing_config import provider_cost_usd, to_public_plan
 from .models import AIOperation, AIProviderAttempt
 from .prompt_version import PROMPT_VERSION_HISTORY_KEY, PROMPT_VERSION_KEY, prompt_version
+from .context_budget import audit_context_manifest
 
 
 def new_operation_id():
@@ -278,6 +279,12 @@ def persist_operation(
             if isinstance(item, dict)
         ],
     }
+    context_budget_evidence = audit_context_manifest(usage.get('context_budget'))
+    if context_budget_evidence is not None:
+        operation.metadata_json['context_budget'] = context_budget_evidence
+        operation.metadata_json['context_budget_policy_version'] = (
+            context_budget_evidence.get('context_budget_policy_version')
+        )
     if version_evidence:
         operation.metadata_json = {**operation.metadata_json, **version_evidence}
     if claimed_turn:
