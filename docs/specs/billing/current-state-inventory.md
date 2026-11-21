@@ -168,7 +168,10 @@ for execution-path and evidence detail.
 
 Refreshed by symbol on the billing line at `4efabb05` and on the unified line
 at `d05e9c0f` (F1 `3d0b71d5` onward; the uncommitted P3 tree at that base
-scans identically). The two lines fork at `0cf97e7c`. The tables above
+scans identically). The two lines fork at `0cf97e7c`. Unified-line rows were
+re-read at P4.0 `04f60590` and the P4.1 tree on 2026-11-19: P4.0 adds two
+`AIOperation()` evidence writers and a read-only meter access, and moves the
+chat credit binding into `ai_agent._TurnOperationEvidence`; P4.1 adds none. The tables above
 describe intent at `88684284` and are kept as written; the tables below are
 the complete, test-enforced list. `backend/tests/test_billing_legacy_writer_inventory.py`
 fails when a function writes a legacy billing field or references a legacy
@@ -220,6 +223,8 @@ dynamic writes):
 
 | Function | Writes | Line |
 |---|---|---|
+| `app/ai_audit.py` `claim_turn_operation` | `AIOperation()` | unified_line |
+| `app/ai_audit.py` `close_turn_operation_alone` | `AIOperation()` | unified_line |
 | `app/ai_audit.py` `persist_operation` | `AIOperation()`, `charged_credits` | both |
 | `app/ai_runtime.py` `_claim_operation` | `AIOperation()` | both |
 | `app/ai_runtime.py` `finalize_batch_charge_allocation` | `charged_credits` | both |
@@ -251,6 +256,7 @@ dynamic writes):
 | `app/orgs.py` `sync_org_plan_from_owner` | `plan_key` | both |
 | `app/routes/admin.py` `adjust_user_credits` | `credits_remaining` | both |
 | `app/routes/admin.py` `patch_user` | `credits_remaining`, `subscription_plan` | both |
+| `app/routes/ai_agent.py` `_meter_cycle_marker` | `thinking_power` (read only) | unified_line |
 | `app/routes/ai_agent.py` `_persist_credit_deduction` | `credits_remaining` | both |
 | `app/routes/ai_agent.py` `_record_usage` | `UsageEvent()` | both |
 | `app/routes/auth.py` `_sso_user_and_membership` | `User()` | both |
@@ -295,7 +301,12 @@ which writes on read):
 | `app/routes/admin.py` `adjust_user_credits` | `apply_plan_to_user` | both |
 | `app/routes/admin.py` `force_plan` | `apply_plan_to_user` | both |
 | `app/routes/admin.py` `run_user_recovery` | `apply_plan_to_user` | both |
-| `app/routes/ai_agent.py` `_conversation_turn` | `_persist_credit_deduction`, `_release_reserved_credits`, `_reserve_preflight_credits`, `_settle_reserved_credits` | unified_line |
+| `app/routes/ai_agent.py` `_TurnOperationEvidence.close_alone` | `close_turn_operation_alone` | unified_line |
+| `app/routes/ai_agent.py` `_TurnOperationEvidence.persist_balance` | `_persist_credit_deduction` | unified_line |
+| `app/routes/ai_agent.py` `_TurnOperationEvidence.release` | `_release_reserved_credits` | unified_line |
+| `app/routes/ai_agent.py` `_TurnOperationEvidence.reserve` | `_reserve_preflight_credits`, `claim_turn_operation` | unified_line |
+| `app/routes/ai_agent.py` `_TurnOperationEvidence.settle` | `_settle_reserved_credits` | unified_line |
+| `app/routes/ai_agent.py` `_conversation_turn` | `settle` | unified_line |
 | `app/routes/ai_agent.py` `_execute_mutation_tool` | `_record_claude_operation`, `reverse_customer_operation_charge` | both |
 | `app/routes/ai_agent.py` `_execute_mutation_tool._reverse_plan_charge` | `reverse_customer_operation_charge` | both |
 | `app/routes/ai_agent.py` `_finish_conversation_turn` | `_record_usage`, `settle` | unified_line |

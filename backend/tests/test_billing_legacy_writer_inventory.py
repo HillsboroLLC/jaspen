@@ -21,7 +21,9 @@ is an inventory change to review, never a silent pass.
 
 The unified line binds the legacy credit functions into ``TurnBilling`` in
 ``ai_agent._conversation_turn`` (reserve, price, settle, release,
-persist_balance), replacing six per-route copies on the billing line. Phase 17
+persist_balance), replacing six per-route copies on the billing line. Since
+P4.0 (``04f60590``) that binding goes through ``_TurnOperationEvidence``,
+which claims and closes the turn's ``AIOperation`` around the same calls. Phase 17
 replaces that binding with the Phase 12 ledger; until then it is a legacy
 credit writer like the rest.
 """
@@ -311,6 +313,11 @@ def scan(root):
 # and in references a legacy mutator, a legacy writer helper, or
 # ``getattr(dynamic)`` on a legacy writer module.
 LEGACY_FIELD_WRITERS = (
+    # P4.0 chat operation evidence (unified line 04f60590): the turn's claim,
+    # and its close when the claim never became durable. Evidence rows only;
+    # neither changes a balance.
+    ("app/ai_audit.py", "claim_turn_operation", "AIOperation()", "unified_line"),
+    ("app/ai_audit.py", "close_turn_operation_alone", "AIOperation()", "unified_line"),
     ("app/ai_audit.py", "persist_operation", "AIOperation()", "both"),
     ("app/ai_audit.py", "persist_operation", "charged_credits", "both"),
     ("app/ai_runtime.py", "_claim_operation", "AIOperation()", "both"),
@@ -368,6 +375,8 @@ LEGACY_FIELD_WRITERS = (
     ("app/routes/admin.py", "adjust_user_credits", "credits_remaining", "both"),
     ("app/routes/admin.py", "patch_user", "credits_remaining", "both"),
     ("app/routes/admin.py", "patch_user", "subscription_plan", "both"),
+    # P4.0: reads the meter's last reset into the claim (read only, no write).
+    ("app/routes/ai_agent.py", "_meter_cycle_marker", "thinking_power", "unified_line"),
     ("app/routes/ai_agent.py", "_persist_credit_deduction", "credits_remaining", "both"),
     ("app/routes/ai_agent.py", "_record_usage", "UsageEvent()", "both"),
     ("app/routes/auth.py", "_sso_user_and_membership", "User()", "both"),
@@ -421,10 +430,16 @@ LEGACY_MUTATOR_REFERENCES = (
     ("app/routes/admin.py", "adjust_user_credits", "apply_plan_to_user", "both"),
     ("app/routes/admin.py", "force_plan", "apply_plan_to_user", "both"),
     ("app/routes/admin.py", "run_user_recovery", "apply_plan_to_user", "both"),
-    ("app/routes/ai_agent.py", "_conversation_turn", "_persist_credit_deduction", "unified_line"),
-    ("app/routes/ai_agent.py", "_conversation_turn", "_release_reserved_credits", "unified_line"),
-    ("app/routes/ai_agent.py", "_conversation_turn", "_reserve_preflight_credits", "unified_line"),
-    ("app/routes/ai_agent.py", "_conversation_turn", "_settle_reserved_credits", "unified_line"),
+    # P4.0 (unified line 04f60590) moved the TurnBilling binding of the legacy
+    # credit functions out of ``_conversation_turn`` into the evidence
+    # wrapper's methods, with the same arguments and results.
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.close_alone", "close_turn_operation_alone", "unified_line"),
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.persist_balance", "_persist_credit_deduction", "unified_line"),
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.release", "_release_reserved_credits", "unified_line"),
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.reserve", "_reserve_preflight_credits", "unified_line"),
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.reserve", "claim_turn_operation", "unified_line"),
+    ("app/routes/ai_agent.py", "_TurnOperationEvidence.settle", "_settle_reserved_credits", "unified_line"),
+    ("app/routes/ai_agent.py", "_conversation_turn", "settle", "unified_line"),
     ("app/routes/ai_agent.py", "_execute_mutation_tool", "_record_claude_operation", "both"),
     ("app/routes/ai_agent.py", "_execute_mutation_tool", "reverse_customer_operation_charge", "both"),
     ("app/routes/ai_agent.py", "_execute_mutation_tool._reverse_plan_charge", "reverse_customer_operation_charge", "both"),
