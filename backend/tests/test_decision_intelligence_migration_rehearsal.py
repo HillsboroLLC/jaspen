@@ -17,6 +17,7 @@ Those retained changes are asserted below so rollback behavior stays explicit.
 
 import contextlib
 import copy
+import re
 from datetime import datetime
 import json
 import os
@@ -113,6 +114,30 @@ def _account_foundation_revision_module():
     return ScriptDirectory(str(MIGRATIONS_DIR)).get_revision(ACCOUNT_FOUNDATION_REVISION).module
 
 
+
+def _later_revision_tables():
+    """Tables created by revisions newer than Phase 5.2 (all purely additive)."""
+    script = ScriptDirectory(str(MIGRATIONS_DIR))
+    names = set()
+    for revision in script.walk_revisions(FINANCIAL_FOUNDATION_REVISION, "heads"):
+        if revision.revision == FINANCIAL_FOUNDATION_REVISION:
+            continue
+        source = Path(revision.path).read_text()
+        for token in re.findall(r"op\.create_table\(\s*([A-Za-z_]\w*|['\"]\w+['\"])", source):
+            if token[0] in "'\"":
+                names.add(token[1:-1])
+            else:
+                names.add(getattr(revision.module, token))
+    return names
+
+
+def _drop_later_revision_tables(connection, metadata):
+    later = _later_revision_tables()
+    for table in reversed(metadata.sorted_tables):
+        if table.name in later:
+            table.drop(connection, checkfirst=True)
+
+
 def _prepare_sqlite_at_production_revision(database_url):
     """Create f1a2b3c4d5e6 shape without replaying SQLite-incompatible history."""
     from app import db
@@ -125,6 +150,7 @@ def _prepare_sqlite_at_production_revision(database_url):
     db.metadata.create_all(engine)
     with engine.begin() as connection:
         context = MigrationContext.configure(connection)
+        _drop_later_revision_tables(connection, db.metadata)
         with Operations.context(context):
             _financial_foundation_revision_module().downgrade()
             _event_inbox_revision_module().downgrade()
@@ -492,7 +518,7 @@ def _assert_upgraded(engine, before):
         version = connection.execute(sa.text(
             "SELECT version_num FROM alembic_version"
         )).scalar_one()
-    assert version == FINANCIAL_FOUNDATION_REVISION
+    assert version == ScriptDirectory(str(MIGRATIONS_DIR)).get_current_head()
 
     expected_dispositions = {
         "verdict-advance": "pursue",

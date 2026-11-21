@@ -102,6 +102,17 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+      # Billing migrated-database tests read the public schema at the current
+      # Alembic head. Tests that need an empty database create their own
+      # isolated schemas, so migrating public first leaves them unaffected.
+      - name: Migrate the Postgres test database to the current head
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+          APP_ENV: test
+          SECRET_KEY: ci-test-only-migration-secret
+          JWT_SECRET_KEY: ci-test-only-migration-jwt
+          STRIPE_SECRET_KEY: sk_test_dummy_ci_migration
+        run: PYTHONPATH=. python -m flask --app wsgi:app db upgrade
       - name: Run backend tests on Postgres
         run: PYTHONPATH=. pytest -q
 

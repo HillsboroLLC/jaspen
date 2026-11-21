@@ -27,6 +27,12 @@ REVISION = "b2d4f6a8c0e3"
 PARENT = "f9c1a3e5b7d4"
 NOW = datetime.now(timezone.utc)
 
+
+@pytest.fixture(autouse=True)
+def _fresh_now(monkeypatch):
+    """Database lease guards use the real clock, so each test needs a current NOW."""
+    monkeypatch.setitem(globals(), "NOW", datetime.now(timezone.utc))
+
 # Synthetic test data only: no real Stripe identifiers, customers, or cards.
 SENSITIVE_VALUES = (
     "4242", "Synthetic Person", "person@example.test", "1 Test Street", "Testville",

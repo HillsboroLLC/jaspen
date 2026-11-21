@@ -467,7 +467,7 @@ def _replace_once(text, old, new, what):
 
 
 def _pg_body(bind, name):
-    rows = bind.execute(sa.text("SELECT prosrc FROM pg_proc WHERE proname=:name"), {"name": name}).scalars().all()
+    rows = bind.execute(sa.text("SELECT prosrc FROM pg_proc WHERE proname=:name AND pronamespace = current_schema()::regnamespace"), {"name": name}).scalars().all()
     if len(rows) != 1:
         raise RuntimeError(f"guard function {name} was not found exactly once")
     return rows[0]
