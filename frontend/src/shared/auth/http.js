@@ -23,8 +23,14 @@ function cookieMap() {
     }, {});
 }
 
-export function getCsrfToken() {
+// Staging sets REACT_APP_CSRF_COOKIE_NAME because it shares the jaspen.ai cookie
+// domain with production. When it is set, only that cookie is read, so staging
+// never sends production's CSRF token (or the reverse).
+const CONFIGURED_CSRF_COOKIE_NAME = String(process.env.REACT_APP_CSRF_COOKIE_NAME || '').trim();
+
+export function getCsrfToken(cookieName = CONFIGURED_CSRF_COOKIE_NAME) {
   const cookies = cookieMap();
+  if (cookieName) return cookies[cookieName] || '';
   return (
     cookies.csrf_access_token ||
     cookies.csrf_token ||

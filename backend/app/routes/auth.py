@@ -74,6 +74,22 @@ GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
 GOOGLE_MFA_PENDING_COOKIE = 'jaspen_mfa_pending'
 SSO_STATE_COOKIE = 'jaspen_sso_state'
+
+
+def _auth_cookie_name(config_key, default):
+    return str(current_app.config.get(config_key) or default)
+
+
+def _access_cookie_name():
+    return _auth_cookie_name('JWT_ACCESS_COOKIE_NAME', 'jaspen_access')
+
+
+def _mfa_pending_cookie_name():
+    return _auth_cookie_name('GOOGLE_MFA_PENDING_COOKIE_NAME', GOOGLE_MFA_PENDING_COOKIE)
+
+
+def _sso_state_cookie_name():
+    return _auth_cookie_name('SSO_STATE_COOKIE_NAME', SSO_STATE_COOKIE)
 MAX_FAILED_ATTEMPTS = 10
 LOCKOUT_DURATION_MINUTES = 15
 MFA_ROLLOUT_ENFORCE_UTC = datetime(2026, 12, 16, 0, 0, 0, tzinfo=timezone.utc)
@@ -1416,7 +1432,7 @@ def mfa_pending_after_google():
     Returns the same payload password login returns when 2FA is required, and
     clears the one-time cookie.
     """
-    pending_token = str(request.cookies.get(GOOGLE_MFA_PENDING_COOKIE) or '').strip()
+    pending_token = str(request.cookies.get(_mfa_pending_cookie_name()) or '').strip()
     try:
         decoded = decode_token(pending_token) if pending_token else {}
     except Exception:
@@ -1440,7 +1456,7 @@ def mfa_pending_after_google():
         })
         status = 200
     resp.delete_cookie(
-        GOOGLE_MFA_PENDING_COOKIE, path='/api/v1/auth/mfa',
+        _mfa_pending_cookie_name(), path='/api/v1/auth/mfa',
         domain=current_app.config.get('JWT_COOKIE_DOMAIN') or None,
     )
     return resp, status
@@ -1636,7 +1652,7 @@ def _sso_state_hash(value):
 
 def _clear_sso_state_cookie(resp):
     resp.delete_cookie(
-        SSO_STATE_COOKIE,
+        _sso_state_cookie_name(),
         path='/api/v1/auth/sso',
         domain=current_app.config.get('JWT_COOKIE_DOMAIN') or None,
     )
@@ -1688,7 +1704,7 @@ def sso_start():
         state=state,
     ))
     resp.set_cookie(
-        SSO_STATE_COOKIE,
+        _sso_state_cookie_name(),
         state,
         max_age=ttl,
         httponly=True,
@@ -1789,7 +1805,7 @@ def sso_callback():
     if not current_app.config.get('SSO_ENABLED'):
         return _sso_unavailable()
     state = str(request.args.get('state') or '').strip()
-    cookie_state = str(request.cookies.get(SSO_STATE_COOKIE) or '').strip()
+    cookie_state = str(request.cookies.get(_sso_state_cookie_name()) or '').strip()
     if not state or not cookie_state or not hmac.compare_digest(state, cookie_state):
         return _clear_sso_state_cookie(redirect(_frontend_login_error_url('sso_invalid_state'), code=302))
     state_row = SsoLoginState.query.filter_by(state_hash=_sso_state_hash(state)).first()
@@ -1830,7 +1846,7 @@ def sso_callback():
         separator = '&' if '?' in callback_url else '?'
         resp = redirect(f'{callback_url}{separator}mfa=1', code=302)
         resp.set_cookie(
-            GOOGLE_MFA_PENDING_COOKIE, pending_token,
+            _mfa_pending_cookie_name(), pending_token,
             max_age=300, httponly=True,
             secure=bool(current_app.config.get('JWT_COOKIE_SECURE')),
             samesite=current_app.config.get('JWT_COOKIE_SAMESITE') or 'Lax',
@@ -2034,7 +2050,7 @@ def google_callback():
         separator = '&' if '?' in callback_url else '?'
         resp = redirect(f'{callback_url}{separator}mfa=1', code=302)
         resp.set_cookie(
-            GOOGLE_MFA_PENDING_COOKIE, pending_token,
+            _mfa_pending_cookie_name(), pending_token,
             max_age=300, httponly=True,
             secure=bool(current_app.config.get('JWT_COOKIE_SECURE')),
             samesite=current_app.config.get('JWT_COOKIE_SAMESITE') or 'Lax',
@@ -2253,7 +2269,7 @@ def refresh_access_token():
     immediately after access-token expiry.
     """
     try:
-        encoded = request.cookies.get('jaspen_access')
+        encoded = request.cookies.get(_access_cookie_name())
         if not encoded:
             return jsonify(error='Missing auth cookie'), 401
 
@@ -2326,7 +2342,7 @@ def refresh_access_token():
 
 @auth_bp.route('/me-cookie', methods=['GET'])
 def get_current_user_from_cookie():
-    token = request.cookies.get('jaspen_access')
+    token = request.cookies.get(_access_cookie_name())
     if not token:
         return jsonify(error='Missing auth cookie'), 401
 

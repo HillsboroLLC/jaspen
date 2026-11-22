@@ -39,7 +39,7 @@
     "articles:generate": "node ./scripts/generate-article-content.mjs",
     "prestart": "node ./scripts/generate-article-content.mjs",
     "start": "react-scripts start",
-    "prebuild": "node ./scripts/generate-article-content.mjs",
+    "prebuild": "node ./scripts/check-api-base.mjs && node ./scripts/generate-article-content.mjs",
     "build": "INLINE_RUNTIME_CHUNK=false react-scripts build && node ./scripts/prerender-public.mjs",
     "pretest": "node ./scripts/generate-article-content.mjs",
     "prerender:verify": "node ./scripts/verify-prerendered.mjs",

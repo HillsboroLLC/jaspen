@@ -48,6 +48,22 @@ def _as_bool(value, default=False):
     return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
 
 
+DEFAULT_JWT_ACCESS_CSRF_COOKIE_NAME = 'csrf_access_token'
+DEFAULT_GOOGLE_MFA_PENDING_COOKIE_NAME = 'jaspen_mfa_pending'
+DEFAULT_SSO_STATE_COOKIE_NAME = 'jaspen_sso_state'
+
+
+def _cookie_name_from_env(env_name, default):
+    """Auth cookie name: production keeps the default; staging sets its own."""
+    configured = str(os.getenv(env_name) or '').strip()
+    return configured or default
+
+
+def _jwt_access_csrf_cookie_name():
+    """CSRF cookie name; production keeps the Flask-JWT-Extended default."""
+    return _cookie_name_from_env('JWT_ACCESS_CSRF_COOKIE_NAME', DEFAULT_JWT_ACCESS_CSRF_COOKIE_NAME)
+
+
 def _derive_cors_origins(frontend_base_url):
     raw = os.getenv('CORS_ORIGINS')
     if raw:
@@ -200,6 +216,12 @@ def create_app():
         JWT_COOKIE_SAMESITE            = os.getenv('JWT_COOKIE_SAMESITE', 'Lax'),
         JWT_COOKIE_CSRF_PROTECT        = _as_bool(os.getenv('JWT_COOKIE_CSRF_PROTECT'), default=True),
         JWT_COOKIE_DOMAIN              = os.getenv('JWT_COOKIE_DOMAIN') or None,
+        # Staging shares the jaspen.ai cookie domain with production, so it sets its
+        # own name for every auth cookie (access, CSRF, MFA-pending, SSO state);
+        # neither environment can overwrite or read the other's cookies.
+        JWT_ACCESS_CSRF_COOKIE_NAME    = _jwt_access_csrf_cookie_name(),
+        GOOGLE_MFA_PENDING_COOKIE_NAME = _cookie_name_from_env('GOOGLE_MFA_PENDING_COOKIE_NAME', DEFAULT_GOOGLE_MFA_PENDING_COOKIE_NAME),
+        SSO_STATE_COOKIE_NAME          = _cookie_name_from_env('SSO_STATE_COOKIE_NAME', DEFAULT_SSO_STATE_COOKIE_NAME),
 
         # Mailer
         MAIL_SERVER                    = os.getenv('MAIL_SERVER', 'smtp.example.com'),
