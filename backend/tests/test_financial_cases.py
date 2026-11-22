@@ -35,6 +35,12 @@ MIGRATIONS_DIR = str(BACKEND_DIR / "migrations")
 PARENT = "c3e5a7b9d1f4"
 REVISION = "d3e5a7b9c1f4"
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_now(monkeypatch):
+    """Database lease guards use the real clock, so each test needs a current NOW."""
+    monkeypatch.setitem(globals(), "NOW", datetime.now(timezone.utc).replace(microsecond=0))
 _REVISION_MODULES = {}
 
 
@@ -123,7 +129,8 @@ def postgres_engine(validate_test_database_url, postgres_schema_url):
         yield engine
 
 
-def _add_inbox(session, event_id, object_type, object_id, *, received_at=NOW):
+def _add_inbox(session, event_id, object_type, object_id, *, received_at=None):
+    received_at = NOW if received_at is None else received_at
     row = ExternalEventInbox(
         id=str(uuid.uuid4()),
         provider="stripe",
