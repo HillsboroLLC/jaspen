@@ -1,0 +1,635 @@
+#!/usr/bin/env bash
+# Install root-owned as /usr/local/sbin/jaspen-staging-deploy (mode 0755), with
+# staging_config_check.py and staging_database.py root-owned in HELPER_DIR.
+#
+# Operator-run staging deployment (the GitHub staging workflow stays disabled).
+# Staging is egress-locked, so code arrives as a git bundle and dependencies as
+# an offline wheelhouse, both built and checksummed by stage-release.sh.
+#
+#   jaspen-staging-deploy --check
+#   jaspen-staging-deploy --status
+#   jaspen-staging-deploy --deploy   <40-hex sha> <bundle> <wheelhouse> [--allow-migrations]
+#   jaspen-staging-deploy --rollback <40-hex sha> <bundle> <wheelhouse>
+#   jaspen-staging-deploy --deploy-detached   <same arguments as --deploy>
+#   jaspen-staging-deploy --rollback-detached <same arguments as --rollback>
+#   jaspen-staging-deploy --log <unit>
+#
+# The -detached modes (the only ones stage-release.sh --execute uses) run the
+# deploy in a transient systemd unit with a wrapper-generated name, so a
+# dropped SSH session cannot stop it part-way, and stream its journal. --log
+# re-attaches to that journal. The systemd-run and journalctl command lines
+# are fixed here; no caller-supplied option reaches them.
+#
+# Output is check names, commit ids, revision ids, counts and PASS/FAIL only.
+# This wrapper never reads or prints environment values or credentials.
+set -euo pipefail
+umask 027
+cd /
+
+readonly CONFIG_FILE="/etc/jaspen-staging/deploy.conf"
+readonly LOCK_FILE="/run/lock/jaspen-staging-deploy.lock"
+readonly WRAPPER_PATH="/usr/local/sbin/jaspen-staging-deploy"
+readonly UNIT_NAME_PATTERN='^jaspen-staging-deploy-[0-9a-f]{12}-[0-9]{8}T[0-9]{6}Z$'
+readonly RELEASE_SHA_PATTERN='^[0-9a-f]{40}$'
+readonly ARTIFACT_PATH_PATTERN='^/[A-Za-z0-9._/-]+$'
+# Staging-only extra (R-2 in the engineering risk register): production runs
+# psycopg2-binary without declaring it in backend/requirements.txt, so staging
+# keeps the same driver installed until R-2 settles the database driver.
+readonly STAGING_EXTRA_REQUIREMENT="psycopg2-binary==2.9.11"
+
+fail() {
+  echo "FAIL: $1" >&2
+  exit 1
+}
+
+load_config() {
+  [[ -f "${CONFIG_FILE}" ]] || fail "deploy config missing"
+  [[ "$(stat -c '%u' "${CONFIG_FILE}")" == "0" ]] || fail "deploy config is not root-owned"
+  [[ "$(stat -c '%a' "${CONFIG_FILE}")" =~ ^(600|640|644)$ ]] || fail "deploy config mode"
+  # Root-owned and not writable by group/other before it is sourced. It holds
+  # paths, unit names, a database host name and expected counts; no credentials.
+  source "${CONFIG_FILE}"
+
+  local key item
+  for key in DEPLOY_ROOT BACKEND_ENV_FILE RUNTIME_SOCKET MIGRATION_URL_FILE NGINX_SITES_ENABLED_DIR \
+    QUARANTINE_DIR HELPER_DIR ARTIFACT_ROOT WHEELHOUSE_DIR LOG_DIR; do
+    [[ "${!key:-}" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "config ${key}"
+  done
+  [[ -z "${APP_DATABASE_URL_FILE:-}" || "${APP_DATABASE_URL_FILE}" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "config APP_DATABASE_URL_FILE"
+  [[ "${DEPLOY_USER:-}" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail "config DEPLOY_USER"
+  for key in RUNTIME_UNIT EGRESS_LOCK_UNIT; do
+    [[ "${!key:-}" =~ ^[A-Za-z0-9@._-]+\.service$ ]] || fail "config ${key}"
+  done
+  [[ "${DATABASE_HOST:-}" =~ ^[A-Za-z0-9.-]+$ ]] || fail "config DATABASE_HOST"
+  for key in QUARANTINE_ENTRY_COUNT EXPECTED_COPIED_USERS HEALTH_RETRIES HEALTH_DELAY_SECONDS; do
+    [[ "${!key:-}" =~ ^[0-9]+$ ]] || fail "config ${key}"
+  done
+  [[ "${COPIED_USERS_CREATED_BEFORE_UTC:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+    || fail "config COPIED_USERS_CREATED_BEFORE_UTC"
+  [[ -n "${MASKED_UNITS:-}" ]] || fail "config MASKED_UNITS"
+  for item in ${MASKED_UNITS}; do
+    [[ "${item}" =~ ^[A-Za-z0-9@._-]+\.(service|timer|socket)$ ]] || fail "config MASKED_UNITS"
+  done
+  [[ -n "${ALLOWED_NGINX_SITES:-}" ]] || fail "config ALLOWED_NGINX_SITES"
+  for item in ${ALLOWED_NGINX_SITES}; do
+    [[ "${item}" =~ ^[A-Za-z0-9._-]+$ ]] || fail "config ALLOWED_NGINX_SITES"
+  done
+  [[ -n "${FORBIDDEN_SECRET_KEYS:-}" ]] || fail "config FORBIDDEN_SECRET_KEYS"
+  for item in ${FORBIDDEN_SECRET_KEYS}; do
+    [[ "${item}" =~ ^[A-Z][A-Z0-9_]*$ ]] || fail "config FORBIDDEN_SECRET_KEYS"
+  done
+
+  readonly VENV_PYTHON="${DEPLOY_ROOT}/backend/venv/bin/python"
+  readonly VENV_PIP="${DEPLOY_ROOT}/backend/venv/bin/pip"
+}
+
+as_app() {
+  runuser -u "${DEPLOY_USER}" -- "$@"
+}
+
+git_app() {
+  as_app git -C "${DEPLOY_ROOT}" "$@"
+}
+
+# Runs a command as the staging app user with the service's own environment
+# file, loaded by systemd. The values never pass through this wrapper.
+run_with_staging_env() {
+  systemd-run --quiet --wait --pipe --collect \
+    --uid="${DEPLOY_USER}" \
+    --working-directory="${DEPLOY_ROOT}/backend" \
+    --property=EnvironmentFile="${BACKEND_ENV_FILE}" \
+    --setenv=APP_ENV=staging \
+    --setenv=JASPEN_MIGRATION_DATABASE_URL_FILE="${MIGRATION_URL_FILE}" \
+    -- "$@"
+}
+
+db_helper() {
+  as_app "${VENV_PYTHON}" "${HELPER_DIR}/staging_database.py" \
+    --backend-dir "${DEPLOY_ROOT}/backend" --url-file "${MIGRATION_URL_FILE}" "$@"
+}
+
+# D1: the users copied from production (created before the configured cutoff)
+# are all deactivated and none has a usable password hash. The total active
+# count is printed for information only.
+d1_copied_users_check() {
+  db_helper copied-users --created-before "${COPIED_USERS_CREATED_BEFORE_UTC}" --expected-copied "${EXPECTED_COPIED_USERS}"
+}
+
+# ---------------------------------------------------------------------------
+# G2 --check: read-only isolation and readiness preflight
+# ---------------------------------------------------------------------------
+
+CHECK_FAILURES=0
+
+check() {
+  local name="$1"
+  shift
+  if "$@" >/dev/null 2>&1; then
+    echo "PASS ${name}"
+  else
+    echo "FAIL ${name}"
+    CHECK_FAILURES=$((CHECK_FAILURES + 1))
+  fi
+}
+
+output_policy_is_drop() {
+  [[ "$(iptables -S OUTPUT | head -n 1)" == "-P OUTPUT DROP" ]]
+}
+
+runtime_requires_egress_lock() {
+  systemctl show "${RUNTIME_UNIT}" --property=Requires --value | tr ' ' '\n' | grep -qx -- "${EGRESS_LOCK_UNIT}"
+}
+
+unit_is_masked() {
+  [[ "$(systemctl is-enabled "$1" 2>/dev/null || true)" == "masked" ]] && ! systemctl is-active --quiet "$1"
+}
+
+nginx_sites_are_exactly_allowed() {
+  local enabled allowed
+  enabled="$(find "${NGINX_SITES_ENABLED_DIR}" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)"
+  allowed="$(printf '%s\n' ${ALLOWED_NGINX_SITES} | LC_ALL=C sort)"
+  [[ "${enabled}" == "${allowed}" ]]
+}
+
+backend_env_is_protected() {
+  [[ -f "${BACKEND_ENV_FILE}" ]] || return 1
+  [[ "$(stat -c '%U' "${BACKEND_ENV_FILE}")" == "root" ]] || return 1
+  (( (8#$(stat -c '%a' "${BACKEND_ENV_FILE}") & 8#007) == 0 ))
+}
+
+no_stray_dotenv_file() {
+  # The application loads backend/.env if present, which would bypass the
+  # service's environment file.
+  [[ ! -e "${DEPLOY_ROOT}/backend/.env" ]]
+}
+
+quarantine_entry_count_matches() {
+  # Read-only: existence and entry COUNT only; no entry names are printed.
+  [[ -d "${QUARANTINE_DIR}" ]] && [[ "$(find "${QUARANTINE_DIR}" -mindepth 1 -maxdepth 1 -printf '.' | wc -c | tr -d ' ')" == "${QUARANTINE_ENTRY_COUNT}" ]]
+}
+
+working_tree_is_clean() {
+  [[ -z "$(git_app status --porcelain --untracked-files=all)" ]]
+}
+
+helper_is_root_owned() {
+  [[ -f "$1" && "$(stat -c '%U' "$1")" == "root" ]] && (( (8#$(stat -c '%a' "$1") & 8#022) == 0 ))
+}
+
+run_check() {
+  local unit path url_args=()
+  CHECK_FAILURES=0
+  check "egress_lock_active" systemctl is-active --quiet "${EGRESS_LOCK_UNIT}"
+  check "egress_output_policy_drop" output_policy_is_drop
+  check "runtime_unit_requires_egress_lock" runtime_requires_egress_lock
+  for unit in ${MASKED_UNITS}; do
+    check "masked ${unit}" unit_is_masked "${unit}"
+  done
+  check "nginx_enabled_sites_exactly_allowed" nginx_sites_are_exactly_allowed
+  check "backend_env_root_owned_not_world_readable" backend_env_is_protected
+  check "no_stray_backend_dotenv" no_stray_dotenv_file
+  check "quarantine_entry_count" quarantine_entry_count_matches
+  check "working_tree_clean" working_tree_is_clean
+  for path in backend/data/user_uploads backend/data/reports backend/connectors_data backend/admin_audit_data; do
+    check "runtime_data_dir ${path}" test -d "${DEPLOY_ROOT}/${path}"
+  done
+  check "helper staging_config_check.py" helper_is_root_owned "${HELPER_DIR}/staging_config_check.py"
+  check "helper staging_database.py" helper_is_root_owned "${HELPER_DIR}/staging_database.py"
+
+  # The environment audit prints its own PASS/FAIL lines (names only).
+  url_args=(--url-file "${MIGRATION_URL_FILE}")
+  if [[ -n "${APP_DATABASE_URL_FILE:-}" && -f "${APP_DATABASE_URL_FILE}" ]]; then
+    url_args+=(--url-file "${APP_DATABASE_URL_FILE}")
+  fi
+  if ! /usr/bin/python3 -I "${HELPER_DIR}/staging_config_check.py" env-file \
+    --env-file "${BACKEND_ENV_FILE}" --database-host "${DATABASE_HOST}" \
+    --forbidden-keys "${FORBIDDEN_SECRET_KEYS}" "${url_args[@]}"; then
+    CHECK_FAILURES=$((CHECK_FAILURES + 1))
+  fi
+
+  if ! d1_copied_users_check; then
+    CHECK_FAILURES=$((CHECK_FAILURES + 1))
+  fi
+
+  if (( CHECK_FAILURES > 0 )); then
+    echo "FAIL: G2 staging isolation preflight (${CHECK_FAILURES} failed check(s))" >&2
+    return 1
+  fi
+  echo "PASS G2 staging isolation preflight"
+}
+
+# ---------------------------------------------------------------------------
+# Deploy record (JSON, safe tokens only)
+# ---------------------------------------------------------------------------
+
+MODE=""
+RELEASE_SHA=""
+PREVIOUS_SHA=""
+START_UTC=""
+START_EPOCH=""
+PRE_MIGRATION_UTC=""
+ALEMBIC_BEFORE=""
+ALEMBIC_AFTER=""
+PENDING_MIGRATIONS=""
+MIGRATIONS_ALLOWED="false"
+MIGRATIONS_RAN="false"
+JOURNAL_ERROR_COUNT=""
+RECORD_FILE=""
+ART_DIR=""
+# Set just before checkout; cleared when the deploy completes. The EXIT trap
+# rolls code back whenever the tree may have changed and nothing finished it.
+CHECKED_OUT="false"
+DEPLOY_COMPLETED="false"
+ROLLBACK_STARTED="false"
+INTERRUPTED_BY=""
+
+json_value() {
+  if [[ -z "$1" ]]; then
+    printf 'null'
+  else
+    [[ "$1" =~ ^[A-Za-z0-9_\ .:/-]+$ ]] || fail "unsafe deploy record value"
+    printf '"%s"' "$1"
+  fi
+}
+
+write_record() {
+  local result="$1" end_utc tmp
+  end_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  install -d -m 0750 "${LOG_DIR}"
+  tmp="${RECORD_FILE}.tmp"
+  {
+    printf '{\n'
+    printf '  "mode": %s,\n' "$(json_value "${MODE}")"
+    printf '  "sha": %s,\n' "$(json_value "${RELEASE_SHA}")"
+    printf '  "previous_sha": %s,\n' "$(json_value "${PREVIOUS_SHA}")"
+    printf '  "start_utc": %s,\n' "$(json_value "${START_UTC}")"
+    printf '  "end_utc": %s,\n' "$(json_value "${end_utc}")"
+    printf '  "migrations_allowed": %s,\n' "${MIGRATIONS_ALLOWED}"
+    printf '  "pending_migrations": %s,\n' "$(json_value "${PENDING_MIGRATIONS}")"
+    printf '  "pre_migration_utc": %s,\n' "$(json_value "${PRE_MIGRATION_UTC}")"
+    printf '  "migrations_ran": %s,\n' "${MIGRATIONS_RAN}"
+    printf '  "alembic_before": %s,\n' "$(json_value "${ALEMBIC_BEFORE}")"
+    printf '  "alembic_after": %s,\n' "$(json_value "${ALEMBIC_AFTER}")"
+    printf '  "journal_error_count": %s,\n' "${JOURNAL_ERROR_COUNT:-null}"
+    printf '  "artifact_dir": %s,\n' "$(json_value "${ART_DIR}")"
+    printf '  "result": %s\n' "$(json_value "${result}")"
+    printf '}\n'
+  } >"${tmp}"
+  mv -f "${tmp}" "${RECORD_FILE}"
+  cp -f "${RECORD_FILE}" "${LOG_DIR}/last.json"
+}
+
+journal_error_count() {
+  # Local error monitoring: counts only, no log lines are printed.
+  local count
+  count="$(journalctl --unit="${RUNTIME_UNIT}" --since="@${START_EPOCH}" --no-pager --output=cat 2>/dev/null | grep -cE 'Traceback|ERROR' || true)"
+  [[ "${count}" =~ ^[0-9]+$ ]] && echo "${count}" || echo "null"
+}
+
+# ---------------------------------------------------------------------------
+# Deploy / rollback
+# ---------------------------------------------------------------------------
+
+socket_health_ok() {
+  local body
+  body="$(curl --silent --fail --max-time 10 --unix-socket "${RUNTIME_SOCKET}" http://localhost/health 2>/dev/null)" || return 1
+  printf '%s' "${body}" | /usr/bin/python3 -I -c '
+import json, sys
+data = json.load(sys.stdin)
+sys.exit(0 if data.get("status") == "ok" and data.get("database") == "ok" else 1)
+' 2>/dev/null
+}
+
+wait_for_health() {
+  local attempt
+  for ((attempt = 1; attempt <= HEALTH_RETRIES; attempt++)); do
+    if socket_health_ok; then
+      echo "PASS G5 socket_health (attempt ${attempt})"
+      return 0
+    fi
+    sleep "${HEALTH_DELAY_SECONDS}"
+  done
+  echo "FAIL G5 socket_health after ${HEALTH_RETRIES} attempt(s)"
+  return 1
+}
+
+install_requirements() {
+  as_app "${VENV_PIP}" install --quiet --disable-pip-version-check --no-index --find-links "${WHEELHOUSE_DIR}" \
+    -r "${DEPLOY_ROOT}/backend/requirements.txt" "${STAGING_EXTRA_REQUIREMENT}" \
+    && as_app "${VENV_PIP}" check --disable-pip-version-check
+}
+
+report_database_state() {
+  local schema_now
+  if [[ "${MIGRATIONS_RAN}" == "true" ]]; then
+    # Re-read the revision: a migration that failed may not have changed it.
+    schema_now="$(db_helper current 2>/dev/null)" || schema_now=""
+    if [[ -n "${schema_now}" && "${schema_now}" == "${ALEMBIC_BEFORE}" ]]; then
+      echo "The schema stayed at ${ALEMBIC_BEFORE}; no database restore is needed."
+    else
+      echo "Database changes are NOT rolled back: the schema is at ${schema_now:-an unreadable revision} (was ${ALEMBIC_BEFORE})."
+      echo "Database recovery is a point-in-time restore of the staging cluster to ${PRE_MIGRATION_UTC} (requires Lydia's approval)."
+    fi
+  else
+    echo "No migrations ran; this deploy did not change the database schema."
+  fi
+}
+
+# Code rollback to the previously deployed commit, with its requirements
+# reinstalled offline from the cumulative wheelhouse.
+code_rollback() {
+  local reason="$1" success_result="${2:-rolled_back_code}" result="rollback_failed"
+  # Runs at most once and is not interrupted by a further signal.
+  [[ "${ROLLBACK_STARTED}" == "false" ]] || return 0
+  ROLLBACK_STARTED="true"
+  trap '' HUP INT TERM
+  echo "Code rollback to ${PREVIOUS_SHA} started (${reason})."
+  if git_app checkout --quiet --detach "${PREVIOUS_SHA}" \
+    && [[ "$(git_app rev-parse HEAD)" == "${PREVIOUS_SHA}" ]] \
+    && install_requirements \
+    && systemctl restart "${RUNTIME_UNIT}" \
+    && wait_for_health; then
+    result="${success_result}"
+    echo "Code rolled back to ${PREVIOUS_SHA}; staging health is OK."
+  else
+    echo "FAIL: code rollback did not complete; staging needs operator attention."
+  fi
+  report_database_state
+  JOURNAL_ERROR_COUNT="$(journal_error_count)"
+  write_record "${result}" || echo "FAIL: could not write the deploy record" >&2
+  echo "Journal Traceback/ERROR lines since deploy start: ${JOURNAL_ERROR_COUNT}"
+}
+
+after_checkout_failure() {
+  echo "FAIL: $1" >&2
+  code_rollback "$1" || true
+  exit 1
+}
+
+# EXIT trap for --deploy/--rollback: an unguarded failure or a signal after
+# checkout still rolls the code back and leaves a final record
+# ("interrupted" when the rollback succeeded, otherwise "rollback_failed").
+on_deploy_exit() {
+  local status=$?; trap '' HUP INT TERM
+  trap - EXIT
+  set +e
+  if [[ "${CHECKED_OUT}" == "true" && "${DEPLOY_COMPLETED}" == "false" && "${ROLLBACK_STARTED}" == "false" ]]; then
+    echo "FAIL: deploy stopped before completing (${INTERRUPTED_BY:-unexpected exit ${status}})" >&2
+    code_rollback "${INTERRUPTED_BY:-unexpected exit ${status}}" "interrupted"
+    (( status != 0 )) || status=1
+  fi
+  exit "${status}"
+}
+
+on_deploy_signal() {
+  INTERRUPTED_BY="signal $1"
+  exit 1
+}
+
+install_deploy_traps() {
+  trap on_deploy_exit EXIT
+  trap 'on_deploy_signal HUP' HUP
+  trap 'on_deploy_signal INT' INT
+  trap 'on_deploy_signal TERM' TERM
+}
+
+stage_artifacts() {
+  local bundle="$1" wheelhouse="$2" source_dir bundle_name unlisted
+  [[ "${bundle}" =~ ^/[A-Za-z0-9._/-]+$ && -f "${bundle}" ]] || fail "bundle path"
+  [[ "${wheelhouse}" =~ ^/[A-Za-z0-9._/-]+$ && -d "${wheelhouse}" ]] || fail "wheelhouse path"
+  source_dir="$(dirname "$(realpath -e "${bundle}")")"
+  bundle_name="$(basename "${bundle}")"
+  [[ "$(realpath -e "${wheelhouse}")" == "${source_dir}/wheelhouse" ]] || fail "wheelhouse must sit next to the bundle"
+  [[ -f "${source_dir}/SHA256SUMS" ]] || fail "SHA256SUMS missing"
+  grep -Eq "^[0-9a-f]{64}  (\./)?${bundle_name}\$" "${source_dir}/SHA256SUMS" || fail "bundle not listed in SHA256SUMS"
+
+  # Copy into a root-controlled directory first, then verify that copy, so the
+  # verified files are the files used.
+  ART_DIR="${ARTIFACT_ROOT}/${RELEASE_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
+  install -d -m 0750 -o root -g "${DEPLOY_USER}" "${ARTIFACT_ROOT}"
+  install -d -m 0750 -o root -g "${DEPLOY_USER}" "${ART_DIR}"
+  cp -R "${source_dir}/." "${ART_DIR}/"
+  chown -R root:"${DEPLOY_USER}" "${ART_DIR}"
+  chmod -R u=rwX,g=rX,o= "${ART_DIR}"
+  (cd "${ART_DIR}" && sha256sum --quiet --strict -c SHA256SUMS) || fail "artifact checksums"
+  # Every file in the artifacts must be listed in SHA256SUMS; an unlisted
+  # file (for example an extra wheel) stops the deploy.
+  [[ -f "${ART_DIR}/SHA256SUMS" && ! -L "${ART_DIR}/SHA256SUMS" ]] || fail "SHA256SUMS is not a regular file"
+  [[ -z "$(cd "${ART_DIR}" && find . ! -type d ! -type f)" ]] || fail "artifacts contain symlinks or other non-regular files"
+  unlisted="$(cd "${ART_DIR}" && comm -23 \
+    <(find . ! -type d ! -path ./SHA256SUMS | sed 's|^\./||' | LC_ALL=C sort) \
+    <(awk '{ sub(/^\.\//, "", $2); print $2 }' SHA256SUMS | LC_ALL=C sort))"
+  [[ -z "${unlisted}" ]] || fail "artifacts contain files not listed in SHA256SUMS"
+  echo "PASS G3 artifact_checksums"
+
+  install -d -m 0750 -o root -g "${DEPLOY_USER}" "${WHEELHOUSE_DIR}"
+  find "${ART_DIR}/wheelhouse" -maxdepth 1 -type f -name '*.whl' -exec cp -n -t "${WHEELHOUSE_DIR}" {} +
+  chown -R root:"${DEPLOY_USER}" "${WHEELHOUSE_DIR}"
+  chmod -R u=rwX,g=rX,o= "${WHEELHOUSE_DIR}"
+  BUNDLE_COPY="${ART_DIR}/${bundle_name}"
+}
+
+fetch_release_from_bundle() {
+  local release_ref
+  git_app bundle verify --quiet "${BUNDLE_COPY}" >/dev/null 2>&1 || fail "git bundle verify"
+  release_ref="$(git_app bundle list-heads "${BUNDLE_COPY}" | awk -v sha="${RELEASE_SHA}" '$1 == sha { print $2; exit }')"
+  [[ "${release_ref}" =~ ^refs/[A-Za-z0-9._/-]+$ ]] || fail "bundle does not contain ${RELEASE_SHA}"
+  git_app fetch --no-tags --quiet "${BUNDLE_COPY}" "+${release_ref}:refs/jaspen-staging-release/${RELEASE_SHA}"
+  git_app cat-file -e "${RELEASE_SHA}^{commit}" || fail "release commit missing after fetch"
+  echo "PASS G3 bundle_contains_release"
+}
+
+extract_target_migrations() {
+  TARGET_TREE="$(mktemp -d "${ART_DIR}/target-tree.XXXXXX")"
+  chown "${DEPLOY_USER}" "${TARGET_TREE}"
+  git_app archive --format=tar "${RELEASE_SHA}" backend/migrations | as_app tar -x -C "${TARGET_TREE}"
+}
+
+deploy_or_rollback() {
+  local bundle="$1" wheelhouse="$2" pending_after
+
+  exec 9>"${LOCK_FILE}"
+  flock -n 9 || fail "another staging deployment is running"
+
+  run_check || fail "preflight"
+  START_EPOCH="$(date -u +%s)"
+  START_UTC="$(date -u -d "@${START_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
+  RECORD_FILE="${LOG_DIR}/deploy-$(date -u -d "@${START_EPOCH}" +%Y%m%dT%H%M%SZ)-${RELEASE_SHA:0:12}.json"
+
+  PREVIOUS_SHA="$(git_app rev-parse HEAD)"
+  [[ "${PREVIOUS_SHA}" =~ ^[0-9a-f]{40}$ ]] || fail "current HEAD"
+
+  stage_artifacts "${bundle}" "${wheelhouse}"
+  fetch_release_from_bundle
+
+  if [[ "${MODE}" == "deploy" ]]; then
+    # Fast-forward only, like production: the release must descend from the
+    # deployed commit.
+    git_app merge-base --is-ancestor "${PREVIOUS_SHA}" "${RELEASE_SHA}" \
+      || fail "release is not a descendant of the deployed commit; use --rollback for an older commit"
+  else
+    [[ "${RELEASE_SHA}" != "${PREVIOUS_SHA}" ]] || fail "rollback target is already deployed"
+    git_app merge-base --is-ancestor "${RELEASE_SHA}" "${PREVIOUS_SHA}" \
+      || fail "rollback target is not an ancestor of the deployed commit"
+  fi
+
+  ALEMBIC_BEFORE="$(db_helper current)" || fail "read alembic revision"
+  extract_target_migrations
+  if [[ "${MODE}" == "rollback" ]]; then
+    db_helper in-history --target-migrations "${TARGET_TREE}/backend/migrations" \
+      --current-migrations "${DEPLOY_ROOT}/backend/migrations" \
+      || fail "rollback target's alembic head is not in the database history"
+    echo "WARNING: rollback does not change the database; the schema stays at ${ALEMBIC_BEFORE}."
+  else
+    # Decided before checkout, so a refusal leaves staging untouched.
+    PENDING_MIGRATIONS="$(db_helper pending --migrations "${TARGET_TREE}/backend/migrations" | tr '\n' ' ' | sed 's/ *$//')" \
+      || fail "list pending migrations"
+    if [[ -n "${PENDING_MIGRATIONS}" ]]; then
+      echo "G4 pending migrations: ${PENDING_MIGRATIONS}"
+      [[ "${MIGRATIONS_ALLOWED}" == "true" ]] \
+        || fail "G4 pending migrations; rerun with --allow-migrations after Lydia approves (they cannot be downgraded)"
+    else
+      echo "G4 pending migrations: none"
+    fi
+  fi
+  write_record "started"
+
+  install_deploy_traps
+  CHECKED_OUT="true"
+  git_app checkout --quiet --detach "${RELEASE_SHA}" || after_checkout_failure "checkout"
+  [[ "$(git_app rev-parse HEAD)" == "${RELEASE_SHA}" ]] || after_checkout_failure "HEAD verification"
+  echo "PASS checkout ${RELEASE_SHA}"
+  install_requirements || after_checkout_failure "offline requirements install or pip check"
+  echo "PASS G3 offline_requirements_install"
+  run_with_staging_env "${VENV_PYTHON}" "${HELPER_DIR}/staging_config_check.py" app --backend-dir "${DEPLOY_ROOT}/backend" \
+    || after_checkout_failure "G3 staging config check"
+
+  if [[ "${MODE}" == "deploy" ]]; then
+    pending_after="$(db_helper pending --migrations "${DEPLOY_ROOT}/backend/migrations" | tr '\n' ' ' | sed 's/ *$//')" \
+      || after_checkout_failure "list pending migrations"
+    [[ "${pending_after}" == "${PENDING_MIGRATIONS}" ]] || after_checkout_failure "pending migrations changed"
+    if [[ -n "${PENDING_MIGRATIONS}" ]]; then
+      PRE_MIGRATION_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      write_record "migrating" || after_checkout_failure "write pre-migration record"
+      echo "G4 pre-migration UTC timestamp (point-in-time restore target): ${PRE_MIGRATION_UTC}"
+      MIGRATIONS_RAN="true"
+      # The migration runs in its own transient unit (systemd-run --wait).
+      # Only this waiting client ignores HUP/INT/TERM, so it keeps waiting for
+      # the result. Stopping the detached deploy unit sends SIGTERM (ignored
+      # here) and, after TimeoutStopSec=15min, SIGKILL: that ends this client
+      # without a final record, the EXIT trap cannot run, and the migration's
+      # output pipe closes. Then check --status and --log, and treat the
+      # database as changed: restore point is the recorded pre-migration time.
+      trap '' HUP INT TERM
+      run_with_staging_env "${VENV_PYTHON}" "${DEPLOY_ROOT}/backend/migrate_production.py" \
+        || after_checkout_failure "migration"
+      install_deploy_traps
+      echo "PASS G4 migrations applied"
+    fi
+    pending_after="$(db_helper pending --migrations "${DEPLOY_ROOT}/backend/migrations")" || after_checkout_failure "list pending migrations"
+    [[ -z "${pending_after}" ]] || after_checkout_failure "migrations still pending"
+  fi
+  ALEMBIC_AFTER="$(db_helper current)" || after_checkout_failure "read alembic revision"
+  d1_copied_users_check || after_checkout_failure "D1 copied users"
+
+  systemctl restart "${RUNTIME_UNIT}" || after_checkout_failure "restart"
+  if ! wait_for_health; then
+    code_rollback "G5 health check failed after restart" || true
+    exit 1
+  fi
+
+  DEPLOY_COMPLETED="true"
+  JOURNAL_ERROR_COUNT="$(journal_error_count)"
+  write_record "deployed" || echo "FAIL: could not write the deploy record" >&2
+  report_database_state
+  echo "Journal Traceback/ERROR lines since deploy start: ${JOURNAL_ERROR_COUNT}"
+  echo "Staging ${MODE} completed for ${RELEASE_SHA} (previous ${PREVIOUS_SHA})."
+}
+
+show_status() {
+  echo "deployed_sha $(git_app rev-parse HEAD)"
+  echo "alembic_current $(db_helper current)"
+  if [[ -f "${LOG_DIR}/last.json" ]]; then
+    /usr/bin/python3 -I -c '
+import json, sys
+record = json.load(open(sys.argv[1], encoding="utf-8"))
+for key in ("mode", "sha", "previous_sha", "start_utc", "end_utc", "pre_migration_utc",
+            "alembic_before", "alembic_after", "journal_error_count", "result"):
+    print(f"last_{key} {record.get(key)}")
+' "${LOG_DIR}/last.json"
+  else
+    echo "last_deploy none"
+  fi
+}
+
+# Validates the --deploy / --rollback arguments ($1 is the mode word).
+validate_release_args() {
+  [[ $# -eq 4 || $# -eq 5 ]] || fail "usage"
+  [[ "$2" =~ ${RELEASE_SHA_PATTERN} ]] || fail "release sha must be exactly 40 lowercase hex characters"
+  [[ "$3" =~ ${ARTIFACT_PATH_PATTERN} ]] || fail "bundle path"
+  [[ "$4" =~ ${ARTIFACT_PATH_PATTERN} ]] || fail "wheelhouse path"
+  if [[ $# -eq 5 ]]; then
+    [[ "$1" == "deploy" && "$5" == "--allow-migrations" ]] || fail "--allow-migrations is only valid with --deploy"
+  fi
+}
+
+follow_unit_log() {
+  [[ "$1" =~ ${UNIT_NAME_PATTERN} ]] || fail "unit name"
+  journalctl -u "$1" -f --no-pager -o cat
+}
+
+# Runs --deploy/--rollback in a transient unit named by this wrapper and
+# streams its journal; a dropped SSH session leaves the unit running.
+run_detached() {
+  local mode="$1" unit status=0 follower
+  shift
+  validate_release_args "${mode}" "$@"
+  unit="jaspen-staging-deploy-${1:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
+  [[ "${unit}" =~ ${UNIT_NAME_PATTERN} ]] || fail "unit name"
+  echo "unit ${unit} (re-attach with: ${WRAPPER_PATH} --log ${unit})"
+  follow_unit_log "${unit}" &
+  follower=$!
+  systemd-run --unit="${unit}" --wait --collect --quiet -p TimeoutStopSec=15min \
+    -- "${WRAPPER_PATH}" "--${mode}" "$@" || status=$?
+  sleep 2
+  kill "${follower}" 2>/dev/null || true
+  wait "${follower}" 2>/dev/null || true
+  echo "unit ${unit} finished with status ${status}"
+  exit "${status}"
+}
+
+case "${1:-}" in
+  --check)
+    [[ $# -eq 1 ]] || fail "usage"
+    load_config
+    run_check
+    ;;
+  --status)
+    [[ $# -eq 1 ]] || fail "usage"
+    load_config
+    show_status
+    ;;
+  --deploy | --rollback)
+    MODE="${1#--}"
+    shift
+    validate_release_args "${MODE}" "$@"
+    [[ "$1" =~ ^[0-9a-f]{40}$ ]] || fail "release sha must be exactly 40 lowercase hex characters"
+    RELEASE_SHA="$1"
+    [[ $# -eq 3 ]] || MIGRATIONS_ALLOWED="true"
+    load_config
+    deploy_or_rollback "$2" "$3"
+    ;;
+  --deploy-detached | --rollback-detached)
+    mode="${1#--}"
+    shift
+    load_config
+    run_detached "${mode%-detached}" "$@"
+    ;;
+  --log)
+    [[ $# -eq 2 ]] || fail "usage"
+    follow_unit_log "$2"
+    ;;
+  *)
+    fail "usage: jaspen-staging-deploy --check | --status | --deploy[-detached] <sha> <bundle> <wheelhouse> [--allow-migrations] | --rollback[-detached] <sha> <bundle> <wheelhouse> | --log <unit>"
+    ;;
+esac

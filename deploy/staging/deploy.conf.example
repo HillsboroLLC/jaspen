@@ -1,0 +1,56 @@
+# Install as /etc/jaspen-staging/deploy.conf: root-owned, mode 0644 or stricter.
+# Placeholders only. This file holds paths, unit names, a database host name and
+# expected counts; it never holds credentials. Fill in the real values on the
+# server only; never commit them.
+
+# Staging checkout (a git clone with a detached HEAD) and the account that owns it.
+DEPLOY_ROOT=/absolute/path/to/the/staging/checkout
+DEPLOY_USER=staging-app-user
+
+# Services and files.
+RUNTIME_UNIT=staging-backend-unit.service
+EGRESS_LOCK_UNIT=staging-egress-lock-unit.service
+BACKEND_ENV_FILE=/absolute/path/to/the/staging/backend.env
+RUNTIME_SOCKET=/absolute/path/to/the/staging/app.sock
+
+# Database: the protected migration URL file (mode 600, owned by DEPLOY_USER),
+# the optional application URL file, and the staging fork's host name (the
+# preflight compares only the parsed host; it never prints a URL).
+MIGRATION_URL_FILE=/absolute/path/to/the/migration_database_url
+APP_DATABASE_URL_FILE=
+DATABASE_HOST=staging-fork-host.example.invalid
+
+# Copied production services that must stay masked (space separated, match the
+# exact unit names on the server).
+MASKED_UNITS="example-copied-app.service example-copied-mail.service example-copied-job.timer"
+
+# nginx: the enabled sites must be exactly this set.
+NGINX_SITES_ENABLED_DIR=/etc/nginx/sites-enabled
+ALLOWED_NGINX_SITES="example-reject-unknown-hosts example-staging-api-site"
+
+# Environment settings that must be empty or absent on staging (mail, AI,
+# integrations, error reporting). Names only; values are never printed.
+FORBIDDEN_SECRET_KEYS="EXAMPLE_MAIL_PASSWORD EXAMPLE_AI_API_KEY EXAMPLE_INTEGRATION_TOKEN"
+
+# Quarantine directory: checked for existence and entry count only.
+QUARANTINE_DIR=/absolute/path/to/the/quarantine/directory
+QUARANTINE_ENTRY_COUNT=0
+
+# D1 data check: users created before this UTC cutoff are the accounts copied
+# from production. All of them must stay deactivated with no usable password
+# hash, and there must be exactly EXPECTED_COPIED_USERS of them. The total
+# active count is reported for information only.
+COPIED_USERS_CREATED_BEFORE_UTC=2000-01-01T00:00:00Z
+EXPECTED_COPIED_USERS=0
+
+# Root-owned helper scripts (staging_config_check.py, staging_database.py),
+# the verified artifact copies, the cumulative offline wheelhouse and the
+# deploy records.
+HELPER_DIR=/usr/local/lib/jaspen-staging
+ARTIFACT_ROOT=/var/lib/jaspen-staging/artifacts
+WHEELHOUSE_DIR=/var/lib/jaspen-staging/wheelhouse
+LOG_DIR=/var/log/jaspen-staging
+
+# Socket health check after restart.
+HEALTH_RETRIES=10
+HEALTH_DELAY_SECONDS=3
