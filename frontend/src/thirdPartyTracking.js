@@ -21,6 +21,15 @@ export function trackingPolicy(pathname) {
   return { analytics: isPublic, ads: isArticle };
 }
 
+// Staging never loads analytics or ads on any route. Keep this pattern identical
+// to the staging host rule in vercel.json (securityPolicy.test.js enforces it);
+// the staging Content-Security-Policy also blocks these scripts there.
+export const STAGING_HOST_PATTERN = /^(staging\.jaspen\.ai|jaspen-git-staging-[a-z0-9-]+\.vercel\.app)$/;
+
+export function isStagingHost(hostname) {
+  return STAGING_HOST_PATTERN.test(String(hostname || '').toLowerCase());
+}
+
 function hasScript(doc, fragment) {
   return Boolean(doc.querySelector(`script[src*="${fragment}"]`));
 }
@@ -36,6 +45,7 @@ function addScript(doc, src, attrs = {}) {
 export function applyTrackingPolicy(pathname, { win = window, doc = document } = {}) {
   // The build's pre-render step must never bake trackers into static pages.
   if (win.__JASPEN_PRERENDER__) return 'skipped';
+  if (isStagingHost(win.location && win.location.hostname)) return 'staging';
   const policy = trackingPolicy(pathname);
   const analyticsLoaded = hasScript(doc, 'googletagmanager.com/gtag/js');
   const adsLoaded = hasScript(doc, 'pagead2.googlesyndication.com');

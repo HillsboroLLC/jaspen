@@ -1,4 +1,6 @@
-import { ADSENSE_CLIENT, GA_MEASUREMENT_ID, applyTrackingPolicy, trackingPolicy } from './thirdPartyTracking';
+import {
+  ADSENSE_CLIENT, GA_MEASUREMENT_ID, STAGING_HOST_PATTERN, applyTrackingPolicy, isStagingHost, trackingPolicy,
+} from './thirdPartyTracking';
 
 function fakeEnv() {
   document.head.innerHTML = '';
@@ -72,4 +74,39 @@ test('index.html no longer loads trackers on every route', () => {
   expect(html).not.toMatch(/<script[^>]+googletagmanager/);
   expect(html).not.toMatch(/<script[^>]+adsbygoogle/);
   expect(html).not.toMatch(/gtag\('config'/);
+});
+
+describe('staging loads no analytics or ads', () => {
+  const stagingWin = (hostname) => ({ location: { hostname, reload: jest.fn() } });
+
+  test.each([
+    'staging.jaspen.ai',
+    'jaspen-git-staging-bailey-builds-projects.vercel.app',
+  ])('%s: a public article page loads nothing', (hostname) => {
+    document.head.innerHTML = '';
+    const win = stagingWin(hostname);
+    expect(applyTrackingPolicy('/articles/example', { win, doc: document })).toBe('staging');
+    expect(scripts()).toEqual([]);
+    expect(win.gtag).toBeUndefined();
+    expect(win.dataLayer).toBeUndefined();
+  });
+
+  test.each([
+    'jaspen.ai',
+    'www.jaspen.ai',
+    'jaspen-git-develop-bailey-builds-projects.vercel.app',
+    'staging.jaspen.ai.evil.example',
+    'xstaging.jaspen.ai',
+  ])('%s keeps the production behavior', (hostname) => {
+    expect(isStagingHost(hostname)).toBe(false);
+    document.head.innerHTML = '';
+    applyTrackingPolicy('/articles/example', { win: stagingWin(hostname), doc: document });
+    expect(scripts()).toHaveLength(2);
+  });
+
+  test('matches the staging host rule in vercel.json', () => {
+    const vercelConfig = require('../vercel.json');
+    const stagingRule = vercelConfig.headers.find((rule) => rule.has);
+    expect(STAGING_HOST_PATTERN.source).toBe(stagingRule.has[0].value);
+  });
 });

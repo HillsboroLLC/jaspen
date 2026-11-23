@@ -92,9 +92,30 @@ describe('staging browser security policy', () => {
     expect(stagingHeader.value).not.toContain('https://api.jaspen.ai');
   });
 
-  test('staging differs from production only in the API origin', () => {
-    expect(stagingHeader.value.replace('https://api-staging.jaspen.ai', 'https://api.jaspen.ai'))
-      .toBe(header.value);
+  test('staging loads no analytics, ads or Stripe.js, and frames nothing', () => {
+    expect(directive(stagingHeader.value, 'script-src')).toBe("script-src 'self'");
+    expect(directive(stagingHeader.value, 'frame-src')).toBe("frame-src 'none'");
+    expect(directive(stagingHeader.value, 'connect-src'))
+      .toBe("connect-src 'self' https://api-staging.jaspen.ai https://*.ingest.sentry.io");
+    [
+      'stripe.com', 'googletagmanager', 'googlesyndication', 'adservice', 'adtrafficquality',
+      'doubleclick', 'google-analytics', 'analytics.google', 'www.google.com', '*.google.com',
+    ].forEach((origin) => expect(stagingHeader.value).not.toContain(origin));
+  });
+
+  test('staging keeps every other production directive unchanged', () => {
+    const names = (value) => value.split(';').map((part) => part.trim().split(/\s+/)[0]).filter(Boolean);
+    expect(names(stagingHeader.value)).toEqual(names(header.value));
+    ['default-src', 'style-src', 'font-src', 'img-src', 'object-src', 'base-uri', 'frame-ancestors']
+      .forEach((name) => expect(directive(stagingHeader.value, name)).toBe(directive(header.value, name)));
+  });
+
+  test('every staging source is also allowed in production, except the staging API', () => {
+    const sources = (value) => new Set(value.split(';').flatMap((part) => part.trim().split(/\s+/).slice(1)));
+    const production = sources(header.value);
+    [...sources(stagingHeader.value)]
+      .filter((source) => source !== "'none'" && source !== 'https://api-staging.jaspen.ai')
+      .forEach((source) => expect(production.has(source)).toBe(true));
   });
 
   test('every other security header still applies on every host', () => {
