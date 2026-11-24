@@ -1521,10 +1521,20 @@ def _clock(engine):
         return _utc(connection.execute(sa.text("SELECT clock_timestamp()")).scalar_one())
 
 
+# Each R2 test's deadline is ``_clock() + R2_WINDOW_SECONDS + extra`` read
+# right after the account is seeded. The window only has to outlast the test's
+# own setup (creating the grant or offer, committing, opening the redeeming
+# transaction) so the "before the deadline" step really happens before it; a
+# 1-second window failed on a slow shared CI runner (Nov 24, 2026). Every
+# assertion about which side of the deadline each step is on is unchanged.
+R2_WINDOW_SECONDS = 5
+
+
 def _wait_past(engine, deadline):
     """Wait until the database clock has passed ``deadline`` (bounded)."""
     import time
-    for _ in range(200):
+    give_up = time.monotonic() + R2_WINDOW_SECONDS + 15
+    while time.monotonic() < give_up:
         if _clock(engine) > deadline:
             return
         time.sleep(0.05)
@@ -1534,7 +1544,7 @@ def _wait_past(engine, deadline):
 def _r2_setup(engine, *, grant_seconds=None, retire_seconds=None):
     with Session(engine, expire_on_commit=False) as session:
         ns = seed_account(session)
-        deadline = _clock(engine) + timedelta(seconds=grant_seconds or retire_seconds)
+        deadline = _clock(engine) + timedelta(seconds=R2_WINDOW_SECONDS + (grant_seconds or retire_seconds))
         if grant_seconds is not None:
             member = staff(session, COMP_PERMISSION, starts_at=ANCHOR, ends_at=deadline)
             definition_id = offer_definition(session, origin="comp", capabilities={}, per_account=10)
