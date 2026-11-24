@@ -858,6 +858,8 @@ def test_smoke_passes_and_flags_removal_when_r3_is_no_longer_observed(tmp_path):
         ("no max-age", {"status": 204, "headers": R3_HEADERS[:4]}, None, {}, "changed header signature"),
         ("actual grants", None, {"status": 401, "headers": ["access-control-allow-origin: {origin}"]}, {}, "actual response grants Access-Control-Allow-Origin"),
         ("actual not 401", None, {"status": 200, "headers": []}, {}, "returned 200, expected 401"),
+        ("echo only", {"status": 204, "headers": R3_HEADERS[:1]}, None, {}, "changed header signature"),
+        ("redirected preflight", {"status": 301, "headers": R3_HEADERS}, None, {}, "status 301, expected 204 or 200"),
     ],
 )
 def test_smoke_fails_closed_on_production_cors_changes(tmp_path, case, preflight, actual, env, expected):
@@ -865,6 +867,8 @@ def test_smoke_fails_closed_on_production_cors_changes(tmp_path, case, preflight
     assert code == 1, (case, output)
     assert expected in output, (case, output)
     assert "STAGING SMOKE FAILED" in output
+    # The second origin is always checked and reported (no silent abort).
+    assert "G7 production" in output and "https://unrelated-origin.example" in output.split("G7", 1)[1], (case, output)
 
 
 def test_smoke_reflection_is_not_excused_when_the_actual_check_fails(tmp_path):

@@ -148,7 +148,7 @@ status_line_code() {
 }
 
 preflight_signature() {
-  printf '%s\n' "$1" | grep -i '^access-control-' | grep -iv '^access-control-allow-origin:' \
+  printf '%s\n' "$1" | { grep -i '^access-control-' || true; } | { grep -iv '^access-control-allow-origin:' || true; } \
     | awk '{i=index($0,":"); n=tolower(substr($0,1,i-1)); v=substr($0,i+1); sub(/^[ \t]+/,"",v); sub(/[ \t]+$/,"",v); print n": "v}' \
     | LC_ALL=C sort | sha256_stdin
 }
@@ -179,6 +179,7 @@ check_production_origin() {
     return 0
   fi
   allowed="$(allow_origin_values "${headers}")"
+  code="$(status_line_code "${headers}")"
   if [[ -z "${allowed}" ]]; then
     pass "production preflight from ${origin} returns no allow-origin"
     if [[ "${R3_EXCEPTION}" == "1" ]]; then
@@ -188,7 +189,9 @@ check_production_origin() {
   fi
   count="$(printf '%s\n' "${allowed}" | grep -c .)"
   signature="$(preflight_signature "${headers}")"
-  if [[ "${count}" != "1" ]]; then
+  if [[ "${code}" != "204" && "${code}" != "200" ]]; then
+    failed "production preflight from ${origin} granted an origin with status ${code:-no status}, expected 204 or 200"
+  elif [[ "${count}" != "1" ]]; then
     failed "production preflight from ${origin} returned ${count} Access-Control-Allow-Origin values"
   elif [[ "${allowed}" != "${origin}" ]]; then
     failed "production preflight from ${origin} granted a different origin (${allowed})"
