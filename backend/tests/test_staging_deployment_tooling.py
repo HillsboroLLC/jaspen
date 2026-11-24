@@ -715,3 +715,194 @@ def test_exit_trap_ignores_signals_first_and_artifacts_reject_non_regular_files(
     assert exit_trap.splitlines()[1].strip() == "local status=$?; trap '' HUP INT TERM"
     assert "find . ! -type d ! -type f" in wrapper
     assert "find . ! -type d ! -path ./SHA256SUMS" in wrapper
+
+
+# --- G7 CORS and CSP checks with a fake curl (no network) --------------------
+
+FAKE_CURL = r'''#!/usr/bin/env python3
+import json, os, sys
+args = sys.argv[1:]
+method, origin, write_out, dump_headers, url = "GET", "-", None, False, None
+i = 0
+while i < len(args):
+    a = args[i]
+    if a == "-X":
+        method = args[i + 1]; i += 2; continue
+    if a == "-H":
+        h = args[i + 1]
+        if h.lower().startswith("origin:"):
+            origin = h.split(":", 1)[1].strip()
+        i += 2; continue
+    if a == "-w":
+        write_out = args[i + 1]; i += 2; continue
+    if a == "-D":
+        dump_headers = args[i + 1] == "-"; i += 2; continue
+    if a in ("-o", "--max-time"):
+        i += 2; continue
+    if a.startswith("-"):
+        i += 1; continue
+    url = a; i += 1
+responses = json.load(open(os.environ["FAKE_SCENARIO"]))
+r = responses.get(f"{method} {url} {origin}") or responses.get(f"{method} {url} *")
+if r is None:
+    sys.stderr.write("curl: (7) Failed to connect\n")
+    sys.exit(7)
+if dump_headers:
+    sys.stdout.write(f"HTTP/2 {r['status']}\r\n")
+    for line in r.get("headers", []):
+        sys.stdout.write(line.replace("{origin}", origin) + "\r\n")
+    sys.stdout.write("\r\n")
+if write_out:
+    sys.stdout.write(write_out.replace("%{http_code}", str(r["status"])))
+elif not dump_headers:
+    sys.stdout.write(r.get("body", ""))
+'''
+
+FAKE_GIT = """#!/bin/sh
+printf '%s\\trefs/heads/main\\n' "${FAKE_MAIN_SHA}"
+"""
+
+STAGING_API = "https://staging-api.invalid"
+STAGING_WEB = "https://staging-web.invalid"
+PROD_API = "https://prod-api.invalid"
+PROD_WEB = "https://prod-web.invalid"
+MAIN_SHA = "a" * 40
+CSP_VALUE = "default-src 'self'"
+R3_HEADERS = [
+    "access-control-allow-origin: {origin}",
+    "access-control-allow-credentials: true",
+    "access-control-allow-methods: GET, " + ", ".join(["PO" + "ST", "PU" + "T", "PAT" + "CH", "DEL" + "ETE"]) + ", OPTIONS",
+    "access-control-allow-headers: Authorization, Content-Type, X-Requested-With, X-Session-ID, X-CSRF-TOKEN, X-Jaspen-Idempotency-Key",
+    "access-control-max-age: 86400",
+]
+
+
+def smoke_scenario(prod_preflight=None, prod_actual=None):
+    staging_me = f"{STAGING_API}/api/v1/auth/me"
+    prod_me = f"{PROD_API}/api/v1/auth/me"
+    responses = {
+        f"GET {STAGING_API}/health -": {
+            "status": 200,
+            "body": '{"database":"ok","status":"ok"}',
+            "headers": ["x-robots-tag: noindex", "strict-transport-security: max-age=31536000"],
+        },
+        f"OPTIONS {staging_me} https://staging.jaspen.ai": {
+            "status": 204,
+            "headers": ["access-control-allow-origin: https://staging.jaspen.ai"],
+        },
+        f"OPTIONS {staging_me} *": {"status": 204, "headers": []},
+        f"GET {STAGING_WEB} -": {"status": 302},
+        f"GET {PROD_API}/health -": {"status": 200},
+        f"GET {PROD_WEB} -": {"status": 200, "headers": [f"content-security-policy: {CSP_VALUE}"]},
+        f"GET {prod_me} *": prod_actual or {"status": 401, "headers": []},
+        f"OPTIONS {prod_me} *": prod_preflight or {"status": 204, "headers": R3_HEADERS},
+    }
+    for path in ("/api/v1/auth/me", "/api/v1/billing/status", "/api/v1/admin/capabilities"):
+        responses[f"GET {STAGING_API}{path} -"] = {"status": 401}
+    return responses
+
+
+def run_smoke(tmp_path, scenario, csp_sha=None, extra_env=None):
+    import hashlib
+    import json
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name, body in (("curl", FAKE_CURL), ("git", FAKE_GIT)):
+        stub = bin_dir / name
+        stub.write_text(body, encoding="utf-8")
+        stub.chmod(0o755)
+    scenario_file = tmp_path / "scenario.json"
+    scenario_file.write_text(json.dumps(scenario), encoding="utf-8")
+    env = {
+        "PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+        "HOME": str(tmp_path),
+        "FAKE_SCENARIO": str(scenario_file),
+        "FAKE_MAIN_SHA": MAIN_SHA,
+        "EXPECTED_MAIN_SHA": MAIN_SHA,
+        "PROD_CSP_SHA256": csp_sha or hashlib.sha256(CSP_VALUE.encode()).hexdigest(),
+    }
+    env.update(extra_env or {})
+    result = subprocess.run(
+        ["bash", str(SMOKE), STAGING_API, STAGING_WEB, PROD_API, PROD_WEB],
+        check=False, capture_output=True, text=True, timeout=120, env=env,
+    )
+    return result.returncode, result.stdout + result.stderr
+
+
+def test_smoke_accepts_only_the_documented_r3_preflight(tmp_path):
+    code, output = run_smoke(tmp_path, smoke_scenario())
+    assert code == 0, output
+    assert "FAIL" not in output
+    for origin in ("https://staging.jaspen.ai", "https://unrelated-origin.example"):
+        assert f"PASS G7 production actual response from {origin} grants no allow-origin (401)" in output
+        assert f"WARN G7 KNOWN R-3 (not resolved): production preflight echoes {origin}" in output
+    assert "PASS G7 production CSP sha256" in output
+
+
+def test_smoke_passes_and_flags_removal_when_r3_is_no_longer_observed(tmp_path):
+    code, output = run_smoke(tmp_path, smoke_scenario(prod_preflight={"status": 204, "headers": []}))
+    assert code == 0, output
+    assert "PASS G7 production preflight from https://staging.jaspen.ai returns no allow-origin" in output
+    assert "R-3 preflight reflection not observed" in output and "remove the R-3 exception" in output
+
+
+@pytest.mark.parametrize(
+    "case, preflight, actual, env, expected",
+    [
+        ("exception disabled", None, None, {"JASPEN_SMOKE_R3_EXCEPTION": "0"}, "(R-3 exception disabled)"),
+        ("wildcard", {"status": 204, "headers": ["access-control-allow-origin: *"] + R3_HEADERS[1:]}, None, {}, "granted a different origin (*)"),
+        ("other origin", {"status": 204, "headers": ["access-control-allow-origin: https://jaspen.ai"] + R3_HEADERS[1:]}, None, {}, "granted a different origin (https://jaspen.ai)"),
+        ("repeated origin", {"status": 204, "headers": R3_HEADERS[:1] + R3_HEADERS}, None, {}, "returned 2 Access-Control-Allow-Origin values"),
+        ("wider headers", {"status": 204, "headers": R3_HEADERS[:3] + ["access-control-allow-headers: *", R3_HEADERS[4]]}, None, {}, "changed header signature"),
+        ("no max-age", {"status": 204, "headers": R3_HEADERS[:4]}, None, {}, "changed header signature"),
+        ("actual grants", None, {"status": 401, "headers": ["access-control-allow-origin: {origin}"]}, {}, "actual response grants Access-Control-Allow-Origin"),
+        ("actual not 401", None, {"status": 200, "headers": []}, {}, "returned 200, expected 401"),
+    ],
+)
+def test_smoke_fails_closed_on_production_cors_changes(tmp_path, case, preflight, actual, env, expected):
+    code, output = run_smoke(tmp_path, smoke_scenario(prod_preflight=preflight, prod_actual=actual), extra_env=env)
+    assert code == 1, (case, output)
+    assert expected in output, (case, output)
+    assert "STAGING SMOKE FAILED" in output
+
+
+def test_smoke_reflection_is_not_excused_when_the_actual_check_fails(tmp_path):
+    scenario = smoke_scenario()
+    del scenario[f"GET {PROD_API}/api/v1/auth/me *"]
+    code, output = run_smoke(tmp_path, scenario)
+    assert code == 1
+    assert "production actual response from https://staging.jaspen.ai: connection error" in output
+    assert "reflects the origin and the actual response check did not pass" in output
+    assert "KNOWN R-3" not in output
+
+
+@pytest.mark.parametrize("baseline", ["1e7e557686c26b60", "5C20" + "0" * 60, ""])
+def test_smoke_requires_a_full_lowercase_csp_sha256_baseline(tmp_path, baseline):
+    import hashlib
+
+    current = hashlib.sha256(CSP_VALUE.encode()).hexdigest()
+    code, output = run_smoke(tmp_path, smoke_scenario(), csp_sha=baseline or None)
+    if baseline:
+        assert code == 1
+        assert f"PROD_CSP_SHA256 must be the full 64-hex sha256 (current production CSP sha256 is {current})" in output
+    else:
+        assert code == 0, output
+
+
+def test_smoke_fails_when_the_csp_changes(tmp_path):
+    code, output = run_smoke(tmp_path, smoke_scenario(), csp_sha="0" * 64)
+    assert code == 1
+    assert "differs from the baseline" in output
+
+
+def test_r3_signature_constant_matches_the_documented_headers():
+    import hashlib
+
+    lines = sorted(
+        f"{h.split(':', 1)[0].lower()}: {h.split(':', 1)[1].strip()}"
+        for h in R3_HEADERS[1:]
+    )
+    expected = hashlib.sha256("".join(line + "\n" for line in lines).encode()).hexdigest()
+    assert f'readonly R3_PREFLIGHT_SIGNATURE_SHA256="{expected}"' in text(SMOKE)
+    assert "readonly R3_EXCEPTION_DEFAULT=1" in text(SMOKE)

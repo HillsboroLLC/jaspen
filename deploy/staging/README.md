@@ -68,8 +68,9 @@ On the server, as root:
    `jaspen-staging-deploy --log <unit>`.
 5. Run `deploy/staging/staging-smoke.sh` with the recorded production CSP
    sha256 and the expected production `main` sha as the fifth and sixth
-   arguments. Every line must be PASS (a WARN is allowed for the optional
-   `X-Jaspen-Environment` header).
+   arguments. Every line must be PASS. WARN is allowed only for the optional
+   `X-Jaspen-Environment` header and for known exception R-3 (below); an
+   "R-3 ... not observed" WARN means remediation may be done, so report it.
 6. Move the `staging` branch to the deployed sha (fast-forward) and report the
    deploy record from `jaspen-staging-deploy --status`.
 
@@ -87,7 +88,29 @@ any gate runs.
 | G4 | `--deploy` | Pending migrations refused before checkout unless `--allow-migrations`; pre-migration UTC timestamp written to the deploy record immediately before migrating; the migration always runs to completion; D1 check again after. | Refusal leaves staging untouched; later failures roll back code. |
 | G5 | `--deploy` | Restart, socket `/health` with retries, journal Traceback/ERROR count in the record. Any failure, error or signal after checkout rolls the code back and writes a final record (`rolled_back_code`, `interrupted` or `rollback_failed`). | Automatic code rollback. |
 | G6 | `staging-smoke.sh` | Staging `/health`, CORS preflights, 401s, `noindex`, HSTS, staging web not public. | Report; Lydia decides on rollback. |
-| G7 | `staging-smoke.sh` | Production unchanged: `/health` 200, web 200, CSP sha256 equals the baseline, no allow-origin for the staging origin, GitHub `main` equals the expected sha. | Stop and report to Lydia at once. |
+| G7 | `staging-smoke.sh` | Production unchanged: `/health` 200, web 200, CSP sha256 equals the full 64-hex baseline, GitHub `main` equals the expected sha. For the staging origin and an unrelated origin: the actual `/api/v1/auth/me` response is 401 and grants no allow-origin, and the preflight grants none, except known exception R-3 (below). | Stop and report to Lydia at once. |
+
+## Production baselines for G7
+
+- `PROD_CSP_SHA256`: the full sha256 of production's `Content-Security-Policy`
+  header value. GET the production web URL, take the first CSP header, strip
+  CR, drop the header name, then `printf '%s' "$value" | sha256sum`.
+  `staging-smoke.sh` uses exactly this method and prints the current value on
+  every run. Record the baseline in the deploy plan, never in this repository.
+- `EXPECTED_MAIN_SHA`: the 40-hex commit GitHub `main` must still be at.
+
+## Known exception R-3 (temporary)
+
+R-3 is an open item in the engineering risk register: the production API's
+CORS preflight echoes the requesting origin. While it is open, G7 reports a
+preflight that echoes **exactly** the requesting origin, with the recorded
+header signature `R3_PREFLIGHT_SIGNATURE_SHA256`, as `WARN ... KNOWN R-3 (not
+resolved)`, and only when the actual response for that origin grants nothing.
+Everything else fails: a wildcard, a different or repeated origin, a changed
+header signature, a connection error, a granting actual response or an
+unexpected status. The exception does not mean R-3 is resolved. Once R-3 is
+remediated and confirmed, remove `R3_EXCEPTION_DEFAULT` and the exception
+branch, and their tests. Until then `JASPEN_SMOKE_R3_EXCEPTION=0` runs G7 strict.
 
 ## Rollback levels
 

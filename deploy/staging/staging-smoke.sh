@@ -6,10 +6,27 @@
 #
 # G6 checks staging; G7 checks that production is unchanged. Both baselines
 # are required (as arguments or environment variables):
-#   PROD_CSP_SHA256    sha256 of production's Content-Security-Policy header
-#                      value, recorded before the staging work;
+#   PROD_CSP_SHA256    full 64-hex sha256 of production's Content-Security-Policy
+#                      header value. Method (the same one this script uses):
+#                      GET PROD_WEB_URL, take the first Content-Security-Policy
+#                      header, strip CR, drop the "name:" and leading spaces,
+#                      then `printf '%s' "$value" | sha256sum` (no trailing
+#                      newline). The script prints the current value on every run;
 #   EXPECTED_MAIN_SHA  the 40-hex commit GitHub main (production) must still be
 #                      at, read with git ls-remote (read-only).
+#
+# G7 CORS checks, for the staging origin and an unrelated origin:
+#   - the actual production API response must grant no Access-Control-Allow-Origin
+#     and must be 401 without a session;
+#   - the production preflight must grant no Access-Control-Allow-Origin, except
+#     for known exception R-3 (tracked in the engineering risk register): a
+#     preflight that echoes exactly the requesting origin with the recorded
+#     header signature R3_PREFLIGHT_SIGNATURE_SHA256 is reported as WARN, and only
+#     while the actual response for that origin grants nothing. A wildcard, a
+#     different or repeated origin, a changed signature, a connection error or a
+#     granting actual response fails. R-3 is not resolved by this exception.
+#     Remove the exception (R3_EXCEPTION_DEFAULT and its check) once R-3 is
+#     remediated and confirmed; until then JASPEN_SMOKE_R3_EXCEPTION=0 runs strict.
 set -euo pipefail
 
 API_URL="${1:-https://api-staging.jaspen.ai}"
@@ -22,6 +39,13 @@ REPO_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 readonly STAGING_ORIGIN="https://staging.jaspen.ai"
 readonly PRODUCTION_ORIGIN="https://jaspen.ai"
 readonly UNRELATED_ORIGIN="https://unrelated-origin.example"
+# Known exception R-3 (temporary; remove after remediation, see the header).
+readonly R3_EXCEPTION_DEFAULT=1
+R3_EXCEPTION="${JASPEN_SMOKE_R3_EXCEPTION:-${R3_EXCEPTION_DEFAULT}}"
+# sha256 of the production preflight's access-control-* headers other than
+# allow-origin (names lowercased, values trimmed, "name: value" lines sorted,
+# each line newline-terminated), recorded Nov 24, 2026.
+readonly R3_PREFLIGHT_SIGNATURE_SHA256="74732d0255561877d40acf091e540e655c9e67f18348c11ac5f93f41312c64ad"
 
 FAILURES=0
 GATE="G6"
@@ -81,11 +105,101 @@ header_value() {
   printf '%s\n' "$1" | grep -i "^$2:" | head -n 1 | sed 's/^[^:]*:[[:space:]]*//' || true
 }
 
-sha256_text() {
+sha256_stdin() {
   if command -v sha256sum >/dev/null 2>&1; then
-    printf '%s' "$1" | sha256sum | awk '{print $1}'
+    sha256sum | awk '{print $1}'
   else
-    printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
+    shasum -a 256 | awk '{print $1}'
+  fi
+}
+
+sha256_text() {
+  printf '%s' "$1" | sha256_stdin
+}
+
+# Raw (CR-stripped) response headers of a preflight from $2 to $1, or
+# "connection error".
+preflight_headers() {
+  local headers
+  headers="$(http_get -o /dev/null -D - -X OPTIONS \
+    -H "Origin: $2" \
+    -H "Access-Control-Request-Method: GET" \
+    -H "Access-Control-Request-Headers: content-type,x-csrf-token" \
+    "$1" 2>/dev/null)" || { echo "connection error"; return 0; }
+  [[ -n "${headers}" ]] || { echo "connection error"; return 0; }
+  printf '%s\n' "${headers}" | tr -d '\r'
+}
+
+# Raw (CR-stripped) response headers of an actual GET from origin $2 to $1, or
+# "connection error".
+actual_headers() {
+  local headers
+  headers="$(http_get -o /dev/null -D - -H "Origin: $2" "$1" 2>/dev/null)" || { echo "connection error"; return 0; }
+  [[ -n "${headers}" ]] || { echo "connection error"; return 0; }
+  printf '%s\n' "${headers}" | tr -d '\r'
+}
+
+allow_origin_values() {
+  printf '%s\n' "$1" | grep -i '^access-control-allow-origin:' | sed 's/^[^:]*:[[:space:]]*//; s/[[:space:]]*$//' || true
+}
+
+status_line_code() {
+  printf '%s\n' "$1" | awk 'toupper($1) ~ /^HTTP\// {code=$2} END {print code}'
+}
+
+preflight_signature() {
+  printf '%s\n' "$1" | grep -i '^access-control-' | grep -iv '^access-control-allow-origin:' \
+    | awk '{i=index($0,":"); n=tolower(substr($0,1,i-1)); v=substr($0,i+1); sub(/^[ \t]+/,"",v); sub(/[ \t]+$/,"",v); print n": "v}' \
+    | LC_ALL=C sort | sha256_stdin
+}
+
+# G7: production must grant the given origin nothing on actual responses, and
+# nothing on preflights except the documented R-3 behaviour.
+check_production_origin() {
+  local origin="$1" url="${PROD_API_URL}/api/v1/auth/me" headers code allowed count actual_ok=0 signature
+  headers="$(actual_headers "${url}" "${origin}")"
+  if [[ "${headers}" == "connection error" ]]; then
+    failed "production actual response from ${origin}: connection error"
+  else
+    code="$(status_line_code "${headers}")"
+    allowed="$(allow_origin_values "${headers}")"
+    if [[ -n "${allowed}" ]]; then
+      failed "production actual response grants Access-Control-Allow-Origin to ${origin}"
+    elif [[ "${code}" != "401" ]]; then
+      failed "production actual /api/v1/auth/me from ${origin} returned ${code:-no status}, expected 401"
+    else
+      pass "production actual response from ${origin} grants no allow-origin (401)"
+      actual_ok=1
+    fi
+  fi
+
+  headers="$(preflight_headers "${url}" "${origin}")"
+  if [[ "${headers}" == "connection error" ]]; then
+    failed "production preflight from ${origin}: connection error"
+    return 0
+  fi
+  allowed="$(allow_origin_values "${headers}")"
+  if [[ -z "${allowed}" ]]; then
+    pass "production preflight from ${origin} returns no allow-origin"
+    if [[ "${R3_EXCEPTION}" == "1" ]]; then
+      warn "R-3 preflight reflection not observed for ${origin}; after confirming remediation, remove the R-3 exception"
+    fi
+    return 0
+  fi
+  count="$(printf '%s\n' "${allowed}" | grep -c .)"
+  signature="$(preflight_signature "${headers}")"
+  if [[ "${count}" != "1" ]]; then
+    failed "production preflight from ${origin} returned ${count} Access-Control-Allow-Origin values"
+  elif [[ "${allowed}" != "${origin}" ]]; then
+    failed "production preflight from ${origin} granted a different origin (${allowed})"
+  elif [[ "${R3_EXCEPTION}" != "1" ]]; then
+    failed "production preflight from ${origin} returned an Access-Control-Allow-Origin (R-3 exception disabled)"
+  elif [[ "${signature}" != "${R3_PREFLIGHT_SIGNATURE_SHA256}" ]]; then
+    failed "production preflight from ${origin} reflects the origin with a changed header signature ${signature}"
+  elif (( actual_ok != 1 )); then
+    failed "production preflight from ${origin} reflects the origin and the actual response check did not pass"
+  else
+    warn "KNOWN R-3 (not resolved): production preflight echoes ${origin} with the recorded signature; actual responses grant nothing"
   fi
 }
 
@@ -175,13 +289,17 @@ if [[ -z "${prod_csp}" ]]; then
   failed "production CSP header missing (or connection error)"
 elif [[ -z "${PROD_CSP_SHA256}" ]]; then
   failed "PROD_CSP_SHA256 baseline is required (current production CSP sha256 is ${prod_csp_sha})"
-elif [[ -n "${prod_csp}" && "${prod_csp_sha}" == "${PROD_CSP_SHA256}" ]]; then
-  pass "production CSP matches the baseline"
+elif [[ ! "${PROD_CSP_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+  failed "PROD_CSP_SHA256 must be the full 64-hex sha256 (current production CSP sha256 is ${prod_csp_sha})"
+elif [[ "${prod_csp_sha}" == "${PROD_CSP_SHA256}" ]]; then
+  pass "production CSP sha256 ${prod_csp_sha} matches the baseline"
 else
   failed "production CSP sha256 ${prod_csp_sha} differs from the baseline"
 fi
 
-expect_no_allow_origin "${PROD_API_URL}/api/v1/auth/me" "${STAGING_ORIGIN}" "production"
+for origin in "${STAGING_ORIGIN}" "${UNRELATED_ORIGIN}"; do
+  check_production_origin "${origin}"
+done
 
 if (( FAILURES > 0 )); then
   echo "STAGING SMOKE FAILED: ${FAILURES} check(s) failed" >&2
