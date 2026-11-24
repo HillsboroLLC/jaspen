@@ -2906,6 +2906,7 @@ from .models_billing_phase12 import (  # noqa: E402,F401
 from .models_billing_phase14 import (  # noqa: E402,F401
     BillingMigrationAccountResult,
     BillingMigrationOpening,
+    BillingMigrationOperationDecision,
     BillingMigrationReview,
     BillingMigrationRun,
 )

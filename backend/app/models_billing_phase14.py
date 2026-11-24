@@ -502,3 +502,91 @@ class BillingMigrationPlanMapping(db.Model):
         ),
         db.Index("ix_billing_migration_plan_mappings_account", "billing_account_id", "created_at"),
     )
+
+
+# ---------------------------------------------------------------------------
+# BI-1 (D-1): recorded decisions for legacy operations that never closed
+# ---------------------------------------------------------------------------
+
+OPERATION_DECISION_RULE_VERSION = "jaspen.billing.migration.operation_decision.v1"
+# Only these Phase 14 classes can take a decision. Anything still in flight,
+# unrecognized, or proven already charged never does.
+OPERATION_DECISION_CLASSES = ("stale_turn_evidence", "outstanding_reservation")
+# ``no_compensation_owed`` lets the backfill proceed; ``compensation_owed``
+# records what is owed and keeps the account quarantined until a separately
+# approved compensation path pays it (no money moves from a decision).
+OPERATION_DISPOSITIONS = ("no_compensation_owed", "compensation_owed")
+
+
+class BillingMigrationOperationDecision(db.Model):
+    """One reviewer's decision about one legacy AI operation that never closed (BI-1, D-1).
+
+    Append-only evidence. It binds the fingerprint of the operation row the
+    reviewer saw, so the decision stops applying if that row changes. One
+    decision per operation evidence; a second, conflicting one is refused.
+    """
+
+    __tablename__ = "billing_migration_operation_decisions"
+
+    id = _id()
+    decision_key = db.Column(db.String(255), nullable=False)
+    ai_operation_id = _ref("fk_billing_migration_operation_decisions_operation", "ai_operations")
+    # Copied from the operation row at decision time (the database guard checks they match).
+    subject_user_id = _ref("fk_billing_migration_operation_decisions_subject", "users", nullable=True)
+    operation_organization_id = _ref("fk_billing_migration_operation_decisions_organization", "organizations",
+                                     nullable=True)
+    operation_class = db.Column(db.String(40), nullable=False)
+    disposition = db.Column(db.String(40), nullable=False)
+    # Legacy internal units owed; only for ``compensation_owed``.
+    amount = db.Column(db.BigInteger, nullable=True)
+    beneficiary_billing_account_id = _ref("fk_billing_migration_operation_decisions_beneficiary", "billing_accounts",
+                                          nullable=True)
+    evidence_json = db.Column(db.JSON, nullable=False)
+    evidence_fingerprint = db.Column(db.String(64), nullable=False)
+    evidence_reference = db.Column(db.String(255), nullable=False)
+    reason = db.Column(db.Text, nullable=False)
+    rule_version = db.Column(db.String(64), nullable=False)
+    reviewer_user_id = _ref("fk_billing_migration_operation_decisions_reviewer", "users")
+    staff_permission_grant_id = _ref("fk_billing_migration_operation_decisions_grant",
+                                     "billing_staff_permission_grants")
+    decided_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    request_fingerprint = db.Column(db.String(64), nullable=False)
+    idempotency_registry_id = _ref("fk_billing_migration_operation_decisions_registry", "idempotency_registry")
+    # A correction: the earlier decision for the same operation evidence that this one replaces. Nothing is
+    # edited; the current decision is the end of the chain.
+    supersedes_decision_id = _ref("fk_billing_migration_operation_decisions_supersedes",
+                                  "billing_migration_operation_decisions", nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_now, server_default=db.func.now())
+
+    __table_args__ = (
+        db.UniqueConstraint("decision_key", name="uq_billing_migration_operation_decisions_key"),
+        db.UniqueConstraint("idempotency_registry_id", name="uq_billing_migration_operation_decisions_registry"),
+        # Each decision is corrected at most once, so a correction chain never forks.
+        db.UniqueConstraint("supersedes_decision_id", name="uq_billing_migration_operation_decisions_supersedes"),
+        # One original decision per operation evidence; every later one must supersede.
+        db.Index("uq_billing_migration_operation_decisions_evidence", "ai_operation_id", "evidence_fingerprint",
+                 unique=True, postgresql_where=db.text("supersedes_decision_id IS NULL"),
+                 sqlite_where=db.text("supersedes_decision_id IS NULL")),
+        db.CheckConstraint(
+            "supersedes_decision_id IS NULL OR supersedes_decision_id <> id",
+            name="ck_billing_migration_operation_decisions_supersedes",
+        ),
+        db.CheckConstraint(
+            f"operation_class IN ({_quoted(OPERATION_DECISION_CLASSES)}) "
+            f"AND disposition IN ({_quoted(OPERATION_DISPOSITIONS)}) "
+            f"AND rule_version = '{OPERATION_DECISION_RULE_VERSION}'",
+            name="ck_billing_migration_operation_decisions_kind",
+        ),
+        db.CheckConstraint(
+            "(disposition = 'no_compensation_owed' AND amount IS NULL AND beneficiary_billing_account_id IS NULL) "
+            "OR (disposition = 'compensation_owed' AND amount IS NOT NULL AND amount > 0 "
+            "AND beneficiary_billing_account_id IS NOT NULL)",
+            name="ck_billing_migration_operation_decisions_amount",
+        ),
+        db.CheckConstraint(
+            "length(trim(reason)) > 0 AND length(trim(evidence_reference)) > 0 AND "
+            + _FINGERPRINT.format("evidence_fingerprint") + " AND " + _FINGERPRINT.format("request_fingerprint"),
+            name="ck_billing_migration_operation_decisions_provenance",
+        ),
+        db.Index("ix_billing_migration_operation_decisions_operation", "ai_operation_id", "created_at"),
+    )

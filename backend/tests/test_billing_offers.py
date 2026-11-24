@@ -735,7 +735,8 @@ def _predecessor(engine):
     phase14 = ("billing_migration_plan_mappings", "billing_migration_payment_archives",
                "billing_migration_openings", "billing_migration_reviews", "billing_migration_account_results",
                "billing_migration_payment_attributions", "billing_migration_payer_bindings",
-               "billing_migration_establishments", "billing_migration_runs")
+               "billing_migration_establishments", "billing_migration_runs",
+               "billing_migration_operation_decisions")  # BI-1 decisions refer to them too
     tables = [t for t in flask_db.metadata.sorted_tables if t.name not in PHASE10_TABLES + phase11 + phase14]
     flask_db.metadata.create_all(engine, tables=tables)
     # The models now carry the Phase 11 constraint texts; restore the Phase 10
@@ -780,7 +781,7 @@ def _gate_sql(connection):
 
 def test_revision_extends_phase9_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["f3a5c7e9b1d2"]  # Phase 17 guard extends Phase 14 without changing Phase 10.
+    assert script.get_heads() == ["c8a9989843b5"]  # BI-1 extends the Phase 17 guard, which extends Phase 14 without changing Phase 10.
     assert script.get_revision(REVISION).down_revision == PARENT
 
 
@@ -1052,7 +1053,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=10, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "b4d6f8a0c2e5", "c8e0a2b4d6f1", "d2f4a6c8e0b3", "f3a5c7e9b1d2"}:
+    if revision not in {REVISION, "b4d6f8a0c2e5", "c8e0a2b4d6f1", "d2f4a6c8e0b3", "f3a5c7e9b1d2", "c8a9989843b5"}:
         engine.dispose()
         pytest.fail(f"Phase 10 migrated tests require Alembic head {REVISION} or Phase 11; found {revision!r}")
     return engine

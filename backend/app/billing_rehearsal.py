@@ -56,10 +56,11 @@ from collections import Counter, defaultdict
 import hashlib
 import json
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 
 from . import db
 from .billing_entitlements import add_calendar_months
+from .ai_audit import TERMINAL_STATUSES as TERMINAL_OPERATION_STATUSES
 from .billing_migration import (
     ARCHIVE_NAMESPACE,
     ESTABLISHMENT_NAMESPACE,
@@ -67,6 +68,7 @@ from .billing_migration import (
     PLAN_MAPPING_NAMESPACE,
     RESULT_NAMESPACE,
     REVIEW_NAMESPACE,
+    OPERATION_DECISION_NAMESPACE,
     RUN_NAMESPACE,
     UNIT_BOUNDARY_AT,
     MigrationError,
@@ -75,6 +77,7 @@ from .billing_migration import (
     MigrationUnitError,
     archive_legacy_payments,
     backfill_billing_account,
+    blocking_legacy_operations,
     establish_billing_account,
     historical_value_population,
     map_legacy_plan,
@@ -118,6 +121,7 @@ PHASE14_TABLES = (
     "billing_migration_runs", "billing_migration_establishments", "billing_migration_payer_bindings",
     "billing_migration_payment_attributions", "billing_migration_account_results", "billing_migration_reviews",
     "billing_migration_openings", "billing_migration_payment_archives", "billing_migration_plan_mappings",
+    "billing_migration_operation_decisions",
 )
 # Target and downstream tables a rehearsal may write (Phase 3) or must never write (Phases 4, 5.2).
 CENSUS_TABLES = PHASE14_TABLES + (
@@ -125,7 +129,7 @@ CENSUS_TABLES = PHASE14_TABLES + (
     "financial_transactions", "billing_subscriptions", "entitlement_instances",
 )
 MIGRATION_NAMESPACES = (RUN_NAMESPACE, ESTABLISHMENT_NAMESPACE, RESULT_NAMESPACE, OPENING_NAMESPACE,
-                        REVIEW_NAMESPACE, ARCHIVE_NAMESPACE, PLAN_MAPPING_NAMESPACE)
+                        REVIEW_NAMESPACE, ARCHIVE_NAMESPACE, PLAN_MAPPING_NAMESPACE, OPERATION_DECISION_NAMESPACE)
 PURCHASED_LOT_SOURCES = ("credit_pack_purchase", "subscription_recurring")
 RETRY_ATTEMPTS = 3
 
@@ -151,7 +155,8 @@ CONFLICT_CATEGORIES = {
                 "payment_amount_conflict", "payment_not_archived", "archived_payment_changed",
                 "archived_payment_missing", "legacy_dispute_state_unknown", "classification_differs_from_archive",
                 "attested_payer_without_payments"},
-    "operation": {"legacy_operation_in_flight"},
+    "operation": {"legacy_operation_in_flight", "legacy_operation_unrecognized", "legacy_operation_decision_required",
+                  "legacy_operation_decision_evidence_changed", "legacy_operation_compensation_pending"},
 }
 
 
@@ -358,14 +363,22 @@ def rehearsal_preconditions(session, *, environment, runtime_role=None, writer_f
         pricing = pricing_unit_findings(session)
         _finding(findings, "pricing_in_internal_units", "fail" if pricing else "pass", "local", pricing or None)
         _finding(findings, "founder_test_credit_policy", "pass", "local", FOUNDER_TEST_POLICY)
-        in_flight = session.execute(select(AIOperation.id).where(AIOperation.status == "started")
-                                    .order_by(AIOperation.id)).scalars().all()
+        # BI-1: an unclosed operation blocks unless Phase 14 classifies it as already charged or a recorded
+        # decision clears it (``billing_migration.legacy_operation_status``); with no age limit configured,
+        # every unclosed operation blocks, as before.
+        unclosed = session.execute(
+            select(AIOperation).where(or_(AIOperation.status.is_(None),
+                                          AIOperation.status.notin_(sorted(TERMINAL_OPERATION_STATUSES))))
+            .order_by(AIOperation.id)).scalars().all()
+        blocking = blocking_legacy_operations(session, unclosed, _database_clock(session))
+        in_flight = [b["operation_id"] for b in blocking]
+        detail = {"started_operations": in_flight,
+                  "blocking_by_code": dict(sorted(Counter(b["code"] for b in blocking).items()))}
         if restore:
-            _finding(findings, "no_in_flight_ai_operations", "fail" if in_flight else "pass", "restore_copy",
-                     {"started_operations": in_flight})
+            _finding(findings, "no_in_flight_ai_operations", "fail" if in_flight else "pass", "restore_copy", detail)
         else:
-            # Fixture runs: affected accounts quarantine (legacy_operation_in_flight); nothing is inferred.
-            _finding(findings, "no_in_flight_ai_operations", "reported", "local", {"started_operations": in_flight})
+            # Fixture runs: affected accounts quarantine (legacy_operation_*); nothing is inferred.
+            _finding(findings, "no_in_flight_ai_operations", "reported", "local", detail)
         if restore:
             frozen = isinstance(writer_freeze_reference, str) and bool(writer_freeze_reference.strip())
             _finding(findings, "legacy_writers_frozen_before_snapshot", "pass" if frozen else "fail", "restore_copy",

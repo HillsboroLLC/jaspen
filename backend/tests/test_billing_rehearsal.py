@@ -33,6 +33,7 @@ from app.models_billing_phase14 import (
     BillingMigrationPlanMapping,
 )
 from tests.test_billing_migration import (
+    _only_the_operator_entry_point,
     FREE,
     PG,
     TEAM,
@@ -385,7 +386,7 @@ def test_phase15_rehearsal_has_no_live_callers():
                      # Phase 16 shadow comparison is inactive and read only.
                      if p.name not in ("billing_rehearsal.py", "billing_shadow.py") and "billing_rehearsal" in p.read_text())
     assert callers == []
-    assert [p for p in (BACKEND / "scripts").rglob("*.py") if "billing_rehearsal" in p.read_text()] == []
+    _only_the_operator_entry_point("billing_rehearsal")
 
 
 # ---------------------------------------------------------------------------
@@ -815,7 +816,7 @@ def test_postgres_restore_copy_needs_a_least_privilege_migration_role_and_a_read
             connection.execute(sa.text(f"CREATE ROLE {migration_role} NOLOGIN"))
             connection.execute(sa.text(f"CREATE ROLE {runtime_role} NOLOGIN"))
             connection.execute(sa.text(f"GRANT SELECT ON ALL TABLES IN SCHEMA public TO {migration_role}"))
-            connection.execute(sa.text(f"GRANT INSERT ON {', '.join(PHASE14_TABLES)} TO {migration_role}"))
+            connection.execute(sa.text(f"GRANT INSERT ON {', '.join(br.PHASE14_TABLES)} TO {migration_role}"))
             connection.execute(sa.text(f"GRANT {migration_role}, {runtime_role} TO current_user"))
         with migrated(engine) as session:
             superuser = br.rehearsal_preconditions(session, environment="restore_copy", runtime_role=runtime_role,

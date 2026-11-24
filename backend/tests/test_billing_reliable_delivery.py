@@ -69,9 +69,10 @@ def legacy_attempt(session, operation_id, *, duration_ms=10):
     return attempt
 
 
-def test_phase17_migration_extends_phase14_as_the_single_head():
+def test_phase17_migration_extends_phase14_and_bi1_is_the_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == [REVISION]
+    assert script.get_heads() == ["c8a9989843b5"]  # BI-1 extends this guard
+    assert script.get_revision("c8a9989843b5").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == "d2f4a6c8e0b3"
 
 

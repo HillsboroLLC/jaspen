@@ -1139,6 +1139,19 @@ def test_only_the_trusted_migration_actor_with_an_identified_operator_starts_a_r
         establish_billing_account(db.session, run_id="missing", organization_id="missing")
 
 
+# BI-1: the one approved operator entry point (staging evidence run). It refuses a production runtime before
+# any database access and writes nothing without --confirm-write; any other script naming the module fails.
+OPERATOR_ENTRY_POINT = "scripts/billing_migration_evidence.py"
+
+
+def _only_the_operator_entry_point(module_name):
+    found = sorted(str(p.relative_to(BACKEND)) for p in (BACKEND / "scripts").rglob("*.py")
+                   if module_name in p.read_text())
+    assert found == [OPERATOR_ENTRY_POINT]
+    source = (BACKEND / OPERATOR_ENTRY_POINT).read_text()
+    assert "if is_production_runtime():" in source and "--confirm-write" in source
+
+
 def test_phase14_backfill_has_no_live_callers():
     """Inactive: no route, job, webhook, startup, or runtime module names the backfill."""
     callers = sorted(
@@ -1149,8 +1162,7 @@ def test_phase14_backfill_has_no_live_callers():
         and ("billing_migration" in path.read_text() or "models_billing_phase14" in path.read_text())
     )
     assert callers == []
-    scripts = [p for p in (BACKEND / "scripts").rglob("*.py") if "billing_migration" in p.read_text()]
-    assert scripts == []
+    _only_the_operator_entry_point("billing_migration")
 
 
 # ---------------------------------------------------------------------------
@@ -1431,7 +1443,7 @@ def _ops(engine):
 def test_revision_extends_phase12_and_is_the_single_head():
     from alembic.script import ScriptDirectory
     script = ScriptDirectory(str(MIGRATIONS_DIR))
-    assert script.get_heads() == ["f3a5c7e9b1d2"]
+    assert script.get_heads() == ["c8a9989843b5"]  # BI-1 extends the Phase 17 guard, which extends Phase 14
     assert script.get_revision(REVISION).down_revision == PARENT
 
 
@@ -1626,7 +1638,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=8, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "f3a5c7e9b1d2"}:
+    if revision not in {REVISION, "f3a5c7e9b1d2", "c8a9989843b5"}:
         engine.dispose()
         pytest.fail(f"Phase 14 migrated tests require Alembic head {REVISION}; found {revision!r}")
     with migrated(engine) as session:

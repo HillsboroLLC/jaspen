@@ -109,6 +109,7 @@ from app.models_billing_phase14 import (
     BillingMigrationPayerBinding,
     BillingMigrationPaymentArchive,
     BillingMigrationPaymentAttribution,
+    BillingMigrationOperationDecision,
     BillingMigrationPlanMapping,
     BillingMigrationReview,
     BillingMigrationRun,
@@ -336,6 +337,7 @@ def db(app):
         from app.models_decision_record import DecisionRecord, DecisionSignal, OptionDecision
 
         for model in (
+            BillingMigrationOperationDecision,
             BillingMigrationPlanMapping,
             BillingMigrationPaymentArchive,
             BillingMigrationOpening,

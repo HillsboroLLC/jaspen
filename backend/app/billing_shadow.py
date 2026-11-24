@@ -76,10 +76,12 @@ from .billing_config import (
     subscription_in_good_standing,
 )
 from .billing_entitlements import add_calendar_months
+from .ai_audit import TERMINAL_STATUSES as TERMINAL_OPERATION_STATUSES
 from .billing_migration import (
     LIVE_SUBSCRIPTION_STATUSES,
     MigrationError,
     _database_clock,
+    blocking_legacy_operations,
     holder_fingerprint,
     plan_account_backfill,
     plan_payment_archive,
@@ -208,8 +210,12 @@ LEGACY_PAID_ROLES = frozenset(ORG_EDIT_ROLES)
 # Ledger movement types (L1); every CreditLedgerEntry.entry_type.
 ENTRY_TYPES = ("grant", "migration_opening", "reservation", "settlement", "release", "expiration",
                "refund_reversal", "dispute_hold", "dispute_reversal", "recovery", "admin_adjustment")
-# Default classification of a legacy ``started`` operation until P4.1's read-only classifier is integrated.
+# Label for an operation when a caller-supplied classifier cannot tell; the default label is now the
+# Phase 14 class (BI-1, ``billing_migration.classify_legacy_operation``).
 UNCLASSIFIED = "unclassified"
+# Labels meaning the operation's process is gone but its credits were never released: still evidence,
+# never authority to release anything.
+STALE_LABELS = frozenset({"stale", "stale_turn_evidence", "outstanding_reservation"})
 
 
 class ShadowError(MigrationError):
@@ -598,17 +604,29 @@ def operation_owner(session, op, cache):
 
 
 def _in_flight(session, ctx, related_user_ids, classifier, at, cache):
-    """``started`` operations this organization owns, or whose owner is unresolved for a related user."""
+    """Blocking unclosed operations this organization owns, or whose owner is unresolved for a related user.
+
+    BI-1: the same Phase 14 status as the backfill and the drain gate
+    (``billing_migration.legacy_operation_status``): an operation proven
+    already charged, or cleared by a recorded decision, is not in flight. The
+    label is the Phase 14 class unless a classifier is supplied.
+    """
     out = []
-    query = select(AIOperation).where(AIOperation.status == "started")
+    query = select(AIOperation).where(or_(AIOperation.status.is_(None),
+                                          AIOperation.status.notin_(sorted(TERMINAL_OPERATION_STATUSES))))
     filters = [AIOperation.billing_account_id == ctx["account_id"]]
     if related_user_ids:
         filters.append(AIOperation.user_id.in_(sorted(related_user_ids)))
-    for op in session.execute(query.where(or_(*filters)).order_by(AIOperation.id)).scalars():
+    unclosed = session.execute(query.where(or_(*filters)).order_by(AIOperation.id)).scalars().all()
+    blocking = {b["operation_id"]: b for b in blocking_legacy_operations(session, unclosed, at)}
+    for op in unclosed:
+        status = blocking.get(op.id)
+        if status is None:
+            continue  # not blocking under Phase 14: already charged, or cleared by a recorded decision
         owner, basis = operation_owner(session, op, cache)
         if owner is not None and owner != ctx["organization_id"]:
             continue  # owned by another organization by evidence: never this organization's record
-        label = classifier(session, op, at) if classifier else UNCLASSIFIED
+        label = classifier(session, op, at) if classifier else status["class"]
         out.append((op, label, owner is not None, basis))
     return out
 
@@ -1022,7 +1040,7 @@ def _reservations(session, ctx, in_flight, projection):
         rows.append(_row(
             "reservations_and_holds", "legacy_in_flight_operation", subject=op.id, ctx=ctx, operation_id=op.id,
             legacy=int(op.projected_credits or 0), authoritative=None, classification=UNRESOLVED,
-            special_case="stale_operation_not_released" if label == "stale" else "in_flight_operation",
+            special_case="stale_operation_not_released" if label in STALE_LABELS else "in_flight_operation",
             subsystem="ai_operations",
             legacy_evidence={"status": op.status, "classification": label, "created_at": _iso(op.created_at)},
             explanation="a stale classification is evidence, never authority to release credits; the meter debit "
@@ -1216,7 +1234,7 @@ def _scoped_payments(session, scope):
 
 
 def _scoped_started_operations(session, scope):
-    """FR-1: ``started`` operations owned by a target, or of a related user with an unresolved owner."""
+    """FR-1: blocking unclosed operations owned by a target, or of a related user with an unresolved owner."""
     filters = []
     if scope["account_ids"]:
         filters.append(AIOperation.billing_account_id.in_(sorted(scope["account_ids"])))
@@ -1224,8 +1242,15 @@ def _scoped_started_operations(session, scope):
         filters.append(AIOperation.user_id.in_(sorted(scope["related_user_ids"])))
     owned, unresolved = {}, {}
     if filters:
-        for op in session.execute(select(AIOperation).where(AIOperation.status == "started", or_(*filters))
-                                  .order_by(AIOperation.id)).scalars():
+        unclosed = session.execute(
+            select(AIOperation).where(or_(AIOperation.status.is_(None),
+                                          AIOperation.status.notin_(sorted(TERMINAL_OPERATION_STATUSES))),
+                                      or_(*filters)).order_by(AIOperation.id)).scalars().all()
+        # BI-1: only operations that still block Phase 14 (in flight, unrecognized, or awaiting or failing
+        # a decision) count as not drained.
+        blocking = {b["operation_id"] for b in blocking_legacy_operations(
+            session, unclosed, scope.get("at") or _database_clock(session))}
+        for op in (o for o in unclosed if o.id in blocking):
             owner, basis = operation_owner(session, op, scope["cache"])
             if owner is None:
                 unresolved[op.id] = basis
@@ -1513,7 +1538,7 @@ def shadow_reconciliation(session, *, organization_ids, at, test_activity_attest
                  "owned_holder_ids": {u for a in accounts for u in a["owned_holder_ids"]},
                  "owner_unresolved_user_ids": {u for a in accounts for u in a["owner_unresolved_user_ids"]},
                  "related_user_ids": {u for a in accounts for u in a["related_user_ids"]},
-                 "cache": cache}
+                 "cache": cache, "at": at}
         scope["payments"] = _scoped_payments(session, scope)
         scope["operations"] = _scoped_started_operations(session, scope)
         archive_plan = plan_payment_archive(session, test_activity_attestation=test_activity_attestation)
@@ -1525,7 +1550,7 @@ def shadow_reconciliation(session, *, organization_ids, at, test_activity_attest
             "shadow_version": SHADOW_VERSION, "as_of": _iso(at), "target_organizations": targets,
             "attestation_fingerprint": _fingerprint(test_activity_attestation),
             "operation_classifier": getattr(operation_classifier, "__name__", None) if operation_classifier
-            else UNCLASSIFIED,
+            else "phase14_legacy_operation_status",
             "legacy_fingerprint": legacy_fingerprint(session)["fingerprint"],
             "accounts": accounts, "global_comparisons": global_rows, "summary": _summary(every),
             "founder_test_separation": _scoped_separation(session, separation, scope),
@@ -1700,7 +1725,9 @@ def _population_counts(session, scope):
         "ai_billing_operations": {"population": count(AIBillingOperation),
                                   "in_scope": count(AIBillingOperation,
                                                     AIBillingOperation.billing_account_id.in_(account_ids))},
-        "started_ai_operations": {"population": count(AIOperation, AIOperation.status == "started"),
+        "started_ai_operations": {"population": count(AIOperation, or_(
+                                      AIOperation.status.is_(None),
+                                      AIOperation.status.notin_(sorted(TERMINAL_OPERATION_STATUSES)))),
                                   "in_scope": len(scope["operations"]["owned"]),
                                   "owner_unresolved": len(scope["operations"]["unresolved"])},
     }

@@ -43,6 +43,7 @@ from app.models_billing_phase14 import BillingMigrationPaymentAttribution
 from tests.test_billing_ai_operations import authorize, pricing, world as ai_world
 from tests.test_billing_financial_effects import PRICE, dispute, pack_purchase, refund, seed_account
 from tests.test_billing_migration import (
+    _only_the_operator_entry_point,
     FREE,
     PG,
     TEAM,
@@ -492,7 +493,7 @@ def test_phase16_shadow_has_no_live_callers():
     callers = sorted(str(p.relative_to(BACKEND)) for p in (BACKEND / "app").rglob("*.py")
                      if p.name != "billing_shadow.py" and "billing_shadow" in p.read_text())
     assert callers == []
-    assert [p for p in (BACKEND / "scripts").rglob("*.py") if "billing_shadow" in p.read_text()] == []
+    _only_the_operator_entry_point("billing_shadow")
 
 
 # ---------------------------------------------------------------------------

@@ -76,6 +76,9 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 
+from .ai_audit import STARTED as OPERATION_STARTED
+from .ai_audit import TERMINAL_STATUSES as TERMINAL_OPERATION_STATUSES
+from .ai_audit import TURN_LIFECYCLE_KEY, classify_unclosed_operation
 from .ai_governance import CREDITS_PER_PROVIDER_DOLLAR, INTERNAL_UNITS_PER_CREDIT, credits_for_provider_cost
 from .billing_allocations import (
     RecurringAllocationConflictError,
@@ -125,11 +128,15 @@ from .models_billing_phase14 import (
     ALGORITHM_VERSION,
     CREDIT_UNIT_BASIS,
     EXPIRY_POLICY,
+    OPERATION_DECISION_CLASSES,
+    OPERATION_DECISION_RULE_VERSION,
+    OPERATION_DISPOSITIONS,
     REVIEW_PERMISSION,
     UNITS_PER_DISPLAYED_CREDIT,
     BillingMigrationAccountResult,
     BillingMigrationEstablishment,
     BillingMigrationOpening,
+    BillingMigrationOperationDecision,
     BillingMigrationPayerBinding,
     BillingMigrationPaymentArchive,
     BillingMigrationPaymentAttribution,
@@ -581,13 +588,257 @@ def _holder_evidence(session, user):
     }
 
 
-def _in_flight_legacy_operations(session, user_ids):
+# ---------------------------------------------------------------------------
+# Legacy AI operations that never closed (BI-1: P4.1 X1 wiring, D-1, D-3)
+# ---------------------------------------------------------------------------
+#
+# An unclosed legacy operation used to quarantine its account whatever it was.
+# The P4.1 X1 classifier (``ai_audit.classify_unclosed_operation``) tells a
+# chat turn that is still running apart from one whose process is long gone.
+# Phase 14 refines its answer into five classes and never writes to the row:
+#
+# * ``in_flight``: may still change a balance (a young turn, a young runtime
+#   operation, a row bound to a billing account, or no age limit configured).
+#   Quarantines, as before.
+# * ``unrecognized``: a status, lifecycle version, or timestamp the classifier
+#   does not positively recognise. Quarantines; no decision can clear it.
+# * ``already_charged``: a P4.0 turn past the age limit whose own durable
+#   facts show the settlement committed (only its status write failed). It
+#   cannot change a balance and its charge stands, so it does not quarantine.
+# * ``stale_turn_evidence``: a P4.0 turn killed before it recorded an outcome.
+#   Whether a mid-turn commit kept its reservation is unknown (F3).
+# * ``outstanding_reservation``: an unbound runtime operation past the age
+#   limit, whose reservation was committed with its claim and never settled
+#   or released.
+#
+# The last two quarantine until a reviewer records a decision for that exact
+# row (``record_operation_decision``). Nothing is compensated automatically:
+# ``compensation_owed`` keeps the account quarantined until a separately
+# approved compensation path exists.
+
+MAX_TURN_SECONDS_CONFIG_KEY = "BILLING_MIGRATION_MAX_TURN_SECONDS"
+# A floor against a mistyped bound (minutes entered as seconds). The approved
+# value is set at integration from the production gunicorn timeout plus margin (D-3).
+MIN_MAX_TURN_SECONDS = 300
+OPERATION_DECISION_NAMESPACE = "billing.migration.operation_decision"
+DECIDABLE_OPERATION_CLASSES = frozenset(OPERATION_DECISION_CLASSES)
+
+
+def migration_max_turn_seconds(config=None):
+    """The explicitly configured age limit for unclosed operations, or None.
+
+    There is no default: missing, non-integer, or below-floor values return
+    None, and every unclosed operation is then treated as in flight.
+    """
+    if config is None:
+        from flask import current_app, has_app_context
+        if not has_app_context():
+            return None
+        config = current_app.config
+    value = config.get(MAX_TURN_SECONDS_CONFIG_KEY)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if not isinstance(value, int) or value < MIN_MAX_TURN_SECONDS:
+        return None
+    return value
+
+
+def operation_fingerprint(operation):
+    """The fingerprint of every column of a legacy operation row: any change ends a decision's validity."""
+    return _fingerprint({column.name: getattr(operation, column.key, None)
+                         for column in AIOperation.__table__.columns})
+
+
+def _effective_start(operation):
+    """The later of the row's creation and its last write (UTC, naive).
+
+    A runtime retry (``ai_runtime._claim_operation``) puts a failed row back to
+    'started' without changing ``created_at``; its last write is the new claim.
+    """
+    times = [t for t in (operation.created_at, getattr(operation, "updated_at", None)) if t is not None]
+    return _naive_utc(max(_utc(t) for t in times)) if times else None
+
+
+def _naive_utc(at):
+    value = _utc(at)
+    return value.replace(tzinfo=None) if value is not None else None
+
+
+def classify_legacy_operation(operation, *, at, max_turn_seconds):
+    """Phase 14 class of one unclosed legacy operation (see above). Reads only."""
+    base = {"operation_id": operation.id, "status": operation.status, "operation_type": operation.operation_type,
+            "billing_account_id": getattr(operation, "billing_account_id", None)}
+    if operation.status in TERMINAL_OPERATION_STATUSES:
+        return None
+    if max_turn_seconds is None:
+        return {**base, "class": "in_flight", "reason": "age_limit_not_configured"}
+    if operation.status != OPERATION_STARTED:
+        return {**base, "class": "unrecognized", "reason": "unrecognized_status"}
+    x1 = classify_unclosed_operation(operation, now=_naive_utc(at), max_turn_seconds=max_turn_seconds)
+    result = {**base, "x1_class": x1["class"], "x1_reason": x1["reason"], "age_seconds": x1["age_seconds"],
+              "max_turn_seconds": max_turn_seconds}
+    if x1["class"] == "in_progress":
+        return {**result, "class": "in_flight", "reason": "turn_within_age_limit"}
+    effective = _effective_start(operation)
+    if effective is not None and x1["age_seconds"] is not None:
+        result["age_seconds"] = min(x1["age_seconds"], int((_naive_utc(at) - effective).total_seconds()))
+        if result["age_seconds"] < max_turn_seconds:
+            # Written to (or reclaimed) within the limit: it may still be running.
+            return {**result, "class": "in_flight", "reason": "written_within_age_limit"}
+    if x1["class"] == "stale_turn_evidence":
+        lifecycle = (operation.metadata_json or {}).get(TURN_LIFECYCLE_KEY) or {}
+        facts = {key: lifecycle.get(key) for key in (
+            "outcome", "settlement_ok", "balance_committed", "settled_credits", "estimated_reservation",
+            "cycle_marker", "claim_committed", "claimed_at")}
+        if (lifecycle.get("outcome") == "settled" and lifecycle.get("settlement_ok") is True
+                and lifecycle.get("balance_committed") is True):
+            return {**result, "class": "already_charged", "reason": "settled_with_durable_charge", "facts": facts}
+        reason = "no_recorded_outcome" if lifecycle.get("outcome") is None else "outcome_without_durable_charge"
+        return {**result, "class": "stale_turn_evidence", "reason": reason, "facts": facts}
+    # X1 says outstanding. Runtime operations reach here; so do rows it cannot recognise.
+    if x1["reason"] != "not_a_p4_0_turn_claim" or x1["age_seconds"] is None:
+        return {**result, "class": "unrecognized", "reason": x1["reason"]}
+    metadata = operation.metadata_json if isinstance(operation.metadata_json, dict) else None
+    if result["billing_account_id"] is not None or metadata is None or TURN_LIFECYCLE_KEY in metadata:
+        return {**result, "class": "in_flight" if result["billing_account_id"] is not None else "unrecognized",
+                "reason": "bound_to_billing_account" if result["billing_account_id"] is not None
+                else "unrecognized_runtime_metadata"}
+    if result["age_seconds"] < max_turn_seconds:
+        return {**result, "class": "in_flight", "reason": "runtime_within_age_limit"}
+    return {**result, "class": "outstanding_reservation", "reason": "runtime_reservation_never_closed"}
+
+
+def _unclosed_operations(session, user_ids):
     if not user_ids:
         return []
     return session.execute(
-        select(AIOperation.id).where(AIOperation.user_id.in_(sorted(user_ids)), AIOperation.status == "started")
+        select(AIOperation).where(AIOperation.user_id.in_(sorted(user_ids)),
+                                  or_(AIOperation.status.is_(None),
+                                      AIOperation.status.notin_(sorted(TERMINAL_OPERATION_STATUSES))))
         .order_by(AIOperation.id)
     ).scalars().all()
+
+
+def _decisions_for(session, operation_ids):
+    if not operation_ids:
+        return {}
+    rows = session.execute(
+        select(BillingMigrationOperationDecision)
+        .where(BillingMigrationOperationDecision.ai_operation_id.in_(sorted(operation_ids)))
+        .order_by(BillingMigrationOperationDecision.created_at, BillingMigrationOperationDecision.id)
+    ).scalars().all()
+    found = defaultdict(list)
+    for row in rows:
+        found[row.ai_operation_id].append(row)
+    return found
+
+
+def _effective_decision(decisions, fingerprint):
+    """The current decision for ``fingerprint``: the end of its append-only correction chain, or None."""
+    matching = [d for d in decisions if d.evidence_fingerprint == fingerprint]
+    superseded = {d.supersedes_decision_id for d in matching if d.supersedes_decision_id}
+    current = [d for d in matching if d.id not in superseded]
+    # More than one current decision cannot happen under the database constraints; if it did, none applies.
+    return current[0] if len(current) == 1 else None
+
+
+def _current_decision(session, operation_id, fingerprint):
+    return _effective_decision(_decisions_for(session, [operation_id]).get(operation_id, []), fingerprint)
+
+
+def operation_affected_organization_ids(session, operation):
+    """Every organization an unclosed operation can block, by the same rules Phase 14 uses to pick an
+    account's candidate users (``plan_account_backfill``): its own organization, and each organization whose
+    candidates include the operation's user, as owner or member (any status), as the Stripe customer of its
+    billing account, or as the payer of a payment on that account."""
+    found = {operation.organization_id} if operation.organization_id else set()
+    if not operation.user_id:
+        return found
+    found |= set(session.execute(select(Organization.id).where(
+        Organization.owner_user_id == operation.user_id)).scalars())
+    found |= set(session.execute(select(OrganizationMember.organization_id).where(
+        OrganizationMember.user_id == operation.user_id)).scalars())
+    subject = session.get(User, operation.user_id)
+    if subject is not None and subject.stripe_customer_id:
+        found |= set(session.execute(select(BillingAccount.organization_id).where(
+            BillingAccount.processor == "stripe",
+            BillingAccount.processor_customer_id == subject.stripe_customer_id)).scalars())
+    found |= set(session.execute(select(BillingAccount.organization_id).join(
+        Payment, Payment.billing_account_id == BillingAccount.id).where(
+        Payment.user_id == operation.user_id)).scalars())
+    return found
+
+
+def legacy_operation_status(operation, *, at, max_turn_seconds, decisions=()):
+    """Whether one unclosed legacy operation blocks migration, and why. Reads only.
+
+    Returns None for a closed operation, else a dict with the Phase 14
+    ``class``, its ``reason``, the quarantine ``code`` (None when it does not
+    block), and, for the decidable classes, the ``evidence_fingerprint`` and
+    the matching decision, if any. ``decisions`` are the operation's recorded
+    decisions.
+    """
+    item = classify_legacy_operation(operation, at=at, max_turn_seconds=max_turn_seconds)
+    if item is None:
+        return None
+    cls = item["class"]
+    result = {"operation_id": operation.id, "class": cls, "reason": item["reason"], "code": None, "detail": None}
+    if cls == "in_flight":
+        return {**result, "code": "legacy_operation_in_flight",
+                "detail": "pause or drain operations; a hold is never inferred from a counter"}
+    if cls == "unrecognized":
+        return {**result, "code": "legacy_operation_unrecognized",
+                "detail": f"{item['reason']}: no decision can clear an operation the classifier does not recognise"}
+    result["evidence_fingerprint"] = operation_fingerprint(operation)
+    if cls == "already_charged":
+        return result
+    decision = _effective_decision(decisions, result["evidence_fingerprint"])
+    if decision is None:
+        if decisions:
+            return {**result, "code": "legacy_operation_decision_evidence_changed",
+                    "detail": "the operation differs from the evidence its decision was recorded from"}
+        return {**result, "code": "legacy_operation_decision_required",
+                "detail": f"{cls}: record an individual reviewed decision for this operation"}
+    result.update(decision_id=decision.id, disposition=decision.disposition,
+                  supersedes_decision_id=decision.supersedes_decision_id)
+    if decision.disposition == "compensation_owed":
+        return {**result, "code": "legacy_operation_compensation_pending",
+                "detail": "compensation is recorded as owed; no approved compensation path has paid it"}
+    return result
+
+
+def blocking_legacy_operations(session, operations, at):
+    """The subset of ``operations`` that still blocks migration, with their status. Reads only."""
+    bound = migration_max_turn_seconds()
+    decisions = _decisions_for(session, [o.id for o in operations])
+    found = []
+    for operation in operations:
+        status = legacy_operation_status(operation, at=at, max_turn_seconds=bound,
+                                         decisions=decisions.get(operation.id, []))
+        if status is not None and status["code"] is not None:
+            found.append(status)
+    return found
+
+
+def _legacy_operation_findings(session, user_ids, at, codes):
+    """Quarantine codes for the members' unclosed operations; returns the ones that do not block."""
+    bound = migration_max_turn_seconds()
+    operations = _unclosed_operations(session, user_ids)
+    decisions = _decisions_for(session, [o.id for o in operations])
+    reported = []
+    for operation in operations:
+        status = legacy_operation_status(operation, at=at, max_turn_seconds=bound,
+                                         decisions=decisions.get(operation.id, []))
+        if status is None:
+            continue
+        if status["code"] is not None:
+            _quarantine(codes, status["code"], operation.id, status["detail"])
+            continue
+        reported.append({key: status[key] for key in ("operation_id", "class", "reason", "evidence_fingerprint",
+                                                      "decision_id", "disposition") if key in status})
+    return reported
 
 
 def _legacy_usage_history(session, user_ids):
@@ -1060,10 +1311,7 @@ def plan_account_backfill(session, *, billing_account_id, at=None):
                 _quarantine(codes, "legacy_source_opened_elsewhere", opening["legacy_source_id"],
                             f"already opened in billing account {elsewhere}")
 
-        in_flight = _in_flight_legacy_operations(session, active | set(holders))
-        for operation_id in in_flight:
-            _quarantine(codes, "legacy_operation_in_flight", operation_id,
-                        "pause or drain operations; a hold is never inferred from a counter")
+        reported_operations = _legacy_operation_findings(session, active | set(holders), at, codes)
 
         holder_fps = {uid: holder_fingerprint(e) for uid, e in holder_evidence.items()}
         for opening in openings:
@@ -1102,6 +1350,10 @@ def plan_account_backfill(session, *, billing_account_id, at=None):
             "pool": pool_evidence, "owned_elsewhere": owned_elsewhere,
             "candidates": sorted(candidates), "active_members": sorted(active),
         }
+        if reported_operations:
+            # BI-1: unclosed operations that do not block (already charged, or cleared by a recorded
+            # decision). Present only when there are any, so every other plan's fingerprint is unchanged.
+            evidence_doc["unclosed_operations"] = sorted(reported_operations, key=lambda o: o["operation_id"])
         return {
             "billing_account_id": account.id, "organization_id": organization.id, "at": at, "unit": unit,
             "holders": sorted(holders), "owners": owners, "owned_elsewhere": owned_elsewhere,
@@ -1690,6 +1942,234 @@ def record_unattributed_review(
     session.flush()
     _complete(session, registry, now, "billing_migration_review", review.id)
     return review, "inserted"
+
+
+def _cycle_reset_after(value, claimed_at):
+    reset = _parsed(value) if isinstance(value, str) else _utc(value)
+    return None if reset is None or claimed_at is None else reset > claimed_at
+
+
+def operation_review_evidence(session, operation, *, at, max_turn_seconds):
+    """What a reviewer needs to decide one unclosed operation, and a recommendation. Reads only.
+
+    The recommendation is advice for the individual review, never applied:
+    ``no_compensation_owed`` only when the evidence shows any reservation came
+    from a monthly meter whose cycle has reset since the claim (the approved S1
+    rule: a reservation from an ended period is not restored, F2-F4 decisions
+    section 1.5, addition 2); otherwise ``individual_review``, because the row
+    cannot show whether or how much of a reservation was kept.
+    """
+    item = classify_legacy_operation(operation, at=at, max_turn_seconds=max_turn_seconds)
+    # The latest claim of the row (a runtime retry reclaims it without changing created_at).
+    claimed_at = _utc(_effective_start(operation))
+    holder = session.get(User, operation.user_id) if operation.user_id else None
+    organization = session.get(Organization, operation.organization_id) if operation.organization_id else None
+    org_meter = _meter(organization.settings) if organization is not None else None
+    grants_before_claim = 0 if holder is None or claimed_at is None else session.execute(
+        select(func.count()).select_from(PersistentCreditGrant).where(
+            PersistentCreditGrant.user_id == holder.id,
+            PersistentCreditGrant.granted_at <= _naive_utc(claimed_at))).scalar_one()
+    user_reset_since = None if holder is None else _cycle_reset_after(holder.credits_reset_at, claimed_at)
+    org_reset_since = None if org_meter is None else _cycle_reset_after(org_meter.get("cycle_reset_at"), claimed_at)
+    metadata = operation.metadata_json if isinstance(operation.metadata_json, dict) else {}
+    evidence = {
+        "classification": item,
+        "operation": {
+            "operation_type": operation.operation_type, "status": operation.status,
+            "created_at": _iso(operation.created_at), "updated_at": _iso(operation.updated_at),
+            "settled_at": _iso(operation.settled_at),
+            "customer_visible": operation.customer_visible, "subsidized": operation.subsidized,
+            "subsidy_classification": operation.subsidy_classification,
+            "projected_credits": operation.projected_credits, "charged_credits": operation.charged_credits,
+            "has_thread": operation.thread_id is not None, "has_idempotency_key": operation.idempotency_key is not None,
+            "metadata_keys": sorted(metadata),
+        },
+        "subject": None if holder is None else {
+            "plan": normalize_plan_key(holder.subscription_plan), "credits_reset_at": _iso(holder.credits_reset_at),
+            "persistent_grants_before_claim": int(grants_before_claim),
+        },
+        "monthly_cycle_reset_since_claim": {"user": user_reset_since, "organization": org_reset_since},
+        "evidence_fingerprint": operation_fingerprint(operation),
+    }
+    # A shared-pool plan draws on the organization's meter, and its debits restamp the member's
+    # ``credits_reset_at``, so only the organization's cycle counts; otherwise the member's own cycle does.
+    shared_pool = holder is not None and normalize_plan_key(holder.subscription_plan) in SHARED_POOL_PLANS
+    monthly_reset = (org_reset_since is True) if shared_pool else (user_reset_since is True)
+    evidence["monthly_cycle_reset_since_claim"]["meter_used"] = "organization" if shared_pool else "user"
+    if holder is not None and grants_before_claim == 0 and monthly_reset:
+        evidence["recommendation"] = {
+            "disposition": "no_compensation_owed",
+            "basis": "the subject held no persistent credit at the claim, so any reservation came from the monthly "
+                     "meter, whose cycle has reset since; a reservation from an ended period is not restored "
+                     "(F2-F4 decisions 1.5, addition 2)",
+        }
+    else:
+        evidence["recommendation"] = {
+            "disposition": "individual_review",
+            "basis": "the evidence cannot show whether or how much of a reservation was kept; nothing is "
+                     "compensated without evidence of the amount",
+        }
+    return evidence
+
+
+def unclosed_operation_review(session, *, at=None):
+    """Every unclosed legacy operation, its class, whether it blocks, and for each one that needs a decision
+    the evidence and a recommended disposition. Reads only; changes nothing."""
+    at = _database_clock(session) if at is None else _utc(at)
+    bound = migration_max_turn_seconds()
+    operations = session.execute(
+        select(AIOperation).where(or_(AIOperation.status.is_(None),
+                                      AIOperation.status.notin_(sorted(TERMINAL_OPERATION_STATUSES))))
+        .order_by(AIOperation.created_at, AIOperation.id)).scalars().all()
+    decisions = _decisions_for(session, [o.id for o in operations])
+    rows = []
+    for operation in operations:
+        status = legacy_operation_status(operation, at=at, max_turn_seconds=bound,
+                                         decisions=decisions.get(operation.id, []))
+        if status is None:
+            continue
+        row = {**status, "user_id": operation.user_id, "organization_id": operation.organization_id}
+        if status["class"] in DECIDABLE_OPERATION_CLASSES and status.get("decision_id") is None:
+            row["evidence"] = operation_review_evidence(session, operation, at=at, max_turn_seconds=bound)
+        rows.append(row)
+    return {"at": _iso(at), "max_turn_seconds": bound, "operations": rows,
+            "needs_decision": sum(1 for r in rows if r["code"] in ("legacy_operation_decision_required",
+                                                                   "legacy_operation_decision_evidence_changed")),
+            "blocking": sum(1 for r in rows if r["code"] is not None)}
+
+
+def record_operation_decision(
+    session, *, decision_command_id, ai_operation_id, disposition, evidence_reference, reason, reviewer_user_id,
+    amount=None, beneficiary_billing_account_id=None, supersedes_decision_id=None,
+):
+    """Record one reviewer's decision about one unclosed legacy operation (BI-1, D-1).
+
+    Only a ``stale_turn_evidence`` or ``outstanding_reservation`` operation
+    takes a decision, and only while the age limit is configured. Separation
+    of duties as for reviews: an explicit, unrevoked ``billing.migration.review``
+    grant valid now, held by someone who is not the operation's user, nor an
+    owner or member of any organization the operation can block (its own, and
+    every organization its user owns or belongs to), nor the bound payer of
+    any of their billing accounts. ``compensation_owed`` names an amount and
+    the operation's own organization's billing account; it moves no money and
+    keeps that account quarantined (compensation, when justified, is paid by a
+    separately approved, reviewed ledger entry). The decision binds the
+    operation's fingerprint, taken under a row lock; one decision per
+    operation evidence. A correction never edits a decision: it is a new,
+    append-only decision that names the current decision for the same
+    evidence in ``supersedes_decision_id``; each decision is superseded at
+    most once. Replaying a recorded command with the same facts returns it.
+    Returns ``(decision, 'inserted'|'duplicate')``.
+    """
+    _read_committed(session)
+    command_id = _text(decision_command_id, "decision_command_id", 128)
+    reason = _text(reason, "reason", 4000)
+    evidence_reference = _text(evidence_reference, "evidence_reference", 255)
+    if disposition not in OPERATION_DISPOSITIONS:
+        raise MigrationError(f"the disposition must be one of {', '.join(OPERATION_DISPOSITIONS)}")
+    if disposition == "no_compensation_owed":
+        if amount is not None or beneficiary_billing_account_id is not None:
+            raise MigrationError("no_compensation_owed takes no amount or beneficiary")
+    elif isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0 \
+            or not beneficiary_billing_account_id:
+        raise MigrationError("compensation_owed needs a positive integer amount of legacy internal units "
+                             "and the beneficiary billing account")
+    key = f"migration-operation-decision:{command_id}"
+    recorded = session.execute(select(BillingMigrationOperationDecision).where(
+        BillingMigrationOperationDecision.decision_key == key)).scalar_one_or_none()
+    if recorded is not None:
+        # A replay is judged against what was recorded, so it stays stable after the operation changes.
+        asked = (ai_operation_id, disposition, amount, beneficiary_billing_account_id, evidence_reference, reason,
+                 reviewer_user_id, supersedes_decision_id)
+        if asked != (recorded.ai_operation_id, recorded.disposition, recorded.amount,
+                     recorded.beneficiary_billing_account_id, recorded.evidence_reference, recorded.reason,
+                     recorded.reviewer_user_id, recorded.supersedes_decision_id):
+            raise MigrationConflictError(f"{OPERATION_DECISION_NAMESPACE} identity was reused with different facts")
+        return recorded, "duplicate"
+    bound = migration_max_turn_seconds()
+    if bound is None:
+        raise MigrationError(f"{MAX_TURN_SECONDS_CONFIG_KEY} is not configured; no operation can be decided")
+    operation = session.execute(select(AIOperation).where(AIOperation.id == ai_operation_id)
+                                .with_for_update()).scalar_one_or_none()
+    if operation is None:
+        raise MigrationError("the operation does not exist")
+    now = _database_now(session)
+    item = classify_legacy_operation(operation, at=now, max_turn_seconds=bound)
+    if item is None or item["class"] not in DECIDABLE_OPERATION_CLASSES:
+        found = "closed" if item is None else item["class"]
+        raise MigrationError(f"a {found} operation cannot take a decision")
+    if reviewer_user_id is None or reviewer_user_id == operation.user_id:
+        raise MigrationPermissionError("a reviewer cannot decide their own operation")
+    grant = _authorized_grant(session, user_id=reviewer_user_id, permission=REVIEW_PERMISSION, started_at=now)
+    if grant is None:
+        raise MigrationPermissionError("the reviewer does not hold the explicit migration review permission")
+    organization = session.get(Organization, operation.organization_id) if operation.organization_id else None
+    affected = operation_affected_organization_ids(session, operation)
+    for organization_id in sorted(affected):
+        affected_org = session.get(Organization, organization_id)
+        if affected_org is not None and (reviewer_user_id == affected_org.owner_user_id or reviewer_user_id in {
+                m.user_id for m in _members(session, organization_id, active_only=False)}):
+            raise MigrationPermissionError("a member or owner of an organization the operation blocks cannot decide it")
+    if affected and session.execute(select(func.count()).select_from(BillingMigrationPayerBinding).join(
+            BillingAccount, BillingAccount.id == BillingMigrationPayerBinding.billing_account_id).where(
+            BillingAccount.organization_id.in_(sorted(affected)),
+            BillingMigrationPayerBinding.payer_user_id == reviewer_user_id)).scalar_one():
+        raise MigrationPermissionError("the payer of an organization the operation blocks cannot decide it")
+    beneficiary = None
+    if disposition == "compensation_owed":
+        beneficiary = _lock_account(session, beneficiary_billing_account_id)
+        if organization is None or beneficiary.organization_id != organization.id:
+            raise MigrationError("compensation can be owed only to the operation's own organization's billing account")
+        if session.execute(select(func.count()).select_from(BillingMigrationPayerBinding).where(
+                BillingMigrationPayerBinding.billing_account_id == beneficiary.id,
+                BillingMigrationPayerBinding.payer_user_id == reviewer_user_id)).scalar_one():
+            raise MigrationPermissionError("the beneficiary account's payer cannot decide its compensation")
+        estimate = (item.get("facts") or {}).get("estimated_reservation")
+        if isinstance(estimate, int) and not isinstance(estimate, bool) and estimate > 0 and amount > estimate:
+            raise MigrationError("compensation cannot exceed the reservation the operation recorded")
+    fingerprint = operation_fingerprint(operation)
+    current = _current_decision(session, operation.id, fingerprint)
+    if supersedes_decision_id is None:
+        if current is not None:
+            raise MigrationConflictError("this operation evidence already has a decision; record a correction "
+                                         "that supersedes it instead of a second decision")
+    elif current is None or current.id != supersedes_decision_id:
+        raise MigrationConflictError("a correction must supersede the current decision for this operation's "
+                                     "current evidence")
+    request = _fingerprint({"ai_operation_id": operation.id, "operation_class": item["class"],
+                            "disposition": disposition, "amount": amount,
+                            "beneficiary_billing_account_id": beneficiary.id if beneficiary else None,
+                            "evidence_reference": evidence_reference, "reason": reason,
+                            "reviewer_user_id": reviewer_user_id, "evidence_fingerprint": fingerprint,
+                            "supersedes_decision_id": supersedes_decision_id,
+                            "rule_version": OPERATION_DECISION_RULE_VERSION})
+    registry, inserted = _claim(session, OPERATION_DECISION_NAMESPACE, key, request, now)
+    if not inserted:
+        decision = session.execute(select(BillingMigrationOperationDecision).where(
+            BillingMigrationOperationDecision.idempotency_registry_id == registry.id)).scalar_one_or_none()
+        if registry.state != "completed" or decision is None:
+            raise MigrationRetryError("the decision is already being recorded")
+        return decision, "duplicate"
+    decision = BillingMigrationOperationDecision(
+        id=str(uuid.uuid4()), decision_key=key, ai_operation_id=operation.id, subject_user_id=operation.user_id,
+        operation_organization_id=operation.organization_id, operation_class=item["class"],
+        disposition=disposition, amount=amount, beneficiary_billing_account_id=beneficiary.id if beneficiary else None,
+        evidence_json=operation_review_evidence(session, operation, at=now, max_turn_seconds=bound),
+        evidence_fingerprint=fingerprint, evidence_reference=evidence_reference, reason=reason,
+        rule_version=OPERATION_DECISION_RULE_VERSION, reviewer_user_id=reviewer_user_id,
+        staff_permission_grant_id=grant.id, decided_at=now, request_fingerprint=request,
+        idempotency_registry_id=registry.id, supersedes_decision_id=supersedes_decision_id,
+    )
+    session.add(decision)
+    try:
+        with session.begin_nested():
+            session.flush()
+    except IntegrityError as exc:
+        # A concurrent decision or correction for the same evidence won (the uniqueness of the root and of
+        # each successor is the final arbiter).
+        raise MigrationConflictError("another decision for this operation evidence was recorded first") from exc
+    _complete(session, registry, now, "billing_migration_operation_decision", decision.id)
+    return decision, "inserted"
 
 
 # ---------------------------------------------------------------------------

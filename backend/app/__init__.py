@@ -397,6 +397,9 @@ def create_app():
         'titan': app.config['LLM_PROVIDER_MODELS']['claude_opus'],
     }
     app.config['GEMINI_API_KEY'] = os.getenv('GEMINI_API_KEY', '')
+    # BI-1 (D-3): the age past which an unclosed legacy AI operation can no longer change a balance, for the
+    # billing migration only. No default: unset or invalid means every unclosed operation still blocks.
+    app.config['BILLING_MIGRATION_MAX_TURN_SECONDS'] = os.getenv('BILLING_MIGRATION_MAX_TURN_SECONDS')
     # 'free' (default) keeps Business/Enterprise customer content off Gemini,
     # whose free tier may use content to improve Google products. Set 'paid'
     # only after billing is active on the key's Google Cloud project.
