@@ -43,13 +43,19 @@ QUARANTINE_ENTRY_COUNT=0
 COPIED_USERS_CREATED_BEFORE_UTC=2000-01-01T00:00:00Z
 EXPECTED_COPIED_USERS=0
 
-# Root-owned helper scripts (staging_config_check.py, staging_database.py),
+# Root-owned helper scripts (staging_config_check.py, staging_database.py, staging_db_roles.py),
 # the verified artifact copies, the cumulative offline wheelhouse and the
 # deploy records.
 HELPER_DIR=/usr/local/lib/jaspen-staging
 ARTIFACT_ROOT=/var/lib/jaspen-staging/artifacts
 WHEELHOUSE_DIR=/var/lib/jaspen-staging/wheelhouse
 LOG_DIR=/var/log/jaspen-staging
+
+# BI-2 database role policy: "off" until Lydia approves it, then "enforce". The role names are the
+# runtime role in the backend URL file and the billing migrator created for the evidence commands.
+ROLE_POLICY=off
+RUNTIME_DB_ROLE=staging_runtime_role
+MIGRATOR_DB_ROLE=staging_billing_migrator_role
 
 # Socket health check after restart.
 HEALTH_RETRIES=10

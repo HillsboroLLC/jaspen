@@ -400,6 +400,11 @@ def create_app():
     # BI-1 (D-3): the age past which an unclosed legacy AI operation can no longer change a balance, for the
     # billing migration only. No default: unset or invalid means every unclosed operation still blocks.
     app.config['BILLING_MIGRATION_MAX_TURN_SECONDS'] = os.getenv('BILLING_MIGRATION_MAX_TURN_SECONDS')
+    # BI-2: the founder's restore-copy authorization and the production identities it must never match
+    # (billing_restore_copy). Unset means every restore-copy rehearsal or shadow comparison is refused.
+    for key in ('BILLING_RESTORE_COPY_AUTHORIZATION', 'BILLING_PRODUCTION_DATABASE_HOSTS',
+                'BILLING_PRODUCTION_LOGIN_ROLES'):
+        app.config[key] = os.getenv(key)
     # 'free' (default) keeps Business/Enterprise customer content off Gemini,
     # whose free tier may use content to improve Google products. Set 'paid'
     # only after billing is active on the key's Google Cloud project.

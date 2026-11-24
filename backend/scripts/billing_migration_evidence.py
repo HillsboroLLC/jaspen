@@ -21,6 +21,10 @@ Writes (each needs --confirm-write; nothing is written without it):
                               --supersedes-decision-id (append-only)
   rehearse                    one Phase 15 rehearsal run (Phase 14 commands)
 
+The database connection uses the same credential path as wsgi.py: the mode-600
+URL file named by JASPEN_DATABASE_URL_FILE (on staging, the runtime file from
+/etc/jaspen-staging/backend.env, or the billing migrator's file for writes).
+
 The operation age limit comes only from BILLING_MIGRATION_MAX_TURN_SECONDS.
 Unset, every unclosed operation blocks and no decision can be recorded.
 
@@ -100,6 +104,13 @@ def run(argv=None, *, app=None):
         _emit({"error": f"refused: {args.command} writes evidence; pass --confirm-write to proceed"})
         return 2
     if app is None:
+        # The same credential path as wsgi.py: the protected URL file named by JASPEN_DATABASE_URL_FILE
+        # (mode 600) is loaded before the application is created. A process DATABASE_URL is the only fallback.
+        import os
+        from database_secret import load_database_url_secret
+        if not load_database_url_secret() and not os.environ.get("DATABASE_URL"):
+            _emit({"error": "refused: no database URL; set JASPEN_DATABASE_URL_FILE to a mode-600 URL file"})
+            return 2
         from app import create_app
         app = create_app()
     from app import db

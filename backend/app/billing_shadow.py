@@ -29,7 +29,8 @@ second financial authority.
   (PostgreSQL ``REPEATABLE READ READ ONLY``; SQLite ``PRAGMA query_only``),
   always rolled back, refused in a production runtime and, for
   ``fixtures``, on anything but a verified local test database (the Phase 15
-  guard). ``restore_copy`` is refused outright until an approved
+  guard). ``restore_copy`` needs the founder's restore-copy authorization
+  (BI-2, ``billing_restore_copy``); before BI-2 it was refused outright until an approved
   authorization mechanism exists (review N4).
 * **Scope** (review N2, FR-1). Every section, global ones included, covers only
   records the target organizations own by Phase 14-15 evidence
@@ -77,6 +78,12 @@ from .billing_config import (
 )
 from .billing_entitlements import add_calendar_months
 from .ai_audit import TERMINAL_STATUSES as TERMINAL_OPERATION_STATUSES
+from .billing_restore_copy import (
+    RestoreCopyAuthorizationError,
+    app_config as restore_copy_config,
+    check_authorization_configuration,
+    verify_restore_copy_database,
+)
 from .billing_migration import (
     LIVE_SUBSCRIPTION_STATUSES,
     MigrationError,
@@ -148,8 +155,8 @@ from .orgs import ORG_EDIT_ROLES, normalize_org_role
 
 SHADOW_VERSION = "jaspen.billing.shadow.v1"
 ENVIRONMENTS = ("fixtures", "restore_copy")
-# Review N4: environments refused outright until a founder-approved restore-copy authorization mechanism exists.
-RESTORE_COPY_REFUSED = frozenset(("restore_copy",))
+# Review N4 closed by BI-2: ``restore_copy`` needs the founder's restore-copy authorization
+# (``billing_restore_copy``); without it, it is refused before any connection opens.
 
 MATCH = "match"
 MISMATCH = "mismatch"
@@ -1822,14 +1829,24 @@ def run_shadow_reconciliation(bind=None, *, organization_ids, environment, test_
     bind = bind if bind is not None else db.engine
     if environment not in ENVIRONMENTS:
         raise ShadowError("a shadow comparison runs only on local fixtures or an approved restore copy")
-    if environment in RESTORE_COPY_REFUSED:
-        # Review N4 (fail closed): a non-production runtime is not authorization, and no approved mechanism yet
-        # proves that a database is an authorized, non-production restore. Refused before any connection opens.
-        raise ShadowError("restore_copy shadow runs are refused until an approved restore-copy authorization "
-                          "mechanism exists (D18 row 16 production-like run, separately authorized)")
+    authorization = None
+    if environment == "restore_copy":
+        # Review N4 / BI-2: a non-production runtime is not authorization. The founder's restore-copy
+        # authorization (billing_restore_copy) is checked before any connection opens; the database identity is
+        # then checked inside the read-only transaction.
+        try:
+            authorization = check_authorization_configuration(restore_copy_config())
+        except RestoreCopyAuthorizationError as exc:
+            raise ShadowError(f"restore_copy shadow run refused: {exc}") from exc
     connection, session, facts = _read_only_session(bind)
     try:
         environment_facts = _guard_environment(connection, environment)
+        if authorization is not None:
+            try:
+                environment_facts["restore_copy_authorization"] = verify_restore_copy_database(
+                    connection, authorization, host=connection.engine.url.host)
+            except RestoreCopyAuthorizationError as exc:
+                raise ShadowError(f"restore_copy shadow run refused: {exc}") from exc
         if at is None:
             at = _database_clock(session)
         before = shadow_census(session)
@@ -1856,6 +1873,7 @@ def run_shadow_reconciliation(bind=None, *, organization_ids, environment, test_
     return {"environment": environment, "database": {**facts, **{k: environment_facts[k] for k in
                                                                  ("host", "database", "server_database",
                                                                   "local_test_database", "production_runtime")}},
+            "restore_copy_authorization": environment_facts.get("restore_copy_authorization"),
             "census_before": before, "census_after": after,
             "census_unchanged": before == after, "report": report,
             "generated_at": datetime.now(timezone.utc).isoformat()}

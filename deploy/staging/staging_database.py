@@ -3,8 +3,10 @@
 
 Run as the staging application user with the staging virtualenv's Python.
 Connects with the protected migration URL file (never printed) and only reads:
-the Alembic revision and the D1 copied-user counts. Output is revision ids, counts
-and PASS/FAIL; errors print the exception class name only.
+the Alembic revision, the D1 copied-user counts and the per-table row counts
+(``census``). Output is revision ids, counts and PASS/FAIL; errors print the
+exception class name only. ``census-compare`` needs no database and runs as
+root on the two census files the wrapper keeps in its root-only log directory.
 """
 
 from __future__ import annotations
@@ -128,10 +130,59 @@ def copied_users_pass(counts: dict[str, int], expected_copied: int) -> bool:
     )
 
 
+def table_counts(engine) -> dict:
+    """Row count of every table in the public schema, plus the Alembic revision (read-only)."""
+    from sqlalchemy import text
+
+    with engine.connect() as connection:
+        _read_only(connection)
+        tables = connection.execute(text(
+            "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
+        )).scalars().all()
+        counts = {}
+        for table in tables:
+            if not REVISION_ID.match(table):
+                raise RuntimeError("unexpected table name")
+            counts[table] = int(connection.execute(text(f'SELECT count(*) FROM public."{table}"')).scalar_one())
+        identity = {
+            "database": connection.execute(text("SELECT current_database()")).scalar_one(),
+            "system_identifier": str(connection.execute(text(
+                "SELECT system_identifier FROM pg_control_system()")).scalar_one()),
+            "in_recovery": bool(connection.execute(text("SELECT pg_is_in_recovery()")).scalar_one()),
+        }
+    return {"tables": counts, "alembic": database_revisions(engine), "identity": identity}
+
+
+def compare_census(before: dict, after: dict, *, migrations_ran: bool) -> dict:
+    """Classify every difference between two censuses.
+
+    Expected migration effects: tables created while migrations ran, still
+    empty. Everything else is unexpected and reported by name: a table created
+    without a migration or created with rows, a table that disappeared, and any
+    pre-existing table whose row count changed (counts only; never row data).
+    """
+    old, new = before["tables"], after["tables"]
+    created = sorted(set(new) - set(old))
+    dropped = sorted(set(old) - set(new))
+    changed = {t: {"before": old[t], "after": new[t]} for t in sorted(set(old) & set(new)) if old[t] != new[t]}
+    expected, unexpected = [], []
+    for table in created:
+        if migrations_ran and new[table] == 0:
+            expected.append({"table": table, "effect": "created_empty_by_migration"})
+        else:
+            unexpected.append({"table": table, "effect": "created_with_rows" if new[table] else
+                               "created_without_migration", "rows": new[table]})
+    unexpected += [{"table": t, "effect": "dropped", "rows_before": old[t]} for t in dropped]
+    unexpected += [{"table": t, "effect": "row_count_changed", **c} for t, c in changed.items()]
+    return {"unchanged_tables": len(set(old) & set(new)) - len(changed), "expected": expected,
+            "unexpected": unexpected, "alembic_before": before.get("alembic"), "alembic_after": after.get("alembic"),
+            "identity_before": before.get("identity"), "identity_after": after.get("identity")}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--backend-dir", required=True)
-    parser.add_argument("--url-file", required=True)
+    parser.add_argument("--backend-dir")
+    parser.add_argument("--url-file")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("current")
     pending_parser = commands.add_parser("pending")
@@ -142,11 +193,44 @@ def main(argv: list[str] | None = None) -> int:
     counts_parser = commands.add_parser("copied-users")
     counts_parser.add_argument("--created-before", required=True)
     counts_parser.add_argument("--expected-copied", type=int, required=True)
+    commands.add_parser("census")
+    compare_parser = commands.add_parser("census-compare")
+    compare_parser.add_argument("--before", required=True)
+    compare_parser.add_argument("--after", required=True)
+    compare_parser.add_argument("--migrations-ran", choices=("true", "false"), required=True)
     args = parser.parse_args(argv)
+
+    if args.command == "census-compare":
+        import json
+
+        result = compare_census(json.loads(Path(args.before).read_text(encoding="utf-8")),
+                                json.loads(Path(args.after).read_text(encoding="utf-8")),
+                                migrations_ran=args.migrations_ran == "true")
+        for item in result["expected"]:
+            print(f"INFO census expected {item['effect']} {item['table']}")
+        for item in result["unexpected"]:
+            detail = " ".join(f"{k}={v}" for k, v in item.items() if k not in ("table", "effect"))
+            print(f"WARN census unexpected {item['effect']} {item['table']} {detail}".rstrip())
+        print(f"INFO census alembic {' '.join(result['alembic_before'] or [])} -> "
+              f"{' '.join(result['alembic_after'] or [])}")
+        if (result["identity_before"] or {}).get("system_identifier") != (result["identity_after"] or {}).get(
+                "system_identifier"):
+            print("INFO census system_identifier differs between the two databases")
+        status = "PASS" if not result["unexpected"] else "WARN"
+        print(f"{status} census_compare unchanged={result['unchanged_tables']} expected={len(result['expected'])} "
+              f"unexpected={len(result['unexpected'])}")
+        return 0 if not result["unexpected"] else 3
+    if not (args.backend_dir and args.url_file):
+        parser.error("--backend-dir and --url-file are required for database commands")
 
     engine = None
     try:
         engine = _engine(args.backend_dir, args.url_file)
+        if args.command == "census":
+            import json
+
+            print(json.dumps(table_counts(engine), sort_keys=True))
+            return 0
         if args.command == "copied-users":
             counts = copied_user_counts(engine, args.created_before)
             passed = copied_users_pass(counts, args.expected_copied)

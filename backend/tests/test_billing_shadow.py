@@ -874,9 +874,10 @@ def test_a_production_runtime_or_an_unknown_environment_is_refused(db, monkeypat
         bs.shadow_reconciliation(session, organization_ids=[], at=now(session), test_activity_attestation=None)
 
 
-def test_restore_copy_is_refused_before_any_connection_until_an_authorization_mechanism_is_approved_n4(
-        db, monkeypatch):
-    """Review N4 negative case: before the fix, restore_copy ran on any database from a non-production runtime."""
+def test_restore_copy_without_the_founders_authorization_is_refused_before_any_connection_n4(db, monkeypatch):
+    """Review N4 negative case: before the fix, restore_copy ran on any database from a non-production runtime.
+    BI-2 adds the founder's restore-copy authorization (tests/test_billing_restore_copy.py); without it, nothing
+    connects."""
     session = db.session
     w = world(session)
     session.commit()
@@ -888,7 +889,7 @@ def test_restore_copy_is_refused_before_any_connection_until_an_authorization_me
             raise AssertionError("restore_copy opened a database connection")
 
     for bind in (flask_db.engine, NoConnect()):
-        with pytest.raises(bs.ShadowError, match="restore_copy shadow runs are refused"):
+        with pytest.raises(bs.ShadowError, match="restore_copy shadow run refused: no restore-copy authorization"):
             bs.run_shadow_reconciliation(bind, organization_ids=w.orgs, environment="restore_copy",
                                          test_activity_attestation=attest(w.founder.user))
     assert shadow(session, w)["environment"] == "fixtures"  # the local fixture path is unchanged

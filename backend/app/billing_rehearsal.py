@@ -61,6 +61,12 @@ from sqlalchemy import func, or_, select, text
 from . import db
 from .billing_entitlements import add_calendar_months
 from .ai_audit import TERMINAL_STATUSES as TERMINAL_OPERATION_STATUSES
+from .billing_restore_copy import (
+    RestoreCopyAuthorizationError,
+    app_config as restore_copy_config,
+    check_authorization_configuration,
+    verify_restore_copy_database,
+)
 from .billing_migration import (
     ARCHIVE_NAMESPACE,
     ESTABLISHMENT_NAMESPACE,
@@ -379,6 +385,17 @@ def rehearsal_preconditions(session, *, environment, runtime_role=None, writer_f
         else:
             # Fixture runs: affected accounts quarantine (legacy_operation_*); nothing is inferred.
             _finding(findings, "no_in_flight_ai_operations", "reported", "local", detail)
+        if restore:
+            # BI-2: the same founder restore-copy authorization as the shadow comparison.
+            try:
+                authorization = check_authorization_configuration(restore_copy_config())
+                # A savepoint, so a failed identity read leaves the transaction usable for the other checks.
+                with session.begin_nested():
+                    facts = verify_restore_copy_database(session.connection(), authorization,
+                                                         host=session.get_bind().url.host)
+                _finding(findings, "restore_copy_authorized", "pass", "restore_copy", facts)
+            except RestoreCopyAuthorizationError as exc:
+                _finding(findings, "restore_copy_authorized", "fail", "restore_copy", str(exc))
         if restore:
             frozen = isinstance(writer_freeze_reference, str) and bool(writer_freeze_reference.strip())
             _finding(findings, "legacy_writers_frozen_before_snapshot", "pass" if frozen else "fail", "restore_copy",

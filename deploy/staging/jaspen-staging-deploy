@@ -79,6 +79,17 @@ load_config() {
     [[ "${item}" =~ ^[A-Z][A-Z0-9_]*$ ]] || fail "config FORBIDDEN_SECRET_KEYS"
   done
 
+  # BI-2 database role policy: "off" (default) or "enforce". When enforced, the preflight verifies it and every
+  # deploy that ran migrations re-applies it (the owner's default privileges re-open new tables to the runtime).
+  ROLE_POLICY="${ROLE_POLICY:-off}"
+  [[ "${ROLE_POLICY}" == "off" || "${ROLE_POLICY}" == "enforce" ]] || fail "config ROLE_POLICY"
+  if [[ "${ROLE_POLICY}" == "enforce" ]]; then
+    for key in RUNTIME_DB_ROLE MIGRATOR_DB_ROLE; do
+      [[ "${!key:-}" =~ ^[a-z_][a-z0-9_]{0,62}$ ]] || fail "config ${key}"
+    done
+    [[ "${RUNTIME_DB_ROLE}" != "${MIGRATOR_DB_ROLE}" ]] || fail "config RUNTIME_DB_ROLE equals MIGRATOR_DB_ROLE"
+  fi
+
   readonly VENV_PYTHON="${DEPLOY_ROOT}/backend/venv/bin/python"
   readonly VENV_PIP="${DEPLOY_ROOT}/backend/venv/bin/pip"
 }
@@ -106,6 +117,33 @@ run_with_staging_env() {
 db_helper() {
   as_app "${VENV_PYTHON}" "${HELPER_DIR}/staging_database.py" \
     --backend-dir "${DEPLOY_ROOT}/backend" --url-file "${MIGRATION_URL_FILE}" "$@"
+}
+
+# BI-2 role policy helper (owner URL file; prints PASS/FAIL lines and counts only).
+roles_helper() {
+  local command="$1"
+  shift
+  as_app "${VENV_PYTHON}" "${HELPER_DIR}/staging_db_roles.py" "${command}" \
+    --runtime-role "${RUNTIME_DB_ROLE}" --migrator-role "${MIGRATOR_DB_ROLE}" \
+    --backend-dir "${DEPLOY_ROOT}/backend" --url-file "${MIGRATION_URL_FILE}" "$@"
+}
+
+# BI-2 data census: per-table row counts before and after, compared outside the database. The files stay in the
+# root-only log directory (never in the repository). Unexpected differences are reported, never hidden.
+CENSUS_RESULT="not_taken"
+census_to() {
+  db_helper census > "$1.tmp" && mv -f "$1.tmp" "$1"
+}
+compare_census() {
+  local before="$1" after="$2" status=0
+  census_to "${after}" || { CENSUS_RESULT="after_unavailable"; echo "WARN census after the ${MODE} unavailable"; return 0; }
+  /usr/bin/python3 -I "${HELPER_DIR}/staging_database.py" census-compare --before "${before}" --after "${after}" \
+    --migrations-ran "${MIGRATIONS_RAN}" || status=$?
+  case "${status}" in
+    0) CENSUS_RESULT="match" ;;
+    3) CENSUS_RESULT="unexpected_changes"; echo "WARN census: unexpected data changes; report to Lydia" ;;
+    *) CENSUS_RESULT="compare_failed"; echo "WARN census comparison failed" ;;
+  esac
 }
 
 # D1: the users copied from production (created before the configured cutoff)
@@ -195,6 +233,13 @@ run_check() {
   done
   check "helper staging_config_check.py" helper_is_root_owned "${HELPER_DIR}/staging_config_check.py"
   check "helper staging_database.py" helper_is_root_owned "${HELPER_DIR}/staging_database.py"
+  if [[ "${ROLE_POLICY}" == "enforce" ]]; then
+    check "helper staging_db_roles.py" helper_is_root_owned "${HELPER_DIR}/staging_db_roles.py"
+    # Prints its own PASS/FAIL lines (role and table names, privilege names).
+    if ! roles_helper verify; then
+      CHECK_FAILURES=$((CHECK_FAILURES + 1))
+    fi
+  fi
 
   # The environment audit prints its own PASS/FAIL lines (names only).
   url_args=(--url-file "${MIGRATION_URL_FILE}")
@@ -270,6 +315,7 @@ write_record() {
     printf '  "migrations_ran": %s,\n' "${MIGRATIONS_RAN}"
     printf '  "alembic_before": %s,\n' "$(json_value "${ALEMBIC_BEFORE}")"
     printf '  "alembic_after": %s,\n' "$(json_value "${ALEMBIC_AFTER}")"
+    printf '  "census": %s,\n' "$(json_value "${CENSUS_RESULT}")"
     printf '  "journal_error_count": %s,\n' "${JOURNAL_ERROR_COUNT:-null}"
     printf '  "artifact_dir": %s,\n' "$(json_value "${ART_DIR}")"
     printf '  "result": %s\n' "$(json_value "${result}")"
@@ -492,6 +538,9 @@ deploy_or_rollback() {
       echo "G4 pending migrations: none"
     fi
   fi
+  CENSUS_BEFORE="${RECORD_FILE%.json}-census-before.json"
+  census_to "${CENSUS_BEFORE}" || fail "census before the ${MODE} (nothing changed)"
+  CENSUS_RESULT="before_taken"
   write_record "started"
 
   install_deploy_traps
@@ -525,6 +574,10 @@ deploy_or_rollback() {
         || after_checkout_failure "migration"
       install_deploy_traps
       echo "PASS G4 migrations applied"
+      if [[ "${ROLE_POLICY}" == "enforce" ]]; then
+        roles_helper apply --confirm || after_checkout_failure "role policy re-apply after migrations"
+        roles_helper verify || after_checkout_failure "role policy verify after migrations"
+      fi
     fi
     pending_after="$(db_helper pending --migrations "${DEPLOY_ROOT}/backend/migrations")" || after_checkout_failure "list pending migrations"
     [[ -z "${pending_after}" ]] || after_checkout_failure "migrations still pending"
@@ -539,6 +592,7 @@ deploy_or_rollback() {
   fi
 
   DEPLOY_COMPLETED="true"
+  compare_census "${CENSUS_BEFORE}" "${RECORD_FILE%.json}-census-after.json"
   JOURNAL_ERROR_COUNT="$(journal_error_count)"
   write_record "deployed" || echo "FAIL: could not write the deploy record" >&2
   report_database_state
@@ -554,7 +608,7 @@ show_status() {
 import json, sys
 record = json.load(open(sys.argv[1], encoding="utf-8"))
 for key in ("mode", "sha", "previous_sha", "start_utc", "end_utc", "pre_migration_utc",
-            "alembic_before", "alembic_after", "journal_error_count", "result"):
+            "alembic_before", "alembic_after", "census", "journal_error_count", "result"):
     print(f"last_{key} {record.get(key)}")
 ' "${LOG_DIR}/last.json"
   else
