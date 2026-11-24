@@ -677,7 +677,7 @@ def test_detached_and_log_modes_use_fixed_command_lines():
     assert '-- "${WRAPPER_PATH}" "--${mode}" "$@" || status=$?' in wrapper
     journal = [line.strip() for line in code_lines(WRAPPER) if "journalctl " in line]
     assert len(journal) == 2
-    assert 'journalctl -u "$1" -f --no-pager -o cat' in journal
+    assert 'exec journalctl -u "$1" -f --no-pager -o cat' in journal
     assert any(line.startswith('count="$(journalctl --unit="${RUNTIME_UNIT}"') for line in journal)
     follow = wrapper[wrapper.index("follow_unit_log() {"):]
     assert follow.index("=~ ${UNIT_NAME_PATTERN}") < follow.index("journalctl -u")
@@ -910,3 +910,104 @@ def test_r3_signature_constant_matches_the_documented_headers():
     expected = hashlib.sha256("".join(line + "\n" for line in lines).encode()).hexdigest()
     assert f'readonly R3_PREFLIGHT_SIGNATURE_SHA256="{expected}"' in text(SMOKE)
     assert "readonly R3_EXCEPTION_DEFAULT=1" in text(SMOKE)
+
+
+
+# --- T-1: the detached run's journal follower never outlives the run ---------
+
+DETACHED_FUNCTIONS = ("follow_unit_log", "stop_follower", "run_detached")
+
+
+def _run_detached_scenario(tmp_path, mode, systemd_run_body, *, signal_after=None):
+    """Runs the wrapper's real run_detached with stub journalctl/systemd-run."""
+    import signal as signal_module
+    import time
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    follower_pid = tmp_path / "follower.pid"
+    unit_done = tmp_path / "unit.done"
+    (bin_dir / "journalctl").write_text(
+        f"#!/bin/bash\necho $$ > {follower_pid}\nwhile true; do sleep 0.1; done\n", encoding="utf-8"
+    )
+    (bin_dir / "systemd-run").write_text(
+        f"#!/bin/bash\necho \"$*\" > {tmp_path / 'systemd-run.args'}\n{systemd_run_body}\n", encoding="utf-8"
+    )
+    for stub in bin_dir.iterdir():
+        stub.chmod(0o755)
+    body = text(WRAPPER)
+    unit_pattern = re.search(r"(?m)^readonly UNIT_NAME_PATTERN=.*$", body).group(0)
+    functions = "\n".join(
+        re.search(rf"(?ms)^{name}\(\) \{{.*?^\}}$", body).group(0) for name in DETACHED_FUNCTIONS
+    )
+    script = f"""set -euo pipefail
+{unit_pattern}
+readonly WRAPPER_PATH=/usr/local/sbin/jaspen-staging-deploy
+FOLLOWER_PID=""
+fail() {{ echo "FAIL: $1" >&2; exit 1; }}
+validate_release_args() {{ true; }}
+{functions}
+run_detached {mode} {"a" * 40} /srv/bundle /srv/wheelhouse
+"""
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "UNIT_DONE": str(unit_done)}
+    proc = subprocess.Popen(["bash", "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    if signal_after is not None:
+        deadline = time.time() + 10
+        while not follower_pid.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.3)
+        proc.send_signal(signal_after)
+    out, err = proc.communicate(timeout=30)
+    pid = int(follower_pid.read_text().strip()) if follower_pid.exists() else None
+    alive = False
+    if pid is not None:
+        time.sleep(0.2)
+        try:
+            os.kill(pid, 0)
+            alive = True
+            os.kill(pid, signal_module.SIGKILL)
+        except ProcessLookupError:
+            alive = False
+    return proc.returncode, out + err, pid, alive, unit_done
+
+
+@pytest.mark.parametrize("mode", ["deploy", "rollback"])
+def test_detached_success_stops_the_follower(tmp_path, mode):
+    code, output, pid, alive, _ = _run_detached_scenario(tmp_path, mode, "sleep 0.5; exit 0")
+    assert code == 0, output
+    assert pid is not None, "the follower must have started"
+    assert not alive, "journalctl follower outlived a successful run (T-1)"
+    assert "finished with status 0" in output
+    args = (tmp_path / "systemd-run.args").read_text()
+    assert args.startswith("--unit=jaspen-staging-deploy-") and f"--{mode} " + "a" * 40 in args
+
+
+def test_detached_failure_keeps_the_status_and_stops_the_follower(tmp_path):
+    code, output, pid, alive, _ = _run_detached_scenario(tmp_path, "deploy", "sleep 0.5; exit 3")
+    assert code == 3
+    assert pid is not None and not alive
+    assert "finished with status 3" in output
+
+
+@pytest.mark.parametrize("sig, expected", [("SIGHUP", 129), ("SIGTERM", 143), ("SIGINT", 130)])
+def test_interrupted_detached_run_stops_the_follower_but_not_the_unit(tmp_path, sig, expected):
+    import signal as signal_module
+
+    # The stub stands in for systemd-run --wait: the transient unit is managed
+    # by systemd, so it finishes even though this process is interrupted.
+    unit_body = 'trap "" HUP INT TERM; sleep 1; touch "$UNIT_DONE"; exit 0'
+    code, output, pid, alive, unit_done = _run_detached_scenario(
+        tmp_path, "deploy", unit_body, signal_after=getattr(signal_module, sig)
+    )
+    assert code == expected, output
+    assert pid is not None and not alive, "journalctl follower outlived an interrupted run (T-1)"
+    assert unit_done.exists(), "the unit must not be stopped by the interruption"
+    assert "finished with status" not in output
+
+
+def test_detached_run_never_stops_the_transient_unit():
+    body = text(WRAPPER)
+    block = body[body.index("stop_follower() {"):body.index("case \"${1:-}\" in")]
+    assert "systemctl" not in block
+    assert 'kill "${FOLLOWER_PID}"' in block
+    assert re.search(r"(?m)^  trap stop_follower EXIT$", block)

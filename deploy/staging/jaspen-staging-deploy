@@ -573,27 +573,45 @@ validate_release_args() {
   fi
 }
 
+# exec makes the journal follower the process itself, so when it runs in the
+# background its PID ($!) is journalctl's and stopping it really ends it (T-1).
 follow_unit_log() {
   [[ "$1" =~ ${UNIT_NAME_PATTERN} ]] || fail "unit name"
-  journalctl -u "$1" -f --no-pager -o cat
+  exec journalctl -u "$1" -f --no-pager -o cat
+}
+
+FOLLOWER_PID=""
+
+# Stops the background journal follower, if any. It never touches the
+# transient deploy unit, which keeps running on its own.
+stop_follower() {
+  [[ -n "${FOLLOWER_PID}" ]] || return 0
+  kill "${FOLLOWER_PID}" 2>/dev/null || true
+  wait "${FOLLOWER_PID}" 2>/dev/null || true
+  FOLLOWER_PID=""
 }
 
 # Runs --deploy/--rollback in a transient unit named by this wrapper and
-# streams its journal; a dropped SSH session leaves the unit running.
+# streams its journal; a dropped SSH session leaves the unit running. The
+# follower is stopped when the unit finishes and on any exit or signal of this
+# process (the unit is not stopped by either).
 run_detached() {
-  local mode="$1" unit status=0 follower
+  local mode="$1" unit status=0
   shift
   validate_release_args "${mode}" "$@"
   unit="jaspen-staging-deploy-${1:0:12}-$(date -u +%Y%m%dT%H%M%SZ)"
   [[ "${unit}" =~ ${UNIT_NAME_PATTERN} ]] || fail "unit name"
   echo "unit ${unit} (re-attach with: ${WRAPPER_PATH} --log ${unit})"
+  trap stop_follower EXIT
+  trap 'stop_follower; exit 129' HUP
+  trap 'stop_follower; exit 130' INT
+  trap 'stop_follower; exit 143' TERM
   follow_unit_log "${unit}" &
-  follower=$!
+  FOLLOWER_PID=$!
   systemd-run --unit="${unit}" --wait --collect --quiet -p TimeoutStopSec=15min \
     -- "${WRAPPER_PATH}" "--${mode}" "$@" || status=$?
   sleep 2
-  kill "${follower}" 2>/dev/null || true
-  wait "${follower}" 2>/dev/null || true
+  stop_follower
   echo "unit ${unit} finished with status ${status}"
   exit "${status}"
 }
