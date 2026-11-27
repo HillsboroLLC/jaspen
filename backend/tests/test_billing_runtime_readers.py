@@ -91,7 +91,8 @@ def modern_org(session, *, plan="team", members=1, credits=500, included_seats=N
     """A funded modern organization on ``plan`` (the definition key), with pricing and capacity for AI use."""
     ns = funded_account(session, members=members, credits=credits)
     definition = session.get(EntitlementDefinition, ns.sub.instance.entitlement_definition_id)
-    key = plan if plan.startswith("pro-") else f"plan.{plan}"  # the canonical plan.<catalog key>
+    # The canonical keys: plan.free, plan.<plan>.monthly|annual (this fixture's subscription is monthly).
+    key = plan if plan.startswith("pro-") else ("plan.free" if plan == "free" else f"plan.{plan}.monthly")
     definition.key, definition.version = key, random.randint(10_000, 2**30)
     if included_seats is not None:
         definition.capability_json = {"schema_version": 1,
@@ -220,9 +221,15 @@ def test_an_unrecognized_plan_definition_fails_closed(db):
 
 def test_a_contract_plan_is_enterprise_and_definition_keys_follow_the_catalog():
     assert readers.public_plan_key("enterprise-contract:x", "enterprise_contract", {}) == "enterprise_custom"
-    for plan in ("free", "starter", "essential", "team", "business", "enterprise_custom"):
-        assert readers.public_plan_key(f"plan.{plan}", "subscription", {}) == plan
-    for unrecognized in ("team", "plan.enterprise", "plan.", "plan.unknown", "pro-123", "PLAN.team"):
+    assert readers.public_plan_key("plan.free", "free", {}) == "free"
+    for plan in ("starter", "essential", "team", "business", "enterprise_custom"):
+        for interval in ("monthly", "annual"):
+            assert readers.parse_plan_definition_key(f"plan.{plan}.{interval}") == (plan, interval)
+            assert readers.public_plan_key(f"plan.{plan}.{interval}", "subscription", {}) == plan
+        assert readers.parse_plan_definition_key(f"plan.{plan}") == (plan, None)
+    for unrecognized in ("team", "plan.enterprise", "plan.", "plan.unknown", "pro-123", "PLAN.team",
+                         "plan.team.weekly", "plan.team.monthly.x", "plan..monthly", "plan.monthly",
+                         "plan.free.monthly"):
         assert readers.public_plan_key(unrecognized, "subscription", {}) is None
     assert readers.public_plan_key(None, None, {}) is None
 
@@ -308,6 +315,20 @@ def test_status_maps_subscription_states_to_the_spellings_the_frontend_reads(db)
     subscription.state = "past_due"
     session.flush()
     assert _status(session, ns)["subscription_status"] == "past_due"
+
+
+def test_the_interval_comes_from_the_subscription_then_the_plan_definition(db):
+    session = db.session
+    ns = modern_org(session)
+    assert _status(session, ns)["billing_interval"] == "monthly"
+    subscription = session.get(BillingSubscription, ns.sub.subscription.id)
+    subscription.interval = "custom"
+    session.flush()
+    assert _status(session, ns)["billing_interval"] == "monthly"  # plan.team.monthly
+    ns.definition.key = "plan.team"
+    session.flush()
+    status = _status(session, ns)
+    assert status["billing_interval"] is None and "billing_interval" in status["not_available"]
 
 
 def test_an_admin_flag_never_impersonates_a_plan(db):

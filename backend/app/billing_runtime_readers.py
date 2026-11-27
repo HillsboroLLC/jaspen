@@ -51,6 +51,7 @@ MODEL = "modern"
 CONTRACT_PLAN_KEY = "enterprise_custom"
 # Canonical base-plan definition keys: ``plan.<catalog plan key>`` (I2 ``plan_definition_key``; I4 tiers).
 PLAN_DEFINITION_PREFIX = "plan."
+PLAN_DEFINITION_INTERVALS = frozenset({"monthly", "annual"})
 # Phase 4 subscription states, written in the processor spelling the existing frontend compares against.
 # ``cancel_at_period_end`` is an active subscription whose cancellation is scheduled (reported separately).
 _STATUS_SPELLING = {"cancelled": "canceled", "cancel_at_period_end": "active"}
@@ -76,19 +77,37 @@ def _naive(value):
     return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed is not None else None
 
 
+def parse_plan_definition_key(definition_key, app_config=None):
+    """``(plan_key, interval)`` of a canonical self-serve plan definition key, else ``(None, None)``.
+
+    Canonical keys (the funding family's): ``plan.free``, and ``plan.<plan>.monthly`` /
+    ``plan.<plan>.annual`` for paid plans (Phase 6 funds each interval from its own definition); a bare
+    ``plan.<plan>`` is accepted too. ``<plan>`` must be a catalog plan key.
+    """
+    if not isinstance(definition_key, str) or not definition_key.startswith(PLAN_DEFINITION_PREFIX):
+        return None, None
+    parts = definition_key[len(PLAN_DEFINITION_PREFIX):].split(".")
+    interval = None
+    if len(parts) == 2 and parts[1] in PLAN_DEFINITION_INTERVALS:
+        interval = parts[1]
+    elif len(parts) != 1:
+        return None, None
+    plan = parts[0]
+    if plan not in get_plan_catalog(app_config or {}) or (plan == "free" and interval is not None):
+        return None, None
+    return plan, interval
+
+
 def public_plan_key(definition_key, plan_source_type, app_config):
     """The public plan key of a modern base-plan entitlement, or None when it names no catalog plan.
 
-    An executed-contract plan is Enterprise. A self-serve plan definition is named ``plan.<catalog plan
-    key>`` (the canonical key the funding family writes, e.g. ``plan.team``). Any other key is not a
-    recognized plan: gates fail closed on it.
+    An executed-contract plan (``enterprise-contract:<id>``) is Enterprise. A self-serve plan definition
+    carries a canonical key (``parse_plan_definition_key``). Any other key is not a recognized plan: gates
+    fail closed on it.
     """
     if plan_source_type == "enterprise_contract":
         return CONTRACT_PLAN_KEY
-    if not isinstance(definition_key, str) or not definition_key.startswith(PLAN_DEFINITION_PREFIX):
-        return None
-    key = definition_key[len(PLAN_DEFINITION_PREFIX):]
-    return key if key in get_plan_catalog(app_config or {}) else None
+    return parse_plan_definition_key(definition_key, app_config)[0]
 
 
 def _account_and_terms(session, context, *, member_user_id=None, at=None):
@@ -205,9 +224,13 @@ def modern_billing_status(session, *, context, user, app_config, usage_warning_f
             scheduled_plan = public_plan_key(schedule["target_plan_key"], None, app_config)
             if scheduled_plan is None:
                 not_available.append("scheduled_plan_change")
+        # The Phase 4 subscription's interval is authoritative; the plan definition's own interval
+        # (plan.<plan>.monthly|annual) answers only when the subscription's is not monthly or annual.
         interval = _INTERVALS.get(subscription["billing_interval"]) if subscription else None
         if subscription and interval is None:
-            not_available.append("billing_interval")
+            interval = parse_plan_definition_key(terms["definition_key"], app_config)[1]
+            if interval is None:
+                not_available.append("billing_interval")
         status = subscription["status"] if subscription else None
         # Capabilities (models, tools, context) are configuration keyed by plan; with no recognized plan they
         # fall to the lowest tier (fail closed). This is not a billing number.
