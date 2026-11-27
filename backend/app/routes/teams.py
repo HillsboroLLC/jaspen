@@ -45,13 +45,17 @@ from app.orgs import (
     mfa_policy_for_org,
     normalize_mfa_policy,
     normalize_org_role,
+    modern_org_gates,
     org_collaboration_state,
+    org_plan_key,
+    org_total_paid_seat_limit,
+    register_modern_billing_error_handlers,
     role_has_capacity,
     user_collaboration_state,
 )
 
 
-teams_bp = Blueprint("teams", __name__)
+teams_bp = register_modern_billing_error_handlers(Blueprint("teams", __name__))
 
 # Roles, seat accounting and capacity all live in app.orgs. This blueprint
 # used to carry its own copies, which drifted: its caps came from the plan
@@ -97,7 +101,7 @@ def _normalize_org_mfa_settings(org, incoming_settings):
     policy = normalize_mfa_policy(incoming_settings.get("mfa_policy"))
     if not policy:
         return None, "mfa_policy must be one of: optional, encouraged, required"
-    plan = to_public_plan(org.plan_key)
+    plan = to_public_plan(org_plan_key(org))
     if plan in {"free", "starter", "essential"} and policy == MFA_POLICY_REQUIRED:
         return None, "MFA enforcement is only available on Team or Business plans"
     if plan == "business":
@@ -163,19 +167,26 @@ def _require_org_access(org_id):
     return user, org, membership, None
 
 
+def _public_org_plan(plan_key, gates=None):
+    return to_public_plan(plan_key) if gates is None or plan_key else None
+
+
 def _org_payload(org, membership_role=None):
+    gates = modern_org_gates(org)
+    plan_key = org_plan_key(org, gates)
     return {
         "id": org.id,
         "name": org.name,
         "slug": org.slug,
         "owner_id": org.owner_user_id,
-        "plan": to_public_plan(org.plan_key),
-        "max_admin_seats": getattr(org, "max_admin_seats", None),
-        "max_total_paid_seats": getattr(org, "max_total_paid_seats", None),
-        "max_creator_seats": getattr(org, "max_creator_seats", None),
-        "max_collaborator_seats": getattr(org, "max_collaborator_seats", None),
+        "plan": _public_org_plan(plan_key, gates),
+        # Legacy per-role seat columns; a modern organization's seat policy is its plan's (seat_policy).
+        "max_admin_seats": getattr(org, "max_admin_seats", None) if gates is None else None,
+        "max_total_paid_seats": org_total_paid_seat_limit(org, gates),
+        "max_creator_seats": getattr(org, "max_creator_seats", None) if gates is None else None,
+        "max_collaborator_seats": getattr(org, "max_collaborator_seats", None) if gates is None else None,
         "settings": org.settings if isinstance(org.settings, dict) else {},
-        "mfa_policy": mfa_policy_for_org(org),
+        "mfa_policy": mfa_policy_for_org(org, gates),
         "created_at": org.created_at.isoformat() if org.created_at else None,
         "updated_at": org.updated_at.isoformat() if org.updated_at else None,
         "user_role": normalize_org_role(membership_role, default=ROLE_VIEWER),
@@ -1087,7 +1098,7 @@ def export_org_data(org_id):
     from app.data_sharing import data_sharing_choices
     response = jsonify({
         "exported_at": _now().isoformat(),
-        "organization": {"id": org.id, "name": org.name, "plan_key": org.plan_key},
+        "organization": {"id": org.id, "name": org.name, "plan_key": org_plan_key(org)},
         "data_sharing": data_sharing_choices(org),
         "members": members,
         "projects": projects,
