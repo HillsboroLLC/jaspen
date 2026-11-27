@@ -1042,7 +1042,10 @@ def test_phase12_service_has_no_live_runtime_callers():
         if path.name not in {"billing_ai_operations.py", "billing_reliable_delivery.py",
                              "models_billing_phase12.py", "models.py", "billing_projections.py",
                              "billing_migration.py",
-                             "billing_shadow.py"}  # Phase 16 shadow comparison is inactive and read only
+                             "billing_shadow.py",  # Phase 16 shadow comparison is inactive and read only
+                             # I4: operator-only staging test policy installer (scripts/billing_policies.py);
+                             # no route, job or startup path imports it.
+                             "billing_runtime_policies.py"}
         and ("billing_ai_operations" in path.read_text() or "models_billing_phase12" in path.read_text())
     ]
     assert callers == []
