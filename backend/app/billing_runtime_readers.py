@@ -40,6 +40,7 @@ from .billing_config import (
     get_plan_catalog,
     tokens_to_credits,
 )
+from .billing_projections import ProjectionError as ProjectionError
 from .billing_projections import project_billing_account, project_plan_terms
 from .models import BillingAccount
 

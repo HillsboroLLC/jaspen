@@ -322,20 +322,21 @@ def get_billing_status():
     # Readers family: a modern organization's status is a pure projection, answered before any legacy
     # pre-read (bootstrap, the admin plan override, Stripe), all of which write or call the processor.
     from app.billing_cutover import modern_context
-    from app.billing_projections import ProjectionError
-    try:
-        readers = modern_context(db.session, family='readers', user_id=user.id)
-        if readers is not None:
-            from app.billing_runtime_readers import modern_billing_status
+
+    readers = modern_context(db.session, family='readers', user_id=user.id)
+    if readers is not None:
+        from app.billing_runtime_readers import ProjectionError, modern_billing_status
+
+        try:
             payload = modern_billing_status(
                 db.session, context=readers, user=user, app_config=current_app.config,
                 usage_warning_fields=_usage_warning_fields,
                 is_admin=is_global_admin(user, app_config=current_app.config))
-            _decorate_connector_tools(user, payload['tool_entitlements'])
-            return jsonify(payload), 200
-    except ProjectionError as exc:  # an invariant violation is refused, never hidden
-        current_app.logger.error('billing status projection refused: %s', exc)
-        return jsonify({'error': 'billing_projection_unavailable'}), 409
+        except ProjectionError as exc:
+            current_app.logger.error('billing status projection refused: %s', exc)
+            return jsonify({'error': 'billing_projection_unavailable'}), 409
+        _decorate_connector_tools(user, payload['tool_entitlements'])
+        return jsonify(payload), 200
 
     if bootstrap_legacy_credits(user, current_app.config):
         db.session.commit()
