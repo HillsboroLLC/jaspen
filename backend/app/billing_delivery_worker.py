@@ -300,7 +300,7 @@ def request_cancellation(session, *, operation_id, organization_id, actor_user_i
     return result.rowcount == 1
 
 
-def read_delivery(session, *, operation_id, organization_id, actor_user_id, after=None):
+def read_delivery(session, *, operation_id, organization_id, actor_user_id, after=None, include_chunks=True):
     """Pure read for the streaming route and for recovery after a disconnect.
 
     ``after`` is the previous view's ``cursor``. Chunks are display progress; the
@@ -315,7 +315,7 @@ def read_delivery(session, *, operation_id, organization_id, actor_user_id, afte
     )).scalar_one()
     chunks = []
     cursor = tuple(after) if after else None
-    if latest is not None:
+    if latest is not None and include_chunks:
         restart = cursor is not None and int(cursor[0]) < int(latest)
         from_seq = 0 if cursor is None or int(cursor[0]) < int(latest) else int(cursor[1])
         rows = session.execute(select(AIDeliveryStreamChunk).where(
@@ -339,7 +339,7 @@ def read_delivery(session, *, operation_id, organization_id, actor_user_id, afte
 def delivery_outcome(session, *, operation_id, organization_id, actor_user_id):
     """Read-only: the job and Phase 12 outcome (charged credits once settled), for JSON callers."""
     view = read_delivery(session, operation_id=operation_id, organization_id=organization_id,
-                         actor_user_id=actor_user_id, after=(2 ** 31, 2 ** 31))
+                         actor_user_id=actor_user_id, include_chunks=False)
     return {
         "operation_id": operation_id, "state": view.state, "outcome": view.outcome, "finished": view.finished,
         "persisted": view.persisted, "billing_state": view.billing_state,

@@ -889,7 +889,10 @@ def test_postgres_o1_the_wrong_isolation_level_stops_recovery():
 def test_postgres_migrated_guards_protect_jobs_chunks_and_persist_before_settle():
     with pg() as engine:
         ns = _pg_world(engine)
-        other = _pg_world(engine)
+        with migrated_session(engine) as session:
+            from tests.test_billing_enterprise_contracts import seed_org
+            other = seed_org(session)  # an unrelated organization; the capacity policy stays ns's
+            session.commit()
         with migrated_session(engine) as session:
             with pytest.raises(sa.exc.IntegrityError, match="Phase 12 identity"):
                 _mismatched_job(session, ns, other.owner)
