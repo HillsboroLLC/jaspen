@@ -91,6 +91,7 @@ class Phase12CallRecorder:
         self._component = "primary"
         self._new_attempt = False
         self.delivered_attempt = None
+        self.recorded_calls = 0
 
     def before_call(self, provider, model, request):
         if self._attempt is None or self._new_attempt:
@@ -123,6 +124,7 @@ class Phase12CallRecorder:
             error_category=None if mapped == "succeeded" else (type(error).__name__ if error else mapped),
             provider_request_id=request_id,
         )
+        self.recorded_calls += 1
         if mapped == "succeeded":
             self.delivered_attempt = handle["attempt"]
         else:
@@ -143,10 +145,11 @@ _REGISTRY = {}  # operation id -> _Pending, for the process that submitted it
 
 
 class _Pending:
-    __slots__ = ("generate", "prepare_response", "failure")
+    __slots__ = ("generate", "prepare_response", "failure", "generation_failure")
 
     def __init__(self, generate, prepare_response):
         self.generate, self.prepare_response, self.failure = generate, prepare_response, None
+        self.generation_failure = None
 
 
 def _worker():
@@ -209,7 +212,16 @@ def _run_registered(ctx):
     except Exception as exc:  # the generation's own failure: no usable response
         pending.failure = exc
         raise worker.DeliveryFailed(type(exc).__name__) from exc
+    if usage.get("generation_failed") is True:
+        # A governed generator rejected its own output before it could be
+        # delivered. Keep the existing failure/fallback path for its caller.
+        pending.generation_failure = (value, usage)
+        if recorder.recorded_calls:
+            raise worker.DeliveryFailed("generation_failed")
+        return worker.NoBillableUsage()
     if recorder.delivered_attempt is None:
+        if recorder.recorded_calls:
+            raise worker.DeliveryFailed("provider_undelivered")
         return worker.NoBillableUsage()
     return worker.DeliveryResult(delivered_attempt_number=recorder.delivered_attempt,
                                  response={"value": value, "usage": usage}, prepare_response=pending.prepare_response)
@@ -394,8 +406,12 @@ def execute_modern_operation(user, *, context, generate, operation_type, idempot
             forget(operation_id)
     session.expire_all()
     if not outcome["persisted"]:
-        if pending is not None and pending.failure is not None:
-            raise pending.failure
+        if pending is not None:
+            if pending.failure is not None:
+                raise pending.failure
+            if pending.generation_failure is not None:
+                value, usage = pending.generation_failure
+                return value, dict(usage), _settlement(outcome, operation_id)
         raise ModernOperationRefused(outcome["outcome"] or "not_delivered")
     response = outcome["response"]
     return response["value"], dict(response["usage"]), _settlement(outcome, operation_id, replay=pending is None)

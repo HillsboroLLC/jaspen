@@ -452,3 +452,26 @@ def test_decision_kit_provider_call_runs_under_the_modern_reservation(client, db
     calls = db.session.query(AIProviderCallUsage).filter_by(operation_id=operation.operation_id).all()
     assert len(calls) == 2
     assert {call.attempt_number for call in calls} == {operation.delivered_attempt_number}
+
+
+def test_governed_generation_failure_absorbs_reported_usage_and_keeps_the_fallback(app, db, modern):
+    from app.ai_runtime import execute_customer_operation
+    from app.models_billing_phase12 import AIAbsorbedUsage
+
+    before, _held = _spendable(db.session, modern["account"])
+    user = db.session.get(User, modern["owner"].id)
+
+    def generate():
+        _provider_reply()  # transport success is not a delivered plan
+        return {"provider_success": False, "provider_error": "invalid_lineage"}, {"generation_failed": True}
+
+    with app.test_request_context():
+        value, usage, settlement = execute_customer_operation(
+            user, generate=generate, operation_type="execution_plan", request_payload={"q": 1},
+            max_tokens=500, thread_id=modern["thread"],
+        )
+    assert value["provider_success"] is False and usage["generation_failed"] is True
+    assert settlement["delivery_status"] == "undelivered" and settlement["charged_credits"] == 0
+    absorbed = db.session.query(AIAbsorbedUsage).filter_by(operation_id=settlement["operation_id"]).one()
+    assert absorbed.absorbed_credits == CHARGE
+    assert _spendable(db.session, modern["account"]) == (before, 0)
