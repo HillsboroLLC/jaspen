@@ -115,6 +115,13 @@ def fake_provider(ctx):
     raise bdw.DeliveryFailed("provider_failed")
 
 
+# The same fake under names only one PostgreSQL journey uses: the migrated database is shared
+# across runs, and ``run_once`` must never pick up another journey's leftover job.
+bdw.executor("i3-concurrent")(fake_provider)
+bdw.executor("i3-crash-journey")(fake_provider)
+UNREGISTERED = "i3-never-registered"  # guard-test jobs that no worker may run
+
+
 def _factory(engine):
     if engine.dialect.name == "postgresql":
         engine = engine.execution_options(isolation_level="READ COMMITTED")
@@ -122,14 +129,14 @@ def _factory(engine):
 
 
 def _submit(session, ns, *, attempts=("ok",), after_restart=None, heartbeat=60, job_lease=90, timeout=30,
-            max_claims=None, step=None, user=None):
+            max_claims=None, step=None, user=None, executor="i3-fake-provider"):
     authorization = authorize(session, ns, user=user, step=step or f"step-{uuid.uuid4().hex[:8]}")
     payload = {"attempts": list(attempts)}
     if after_restart:
         payload["after_restart"] = list(after_restart)
     bdw.submit_delivery(
         session, operation_id=authorization.operation_id, organization_id=ns.org,
-        actor_user_id=user or ns.owner, executor="i3-fake-provider", payload=payload,
+        actor_user_id=user or ns.owner, executor=executor, payload=payload,
         provider_timeout_seconds=timeout, heartbeat_interval_seconds=heartbeat, job_lease_seconds=job_lease,
         max_claims=max_claims,
     )
@@ -728,11 +735,13 @@ def test_postgres_a_disconnect_never_stops_delivery_and_the_heartbeat_renews_dur
 def test_postgres_concurrent_workers_run_each_job_exactly_once():
     with pg() as engine:
         ns = _pg_world(engine, credits=5000, member={"max_concurrent": 20}, organization={"max_concurrent": 20})
-        operations = [_pg_submit(engine, ns) for _ in range(6)]
+        operations = [_pg_submit(engine, ns, executor="i3-concurrent") for _ in range(6)]
         barrier = threading.Barrier(4)
 
         def run(index):
-            worker = bdw.DeliveryWorker(_factory(engine), owner=f"pg-concurrent-{index}")
+            # Scoped to this journey's executor: other jobs in the shared database are not its work.
+            worker = bdw.DeliveryWorker(_factory(engine), owner=f"pg-concurrent-{index}",
+                                        executors=("i3-concurrent",))
             barrier.wait()
             done = []
             while True:
@@ -789,10 +798,10 @@ def test_postgres_a_crashed_worker_is_recovered_by_another_process():
     with pg() as engine:
         ns = _pg_world(engine)
         operation_id = _pg_submit(engine, ns, attempts=("crash",), after_restart=("ok",), heartbeat=1,
-                                  job_lease=3, timeout=5)
+                                  job_lease=3, timeout=5, executor="i3-crash-journey")
         with pytest.raises(SimulatedCrash):
             bdw.DeliveryWorker(_factory(engine), owner="pg-crashing").run_job(operation_id)
-        restarted = bdw.DeliveryWorker(_factory(engine), owner="pg-restarted")
+        restarted = bdw.DeliveryWorker(_factory(engine), owner="pg-restarted", executors=("i3-crash-journey",))
         assert restarted.run_once() == []  # the dead worker's job lease has not lapsed yet
         assert _wait(lambda: restarted.run_once() == [(operation_id, "delivered")], timeout=10)
         with migrated_session(engine) as session:
@@ -836,9 +845,9 @@ def test_postgres_a_late_response_after_the_lease_lapsed_is_delivered_never_char
         sweeper = bdw.DeliveryWorker(_factory(engine), owner="pg-sweeper")
 
         def lapsed():
+            sweeper.recover()
             with migrated_session(engine) as session:
-                return _billing(session, operation_id).state == "expired" or bool(
-                    sweeper.recover()["expired"])
+                return _billing(session, operation_id).state == "expired"
         assert _wait(lapsed, timeout=15)  # renewal is capped at the deadline plus one lease
         hook["release"].set()
         thread.join(20)
@@ -869,12 +878,13 @@ def test_postgres_recovery_retries_settlement_and_concurrent_sweeps_charge_once(
 
         with ThreadPoolExecutor(3) as pool:
             reports = list(pool.map(sweep, range(3)))
-        assert all(report["blocked"] == [] for report in reports)
+        assert not {row["operation_id"] for report in reports for row in report["blocked"]} & set(operations)
         with migrated_session(engine) as session:
             for operation_id in operations:
                 assert charged(session, operation_id) == 18 and _job(session, operation_id).outcome == "delivered"
             assert sums(session, ns.account) == (5000 - 4 * 18, 0)
-        assert bdw.DeliveryWorker(_factory(engine)).recover()["jobs_settled"] == []
+        final = bdw.DeliveryWorker(_factory(engine)).recover()
+        assert not {row["operation_id"] for row in final["jobs_settled"] + final["settled"]} & set(operations)
 
 
 @PG
@@ -897,7 +907,7 @@ def test_postgres_migrated_guards_protect_jobs_chunks_and_persist_before_settle(
             with pytest.raises(sa.exc.IntegrityError, match="Phase 12 identity"):
                 _mismatched_job(session, ns, other.owner)
             session.rollback()
-        operation_id = _pg_submit(engine, ns)
+        operation_id = _pg_submit(engine, ns, executor=UNREGISTERED)
         with migrated_session(engine) as session:
             for statement, message in (
                 (sa.update(AIDeliveryJob).values(organization_id=other.org), "immutable"),

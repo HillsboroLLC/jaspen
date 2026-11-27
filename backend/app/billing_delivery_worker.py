@@ -615,8 +615,10 @@ class DeliveryWorker:
       heartbeat get a new session from it.
     """
 
-    def __init__(self, session_factory=None, *, owner=None, app=None, heartbeat_session_factory=None):
+    def __init__(self, session_factory=None, *, owner=None, app=None, heartbeat_session_factory=None,
+                 executors=None):
         self.owner = owner or f"delivery-worker-{uuid.uuid4().hex[:12]}"
+        self._executors = None if executors is None else tuple(executors)  # None: every registered executor
         self._app = app
         self._scoped = session_factory is None and app is not None
         if self._scoped:
@@ -680,7 +682,9 @@ class DeliveryWorker:
 
     def claim(self, operation_id=None, *, executors=None):
         """Claim one job (a specific one, or the oldest available) by compare-and-set; None if none."""
-        executors = tuple(executors if executors is not None else registered_executors())
+        if executors is None:  # this worker's own work: what it can run
+            executors = tuple(name for name in (self._executors or registered_executors()) if name in _EXECUTORS)
+        executors = tuple(executors)
         if not executors:
             return None
         with self._session() as session:
