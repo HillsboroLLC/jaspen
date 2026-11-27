@@ -316,6 +316,7 @@ LEGACY_FIELD_WRITERS = (
     # and its close when the claim never became durable. Evidence rows only;
     # neither changes a balance.
     ("app/ai_audit.py", "claim_turn_operation", "AIOperation()", "both"),
+    ("app/billing_runtime_ai.py", "claim_modern_operation", "AIOperation()", "both"),  # I4: Phase 12 operation row
     ("app/ai_audit.py", "close_turn_operation_alone", "AIOperation()", "both"),
     ("app/ai_audit.py", "persist_operation", "AIOperation()", "both"),
     ("app/ai_audit.py", "persist_operation", "charged_credits", "both"),
