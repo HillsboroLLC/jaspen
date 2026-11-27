@@ -695,7 +695,7 @@ def create_app():
             from .models import User
             user = db.session.get(User, str(get_jwt_identity() or ''))
             if user is not None:
-                return jsonify(_insufficient_credits_payload(user, 0)), 402
+                return jsonify(_insufficient_credits_payload(user, 0, billing_context=e.billing_context)), 402
         return jsonify({'error': 'ai_operation_unavailable', 'code': e.code}), status
 
     @app.errorhandler(BillingFamilyDisabledError)

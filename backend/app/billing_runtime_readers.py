@@ -368,3 +368,28 @@ def modern_org_gates_for(session, organization_id, *, app_config=None, config=No
     if context is None:
         return None
     return modern_org_gates(session, context=context, app_config=app_config)
+
+
+def modern_entitlement_plan_for(user, *, organization_id=None, app_config=None):
+    """Plan for a member's AI and tool gates, with None reserved for legacy work."""
+    from flask import has_app_context
+
+    from . import db
+    from .billing_cutover import context_organization_id, modern_context
+    from .models import User
+    from .session_access import SessionNotFound, active_membership_for_user, active_org_id_for_user
+
+    if not isinstance(user, User) or not has_app_context():
+        return None
+    session = db.session
+    with session.no_autoflush:
+        organization_id = (
+            organization_id or active_org_id_for_user(user) or context_organization_id(session, user.id)
+        )
+        context = modern_context(session, family=READERS_FAMILY, organization_id=organization_id)
+        if context is None:
+            return None
+        if active_membership_for_user(context.organization_id, user.id) is None:
+            raise SessionNotFound(denied=True)
+        gates = modern_org_gates(session, context=context, app_config=app_config)
+        return (gates["plan_key"] or "free") if gates["billing_current"] else "free"

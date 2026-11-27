@@ -594,3 +594,52 @@ def test_the_legacy_seat_policy_edit_of_a_modern_organization_answers_409(app, c
 def test_free_allowance_unit_matches_the_ledger_unit():
     """The ledger and the legacy meters share internal credit units (I1 footprint check uses the same)."""
     assert tokens_to_credits(DEFAULT_PLAN_CATALOG["free"]["monthly_credits"], precision=0) == 300
+
+
+def test_ai_and_tool_gates_use_the_work_organizations_modern_entitlement(db, readers_on):
+    from flask import current_app
+
+    from app.routes import ai_agent, strategy
+    from app.session_access import pin_active_organization
+    from tests.test_billing_cutover import _org
+
+    session = db.session
+    modern = modern_org(session, plan="essential")
+    user = session.get(User, modern.owner)
+    legacy = _org(session, user)
+    user.active_organization_id = legacy.id
+    session.flush()
+    with current_app.test_request_context():
+        pin_active_organization(user.id, modern.org)
+        assert readers.modern_entitlement_plan_for(user, app_config=current_app.config) == "essential"
+        assert ai_agent._entitlement_plan_key(user) == "essential"
+        model, error = ai_agent._resolve_model_selection(user, requested_model_type="orbit")
+        assert error is None and model["model_type"] == "orbit"
+        _, plan, _ = strategy._require_tool_access(user.id, "wbs_read")
+        assert plan == "essential"
+
+        subscription = session.get(BillingSubscription, modern.sub.subscription.id)
+        subscription.state = "past_due"
+        session.flush()
+        assert ai_agent._entitlement_plan_key(user) == "free"
+        _, plan, _ = strategy._require_tool_access(user.id, "wbs_read")
+        assert plan == "free"
+
+
+def test_modern_credit_refusal_uses_only_the_paying_organizations_meter(db, readers_on, monkeypatch):
+    from app.routes import ai_agent
+
+    session = db.session
+    modern = modern_org(session, plan="essential")
+    user = session.get(User, modern.owner)
+    billing_context = context(session, modern)
+
+    def legacy_meter(*args, **kwargs):
+        raise AssertionError("modern refusal consulted a legacy meter")
+
+    monkeypatch.setattr(ai_agent, "get_usage_meter_state", legacy_meter)
+    payload = ai_agent._insufficient_credits_payload(user, 0, billing_context=billing_context)
+    assert payload["plan_key"] == "essential"
+    monkeypatch.delenv("BILLING_MODERN_FAMILIES")
+    payload = ai_agent._insufficient_credits_payload(user, 0, billing_context=billing_context)
+    assert payload["plan_key"] is None and payload["credits_remaining"] is None

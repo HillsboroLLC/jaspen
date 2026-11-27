@@ -42,9 +42,10 @@ SETTLEMENT_MARGIN_SECONDS = 15
 class ModernOperationRefused(RuntimeError):
     """A modern operation could not start; ``code`` is operational, never customer wording."""
 
-    def __init__(self, code, detail=None):
+    def __init__(self, code, detail=None, *, billing_context=None):
         super().__init__(detail or code)
         self.code = code
+        self.billing_context = billing_context
 
 
 def input_token_bound(input_characters):
@@ -234,7 +235,7 @@ def _find_replay(session, *, context, user_id, key, fingerprint):
     ):
         raise ModernOperationRefused("idempotency_conflict")
     if session.get(AIDeliveryJob, operation.id) is None:
-        raise ModernOperationRefused(operation.error_code or "delivery_pending")
+        raise ModernOperationRefused(operation.error_code or "delivery_pending", billing_context=context)
     return operation.id
 
 
@@ -298,7 +299,7 @@ def submit_modern_operation(session, *, context, user_id, operation_type, genera
         raise
     session.commit()  # the job is durable before any provider call
     if refusal is not None:
-        raise ModernOperationRefused(refusal)
+        raise ModernOperationRefused(refusal, billing_context=context)
     pending = _REGISTRY[operation.id] = _Pending(generate, prepare_response)
     worker.start_in_process(operation.id)
     return operation.id, pending

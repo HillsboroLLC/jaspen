@@ -2480,7 +2480,10 @@ def _resolve_strategy_thread_state(sessions, all_data, thread_id):
 
 
 def _resolve_user_model_selection(user, requested_model_type=None):
-    plan_key = effective_plan_key(user, current_app.config)
+    from ..billing_runtime_readers import modern_entitlement_plan_for
+
+    plan_key = modern_entitlement_plan_for(user, app_config=current_app.config)
+    plan_key = plan_key or effective_plan_key(user, current_app.config)
     allowed_model_types = get_allowed_model_types(plan_key, current_app.config)
     default_model_type = get_default_model_type(plan_key, current_app.config)
     selected_model_type = normalize_model_type(requested_model_type or default_model_type)
@@ -2521,7 +2524,10 @@ def _require_tool_access(user_id, tool_id, access='read'):
     if not user:
         return None, None, (jsonify({'error': 'User not found'}), 404)
 
-    plan_key = effective_plan_key(user, current_app.config)
+    from ..billing_runtime_readers import modern_entitlement_plan_for
+
+    plan_key = modern_entitlement_plan_for(user, app_config=current_app.config)
+    plan_key = plan_key or effective_plan_key(user, current_app.config)
     if not is_tool_allowed(plan_key, tool_id, access):
         return user, plan_key, _tool_access_error_response(plan_key, tool_id, access=access)
 

@@ -5826,19 +5826,20 @@ def _max_output_tokens_for_plan(plan_key):
     return int(max(256, caps.get(normalized_plan, caps["free"])))
 
 
-def _insufficient_credits_payload(user, required_credits):
-    usage_state = None
-    try:
-        from app.billing_cutover import modern_context
-        context = modern_context(db.session, family="readers", user_id=getattr(user, "id", None))
-    except Exception:  # a disabled family answers elsewhere; this payload never decides billing
-        context = None
-    if context is not None:
-        from app.billing_runtime_readers import modern_usage_meter_state
-        usage_state = modern_usage_meter_state(db.session, context=context, user_id=user.id,
-                                               app_config=current_app.config)
-    if usage_state is None:
+def _insufficient_credits_payload(user, required_credits, *, billing_context=None):
+    if billing_context is None:
         usage_state = get_usage_meter_state(user, current_app.config)
+        plan_key = to_public_plan(user.subscription_plan)
+    else:
+        from app.billing_cutover import cutover_config
+        from app.billing_runtime_readers import modern_usage_meter_state
+
+        usage_state = {}
+        if cutover_config().enabled("readers"):
+            usage_state = modern_usage_meter_state(
+                db.session, context=billing_context, user_id=user.id, app_config=current_app.config,
+            )
+        plan_key = usage_state.get("plan_key")
     remaining_tokens = usage_state.get("remaining")
     remaining_credits = tokens_to_credits(remaining_tokens, precision=1)
     reset_at = usage_state.get("reset_at")
@@ -5849,7 +5850,7 @@ def _insufficient_credits_payload(user, required_credits):
         "upgrade_url": "/account?tab=billing",
         "required_credits": tokens_to_credits(int(required_credits or 0), precision=1),
         "credits_remaining": remaining_credits,
-        "plan_key": usage_state.get("plan_key") if context is not None else to_public_plan(user.subscription_plan),
+        "plan_key": plan_key,
         "monthly_credit_limit": tokens_to_credits(usage_state.get("monthly_limit"), precision=0),
         "cycle_credit_limit": tokens_to_credits(usage_state.get("cycle_limit"), precision=0),
         "cycle_reset_at": reset_at.isoformat() if reset_at else None,
@@ -11697,7 +11698,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
 _anthropic_content_to_dicts = anthropic_provider.content_to_dicts
 
 
-def _entitlement_plan_key(user):
+def _entitlement_plan_key(user, organization_id=None):
     """Org-aware entitlement plan for the chat agent's tool gating.
 
     A member of a paid organization inherits that org's plan (essential / team /
@@ -11713,6 +11714,13 @@ def _entitlement_plan_key(user):
     """
     if not user:
         return "free"
+    from app.billing_runtime_readers import modern_entitlement_plan_for
+
+    modern_plan = modern_entitlement_plan_for(
+        user, organization_id=organization_id, app_config=current_app.config,
+    )
+    if modern_plan is not None:
+        return modern_plan
     try:
         active_org, _ = resolve_active_org_for_user(user)
     except Exception:
@@ -11771,7 +11779,7 @@ def _generate_assistant_reply_anthropic(
         return fallback_reply, {"provider": "heuristic", "model": None, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, [], [], None
 
     model_name = _anthropic_model_for_selection(model_selection)
-    plan_key = _entitlement_plan_key(user)
+    plan_key = _entitlement_plan_key(user, getattr(project, "organization_id", None))
     max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
@@ -12053,7 +12061,7 @@ def _stream_assistant_reply_events_anthropic(
         return
 
     model_name = _anthropic_model_for_selection(model_selection)
-    plan_key = _entitlement_plan_key(user)
+    plan_key = _entitlement_plan_key(user, getattr(project, "organization_id", None))
     max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
@@ -12395,7 +12403,7 @@ def _generate_assistant_reply_gemini(
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
-    plan_key = _entitlement_plan_key(user)
+    plan_key = _entitlement_plan_key(user, getattr(project, "organization_id", None))
     max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
@@ -12635,7 +12643,7 @@ def _stream_assistant_reply_events_gemini(
     if not messages:
         messages = [{"role": "user", "content": _wrap_user_message_content(user_message)}]
 
-    plan_key = _entitlement_plan_key(user)
+    plan_key = _entitlement_plan_key(user, getattr(project, "organization_id", None))
     max_tokens = _max_output_tokens_for_plan(plan_key)
     temperature = float(
         current_app.config.get("AI_AGENT_TEMPERATURE")
@@ -14081,7 +14089,9 @@ def _analysis_unavailable_stream_payload(user, thread_id):
 
 
 def _resolve_model_selection(user, requested_model_type=None, fallback_model_type=None):
-    plan_key = to_public_plan(user.subscription_plan)
+    from app.billing_runtime_readers import modern_entitlement_plan_for
+
+    plan_key = modern_entitlement_plan_for(user, app_config=current_app.config) or to_public_plan(user.subscription_plan)
     allowed_model_types = get_allowed_model_types(plan_key, current_app.config)
     default_model_type = get_default_model_type(plan_key, current_app.config)
     normalized = normalize_model_type(requested_model_type or fallback_model_type or default_model_type)
@@ -16591,7 +16601,12 @@ def conversation_start():
             "retryable": True,
             "action": {"type": "retry", "label": "Retry"},
         }), 500
-    context_budget = get_context_budget(effective_plan_key(user, current_app.config))
+    from app.billing_runtime_readers import modern_entitlement_plan_for
+
+    reader_plan = modern_entitlement_plan_for(
+        user, organization_id=getattr(turn_project, "organization_id", None), app_config=current_app.config,
+    )
+    context_budget = get_context_budget(reader_plan or effective_plan_key(user, current_app.config))
     refusal = turn.reserve(token_hint=_preflight_token_hint_for_conversation(
         user_message,
         chat_history=chat_history,
@@ -16822,7 +16837,12 @@ def conversation_continue():
             "retryable": True,
             "action": {"type": "retry", "label": "Retry"},
         }), 500
-    context_budget = get_context_budget(effective_plan_key(user, current_app.config))
+    from app.billing_runtime_readers import modern_entitlement_plan_for
+
+    reader_plan = modern_entitlement_plan_for(
+        user, organization_id=getattr(turn_project, "organization_id", None), app_config=current_app.config,
+    )
+    context_budget = get_context_budget(reader_plan or effective_plan_key(user, current_app.config))
     refusal = turn.reserve(token_hint=_preflight_token_hint_for_conversation(
         user_message,
         chat_history=chat_history,
@@ -18393,7 +18413,12 @@ def conversation_regenerate():
         previous_readiness,
         _compute_readiness(regen_history, session.get("strategy_objective")),
     )
-    context_budget = get_context_budget(effective_plan_key(user, current_app.config))
+    from app.billing_runtime_readers import modern_entitlement_plan_for
+
+    reader_plan = modern_entitlement_plan_for(
+        user, organization_id=getattr(turn_project, "organization_id", None), app_config=current_app.config,
+    )
+    context_budget = get_context_budget(reader_plan or effective_plan_key(user, current_app.config))
     old_response = {
         "content": str(last_msg.get("content") or ""),
         "timestamp": last_msg.get("timestamp"),
