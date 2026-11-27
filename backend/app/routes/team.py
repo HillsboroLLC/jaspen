@@ -36,6 +36,8 @@ from app.orgs import (
     normalize_org_role,
     org_collaboration_state,
     org_payload,
+    org_plan_key,
+    register_modern_billing_error_handlers,
     resolve_active_org_for_user,
     role_has_capacity,
     role_label,
@@ -47,7 +49,7 @@ from app.models import Organization, OrganizationInvitation, OrganizationMember,
 from app.session_access import can_read_session, can_write_session, is_hidden_for, lock_project_row
 
 
-team_bp = Blueprint("team", __name__)
+team_bp = register_modern_billing_error_handlers(Blueprint("team", __name__))
 PROJECT_VISIBILITY_VALUES = {"private", "team", "specific"}
 
 
@@ -302,7 +304,7 @@ def update_seat_policy():
 
     usage = build_seat_usage(org)
     used_by_role = {role: int((usage.get(role) or {}).get("used") or 0) for role in ORG_ROLES}
-    base_policy = seat_policy_for_plan(org.plan_key)
+    base_policy = seat_policy_for_plan(org_plan_key(org))
     parsed, parse_error = _parse_seat_overrides(raw_overrides, used_by_role, base_policy)
     if parse_error:
         return jsonify({"error": parse_error}), 400

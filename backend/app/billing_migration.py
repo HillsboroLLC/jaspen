@@ -124,6 +124,7 @@ from .models import (
     User,
 )
 from .models_billing_phase12 import CONVERSION_KEY
+from .models_billing_identity import BillingModelAssignment
 from .models_billing_phase14 import (
     ALGORITHM_VERSION,
     CREDIT_UNIT_BASIS,
@@ -1041,6 +1042,10 @@ def plan_establishment(session, *, organization_id, at=None):
         codes = []
         if account is not None and account.status == "closed":
             _quarantine(codes, "billing_account_closed", account.id)
+        if session.execute(select(BillingModelAssignment.id).where(
+                BillingModelAssignment.organization_id == organization.id)).first() is not None:
+            # I1: the modern model owns this organization; the legacy backfill never establishes it.
+            _quarantine(codes, "modern_billing_account", organization.id)
         people = {m.user_id for m in _members(session, organization.id, active_only=False)}
         if organization.owner_user_id:
             people.add(organization.owner_user_id)

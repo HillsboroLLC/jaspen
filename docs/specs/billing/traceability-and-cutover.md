@@ -1173,6 +1173,118 @@ Phase 16 handoff disposition for this increment:
    remain the durable cutover-preparation evidence. This increment consumes no
    readiness result and performs no cutover.
 
+### Row 17 integration record — I1: family switches, account boundary, identity family (inactive)
+
+Status: **implemented locally on `develop` `054228ed`; inactive by default;
+awaiting independent audit.** Founder decision 2026-11-26: on isolated staging,
+row 17 is integrated ahead of rows 14-16 with synthetic new-model
+organizations only. Rows 14-16 remain mandatory before any production cutover;
+this is a sequencing decision, not a waiver.
+
+| Concern | Implementation | Evidence |
+|---|---|---|
+| Family switches | `billing_cutover.FAMILIES` in D18 order; `BILLING_MODERN_FAMILIES` must be a prefix of it; refused in a production runtime (OD-1 Option C); any invalid value enables nothing; unset = all off | `test_every_family_is_off_by_default`; `test_families_must_be_enabled_in_d18_order`; `test_switches_are_refused_in_a_production_runtime` |
+| Account boundary | `billing_model_assignments` (migration `a1f3c5e7b9d0`): one immutable row per modern organization; absence = legacy; one-way (a switch turned off never returns an organization to legacy) | `test_establish_creates_the_account_owner_role_and_assignment_once`; SQLite and PostgreSQL guard tests |
+| Organization-context ownership | Billing follows the organization, never the person: each command or AI operation runs in one organization's context (active organization for account commands, project organization for AI work), and that organization's model alone handles it. People may belong to both models (the multi-user model rows 14-16 complete). Assignment needs a clean organization and owner (an existing billing account, organization payments, grants, entitlements, AI operations, usage, meter, plan or seats; the owner's processor ids, plan, status, unlimited value, credits above the Free allowance, seats, payments); the database also refuses any organization with a Phase 14 establishment. The flush guard refuses legacy money attributed to a modern organization, direct plan or seat edits of its row, and giving a modern account's processor customer to a legacy payer; the owner's personal plan is never synced into a modern organization; legacy billing commands answer 409 in a modern context | `test_only_the_organization_and_its_owner_must_be_clean`; `test_legacy_money_attributed_to_a_modern_organization_is_refused`; `test_people_may_belong_to_both_models`; `test_billing_commands_follow_the_context_organization`; `test_legacy_billing_commands_answer_409_for_a_modern_account_and_never_reach_stripe` |
+| Legacy accounts unchanged | With no assignment, the guard returns before any check; legacy routes keep their behavior | `test_without_any_modern_organization_legacy_writes_are_untouched`; `test_a_legacy_account_keeps_its_legacy_billing_commands`; full suites |
+| Phase 14 exclusion | `plan_establishment` quarantines `modern_billing_account`; the database refuses a non-quarantine establishment of a modern organization | `test_phase14_quarantines_a_modern_organization`; SQLite guard test |
+| Identity commands | `establish_modern_billing_identity` (owner only; active account, `billing_owner` role, assignment; one idempotency claim); `bind_processor_customer` (once; billing authority; never a legacy payer's customer) | identity and binding tests; `scripts/billing_identity.py` tests |
+
+**Concurrency:** every guarded write takes `FOR KEY SHARE` on the organizations
+it touches before checking (it never conflicts with ordinary organization
+updates), and `establish` takes `FOR UPDATE`, so a money or entitlement write
+racing the first assignment is serialized with it.
+
+**Carried to I4 (AI-reservation family):** legacy AI metering (`AIOperation`,
+`UsageEvent`, per-user compatibility counters) is not blocked for modern
+accounts in I1. Staging has no AI egress. I4 routes every turn by its
+project's organization, refuses legacy charging in a modern context and charges
+exactly one model.
+
+### Row 17 integration record: I2, financial-event and credit-funding families (inactive)
+
+Status: **implemented locally on `claude/billing-i2-financial-funding`; inactive by default.** Every path runs only
+for a modern organization while its family is enabled. `BILLING_MODERN_FAMILIES` is refused in a production runtime.
+
+| Concern | Implementation | Evidence |
+|---|---|---|
+| Account commands | `routes/billing.py` dispatches through `modern_context` and keeps the legacy request and response shapes. The modern commands are: subscription checkout/create/sync, upgrade, downgrade, cancel/resume, credit packs and confirmation, and seat purchase. Commands that fund credits need `credit_funding`; the others need `financial_events`. Every other POST, and any disabled family, keeps the I1 409 | `test_billing_runtime_routes.py` |
+| Processor customer | Created once per billing account, with idempotency key `jaspen-billing-account-customer:<account>` and `billing_account_id` in its metadata, and bound with `bind_processor_customer`. Processor metadata names the account and never a legacy `user_id` | `test_a_new_modern_subscription_creates_and_binds_the_account_customer` |
+| Webhook | A modern account's verified event goes only to `billing_inbox.record_event`. The account is found from the customer, the recorded `billing_account_id`, or (for refunds and disputes) the paying customer. Legacy payers keep the legacy path, and nothing changes while no modern organization exists | `test_a_modern_accounts_event_goes_only_to_the_inbox`; `test_legacy_payers_keep_the_legacy_webhook_even_when_modern_accounts_exist` |
+| Legacy attribution | Legacy checkouts record their context organization in processor metadata. Fulfillment uses it, and never a modern organization | `test_legacy_fulfillment_uses_the_checkout_organization_never_a_modern_one` |
+| Processor (`scripts/billing_events.py process`) | Bounded claim. Each event is re-fetched (D14.5) and applied in one transaction with `mark_processed`: Phase 5.2 recording; Phase 4/6 activation and renewal (per-term instances); Phase 7 upgrade proration, scheduled downgrade and cancellation; Phase 8 seat funding and increase; Phase 9 purchase and refund/dispute cases. A failure is marked retryable or quarantined in a fresh transaction | `test_billing_runtime_financial.py`; journeys |
+| D2 / D4 | `define-test-catalog` copies configured values only, labels each definition test, cites evidence `founder-decision-D2-2026-11-26` and requires an approver. `allocate-free` opens each organization's monthly Free lot from its account anchor. `allocate-annual` opens annual monthly releases | `test_billing_runtime_funding.py` |
+| D5 | The processor resolver applies only `none`, `full` or `single_line` allocations; anything else is quarantined as `allocation_manual_review`. Migration `e7b9d1f3a5c6` adds `financial_case_events.allocation_basis`, which the recorder classifies from evidence. PostgreSQL recomputes it at commit, and PostgreSQL and SQLite refuse credit evaluation of a `derived` version. Phase 9 refuses one in the service | `test_billing_i2_guards.py`; updated Phase 9 mixed-invoice tests |
+| Q4 | Every subscription refund, and every `charge_refunded` dispute, is quarantined for review | journeys; `test_subscription_refunds_and_refunded_disputes_are_quarantined_for_review` |
+| T-INBOX-01..03 | Only the identity unique violation counts as a duplicate, and an invisible duplicate raises a typed retry. Conflict evidence is suppressed only for the same-digest race, and quarantine requires visible evidence | `test_event_inbox.py` (PostgreSQL: three isolation levels) |
+| F4 / F5 | F4: an evaluation's amounts must equal its effects (service check plus a deferred PostgreSQL check). F5: a re-application records one event per newly evaluated lot | `test_billing_i2_guards.py`; `test_annual_releases_and_a_reapplied_dispute_announce_each_new_lot_f5` |
+| D10-10 | The I2 journeys run on a fully migrated PostgreSQL schema | `test_billing_i2_journeys.py` |
+
+**Pre-production items:**
+- Approved customer communication templates (the placeholder obligation is staging only).
+- Approved production plan and pack definitions (D2 is staging test pricing).
+- Subscription-refund dispositions and the `charge_refunded` dispute policy (Q4).
+- Rows 14–16.
+
+### Row 17 integration record — I4: the ai_reservation family (inactive)
+
+Status: **implemented locally on the I1-I5 integration line; inactive by default;
+awaiting independent audit.** Every AI operation of a modern organization (chat
+turns start, continue and regenerate, streamed or not, and every governed
+operation through `ai_runtime.execute_customer_operation`) is routed by the work's
+organization (`modern_context(family="ai_reservation")`). It is claimed under
+`turn_lifecycle.version` `p4.2-s1` (D-2; the X1 classifier counts it as in flight),
+authorized by Phase 12 for the configured, priced models, and run by the
+reliable-delivery worker (I3) through one in-process executor. Legacy
+organizations keep the legacy path unchanged (OD-1 Option C).
+
+| Concern | Implementation | Evidence |
+|---|---|---|
+| Every provider request checked and recorded | Context-local call observer in both provider adapters; `Phase12CallRecorder` maps requests to attempts and tool iterations | `test_ai_provider_observer.py`; `test_billing_runtime_ai.py` |
+| F2: an unsaved reply is never charged | The reply is saved in the worker's persist transaction (store `commit=False`); only then does the worker settle | `test_f2_a_modern_reply_that_cannot_be_saved_is_not_charged` |
+| F3 / gate criterion 1 | The route streams from durable state; a disconnect does nothing; the worker saves and settles once | `test_f3_a_dropped_modern_stream_is_saved_and_settled_once` |
+| F4 | No money moves in the request transaction, so a rollback inside generation cannot add or lose credits | both `test_f4_*` journeys |
+| Governed operations | Same contract `(value, usage, settlement)`; failures are never charged and re-raise | `test_a_modern_governed_operation_settles_through_phase12` |
+| D2 / D3 staging test policies | `billing_runtime_policies.install_test_policies` (labeled `staging-test`, refused in a production runtime; numbers from an operator rules file) | `test_billing_runtime_policies.py` |
+| Refusals | Credit exhaustion 402 (the existing payload, from the modern meter), capacity denial 429, missing pricing 503, a slow outcome 202; nothing is reserved | app error handler |
+
+The legacy F2-F4 strict-xfail probes keep pinning the legacy path, which stays
+unchanged. The modern counterparts above pass. D-3: the request waits at most the
+effective policy's `max_operation_seconds` plus a margin, which must stay below
+the server's request timeout (staging: 180 s; production: D1, not yet verified).
+### Row 17 integration record — I3: reliable-delivery worker (inactive)
+
+Status: **implemented locally on I1 (`7a2aa323`); inactive; independent audit
+ACCEPT.** Migration `d7e9b1c3a5f8` (revises `a1f3c5e7b9d0`; re-chained after I2
+at integration). `app/billing_delivery_worker.py` reaches Phase 12 only through
+the Phase 17 boundary; its only callers are the operator CLI
+`scripts/billing_delivery_worker.py` (refuses a production runtime and runs only
+with the `ai_reservation` family on; no service unit) and, at I4, the
+family-gated AI runtime. The interface is
+`docs/specs/billing/reliable-delivery-worker-interface.md`. Nothing here enables
+charging (OD-1 Option C).
+
+| Gate criterion | Implementation | Evidence (PostgreSQL 18.6 journeys unless noted) |
+|---|---|---|
+| 1. Provider call, persistence and settlement independent of the client | The request only submits a durable job (`ai_delivery_jobs`); a worker claims it by lease (compare-and-set, `SKIP LOCKED`) and runs it to an outcome; the route streams persisted chunks and the saved response by polling; a disconnect does nothing | `test_postgres_a_disconnect_never_stops_delivery_and_the_heartbeat_renews_during_the_call`; `test_in_process_start_has_the_app_context_and_persists_on_the_threads_db_session` |
+| 3. Heartbeat renews the lease independently of the provider call | A heartbeat thread on its own session renews the job lease and calls `heartbeat_reliable_delivery` while the provider call blocks; submission refuses a lease not above provider timeout plus heartbeat; a lapsed lease is never revived; a renewal failure never drops the job lease; a hung executor stops holding its job once the reservation lapsed | the disconnect journey above; `test_submit_fails_closed_on_timing_and_is_idempotent`; `test_s3_a_failed_reservation_renewal_still_renews_the_job_lease`; `test_n3_a_hung_executor_stops_holding_its_job_after_the_reservation_lapsed`; `test_postgres_b1_a_heartbeat_during_call_recording_never_deadlocks` |
+| 5. No duplicate charge from retries, replays, late responses, cancellations, restarts or concurrent workers | Persist (committed, with the runtime's own `on_persist` write) before settle; settlement only through `settle_persisted_response`, enforced statically and by the database for job-managed operations (M2); a reclaiming worker records the lost in-flight call as unknown usage (absorbed); claims are bounded; a cancel committed before persistence is honored; one lock order (job, account, operation) | `test_postgres_concurrent_workers_run_each_job_exactly_once`; `test_postgres_restart_lost_lease_race_and_late_original_worker_charge_once`; `test_postgres_a_crashed_worker_is_recovered_by_another_process`; `test_postgres_cancellation_during_streaming_is_undelivered_and_never_charged`; `test_postgres_a_late_response_after_the_lease_lapsed_is_delivered_never_charged`; `test_postgres_recovery_retries_settlement_and_concurrent_sweeps_charge_once`; `test_s1_a_cancel_committed_before_persistence_is_never_charged`; `test_a_reclaim_without_the_closure_is_not_resumable_and_never_loops` |
+| 4 (sweep, Phase 17 B2/O1/O2) | Bounded sweep: per-pass durable cursors with wrap-around and a scan bound; row errors (identity, state, conflict, guard, malformed data) blocked in a savepoint; systemic errors stop the sweep; worker job passes are cursor-paged and isolated per row | `test_permanently_blocked_rows_never_starve_a_saved_response`; `test_scanning_is_bounded_and_resumes_from_its_cursor`; `test_n4_the_sweep_wraps_around_to_rows_before_its_cursor`; `test_o2_a_row_level_database_refusal_is_isolated`; `test_o1_a_systemic_billing_error_stops_the_sweep`; `test_postgres_o1_the_wrong_isolation_level_stops_recovery`; `test_s2_a_malformed_saved_envelope_is_a_row_block_and_the_sweep_moves_on`; `test_s2_one_poisoned_abandoned_job_never_stops_recovery` |
+| 2, 8 (M3) | Database guards: job identity must equal the Phase 12 binding; jobs never deleted, finished jobs immutable; chunks append-only; a bound operation's identity and saved envelope cannot be rewritten (only `settlement` recorded once); reads require an active member | `test_postgres_migrated_guards_protect_jobs_chunks_and_persist_before_settle`; `test_sqlite_migration_guards_jobs_chunks_and_persist_before_settle` (SQLite); `test_the_route_read_enforces_durable_identity_and_active_membership` |
+
+Static guards: only `billing_ai_operations.py` and `billing_reliable_delivery.py`
+name `settle_delivered_operation`, `record_undelivered_operation` or
+`expire_ai_operation`; the worker has no live caller.
+
+Approved policy applied: a cancelled turn whose partial text was already
+streamed is undelivered with no charge (AI billability policy, 2026-11-11).
+Open: running the standalone worker as a service (infrastructure approval) and
+D1 (in-process start dies with a Gunicorn worker timeout; the standalone worker
+is the reliability path); N2 (a sweep page holds its account locks until
+commit); N5 (stream progress may show a newer attempt than the saved one during
+a lost-lease race; the saved response is authoritative). Local verification is
+not activation.
+
 ## D18 Phase dependency and cutover map
 
 The original 18 phases are the authoritative implementation sequence because

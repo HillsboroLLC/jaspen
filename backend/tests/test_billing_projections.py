@@ -923,6 +923,10 @@ PHASE14_MODULE = "app/billing_migration.py"
 PHASE15_MODULE = "app/billing_rehearsal.py"
 # Phase 16 shadow comparison reads them too (inactive, read only).
 PHASE16_MODULE = "app/billing_shadow.py"
+# D18 row 17 readers family (I5): the one live module allowed to read them, and only after
+# billing_cutover.modern_context(family="readers") answers for a modern organization, which requires the
+# BILLING_MODERN_FAMILIES switch to enable "readers" (off by default, refused in production).
+READERS_MODULE = "app/billing_runtime_readers.py"
 
 
 def phase13_live_importers(backend):
@@ -936,7 +940,7 @@ def phase13_live_importers(backend):
     return sorted(
         str(path.relative_to(backend)) for path in (backend / "app").rglob("*.py")
         if str(path.relative_to(backend)) not in (PHASE13_MODULE, PHASE14_MODULE, PHASE15_MODULE,
-                                                    PHASE16_MODULE)
+                                                    PHASE16_MODULE, READERS_MODULE)
         and "billing_projections" in path.read_text()
     )
 

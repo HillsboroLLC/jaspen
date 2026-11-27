@@ -663,6 +663,47 @@ def create_app():
     # a machine-readable `code` the frontend can branch on.
     from .session_access import SessionAccessError
 
+    # Billing row-17 boundary (I1): one billing model per account. The flush guard refuses legacy payer and
+    # money writes for modern accounts in every writer; a refusal reaches the client as 409.
+    from .billing_cutover import BillingModelConflictError, cutover_config, install_legacy_write_guard
+
+    install_legacy_write_guard()
+    _cutover = cutover_config()
+    for _error in _cutover.errors:
+        app.logger.error('billing cutover configuration refused: %s', _error)
+    if _cutover.families:
+        app.logger.warning('modern billing families enabled: %s', ', '.join(sorted(_cutover.families)))
+
+    @app.errorhandler(BillingModelConflictError)
+    def handle_billing_model_conflict(e):
+        db.session.rollback()
+        return jsonify({'error': 'billing_model_conflict', 'msg': str(e), 'codes': list(e.codes)}), 409
+
+    from .billing_cutover import BillingFamilyDisabledError
+
+    from .billing_runtime_ai import ModernOperationRefused
+
+    @app.errorhandler(ModernOperationRefused)
+    def handle_modern_operation_refused(e):
+        # Operational answers only (Article 17A). Nothing was charged.
+        db.session.rollback()
+        status = {'credit_exhausted': 402, 'capacity_denied': 429, 'delivery_pending': 202,
+                  'idempotency_conflict': 409, 'conversation_persist_failed': 500}.get(e.code, 503)
+        if e.code == 'credit_exhausted':
+            from .routes.ai_agent import _insufficient_credits_payload
+            from flask_jwt_extended import get_jwt_identity
+            from .models import User
+            user = db.session.get(User, str(get_jwt_identity() or ''))
+            if user is not None:
+                return jsonify(_insufficient_credits_payload(user, 0)), 402
+        return jsonify({'error': 'ai_operation_unavailable', 'code': e.code}), status
+
+    @app.errorhandler(BillingFamilyDisabledError)
+    def handle_billing_family_disabled(e):
+        # A modern organization whose family is off: nobody answers, never a fall back to legacy billing.
+        db.session.rollback()
+        return jsonify({'error': 'billing_family_disabled', 'msg': str(e)}), 503
+
     @app.errorhandler(SessionAccessError)
     def handle_session_access_error(e):
         body, status = e.to_response()

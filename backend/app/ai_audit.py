@@ -434,6 +434,9 @@ def _audit_status(usage, success):
 
 TURN_LIFECYCLE_KEY = 'turn_lifecycle'
 TURN_LIFECYCLE_VERSION = 'p4.0-s0'
+# D-2 (I4): a modern operation's claim. Phase 12 binds it to a billing account and the reliable-delivery
+# worker owns its lifecycle, so it is never stale P4.0 evidence; see classify_unclosed_operation.
+MODERN_TURN_LIFECYCLE_VERSION = 'p4.2-s1'
 STARTED = 'started'
 TERMINAL_STATUSES = frozenset({'succeeded', 'degraded', 'failed'})
 
@@ -756,6 +759,10 @@ def classify_unclosed_operation(operation, *, now=None, max_turn_seconds=DEFAULT
         and lifecycle.get('version') == TURN_LIFECYCLE_VERSION
         and getattr(operation, 'billing_account_id', None) is None
     )
+    if lifecycle is not None and lifecycle.get('version') == MODERN_TURN_LIFECYCLE_VERSION:
+        # D-2: a Phase 12 operation's reservation is committed with its authorization and released, settled or
+        # expired only by Phase 12 and the worker. It always counts as in flight here, whatever its age.
+        return {**result, 'class': UNCLOSED_OUTSTANDING, 'in_flight': True, 'reason': 'phase12_operation'}
     if not p4_0_evidence:
         reason = ('not_a_p4_0_turn_claim' if lifecycle is None or operation.operation_type != 'conversation'
                   else 'unrecognised_turn_claim')

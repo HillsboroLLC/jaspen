@@ -1042,7 +1042,13 @@ def test_phase12_service_has_no_live_runtime_callers():
         if path.name not in {"billing_ai_operations.py", "billing_reliable_delivery.py",
                              "models_billing_phase12.py", "models.py", "billing_projections.py",
                              "billing_migration.py",
-                             "billing_shadow.py"}  # Phase 16 shadow comparison is inactive and read only
+                             "billing_shadow.py",  # Phase 16 shadow comparison is inactive and read only
+                             # I4: operator-only staging test policy installer (scripts/billing_policies.py);
+                             # no route, job or startup path imports it.
+                             "billing_runtime_policies.py",
+                             # I4: the ai_reservation family runtime, reached only through
+                             # modern_context(family="ai_reservation"); legacy contexts never import it.
+                             "billing_runtime_ai.py"}
         and ("billing_ai_operations" in path.read_text() or "models_billing_phase12" in path.read_text())
     ]
     assert callers == []
@@ -1140,7 +1146,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=12, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "d2f4a6c8e0b3", "f3a5c7e9b1d2", "c8a9989843b5"}:
+    if revision not in {REVISION, "d2f4a6c8e0b3", "f3a5c7e9b1d2", "c8a9989843b5", "a1f3c5e7b9d0", "e7b9d1f3a5c6", "d7e9b1c3a5f8"}:
         engine.dispose()
         pytest.fail(f"Phase 12 migrated tests require Alembic head {REVISION} or Phase 14; found {revision!r}")
     return engine

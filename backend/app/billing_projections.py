@@ -507,6 +507,76 @@ def project_billing_account(session, *, billing_account_id, at=None, member_user
         }
 
 
+def project_plan_terms(session, *, billing_account_id, at=None, member_user_id=None):
+    """Pure read of the active plan's approved terms and its current credit period (I5 readers).
+
+    Everything comes from the Phase 4 definition, instance, subscription and
+    period records and the Phase 3/6/7 lots that fund the period:
+
+    * ``definition_key`` / ``plan_source_type``: the active base-plan entitlement.
+    * ``monthly_credit_amount``: the definition's approved ``credit_amount``.
+    * ``included_seats``: the definition's declared ``included_seats`` capability, or None when undeclared.
+    * ``period``: the credit period covering ``at``, with ``allocated`` (original amounts of the lots funding
+      it: its own allocation plus Phase 7 upgrade lots) and ``purchased_in_period`` (original amounts of
+      credit-pack lots that became available within it up to ``at``).
+    * ``non_expiring_available``: ledger-available credits of open, unscoped lots with no expiry (ADR
+      ``persistent_credits``), restricted to what ``member_user_id`` may spend when given.
+
+    No period, plan or capability is ever inferred: a missing record is None.
+    """
+    with session.no_autoflush:
+        account = _account(session, billing_account_id)
+        if member_user_id is not None:
+            _require_member(session, account.organization_id, member_user_id)
+        at = _clock(session) if at is None else _utc(at)
+        non_expiring = sum(
+            available for lot, available, _held in _lot_balances(session, account.id)
+            if lot.expires_at is None and _open_at(lot, at) and lot.eligibility_scope is None
+            and (member_user_id is None or _eligible(lot, member_user_id))
+        )
+        instance, plan_key = _plan(session, account.id, at)
+        if instance is None:
+            return {"billing_account_id": account.id, "as_of": _iso(at), "definition_key": None,
+                    "plan_source_type": None, "monthly_credit_amount": None, "included_seats": None,
+                    "period": None, "non_expiring_available": non_expiring}
+        definition = session.get(EntitlementDefinition, instance.entitlement_definition_id)
+        funding = definition.funding_policy_json if isinstance(definition.funding_policy_json, dict) else {}
+        amount = funding.get("credit_amount")
+        capabilities = (definition.capability_json or {}).get("capabilities")
+        seats = capabilities.get("included_seats") if isinstance(capabilities, dict) else None
+        subscription = session.get(BillingSubscription, instance.subscription_id) \
+            if instance.subscription_id else None
+        period = _current_period(session, account.id, instance, subscription, at)
+        period_view = None
+        if period is not None:
+            starts_at, ends_at = _utc(period.starts_at), _utc(period.ends_at)
+            lot_ids = _period_lot_ids(session, period)
+            allocated = sum(int(lot.original_amount) for lot in session.execute(
+                select(CreditLot).where(CreditLot.billing_account_id == account.id, CreditLot.id.in_(lot_ids))
+            ).scalars()) if lot_ids else 0
+            purchased = int(session.execute(
+                select(func.coalesce(func.sum(CreditLot.original_amount), 0)).where(
+                    CreditLot.billing_account_id == account.id,
+                    CreditLot.source_type.in_(sorted(PURCHASED_SOURCES)),
+                    CreditLot.available_at >= starts_at,
+                    CreditLot.available_at <= at,
+                )
+            ).scalar_one())
+            period_view = {"period_id": period.id, "starts_at": _iso(starts_at), "ends_at": _iso(ends_at),
+                           "allocated": allocated, "purchased_in_period": purchased}
+        return {
+            "billing_account_id": account.id,
+            "as_of": _iso(at),
+            "definition_key": plan_key,
+            "plan_source_type": instance.source_type,
+            "monthly_credit_amount": amount if isinstance(amount, int) and not isinstance(amount, bool) else None,
+            "included_seats": seats if isinstance(seats, int) and not isinstance(seats, bool) and seats >= 0
+            else None,
+            "period": period_view,
+            "non_expiring_available": non_expiring,
+        }
+
+
 def _capacity_view(session, account_id, member_user_id, at):
     """Short-term capacity, kept apart from credits (D22, D23): the latest recorded decision."""
     query = (

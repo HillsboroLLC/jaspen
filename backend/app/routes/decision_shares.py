@@ -12,7 +12,7 @@ from app.admin_audit import append_admin_audit_event
 from app.admin_policy import is_global_admin
 from app.data_sharing import decision_sharing_allowed
 from app.models import DecisionShare, Organization, User
-from app.orgs import active_membership_for_user, can_manage_org, plan_allows_collaboration
+from app.orgs import active_membership_for_user, can_manage_org, org_plan_key, plan_allows_collaboration
 from app.session_access import SessionForbidden, SessionNotFound, resolve_session_for_actor
 from app.sharing import (
     ARTIFACT_SCORECARD,
@@ -75,7 +75,7 @@ def _prepare(user, body):
         # Every modern account has a solo organization internally. It becomes
         # organization-governed sharing only when its plan can have teammates;
         # individual accounts keep the explicit choice themselves.
-        if organization is not None and plan_allows_collaboration(organization.plan_key):
+        if organization is not None and plan_allows_collaboration(org_plan_key(organization)):
             share_organization_id = organization.id
         if share_organization_id and not decision_sharing_allowed(organization):
             return None, (jsonify({
@@ -206,7 +206,7 @@ def _scope_for_user(user):
     if org_id:
         organization = Organization.query.filter_by(id=org_id).first()
         membership = active_membership_for_user(org_id, str(user.id))
-        if membership is not None and organization is not None and plan_allows_collaboration(organization.plan_key):
+        if membership is not None and organization is not None and plan_allows_collaboration(org_plan_key(organization)):
             query = DecisionShare.query.filter_by(organization_id=org_id)
             if not can_manage_org(membership.role):
                 query = query.filter_by(user_id=user.id)

@@ -316,6 +316,7 @@ LEGACY_FIELD_WRITERS = (
     # and its close when the claim never became durable. Evidence rows only;
     # neither changes a balance.
     ("app/ai_audit.py", "claim_turn_operation", "AIOperation()", "both"),
+    ("app/billing_runtime_ai.py", "claim_modern_operation", "AIOperation()", "both"),  # I4: Phase 12 operation row
     ("app/ai_audit.py", "close_turn_operation_alone", "AIOperation()", "both"),
     ("app/ai_audit.py", "persist_operation", "AIOperation()", "both"),
     ("app/ai_audit.py", "persist_operation", "charged_credits", "both"),
@@ -346,6 +347,7 @@ LEGACY_FIELD_WRITERS = (
     ("app/billing_config.py", "reset_user_monthly_credits", "credits_remaining", "both"),
     ("app/billing_config.py", "reset_user_monthly_credits", "credits_reset_at", "both"),
     ("app/billing_enterprise_contracts.py", "_transition", "setattr(dynamic)", "both"),
+    ("app/billing_cutover.py", "legacy_billing_footprint", "thinking_power", "both"),  # I1: read-only footprint
     ("app/billing_projections.py", "_meter", "thinking_power", "both"),
     ("app/conversation_turn.py", "ConversationTurn.__init__", "credits_charged", "both"),
     ("app/conversation_turn.py", "ConversationTurn.settle", "credits_charged", "both"),
@@ -394,6 +396,7 @@ LEGACY_FIELD_WRITERS = (
 )
 
 LEGACY_MUTATOR_REFERENCES = (
+    ("app/billing_runtime_ai.py", "submit_modern_operation", "claim_modern_operation", "both"),  # I4: Phase 12 operation row
     ("app/ai_runtime.py", "_claim_operation", "_claim_operation", "both"),
     ("app/ai_runtime.py", "execute_customer_operation", "_claim_operation", "both"),
     ("app/ai_runtime.py", "execute_customer_operation", "_release_reserved_credits", "both"),

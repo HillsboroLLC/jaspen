@@ -415,6 +415,8 @@ class FinancialCaseEvent(db.Model):
     cumulative_principal_minor = db.Column(db.BigInteger, nullable=False)
     effective_at = db.Column(db.DateTime(timezone=True), nullable=False)
     received_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    # I2 (D5): classified by the recorder from the recorded evidence; ``derived`` is never applied.
+    allocation_basis = db.Column(db.String(16), nullable=False, default="derived", server_default="derived")
     created_xid = db.Column(db.String(20), nullable=False, server_default="0")
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, server_default=db.func.now())
 
@@ -427,6 +429,10 @@ class FinancialCaseEvent(db.Model):
         db.CheckConstraint(
             "cumulative_principal_minor >= 0",
             name="ck_financial_case_events_cumulative_principal",
+        ),
+        db.CheckConstraint(
+            "allocation_basis IN ('none','full','single_line','derived')",
+            name="ck_financial_case_events_allocation_basis",
         ),
         db.UniqueConstraint(
             "financial_case_id", "external_version",

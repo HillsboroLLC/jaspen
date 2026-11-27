@@ -532,6 +532,8 @@ def test_outbox_service_has_no_live_runtime_callers():
         if path.name in {
             "billing_allocations.py", "billing_enterprise_contracts.py", "billing_financial_effects.py", "billing_offers.py", "billing_outbox.py", "billing_plan_changes.py", "billing_seats.py",
             "models_billing_phase5.py", "models.py",
+            # I2 (D18 row 17): live only under BILLING_MODERN_FAMILIES (financial_events); off by default, refused in production.
+            "billing_runtime_financial.py",
         }:
             continue
         if "billing_outbox" in path.read_text():

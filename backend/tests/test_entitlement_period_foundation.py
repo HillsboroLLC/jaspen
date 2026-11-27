@@ -97,6 +97,9 @@ def test_phase_4_policy_has_no_live_runtime_importers():
     allowed = {
         "billing_allocations.py", "billing_enterprise_contracts.py", "billing_entitlements.py", "billing_offers.py", "billing_plan_changes.py", "billing_seats.py", "models.py",
         "models_billing_phase4.py",
+        # I2 (D18 row 17): live only for modern organizations under BILLING_MODERN_FAMILIES
+        # (financial_events / credit_funding), off by default and refused in production.
+        "billing_runtime_financial.py", "billing_runtime_funding.py",
         "billing_projections.py",  # Phase 13 projections are inactive and read only.
         "billing_migration.py",  # Phase 14 backfill is inactive.
         "billing_rehearsal.py",  # Phase 15 rehearsal is inactive.

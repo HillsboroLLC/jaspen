@@ -6,6 +6,7 @@ from app.admin_policy import is_global_admin
 from app.orgs import (
     can_manage_org,
     normalize_org_role,
+    org_plan_key,
     plan_allows_collaboration,
     resolve_active_org_for_user,
 )
@@ -29,7 +30,7 @@ def resolve_customer_scope(user, requested_scope="organization"):
         organization_id=organization.id, status="active"
     ).count()
     can_view_organization = bool(
-        plan_allows_collaboration(organization.plan_key)
+        plan_allows_collaboration(org_plan_key(organization))
         and (can_manage_org(role) or global_admin)
     )
     show_scope_control = bool(can_view_organization and active_member_count > 1)
