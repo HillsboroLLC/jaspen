@@ -3273,7 +3273,7 @@ def _modern_confirm_pack(user, ctx, data):
         credits = mf.pack_funding_state(db.session, ctx, payment_intent_id)
         if credits is None:
             return jsonify({'msg': 'Payment is not ready yet', 'granted': False, 'reason': 'processing'}), 409
-        return jsonify({'success': True, 'granted': True, 'credits': credits}), 200
+        return jsonify({'success': True, 'granted': True, 'credits': tokens_to_credits(credits, precision=0)}), 200
     return _modern_command(run)
 
 
