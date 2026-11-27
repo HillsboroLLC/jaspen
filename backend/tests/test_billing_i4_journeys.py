@@ -195,8 +195,13 @@ def test_f2_a_modern_reply_that_cannot_be_saved_is_not_charged(client, db, moder
     from app.routes import ai_agent
     _script(monkeypatch)
     real = ai_agent._save_turn_project
-    monkeypatch.setattr(ai_agent, "_save_turn_project", lambda uid, sessions, **k: (
-        False if k.get("commit") is False else real(uid, sessions, **k)))
+    def save(uid, sessions, **kwargs):
+        history = sessions[modern["thread"]]["chat_history"]
+        if any(message.get("content") == REPLY for message in history):
+            return False
+        return real(uid, sessions, **kwargs)
+
+    monkeypatch.setattr(ai_agent, "_save_turn_project", save)
     before, _held = _spendable(db.session, modern["account"])
     response = client.post(CONTINUE_URL, headers=modern["headers"],
                            json={"thread_id": modern["thread"], "message": "Should we bid?"})
@@ -288,3 +293,107 @@ def test_a_legacy_organization_beside_a_modern_one_keeps_legacy_charging(client,
     response = client.post(CONTINUE_URL, headers=headers, json={"thread_id": "t-legacy", "message": "Hi"})
     assert response.status_code == 200
     assert not session.query(AIBillingOperation).filter(AIBillingOperation.actor_user_id == legacy.id).count()
+
+
+def test_overlapping_modern_turn_requests_replay_one_saved_charge(app, db, modern, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from app import billing_runtime_ai
+
+    generating, duplicate, release = Event(), Event(), Event()
+
+    def pause():
+        generating.set()
+        assert release.wait(10)
+
+    _script(monkeypatch, during=pause)
+    lookup = billing_runtime_ai._find_replay
+
+    def track_replay(*args, **kwargs):
+        operation_id = lookup(*args, **kwargs)
+        if operation_id is not None:
+            duplicate.set()
+        return operation_id
+
+    monkeypatch.setattr(billing_runtime_ai, "_find_replay", track_replay)
+    headers = {**modern["headers"], "X-Jaspen-Idempotency-Key": "one-turn"}
+    data = {"thread_id": modern["thread"], "message": "Should we bid?"}
+    before, _held = _spendable(db.session, modern["account"])
+
+    def post(payload):
+        with app.test_client() as browser:
+            response = browser.post(CONTINUE_URL, headers=headers, json=payload)
+            return response.status_code, response.get_json()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(post, data)
+        try:
+            assert generating.wait(10)
+            second = pool.submit(post, data)
+            assert duplicate.wait(10)
+        finally:
+            release.set()
+        first_status, first_payload = first.result(timeout=10)
+        second_status, second_payload = second.result(timeout=10)
+
+    assert first_status == second_status == 200
+    assert second_payload["idempotent_replay"] is True
+    assert first_payload["credits"] == second_payload["credits"]
+    assert second_payload["reply"] == REPLY
+    assert post({**data, "message": "Different input"})[0] == 409
+    after, held = _spendable(db.session, modern["account"])
+    assert (before - after, held) == (CHARGE, 0)
+    assert _history(db.session, modern["thread"]).count(REPLY) == 1
+
+
+def test_a_governed_replay_checks_the_request_fingerprint(app, db, modern):
+    from app.ai_runtime import execute_customer_operation
+    from app.billing_runtime_ai import ModernOperationRefused
+
+    before, _held = _spendable(db.session, modern["account"])
+    user = db.session.get(User, modern["owner"].id)
+
+    def generate():
+        _provider_reply()
+        return {"score": 72}, {"input_tokens": 11, "output_tokens": 7}
+
+    def call(payload):
+        return execute_customer_operation(
+            user, generate=generate, operation_type="score_next", request_payload=payload, max_tokens=500,
+            thread_id=modern["thread"], idempotency_key="one-governed-operation",
+        )
+
+    with app.test_request_context():
+        first, _, first_settlement = call({"q": 1})
+        replay, _, replay_settlement = call({"q": 1})
+        with pytest.raises(ModernOperationRefused, match="idempotency_conflict"):
+            call({"q": 2})
+
+    assert replay == first
+    assert replay_settlement["idempotent_replay"] is True
+    assert first_settlement["charged_credits"] == replay_settlement["charged_credits"] == CHARGE
+    assert _spendable(db.session, modern["account"]) == (before - CHARGE, 0)
+
+
+def test_failed_delivery_envelope_rolls_back_a_new_reply_and_its_audit_event(client, db, modern, monkeypatch):
+    from app import billing_reliable_delivery as delivery
+    from app.models import AdminAuditEvent
+
+    _script(monkeypatch)
+    before, _held = _spendable(db.session, modern["account"])
+    thread_id = f"t-{uuid.uuid4().hex[:8]}"
+
+    def fail_envelope(*args, **kwargs):
+        raise RuntimeError("delivery envelope write failed")
+
+    monkeypatch.setattr(delivery, "persist_successful_response", fail_envelope)
+    response = client.post(
+        "/api/v1/ai-agent/conversation/start", headers=modern["headers"],
+        json={"thread_id": thread_id, "message": "Should we bid?"},
+    )
+    assert response.status_code >= 400
+    assert _spendable(db.session, modern["account"]) == (before, 0)
+    assert REPLY not in _history(db.session, thread_id)
+    events = db.session.query(AdminAuditEvent).filter_by(action="session.created").all()
+    assert all(event.details.get("thread_id") != thread_id for event in events)

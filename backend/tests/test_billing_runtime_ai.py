@@ -89,3 +89,25 @@ def test_modern_operation_wait_stays_below_staging_request_timeout(runaway_secon
         "runaway": {"max_operation_seconds": runaway_seconds}
     }
     assert rt.operation_timeout_seconds(session) == wait_seconds
+
+
+def test_an_unsaved_request_does_not_leave_a_keyed_claim(db):
+    from app.billing_cutover import ModernContext
+    from app.models import AIOperation
+
+    session = db.session
+    owner = _user(session)
+    org = _org(session, owner)
+    session.commit()
+
+    def reject_request():
+        raise rt.ModernOperationRefused("conversation_persist_failed")
+
+    with pytest.raises(rt.ModernOperationRefused, match="conversation_persist_failed"):
+        rt.submit_modern_operation(
+            session, context=ModernContext(org.id, "unused"), user_id=owner.id, operation_type="conversation",
+            generate=None, max_output_tokens=500, config={}, provider_timeout_seconds=60,
+            idempotency_key="unsaved-request", request_fingerprint="original", before_authorize=reject_request,
+        )
+    session.rollback()
+    assert session.query(AIOperation).filter_by(idempotency_key="unsaved-request").count() == 0

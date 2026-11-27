@@ -687,7 +687,8 @@ def create_app():
     def handle_modern_operation_refused(e):
         # Operational answers only (Article 17A). Nothing was charged.
         db.session.rollback()
-        status = {'credit_exhausted': 402, 'capacity_denied': 429, 'delivery_pending': 202}.get(e.code, 503)
+        status = {'credit_exhausted': 402, 'capacity_denied': 429, 'delivery_pending': 202,
+                  'idempotency_conflict': 409, 'conversation_persist_failed': 500}.get(e.code, 503)
         if e.code == 'credit_exhausted':
             from .routes.ai_agent import _insufficient_credits_payload
             from flask_jwt_extended import get_jwt_identity

@@ -22,6 +22,7 @@ generation cannot add or lose credits (F4), an unsaved reply is never charged
 (F2), and a dropped connection neither strands nor charges a reservation (F3).
 """
 
+import hashlib
 import math
 import uuid
 from datetime import datetime, timezone
@@ -141,10 +142,10 @@ _REGISTRY = {}  # operation id -> _Pending, for the process that submitted it
 
 
 class _Pending:
-    __slots__ = ("generate", "on_persist", "result", "failure")
+    __slots__ = ("generate", "prepare_response", "failure")
 
-    def __init__(self, generate, on_persist):
-        self.generate, self.on_persist, self.result, self.failure = generate, on_persist, None, None
+    def __init__(self, generate, prepare_response):
+        self.generate, self.prepare_response, self.failure = generate, prepare_response, None
 
 
 def _worker():
@@ -209,53 +210,96 @@ def _run_registered(ctx):
         raise worker.DeliveryFailed(type(exc).__name__) from exc
     if recorder.delivered_attempt is None:
         return worker.NoBillableUsage()
-    pending.result = (value, usage)
     return worker.DeliveryResult(delivered_attempt_number=recorder.delivered_attempt,
-                                 response={"value": value, "usage": usage}, on_persist=pending.on_persist)
+                                 response={"value": value, "usage": usage}, prepare_response=pending.prepare_response)
+
+
+def modern_idempotency_key(context, user_id, operation_type, request_key):
+    if not request_key:
+        return None
+    value = f"phase12:{context.organization_id}:{user_id}:{operation_type}:{request_key}"
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _find_replay(session, *, context, user_id, key, fingerprint):
+    from sqlalchemy import select
+
+    from .models_billing_delivery import AIDeliveryJob
+
+    operation = session.execute(select(AIOperation).where(AIOperation.idempotency_key == key)).scalar_one_or_none()
+    if operation is None:
+        return None
+    if (operation.organization_id, operation.user_id, operation.request_fingerprint) != (
+        context.organization_id, str(user_id), fingerprint
+    ):
+        raise ModernOperationRefused("idempotency_conflict")
+    if session.get(AIDeliveryJob, operation.id) is None:
+        raise ModernOperationRefused(operation.error_code or "delivery_pending")
+    return operation.id
 
 
 def submit_modern_operation(session, *, context, user_id, operation_type, generate, max_output_tokens,
                             config, provider_timeout_seconds, thread_id=None, route=None, streaming=None,
-                            idempotency_key=None, request_fingerprint=None, prompt_family=None, on_persist=None):
-    """Claim, authorize and submit one modern operation; commits. Returns ``(operation_id, pending)``.
+                            idempotency_key=None, request_fingerprint=None, prompt_family=None,
+                            before_authorize=None, prepare_response=None):
+    """Claim, authorize and submit one modern operation; commits.
 
-    ``generate(emit, should_stop) -> (value, usage)`` runs on the worker thread.
-    ``on_persist(session, response)`` runs inside the transaction that saves the
-    response. Refusals raise ``ModernOperationRefused`` (``credit_exhausted``,
-    ``capacity_denied``, ``pricing_required``) with nothing reserved.
+    Returns the operation ID and its local pending executor, if this request
+    created the operation. A retry follows the durable job of the winner.
     """
+    from sqlalchemy.exc import IntegrityError
+
     from .billing_ai_operations import authorize_ai_operation
 
     worker = _worker()
-    operation = claim_modern_operation(
-        session, user_id=user_id, organization_id=context.organization_id, operation_type=operation_type,
-        thread_id=thread_id, route=route, streaming=streaming, idempotency_key=idempotency_key,
-        request_fingerprint=request_fingerprint, prompt_family=prompt_family,
-    )
-    auth = authorize_ai_operation(
-        session, operation_id=operation.id, actor_user_id=str(user_id), step_key=f"{operation_type}:1",
-        candidates=[list(pair) for pair in configured_candidates(session, config)],
-        max_input_tokens=INITIAL_INPUT_BOUND,
-        max_output_tokens=max(1, min(int(max_output_tokens or 1), INITIAL_OUTPUT_BOUND)),
-    )
-    if auth.outcome != "authorized":
-        operation.status, operation.error_code = "failed", auth.outcome
-        session.commit()
-        raise ModernOperationRefused(auth.outcome)
+    replay = dict(context=context, user_id=user_id, key=idempotency_key, fingerprint=request_fingerprint)
+    if idempotency_key:
+        existing_id = _find_replay(session, **replay)
+        if existing_id is not None:
+            return existing_id, None
     try:
-        worker.submit_delivery(
-            session, operation_id=operation.id, organization_id=context.organization_id,
-            actor_user_id=str(user_id), executor=EXECUTOR_NAME,
-            payload={"operation_type": operation_type, "thread_id": thread_id, "route": route},
-            provider_timeout_seconds=provider_timeout_seconds,
-        )
-    except worker.DeliveryTimingError:
-        worker.release_unsubmitted_operation(session, operation_id=operation.id,
-                                             organization_id=context.organization_id, actor_user_id=str(user_id))
-        session.commit()
-        raise ModernOperationRefused("delivery_timing")
+        with session.begin_nested():
+            operation = claim_modern_operation(
+                session, user_id=user_id, organization_id=context.organization_id, operation_type=operation_type,
+                thread_id=thread_id, route=route, streaming=streaming, idempotency_key=idempotency_key,
+                request_fingerprint=request_fingerprint, prompt_family=prompt_family,
+            )
+            if before_authorize is not None:
+                before_authorize()
+            auth = authorize_ai_operation(
+                session, operation_id=operation.id, actor_user_id=str(user_id), step_key=f"{operation_type}:1",
+                candidates=[list(pair) for pair in configured_candidates(session, config)],
+                max_input_tokens=INITIAL_INPUT_BOUND,
+                max_output_tokens=max(1, min(int(max_output_tokens or 1), INITIAL_OUTPUT_BOUND)),
+            )
+            refusal = None
+            if auth.outcome != "authorized":
+                refusal = auth.outcome
+                operation.status, operation.error_code = "failed", refusal
+            else:
+                try:
+                    worker.submit_delivery(
+                        session, operation_id=operation.id, organization_id=context.organization_id,
+                        actor_user_id=str(user_id), executor=EXECUTOR_NAME,
+                        payload={"operation_type": operation_type, "thread_id": thread_id, "route": route},
+                        provider_timeout_seconds=provider_timeout_seconds,
+                    )
+                except worker.DeliveryTimingError:
+                    worker.release_unsubmitted_operation(
+                        session, operation_id=operation.id, organization_id=context.organization_id,
+                        actor_user_id=str(user_id),
+                    )
+                    refusal = operation.error_code = "delivery_timing"
+    except IntegrityError:
+        if idempotency_key:
+            existing_id = _find_replay(session, **replay)
+            if existing_id is not None:
+                return existing_id, None
+        raise
     session.commit()  # the job is durable before any provider call
-    pending = _REGISTRY[operation.id] = _Pending(generate, on_persist)
+    if refusal is not None:
+        raise ModernOperationRefused(refusal)
+    pending = _REGISTRY[operation.id] = _Pending(generate, prepare_response)
     worker.start_in_process(operation.id)
     return operation.id, pending
 
@@ -289,7 +333,7 @@ def wait_for_outcome(*, operation_id, context, user_id, timeout_seconds, session
         while True:
             outcome = worker.delivery_outcome(watch, operation_id=operation_id,
                                               organization_id=context.organization_id,
-                                              actor_user_id=str(user_id))
+                                              actor_user_id=str(user_id), include_response=True)
             watch.rollback()  # the next poll reads a fresh snapshot
             if outcome["finished"]:
                 return outcome
@@ -326,25 +370,7 @@ def execute_modern_operation(user, *, context, generate, operation_type, idempot
 
     from . import db
     from .ai_providers import anthropic as anthropic_provider
-    from .ai_runtime import AIOperationInProgress
-
     session = db.session
-    if idempotency_key:
-        from sqlalchemy import select
-
-        existing = session.execute(select(AIOperation).where(
-            AIOperation.idempotency_key == idempotency_key)).scalar_one_or_none()
-        if existing is not None:
-            identity = dict(operation_id=existing.id, organization_id=context.organization_id,
-                            actor_user_id=str(user.id))
-            outcome = _worker().delivery_outcome(session, **identity)
-            if not outcome["finished"]:
-                raise AIOperationInProgress("This request is already being processed.")
-            response = _worker().read_delivery(session, include_chunks=False, **identity).response
-            if not outcome["persisted"] or not isinstance(response, dict):
-                raise ModernOperationRefused(outcome["outcome"] or "not_delivered")
-            return response.get("value"), dict(response.get("usage") or {}), _settlement(
-                outcome, existing.id, replay=True)
 
     def run(emit, should_stop):
         value, usage = generate()
@@ -363,14 +389,15 @@ def execute_modern_operation(user, *, context, generate, operation_type, idempot
         outcome = wait_for_outcome(operation_id=operation_id, context=context, user_id=user.id,
                                    timeout_seconds=operation_timeout_seconds(session))
     finally:
-        forget(operation_id)
+        if pending is not None:
+            forget(operation_id)
     session.expire_all()
     if not outcome["persisted"]:
         if pending is not None and pending.failure is not None:
             raise pending.failure
         raise ModernOperationRefused(outcome["outcome"] or "not_delivered")
-    value, usage = pending.result if pending is not None and pending.result else (None, {})
-    return value, dict(usage or {}), _settlement(outcome, operation_id)
+    response = outcome["response"]
+    return response["value"], dict(response["usage"]), _settlement(outcome, operation_id, replay=pending is None)
 
 
 def _settlement(outcome, operation_id, *, replay=False):

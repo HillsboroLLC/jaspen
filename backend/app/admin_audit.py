@@ -53,7 +53,7 @@ def _request_user_agent():
     return str(request.headers.get("User-Agent") or "").strip() or None
 
 
-def _backfill_legacy_events():
+def _backfill_legacy_events(*, commit=True):
     _ensure_dir()
     if not os.path.exists(AUDIT_FILE):
         return
@@ -87,7 +87,7 @@ def _backfill_legacy_events():
         ))
         imported += 1
 
-    if imported:
+    if imported and commit:
         db.session.commit()
 
 
@@ -101,8 +101,9 @@ def append_admin_audit_event(
     details=None,
     remote_addr=None,
     user_agent=None,
+    commit=True,
 ):
-    _backfill_legacy_events()
+    _backfill_legacy_events(commit=commit)
     event = AdminAuditEvent(
         timestamp=datetime.now(timezone.utc),
         actor_user_id=str(actor_user_id or "").strip() or None,
@@ -123,7 +124,8 @@ def append_admin_audit_event(
         ).strip() or None,
     )
     db.session.add(event)
-    db.session.commit()
+    if commit:
+        db.session.commit()
     return event
 
 
@@ -136,6 +138,7 @@ def append_user_audit_event(
     target_user_id=None,
     target_email=None,
     details=None,
+    commit=True,
 ):
     resolved_actor_user_id = actor_user_id
     resolved_actor_email = actor_email
@@ -151,6 +154,7 @@ def append_user_audit_event(
         details=details,
         remote_addr=_request_remote_addr(),
         user_agent=_request_user_agent(),
+        commit=commit,
     )
 
 

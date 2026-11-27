@@ -87,6 +87,7 @@ class DeliveryResult:
     delivered_attempt_number: int
     response: object
     on_persist: object = None  # callable(session, response); runs inside the persistence transaction
+    prepare_response: object = None  # callable(session, response) returning the customer result to save
 
 
 @dataclass(frozen=True)
@@ -312,9 +313,11 @@ def read_delivery(session, *, operation_id, organization_id, actor_user_id, afte
     saved response, once present, is the result. When a newer attempt started,
     its chunks come from the beginning and the first has ``restart=True``.
     """
+    # Observe the job first. Once finished, its settlement and response are
+    # durable, including when each query takes a fresh READ COMMITTED snapshot.
+    job = _job_for(session, operation_id, organization_id, actor_user_id)
     view = rd.delivery_view(session, operation_id=operation_id, organization_id=organization_id,
                             actor_user_id=actor_user_id)
-    job = _job_for(session, operation_id, organization_id, actor_user_id)
     latest = session.execute(select(func.max(AIDeliveryStreamChunk.attempt_number)).where(
         AIDeliveryStreamChunk.operation_id == operation_id,
     )).scalar_one()
@@ -341,7 +344,7 @@ def read_delivery(session, *, operation_id, organization_id, actor_user_id, afte
     )
 
 
-def delivery_outcome(session, *, operation_id, organization_id, actor_user_id):
+def delivery_outcome(session, *, operation_id, organization_id, actor_user_id, include_response=False):
     """Read-only: the job and Phase 12 outcome (charged credits once settled), for JSON callers."""
     view = read_delivery(session, operation_id=operation_id, organization_id=organization_id,
                          actor_user_id=actor_user_id, include_chunks=False)
@@ -350,6 +353,7 @@ def delivery_outcome(session, *, operation_id, organization_id, actor_user_id):
         "persisted": view.persisted, "billing_state": view.billing_state,
         "delivery_status": view.delivery_status, "charged_credits": view.charged_credits,
         "absorbed_credits": view.absorbed_credits,
+        **({"response": view.response} if include_response else {}),
     }
 
 
@@ -879,11 +883,16 @@ class DeliveryWorker:
                     if job.cancel_requested_at is not None and job.state == "running":
                         session.rollback()
                         return "cancelled"  # the stop was recorded before this response was kept
+                    response = result.response
+                    if result.prepare_response is not None:
+                        if job.state in ("persisted", "finished"):
+                            return job.state == "persisted" or job.outcome in ("delivered", "absorbed")
+                        response = result.prepare_response(session, response)
                     _envelope, replay = rd.persist_successful_response(
                         session, operation_id=claim.operation_id, organization_id=claim.organization_id,
                         actor_user_id=claim.actor_user_id,
                         delivered_attempt_number=int(result.delivered_attempt_number),
-                        response_json=result.response,
+                        response_json=response,
                     )
                     if not replay and result.on_persist is not None:
                         result.on_persist(session, result.response)

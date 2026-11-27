@@ -524,7 +524,8 @@ def ai_usage_daily_status():
     })
 
 
-def _audit_ai_agent_event(action, *, user=None, target_user_id=None, target_email=None, details=None):
+def _audit_ai_agent_event(action, *, user=None, target_user_id=None, target_email=None, details=None,
+                          commit=True):
     append_user_audit_event(
         actor_user=user,
         actor_user_id=getattr(user, "id", None) if user is not None else target_user_id,
@@ -533,6 +534,7 @@ def _audit_ai_agent_event(action, *, user=None, target_user_id=None, target_emai
         target_user_id=target_user_id or getattr(user, "id", None),
         target_email=target_email or getattr(user, "email", None),
         details=details if isinstance(details, dict) else {},
+        commit=commit,
     )
 
 
@@ -15723,39 +15725,44 @@ def _modern_turn_payload_credits(turn, payload, outcome, raw_usage=None):
     return payload
 
 
-def _submit_modern_turn(turn, *, produce, finish, streaming, route, request_fingerprint, project=None):
-    """Hand a modern turn's generation and save to the worker; returns ``(operation_id, pending, holder)``.
-
-    ``produce(emit)`` runs on the worker thread and returns ``(value, usage)``; ``finish(value, usage)``
-    runs inside the worker's persist transaction and returns ``(payload, error)``, as the legacy finish
-    paths do."""
+def _submit_modern_turn(turn, *, produce, finish, streaming, route, idempotency_key, request_fingerprint,
+                        project=None, save_before_generation=False):
+    """Submit one durable turn and save its customer payload before settlement."""
     from app import billing_runtime_ai as modern_ai
 
-    holder = {}
+    def save_user_turn():
+        # This callback only runs for the request that claimed the operation.
+        turn.modern_persisting = True
+        try:
+            if not turn.save():
+                raise modern_ai.ModernOperationRefused("conversation_persist_failed")
+        finally:
+            turn.modern_persisting = False
 
     def generate(emit, should_stop):
         _rebind_turn_to_this_thread(turn, project)
         value, usage = produce(emit)
         return modern_ai._jsonable(value), modern_ai._jsonable(dict(usage or {}))
 
-    def on_persist(persist_session, response):
+    def prepare_response(persist_session, response):
         turn.modern_persisting = True
         try:
             payload, error = finish(response["value"], response["usage"])
         finally:
             turn.modern_persisting = False
         if error is not None:
-            raise RuntimeError(f"reply_not_saved:{error[1]}")  # nothing is saved; the turn is not charged
-        holder["payload"], holder["usage"] = payload, response["usage"]
+            raise RuntimeError(f"reply_not_saved:{error[1]}")
+        return {"payload": modern_ai._jsonable(payload), "usage": response["usage"]}
 
-    operation_id, pending = modern_ai.submit_modern_operation(
+    return modern_ai.submit_modern_operation(
         db.session, context=turn.modern, user_id=turn.user_id, operation_type="conversation", generate=generate,
         max_output_tokens=int(current_app.config.get("AI_AGENT_MAX_OUTPUT_TOKENS") or 4096),
         config=current_app.config, provider_timeout_seconds=anthropic_provider.request_timeout_seconds(),
-        thread_id=turn.thread_id, route=route, streaming=streaming, request_fingerprint=request_fingerprint,
-        prompt_family="conversation", on_persist=on_persist,
+        thread_id=turn.thread_id, route=route, streaming=streaming,
+        idempotency_key=modern_ai.modern_idempotency_key(turn.modern, turn.user_id, route, idempotency_key),
+        request_fingerprint=request_fingerprint, prompt_family="conversation",
+        before_authorize=save_user_turn if save_before_generation else None, prepare_response=prepare_response,
     )
-    return operation_id, pending, holder
 
 
 def _streamed_reply(events, emit):
@@ -15793,7 +15800,8 @@ def _submit_modern_conversation_turn(turn, req, *, streaming):
         )
 
     return _submit_modern_turn(turn, produce=produce, finish=finish, streaming=streaming, route=req.route,
-                               request_fingerprint=req.request_fingerprint, project=req.project)
+                               idempotency_key=req.idempotency_key, request_fingerprint=req.request_fingerprint,
+                               project=req.project, save_before_generation=True)
 
 
 def _modern_turn_failure(turn, req, pending, outcome):
@@ -15809,24 +15817,38 @@ def _modern_turn_failure(turn, req, pending, outcome):
             "retryable": True}, 502
 
 
+def _modern_conversation_payload(turn, response, outcome, *, streaming, replay):
+    payload = dict(response["payload"])
+    if streaming:
+        payload["type"] = "done"
+    else:
+        payload.pop("type", None)
+    payload = _modern_turn_payload_credits(turn, payload, outcome, response["usage"])
+    if replay:
+        payload["idempotent_replay"] = True
+        if isinstance(payload.get("usage"), dict):
+            payload["usage"]["idempotent_replay"] = True
+    return payload
+
+
 def _run_modern_conversation_turn(turn, req, submission=None):
     from app import billing_runtime_ai as modern_ai
-    operation_id, pending, holder = submission or _submit_modern_conversation_turn(turn, req, streaming=False)
+    operation_id, pending = submission or _submit_modern_conversation_turn(turn, req, streaming=False)
     outcome = modern_ai.wait_for_outcome(operation_id=operation_id, context=turn.modern, user_id=turn.user_id,
                                          timeout_seconds=modern_ai.operation_timeout_seconds(db.session))
     db.session.expire_all()
-    if not outcome["persisted"] or "payload" not in holder:
+    if not outcome["persisted"]:
         body, status = _modern_turn_failure(turn, req, pending, outcome)
         return jsonify(body), status
-    return jsonify(_modern_turn_payload_credits(turn, holder["payload"], outcome, holder.get("usage"))), 200
+    payload = _modern_conversation_payload(turn, outcome["response"], outcome, streaming=False, replay=pending is None)
+    return jsonify(payload), 200
 
 
 def _stream_modern_conversation_turn(turn, req, submission=None):
-    """Stream a modern turn from durable state. A dropped connection does nothing: the worker keeps going,
-    saves the reply and settles it once (criterion 1)."""
+    """Stream a modern turn from durable state. The worker keeps going after disconnect."""
     import time as _time
     from app import billing_runtime_ai as modern_ai
-    operation_id, pending, holder = submission or _submit_modern_conversation_turn(turn, req, streaming=True)
+    operation_id, pending = submission or _submit_modern_conversation_turn(turn, req, streaming=True)
     worker = modern_ai._worker()
     identity = dict(operation_id=operation_id, organization_id=turn.modern.organization_id,
                     actor_user_id=str(turn.user_id))
@@ -15838,7 +15860,7 @@ def _stream_modern_conversation_turn(turn, req, submission=None):
         factory = modern_ai._outcome_session_factory()
         with factory() as watch:
             while True:
-                view = worker.read_delivery(watch, after=cursor, **identity)
+                view = worker.read_delivery(watch, after=cursor, include_chunks=pending is not None, **identity)
                 watch.rollback()
                 for chunk in view.chunks:
                     yield _sse_payload({"type": "delta", "text": chunk.content})
@@ -15853,11 +15875,13 @@ def _stream_modern_conversation_turn(turn, req, submission=None):
                 _time.sleep(min(remaining, worker.STREAM_POLL_SECONDS))
             outcome = worker.delivery_outcome(watch, **identity)
         db.session.expire_all()
-        if not outcome["persisted"] or "payload" not in holder:
+        if not outcome["persisted"]:
             body, _status = _modern_turn_failure(turn, req, pending, outcome)
             yield _sse_payload({"type": "error", **body})
             return
-        yield _sse_payload(_modern_turn_payload_credits(turn, holder["payload"], outcome, holder.get("usage")))
+        yield _sse_payload(_modern_conversation_payload(
+            turn, view.response, outcome, streaming=True, replay=pending is None,
+        ))
 
     return Response(event_stream(), mimetype="text/event-stream", headers=dict(_SSE_HEADERS))
 
@@ -16031,6 +16055,7 @@ def _finish_conversation_turn(turn, req, *, reply, usage, actions, mutations, un
         _audit_ai_agent_event(
             "session.created",
             user=user,
+            commit=not getattr(turn, "modern_persisting", False),
             details={
                 "thread_id": thread_id,
                 "name": req.name if is_start else (session.get("name") or "Jaspen Intake"),
@@ -16088,12 +16113,13 @@ def _finish_conversation_turn(turn, req, *, reply, usage, actions, mutations, un
             "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
             "message_saved": True,
         })
-    _remember_conversation_payload(
-        session, req.idempotency_key, req.request_fingerprint, payload,
-    )
-    if not turn.save():
-        _close_turn_alone(turn, "replay_cache_not_saved")
-        return None, ({"error": "Failed to persist idempotency state"}, 500)
+    if getattr(turn, "modern", None) is None:
+        _remember_conversation_payload(
+            session, req.idempotency_key, req.request_fingerprint, payload,
+        )
+        if not turn.save():
+            _close_turn_alone(turn, "replay_cache_not_saved")
+            return None, ({"error": "Failed to persist idempotency state"}, 500)
     return payload, None
 
 
@@ -16270,6 +16296,7 @@ def _finish_regenerated_turn(turn, *, reply, usage, chat_history, last_msg, old_
     _audit_ai_agent_event(
         "message.regenerated",
         user=user,
+        commit=not getattr(turn, "modern_persisting", False),
         details={
             "thread_id": str(session.get("session_id") or turn.session_key),
             "message_index": assistant_message_index,
@@ -16306,10 +16333,11 @@ def _finish_regenerated_turn(turn, *, reply, usage, chat_history, last_msg, old_
         "organization_id": session.get("organization_id"),
         "visibility": session.get("visibility") or "private",
     })
-    _remember_conversation_payload(session, idempotency_key, request_fingerprint, payload)
-    if not turn.save():
-        _close_turn_alone(turn, "replay_cache_not_saved")
-        return None, ({"error": "Failed to persist idempotency state"}, 500)
+    if getattr(turn, "modern", None) is None:
+        _remember_conversation_payload(session, idempotency_key, request_fingerprint, payload)
+        if not turn.save():
+            _close_turn_alone(turn, "replay_cache_not_saved")
+            return None, ({"error": "Failed to persist idempotency state"}, 500)
     return payload, None
 
 
@@ -16545,7 +16573,7 @@ def conversation_start():
         route=request.endpoint, streaming=stream_requested,
         idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
     )
-    if not turn.save():
+    if getattr(turn, "modern", None) is None and not turn.save():
         return jsonify({
             "error": "The conversation could not be saved. Your scoring request was not started. Try again.",
             "code": "conversation_persist_failed",
@@ -16768,7 +16796,7 @@ def conversation_continue():
         route=request.endpoint, streaming=stream_requested,
         idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
     )
-    if not turn.save():
+    if getattr(turn, "modern", None) is None and not turn.save():
         return jsonify({
             "error": "The conversation could not be saved. Your scoring request was not started. Try again.",
             "code": "conversation_persist_failed",
@@ -18411,7 +18439,8 @@ def conversation_regenerate():
 
         submission = _submit_modern_turn(
             turn, produce=produce, finish=lambda value, usage: finish(value["reply"], usage, streaming=stream_requested),
-            streaming=stream_requested, route=request.endpoint, request_fingerprint=request_fingerprint,
+            streaming=stream_requested, route=request.endpoint, idempotency_key=idempotency_key,
+            request_fingerprint=request_fingerprint,
             project=turn_project,
         )
         if stream_requested:
