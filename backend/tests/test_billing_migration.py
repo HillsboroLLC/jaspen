@@ -1443,7 +1443,7 @@ def _ops(engine):
 def test_revision_extends_phase12_and_is_the_single_head():
     from alembic.script import ScriptDirectory
     script = ScriptDirectory(str(MIGRATIONS_DIR))
-    assert script.get_heads() == ["a1f3c5e7b9d0"]  # I1 follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14
+    assert script.get_heads() == ["e7b9d1f3a5c6"]  # I2 follows I1;  # I1 follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14
     assert script.get_revision(REVISION).down_revision == PARENT
 
 
@@ -1638,7 +1638,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=8, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "f3a5c7e9b1d2", "c8a9989843b5", "a1f3c5e7b9d0"}:
+    if revision not in {REVISION, "f3a5c7e9b1d2", "c8a9989843b5", "a1f3c5e7b9d0", "e7b9d1f3a5c6"}:
         engine.dispose()
         pytest.fail(f"Phase 14 migrated tests require Alembic head {REVISION}; found {revision!r}")
     with migrated(engine) as session:

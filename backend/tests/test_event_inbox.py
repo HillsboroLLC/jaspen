@@ -221,7 +221,7 @@ def test_inbox_has_no_live_runtime_importers():
             "billing_projections.py",
             "billing_shadow.py",  # Phase 16 shadow comparison (inactive) reads financial cases only.
             # I2 (D18 row 17): live only under BILLING_MODERN_FAMILIES (financial_events); off by default, refused in production.
-            "billing_runtime_financial.py",
+            "billing_runtime_financial.py", "billing_runtime_funding.py",
         }:
             continue
         text = path.read_text()

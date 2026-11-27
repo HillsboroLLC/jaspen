@@ -9,6 +9,9 @@ Output is canonical JSON on stdout.
                        copied from the configured catalog (credit_funding family)
   allocate-free        D4: open each modern organization's current monthly Free lot
                        from its account anchor (credit_funding family)
+  allocate-annual      open the current monthly release of each modern paid annual
+                       term from its paid line, and re-apply open disputes to new lots
+                       (credit_funding family)
   process              claim and apply recorded processor events from the inbox, in a
                        bounded batch (financial_events family; funding steps also need
                        credit_funding)
@@ -41,6 +44,9 @@ def _parser():
     free = commands.add_parser("allocate-free", help="open each modern organization's monthly Free lot")
     free.add_argument("--organization-id", help="only this organization")
     free.add_argument("--confirm-write", action="store_true")
+    annual = commands.add_parser("allocate-annual", help="open the current monthly release of each annual term")
+    annual.add_argument("--organization-id", help="only this organization")
+    annual.add_argument("--confirm-write", action="store_true")
     process = commands.add_parser("process", help="apply a bounded batch of inbox events")
     process.add_argument("--limit", type=int, default=50, help=f"events to claim (1-{MAX_BATCH})")
     process.add_argument("--confirm-write", action="store_true")
@@ -92,7 +98,7 @@ def run(argv=None, *, app=None):
                     effective_at=_effective_at(args.effective_at))
                 session.commit()
                 _emit({"definitions": [{"key": k, "version": v, "state": s} for k, v, s in results]})
-            elif args.command == "allocate-free":
+            elif args.command in ("allocate-free", "allocate-annual"):
                 funding.require_family()
                 contexts = funding.modern_contexts(session)
                 if args.organization_id:
@@ -101,7 +107,8 @@ def run(argv=None, *, app=None):
                 outcomes = []
                 for context in contexts:
                     try:
-                        result = funding.allocate_free(session, context)
+                        result = (funding.allocate_free if args.command == "allocate-free"
+                                  else funding.allocate_annual_release)(session, context)
                         session.commit()
                         outcomes.append(result.__dict__)
                     except funding.FundingRuntimeError as exc:

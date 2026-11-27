@@ -81,6 +81,9 @@ def _predecessor(engine):
 def _upgrade(engine):
     with _ops(engine):
         _revision().upgrade()
+    with _ops(engine):
+        # I2 adds the D5 allocation basis to case versions; the recorder writes it.
+        _revision("e7b9d1f3a5c6").add_allocation_basis_column()
 
 
 def _new_engine(url):

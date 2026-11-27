@@ -402,3 +402,74 @@ def modern_contexts(session):
 
 def families_enabled():
     return sorted(cutover_config().families)
+
+
+# ---------------------------------------------------------------------------
+# Annual monthly releases (Phase 6 annual_monthly; P11-DEP-001)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class AnnualRelease:
+    organization_id: str
+    billing_account_id: str
+    outcome: str  # inserted | duplicate | no_annual_term
+    period_index: int | None = None
+    reapplied_cases: int = 0
+
+
+def allocate_annual_release(session, context):
+    """Open the current monthly release of the account's paid annual term, from its paid line.
+
+    D-6 duty: lots newly funded from a line under an open dispute are evaluated by
+    re-applying that case (Phase 9 records an event per new lot, F5). The caller commits.
+    """
+    from .billing_financial_effects import CASE_EVENT_TYPES, apply_financial_case_effects
+    from .models import BillingSubscription, FinancialLine, FinancialTransaction
+    from .models_billing_phase5 import FinancialCase, FinancialCaseEventLine
+
+    account = lock_billing_account(session, context.billing_account_id)
+    at = _database_now(session)
+    base = dict(organization_id=context.organization_id, billing_account_id=account.id)
+    subscription = session.execute(select(BillingSubscription).where(
+        BillingSubscription.billing_account_id == account.id, BillingSubscription.processor == "stripe",
+        BillingSubscription.interval == "year",
+        BillingSubscription.state.in_(("active", "past_due", "cancel_at_period_end")),
+    )).scalars().first()
+    if subscription is None or not (_utc(subscription.term_starts_at) <= at < _utc(subscription.term_ends_at)):
+        return AnnualRelease(outcome="no_annual_term", **base)
+    instance = session.execute(select(EntitlementInstance).where(
+        EntitlementInstance.subscription_id == subscription.id, EntitlementInstance.state == "active",
+        EntitlementInstance.entitlement_definition_id == subscription.current_entitlement_definition_id,
+    )).scalar_one_or_none()
+    line = None if instance is None else session.execute(
+        select(FinancialLine).join(FinancialTransaction, FinancialTransaction.id == FinancialLine.financial_transaction_id)
+        .where(FinancialLine.entitlement_instance_id == instance.id, FinancialLine.line_kind == "subscription",
+               FinancialTransaction.kind == "payment",
+               FinancialTransaction.effective_at >= subscription.term_starts_at,
+               FinancialTransaction.effective_at < subscription.term_ends_at)
+        .order_by(FinancialTransaction.effective_at)).scalars().first()
+    if line is None:
+        return AnnualRelease(outcome="no_annual_term", **base)
+    index = period_index_at(subscription.anchor_at, at)
+    try:
+        _allocation, _period, _lot, state = allocate_recurring_credits(
+            session, billing_account_id=account.id, entitlement_instance_id=instance.id, period_index=index,
+            opened_at=at, delivery_obligations=placeholder_obligations("credit_period_funded"),
+            financial_line_id=line.id, actor_type=SYSTEM_ACTOR[0], actor_id=SYSTEM_ACTOR[1])
+    except RecurringAllocationRetryError as exc:
+        raise FundingRetryError(str(exc)) from exc
+    except RecurringAllocationError as exc:
+        raise FundingRuntimeError(str(exc)) from exc
+    cases = session.execute(
+        select(FinancialCase).join(FinancialCaseEventLine,
+                                   FinancialCaseEventLine.financial_case_event_id == FinancialCase.current_event_id)
+        .where(FinancialCase.billing_account_id == account.id, FinancialCase.case_type == "dispute",
+               FinancialCase.state.in_(("opened", "pending", "lost")),
+               FinancialCaseEventLine.financial_line_id == line.id)
+    ).scalars().all()
+    for case in cases:
+        apply_financial_case_effects(
+            session, billing_account_id=account.id, financial_case_id=case.id, applied_at=at,
+            actor_type=SYSTEM_ACTOR[0], actor_id=SYSTEM_ACTOR[1],
+            delivery_obligations=placeholder_obligations(CASE_EVENT_TYPES[case.state]))
+    return AnnualRelease(outcome=state, period_index=index, reapplied_cases=len(cases), **base)

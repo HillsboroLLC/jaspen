@@ -261,6 +261,7 @@ def test_an_added_seat_is_paid_then_committed_by_the_processor(client, auth_head
     assert metadata["jaspen_seat_requested_by"] == owner_org.user.id and metadata["jaspen_seat_delta"] == "1"
     import time
     time.sleep(1.1)  # processor times are whole seconds; the owner's grant began moments ago in this fixture
+    session.commit()  # a fresh transaction: PostgreSQL now() is the transaction start
     now = bc._database_now(session).replace(microsecond=0)
     seat_invoice = s.invoice(customer, sub, [s.invoice_line(s.PRICES["STRIPE_ADDITIONAL_SEAT_PRICE_IDS"]["team"],
                                                             2000, now, s.add_calendar_months(anchor, 1))],

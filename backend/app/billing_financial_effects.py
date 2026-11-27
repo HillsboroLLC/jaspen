@@ -35,6 +35,7 @@ from .billing_allocations import (
     _complete_registry_if_claimed,
 )
 from .billing_financial_cases import (
+    AUTHORITATIVE_ALLOCATION_BASES,
     FinancialCaseInvariantError,
     record_financial_case_event,
 )
@@ -1032,7 +1033,7 @@ def apply_financial_case_effects(
     event = session.get(FinancialCaseEvent, case.current_event_id)
     if event is None or event.financial_case_id != case.id:
         raise FinancialEffectError("financial case has no accepted current version")
-    domain_event, _messages, _state = _record_event(session, _case_event(case, event), delivery_obligations)
+    domain_event, _messages, event_state = _record_event(session, _case_event(case, event), delivery_obligations)
 
     if case.case_type == "refund" and case.state in NO_CREDIT_EFFECT_REFUND_STATES:
         # D10: financial-only never changes capabilities or funded credits. An
@@ -1048,6 +1049,12 @@ def apply_financial_case_effects(
                 "changing a refund with applied credit effects to a no-credit disposition needs a decision"
             )
         return case, event, []
+    if event.allocation_basis not in AUTHORITATIVE_ALLOCATION_BASES:
+        # D5 (founder decision 2026-11-26): only an allocation that follows from processor
+        # evidence alone is applied; a derived multi-line split needs manual review.
+        raise FinancialEffectPolicyRequiredError(
+            "the case allocation is not authoritative processor evidence and needs manual review (D5)"
+        )
 
     source_lines = {
         line.id: line for line in session.execute(
@@ -1097,8 +1104,32 @@ def apply_financial_case_effects(
                 evaluations.append(evaluation)
     if domain_event.aggregate_id != case.id:
         raise FinancialEffectConflictError("case event aggregate does not match")
+    if event_state == "duplicate":
+        # Phase 9 audit F5: a re-application that evaluates lots funded since the version was
+        # first applied records one event per new lot, so no ledger effect goes unannounced.
+        for evaluation in evaluations:
+            _record_event(session, {
+                **_case_event(case, event),
+                "event_key": f"financial_case_version_applied:{event.id}:lot:{evaluation.lot_id}",
+                "reference_ids": [case.id, event.id, evaluation.id, evaluation.lot_id],
+                "occurred_at": applied_at,
+            }, delivery_obligations)
     session.flush()
     return case, event, evaluations
+
+
+def _reconcile_evaluation(session, evaluation, applied):
+    """Phase 9 audit F4: an evaluation's amounts are exactly the effects it wrote.
+
+    PostgreSQL re-checks the same at commit (I2 migration ``e7b9d1f3a5c6``)."""
+    session.flush()
+    written = dict(session.execute(
+        select(FinancialCaseCreditEffect.effect_type, func.sum(FinancialCaseCreditEffect.amount))
+        .where(FinancialCaseCreditEffect.evaluation_id == evaluation.id)
+        .group_by(FinancialCaseCreditEffect.effect_type)
+    ).all())
+    if any(int(written.get(kind) or 0) != int(amount) for kind, amount in applied.items()):
+        raise FinancialEffectError("case lot evaluation amounts do not reconcile with its credit effects")
 
 
 def _evaluate_lot(session, *, case, event, line, funded, r_case, applied_at, actor_type, actor_id):
@@ -1236,6 +1267,7 @@ def _evaluate_lot(session, *, case, event, line, funded, r_case, applied_at, act
                 related_entry_id=hold_entry.id, registry=registry, effective_at=effective_at,
                 actor_type=actor_type, actor_id=actor_id, reason_code=reason,
             )
+    _reconcile_evaluation(session, evaluation, applied)
     _complete(session, evaluation_registry, completed_at=applied_at,
               result_type="financial_case_lot_evaluation", result_id=evaluation.id)
     return evaluation

@@ -275,3 +275,45 @@ def test_legacy_fulfillment_uses_the_checkout_organization_never_a_modern_one(cl
     grant = session.query(PersistentCreditGrant).one()
     payment = session.query(Payment).one()
     assert grant.organization_id == legacy.id and payment.organization_id == legacy.id
+
+
+def test_annual_releases_and_a_reapplied_dispute_announce_each_new_lot_f5(modern):
+    from app import billing_runtime_funding as funding
+    from app.models_billing_phase5 import DomainEvent
+    from app.models_billing_phase9 import FinancialCaseLotEvaluation
+
+    m, session = modern, modern["session"]
+    now = bc._database_now(session).replace(microsecond=0)
+    anchor = now - timedelta(days=40)
+    end = s.add_calendar_months(anchor, 12)
+    sub = f"sub_i2{uuid.uuid4().hex[:12]}"
+    inv = s.invoice(m["customer"], sub, [s.invoice_line(s.PRICES["STRIPE_ANNUAL_PRICE_IDS"]["essential"], 38400,
+                                                        anchor, end)],
+                    reason="subscription_create", paid_at=anchor)
+    s.record(session, m["gateway"], inv, "invoice.paid", created=anchor)
+    assert _process(m)["processed"] == 1
+    pi = f"pi_i2{uuid.uuid4().hex[:12]}"
+    m["gateway"].invoice_payments[pi] = inv["id"]
+    m["gateway"].payment_customers[pi] = m["customer"]
+    dispute = {"id": f"dp_i2{uuid.uuid4().hex[:12]}", "object": "dispute", "status": "needs_response",
+               "amount": inv["total"], "payment_intent": pi}
+    s.record(session, m["gateway"], dispute, "charge.dispute.created", created=now)
+    assert _process(m)["processed"] == 1
+    assert session.query(FinancialCaseLotEvaluation).count() == 1
+    context = bc.modern_context(session, family="credit_funding", organization_id=m["org"].id)
+    release = funding.allocate_annual_release(session, context)
+    session.commit()
+    assert (release.outcome, release.period_index, release.reapplied_cases) == ("inserted", 1, 1)
+    lots = session.query(CreditLot).filter_by(source_type="subscription_recurring").all()
+    assert len(lots) == 2
+    assert session.query(FinancialCaseLotEvaluation).count() == 2
+    lot_events = session.query(DomainEvent).filter(DomainEvent.event_key.like("financial_case_version_applied:%:lot:%"))
+    assert lot_events.count() == 1
+    # Both lots are held by the dispute; running the release again adds nothing.
+    for lot in lots:
+        held = sum(e.held_delta for e in session.query(CreditLedgerEntry).filter_by(lot_id=lot.id))
+        assert held == lot.original_amount
+    again = funding.allocate_annual_release(session, context)
+    session.commit()
+    assert again.outcome == "duplicate"
+    assert session.query(FinancialCaseLotEvaluation).count() == 2 and lot_events.count() == 1
