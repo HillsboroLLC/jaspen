@@ -15700,23 +15700,26 @@ def _rebind_turn_to_this_thread(turn, project=None):
     return worker_user
 
 
-def _modern_turn_payload_credits(turn, payload, outcome):
-    """After settlement: what was charged (Phase 12) and what remains (the modern meter)."""
+def _modern_turn_payload_credits(turn, payload, outcome, raw_usage=None):
+    """After settlement: what was charged (Phase 12), what remains and the plan (the modern meter)."""
     from app.billing_runtime_readers import modern_usage_meter_state
     from app.billing_cutover import modern_context
+    from app.models import User
     charged = int(outcome.get("charged_credits") or 0)
-    remaining = None
+    remaining, plan_key = None, None
     try:
         readers = modern_context(db.session, family="readers", organization_id=turn.modern.organization_id)
         if readers is not None:
-            remaining = modern_usage_meter_state(db.session, context=readers, user_id=turn.user_id,
-                                                 app_config=current_app.config).get("remaining")
+            meter = modern_usage_meter_state(db.session, context=readers, user_id=turn.user_id,
+                                             app_config=current_app.config)
+            remaining, plan_key = meter.get("remaining"), meter.get("plan_key")
     except Exception:
         current_app.logger.exception("modern meter read failed after a turn")
     payload["credits"] = _public_credits_payload(charged=charged, remaining=remaining)
-    if isinstance(payload.get("usage"), dict):
-        payload["usage"]["credits_charged"] = tokens_to_credits(charged, precision=1)
-        payload["usage"]["credits_remaining"] = tokens_to_credits(remaining, precision=1)
+    if isinstance(raw_usage, dict) and isinstance(payload.get("usage"), dict):
+        payload["usage"] = _public_usage_payload(
+            raw_usage, model_type=payload.get("model_type"), credits_charged=charged, credits_remaining=remaining,
+            user=db.session.get(User, str(turn.user_id)), plan_key=plan_key)
     return payload
 
 
@@ -15743,7 +15746,7 @@ def _submit_modern_turn(turn, *, produce, finish, streaming, route, request_fing
             turn.modern_persisting = False
         if error is not None:
             raise RuntimeError(f"reply_not_saved:{error[1]}")  # nothing is saved; the turn is not charged
-        holder["payload"] = payload
+        holder["payload"], holder["usage"] = payload, response["usage"]
 
     operation_id, pending = modern_ai.submit_modern_operation(
         db.session, context=turn.modern, user_id=turn.user_id, operation_type="conversation", generate=generate,
@@ -15815,7 +15818,7 @@ def _run_modern_conversation_turn(turn, req, submission=None):
     if not outcome["persisted"] or "payload" not in holder:
         body, status = _modern_turn_failure(turn, req, pending, outcome)
         return jsonify(body), status
-    return jsonify(_modern_turn_payload_credits(turn, holder["payload"], outcome)), 200
+    return jsonify(_modern_turn_payload_credits(turn, holder["payload"], outcome, holder.get("usage"))), 200
 
 
 def _stream_modern_conversation_turn(turn, req, submission=None):
@@ -15848,7 +15851,7 @@ def _stream_modern_conversation_turn(turn, req, submission=None):
             body, _status = _modern_turn_failure(turn, req, pending, outcome)
             yield _sse_payload({"type": "error", **body})
             return
-        yield _sse_payload(_modern_turn_payload_credits(turn, holder["payload"], outcome))
+        yield _sse_payload(_modern_turn_payload_credits(turn, holder["payload"], outcome, holder.get("usage")))
 
     return Response(event_stream(), mimetype="text/event-stream", headers=dict(_SSE_HEADERS))
 

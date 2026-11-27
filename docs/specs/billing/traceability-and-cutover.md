@@ -1201,6 +1201,33 @@ accounts in I1. Staging has no AI egress. I4 routes every turn by its
 project's organization, refuses legacy charging in a modern context and charges
 exactly one model.
 
+### Row 17 integration record — I4: the ai_reservation family (inactive)
+
+Status: **implemented locally on the I1-I5 integration line; inactive by default;
+awaiting independent audit.** Every AI operation of a modern organization (chat
+turns start, continue and regenerate, streamed or not, and every governed
+operation through `ai_runtime.execute_customer_operation`) is routed by the work's
+organization (`modern_context(family="ai_reservation")`). It is claimed under
+`turn_lifecycle.version` `p4.2-s1` (D-2; the X1 classifier counts it as in flight),
+authorized by Phase 12 for the configured, priced models, and run by the
+reliable-delivery worker (I3) through one in-process executor. Legacy
+organizations keep the legacy path unchanged (OD-1 Option C).
+
+| Concern | Implementation | Evidence |
+|---|---|---|
+| Every provider request checked and recorded | Context-local call observer in both provider adapters; `Phase12CallRecorder` maps requests to attempts and tool iterations | `test_ai_provider_observer.py`; `test_billing_runtime_ai.py` |
+| F2: an unsaved reply is never charged | The reply is saved in the worker's persist transaction (store `commit=False`); only then does the worker settle | `test_f2_a_modern_reply_that_cannot_be_saved_is_not_charged` |
+| F3 / gate criterion 1 | The route streams from durable state; a disconnect does nothing; the worker saves and settles once | `test_f3_a_dropped_modern_stream_is_saved_and_settled_once` |
+| F4 | No money moves in the request transaction, so a rollback inside generation cannot add or lose credits | both `test_f4_*` journeys |
+| Governed operations | Same contract `(value, usage, settlement)`; failures are never charged and re-raise | `test_a_modern_governed_operation_settles_through_phase12` |
+| D2 / D3 staging test policies | `billing_runtime_policies.install_test_policies` (labeled `staging-test`, refused in a production runtime; numbers from an operator rules file) | `test_billing_runtime_policies.py` |
+| Refusals | Credit exhaustion 402 (the existing payload, from the modern meter), capacity denial 429, missing pricing 503, a slow outcome 202; nothing is reserved | app error handler |
+
+The legacy F2-F4 strict-xfail probes keep pinning the legacy path, which stays
+unchanged. The modern counterparts above pass. D-3: the request waits at most the
+effective policy's `max_operation_seconds` plus a margin, which must stay below
+the server's request timeout (staging: 180 s; production: D1, not yet verified).
+
 ## D18 Phase dependency and cutover map
 
 The original 18 phases are the authoritative implementation sequence because
