@@ -711,3 +711,124 @@ def test_postgres_concurrent_receipt_of_same_event_stores_one_row(postgres_engin
     assert sorted(outcomes) == ["duplicate", "duplicate", "duplicate", "inserted"]
     with postgres_engine.connect() as connection:
         assert connection.execute(sa.text("SELECT COUNT(*) FROM external_event_inbox")).scalar() == 1
+
+
+# --------------------------------------------------------------------------- T-INBOX-01..03 (activation gate)
+
+def _with_fields(monkeypatch, **overrides):
+    """Make the minimizer return fields the database refuses (an integrity error that is not a duplicate)."""
+    original = inbox.minimize_stripe_event
+
+    def minimized(raw_body, event):
+        return {**original(raw_body, event), **overrides}
+
+    monkeypatch.setattr(inbox, "minimize_stripe_event", minimized)
+
+
+def test_t_inbox_01_an_unrelated_integrity_error_on_receipt_is_not_read_as_a_duplicate(engine, monkeypatch):
+    raw, event = _charge_event("evt_tinbox01check")
+    _with_fields(monkeypatch, provider="other")  # the provider check fails, not the identity constraint
+    with _session(engine) as session:
+        with pytest.raises(sa.exc.IntegrityError):
+            inbox.record_event(session, raw, event, now=NOW)
+        session.rollback()
+    with engine.connect() as connection:
+        assert connection.execute(sa.text("SELECT COUNT(*) FROM external_event_inbox")).scalar() == 0
+
+
+def test_t_inbox_02_03_failed_conflict_evidence_propagates_and_leaves_no_quarantine(engine, monkeypatch):
+    raw, event = _charge_event("evt_tinbox02")
+    event_pk, _ = _record(engine, raw, event)
+    variant = _variant(raw)
+    _with_fields(monkeypatch, payload_digest="not-a-sha256-digest")  # the evidence row's digest check fails
+    with _session(engine) as session:
+        with pytest.raises(sa.exc.IntegrityError):
+            inbox.record_event(session, *variant, now=NOW)
+        session.rollback()
+    assert _state(engine, event_pk).state == "received"
+    assert _conflicts(engine, event_pk) == []
+
+
+def test_unique_violation_recognition_names_the_exact_constraint():
+    class Diag:
+        constraint_name = inbox.EVENT_IDENTITY_CONSTRAINT
+
+    class PgError(Exception):
+        sqlstate = "23505"
+        diag = Diag()
+
+    class Wrapped(Exception):
+        orig = PgError()
+
+    assert inbox._is_unique_violation(Wrapped(), inbox.EVENT_IDENTITY_CONSTRAINT)
+    assert not inbox._is_unique_violation(Wrapped(), inbox.CONFLICT_IDENTITY_CONSTRAINT)
+    PgError.sqlstate = "23514"
+    assert not inbox._is_unique_violation(Wrapped(), inbox.EVENT_IDENTITY_CONSTRAINT)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("isolation", ["READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"])
+def test_postgres_t_inbox_01_concurrent_duplicates_converge_under_each_isolation(postgres_engine, isolation):
+    raw, event = _charge_event(f"evt_tinbox01{isolation.replace(' ', '')}")
+    engine = postgres_engine.execution_options(isolation_level=isolation)
+    barrier = threading.Barrier(4)
+    outcomes, errors = [], []
+
+    def worker():
+        for _attempt in range(5):
+            try:
+                with _session(engine) as session:
+                    session.execute(sa.text("SELECT 1")).scalar()
+                    barrier.wait(10) if _attempt == 0 else None
+                    _, outcome = inbox.record_event(session, raw, event)
+                    session.commit()
+                    outcomes.append(outcome)
+                    return
+            except inbox.InboxRetryError:
+                continue  # the caller rolls back and retries; the retry converges
+            except sa.exc.OperationalError as exc:
+                if getattr(exc.orig, "sqlstate", None) == "40001":
+                    continue
+                errors.append(exc)
+                return
+            except Exception as exc:  # pragma: no cover - surfaced by assertion
+                errors.append(exc)
+                return
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert errors == []
+    assert sorted(outcomes) == ["duplicate", "duplicate", "duplicate", "inserted"]
+    with postgres_engine.connect() as connection:
+        assert connection.execute(sa.text("SELECT COUNT(*) FROM external_event_inbox")).scalar() == 1
+        assert connection.execute(sa.text("SELECT COUNT(*) FROM external_event_inbox_conflicts")).scalar() == 0
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("isolation", ["REPEATABLE READ", "SERIALIZABLE"])
+def test_postgres_t_inbox_03_quarantine_needs_conflict_evidence_this_transaction_can_see(
+        postgres_engine, isolation):
+    raw, event = _charge_event("evt_tinbox03")
+    event_pk, _ = _record(postgres_engine, raw, event)
+    variant = _variant(raw)
+    stale_engine = postgres_engine.execution_options(isolation_level=isolation)
+    with Session(stale_engine) as stale:
+        stale.execute(sa.text("SELECT COUNT(*) FROM external_event_inbox_conflicts")).scalar()  # snapshot
+        assert _record(postgres_engine, *variant)[1] == "digest_conflict"  # committed elsewhere
+        try:
+            inbox.record_event(stale, *variant, now=NOW)
+            stale.commit()
+            outcome = "recorded"
+        except inbox.InboxRetryError:
+            stale.rollback()
+            outcome = "retry"
+        except sa.exc.OperationalError as exc:
+            stale.rollback()
+            outcome = getattr(exc.orig, "sqlstate", None)
+    assert outcome in ("retry", "40001")
+    assert _state(postgres_engine, event_pk).state == "quarantined"
+    assert len(_conflicts(postgres_engine, event_pk)) == 1
+    assert _record(postgres_engine, *variant) == (event_pk, "digest_conflict")  # the retry converges

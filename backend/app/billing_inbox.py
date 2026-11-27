@@ -72,6 +72,38 @@ class StaleClaimError(InboxInvariantError):
     """Raised when a worker's claim token or lease is no longer current."""
 
 
+class InboxRetryError(InboxInvariantError):
+    """A concurrent receiver holds the same event under a snapshot this transaction cannot see; retry.
+
+    T-INBOX-01: under REPEATABLE READ or SERIALIZABLE a genuine concurrent duplicate is
+    neither a conflict nor silently lost; the caller rolls back and the retry converges.
+    """
+
+
+EVENT_IDENTITY_CONSTRAINT = "uq_external_event_inbox_provider_event"
+CONFLICT_IDENTITY_CONSTRAINT = "uq_external_event_inbox_conflicts_event_digest"
+_SQLITE_UNIQUE = {
+    EVENT_IDENTITY_CONSTRAINT: "external_event_inbox.provider, external_event_inbox.event_id",
+    CONFLICT_IDENTITY_CONSTRAINT: (
+        "external_event_inbox_conflicts.inbox_event_id, external_event_inbox_conflicts.conflicting_digest"
+    ),
+}
+
+
+def _is_unique_violation(error, constraint):
+    """True only when ``error`` is the named unique constraint (T-INBOX-01/02).
+
+    Any other integrity failure (a check, a foreign key, a guard trigger) is a real
+    error and must propagate rather than be read as a harmless duplicate.
+    """
+    original = getattr(error, "orig", None)
+    if hasattr(original, "diag"):  # PostgreSQL (psycopg 3 ``sqlstate``, psycopg2 ``pgcode``)
+        code = getattr(original, "sqlstate", None) or getattr(original, "pgcode", None)
+        return code == "23505" and getattr(original.diag, "constraint_name", None) == constraint
+    message = str(original or error)
+    return message.startswith("UNIQUE constraint failed: ") and message.endswith(_SQLITE_UNIQUE[constraint])
+
+
 def _utcnow():
     return datetime.now(timezone.utc)
 
@@ -184,11 +216,15 @@ def record_event(session, raw_body: bytes, event: dict, *, now=None):
                 session.add(row)
                 session.flush()
             return row, "inserted"
-        except IntegrityError:
+        except IntegrityError as error:
+            if not _is_unique_violation(error, EVENT_IDENTITY_CONSTRAINT):
+                raise
             # A concurrent receiver inserted the same event first.
             existing = _locked_event(session, fields["provider"], fields["event_id"])
             if existing is None:
-                raise
+                raise InboxRetryError(
+                    "a concurrent receiver recorded this event outside the current snapshot; retry"
+                ) from error
     if existing.payload_digest == fields["payload_digest"]:
         return existing, "duplicate"
 
@@ -207,8 +243,17 @@ def record_event(session, raw_body: bytes, event: dict, *, now=None):
                     state_at_detection=existing.state, detected_at=now,
                 ))
                 session.flush()
-        except IntegrityError:
-            pass  # The same conflicting digest was recorded concurrently.
+        except IntegrityError as error:
+            if not _is_unique_violation(error, CONFLICT_IDENTITY_CONSTRAINT):
+                raise  # T-INBOX-02: only the same digest recorded concurrently is harmless.
+        # T-INBOX-03: quarantine only with durable conflict evidence in this transaction's view.
+        if session.execute(
+            select(ExternalEventInboxConflict.id).where(
+                ExternalEventInboxConflict.inbox_event_id == existing.id,
+                ExternalEventInboxConflict.conflicting_digest == fields["payload_digest"],
+            )
+        ).scalar_one_or_none() is None:
+            raise InboxRetryError("the conflict evidence is not visible to this transaction; retry")
     session.execute(
         update(ExternalEventInbox)
         .where(
