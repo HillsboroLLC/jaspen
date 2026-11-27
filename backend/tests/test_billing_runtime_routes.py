@@ -270,3 +270,16 @@ def test_an_added_seat_is_paid_then_committed_by_the_processor(client, auth_head
     _summary = _process(owner_org); assert _summary["processed"] == 1, _summary["events"]
     session.expire_all()
     assert session.query(SeatCommitment).filter_by(state="active").one().quantity == 4
+
+
+def test_an_upgrade_is_refused_while_a_change_is_scheduled(client, auth_headers, owner_org, stripe_calls,
+                                                          monkeypatch):
+    sub, _anchor, _customer = _activate(owner_org)
+    item = {"id": "si_plan", "price": {"id": s.PRICES["STRIPE_PRICE_IDS"]["essential"]}}
+    calls = _processor_subscription(monkeypatch, sub, [item])
+    downgrade = client.post("/api/v1/billing/modify-subscription", json={"plan_key": "starter"},
+                            headers=auth_headers)
+    assert downgrade.status_code == 200, downgrade.get_json()
+    response = client.post("/api/v1/billing/modify-subscription", json={"plan_key": "team"}, headers=auth_headers)
+    assert response.status_code == 409
+    assert [call.get("proration_behavior") for call in calls] == ["none"]  # only the downgrade reached Stripe

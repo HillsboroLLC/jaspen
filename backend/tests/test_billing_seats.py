@@ -947,7 +947,7 @@ def _assert_models_match(engine):
 
 def test_revision_extends_phase7_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["e7b9d1f3a5c6"]  # I2 follows I1;  # I1 follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14 without changing Phase 8.
+    assert script.get_heads() == ["e7b9d1f3a5c6"]  # I2 follows I1, which follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14 without changing Phase 8.
     assert script.get_revision("f2b4d6e8a0c3").down_revision == "e1a3c5b7d9f2"
     assert script.get_revision("e1a3c5b7d9f2").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == PARENT

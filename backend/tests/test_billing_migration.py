@@ -1443,7 +1443,7 @@ def _ops(engine):
 def test_revision_extends_phase12_and_is_the_single_head():
     from alembic.script import ScriptDirectory
     script = ScriptDirectory(str(MIGRATIONS_DIR))
-    assert script.get_heads() == ["e7b9d1f3a5c6"]  # I2 follows I1;  # I1 follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14
+    assert script.get_heads() == ["e7b9d1f3a5c6"]  # I2 follows I1, which follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14
     assert script.get_revision(REVISION).down_revision == PARENT
 
 

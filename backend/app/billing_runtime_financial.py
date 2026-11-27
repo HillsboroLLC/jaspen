@@ -732,9 +732,9 @@ def _invoice_failed(session, row, gateway, config):
     external_id, _metadata = _invoice_subscription(invoice)
     if not external_id:
         return "ignored"
-    subscription = _local_subscription(session, account, external_id)
     if invoice.get("billing_reason") != "subscription_cycle":
-        return "ignored"  # a failed upgrade or seat payment grants and changes nothing
+        return "ignored"  # a failed first, upgrade or seat payment grants and changes nothing
+    subscription = _local_subscription(session, account, external_id)
     if subscription.state == "active":
         subscription.state = "past_due"
         session.flush()
@@ -751,6 +751,10 @@ def _subscription_ended(session, row, gateway, config):
     processor = gateway.subscription(row.object_id)
     account = _account_from_object(session, processor)
     context_for_account(session, account, config=config)
+    if processor.get("status") == "incomplete_expired" and session.execute(select(BillingSubscription.id).where(
+            BillingSubscription.processor == PROVIDER,
+            BillingSubscription.external_subscription_id == row.object_id)).first() is None:
+        return "ignored"  # an abandoned first payment: nothing was ever activated
     subscription = _local_subscription(session, account, row.object_id)
     if subscription.state in ("cancelled", "expired"):
         return "ignored"
@@ -821,7 +825,10 @@ def resolve_case_allocations(session, source, amount):
                 and int(line.principal_minor) + int(line.discount_minor) > 0]
     if amount == 0:
         return [], 0, "none"
-    if amount == int(source.gross_minor) and eligible:
+    negative = any(int(line.principal_minor) + int(line.discount_minor) < 0 for line in lines)
+    eligible_net = sum(int(line.principal_minor) + int(line.discount_minor) for line in eligible)
+    if (eligible and not negative and amount == int(source.gross_minor)
+            and amount - int(source.tax_minor) - int(source.fee_minor) == eligible_net):
         allocations = [{"financial_line_id": line.id,
                         "attributed_principal_minor": int(line.principal_minor) + int(line.discount_minor)}
                        for line in eligible]
@@ -881,8 +888,9 @@ def _refund(session, row, gateway, config):
     account = _account_for_payment_object(session, refund, gateway)
     context_for_account(session, account, config=config)
     source = _case_source(session, account, refund, gateway)
-    if any(line.line_kind == "subscription" for line in session.execute(select(FinancialLine).where(
-            FinancialLine.financial_transaction_id == source.id)).scalars()):
+    if source.object_type == "invoice" or any(line.subscription_id for line in session.execute(
+            select(FinancialLine).where(FinancialLine.financial_transaction_id == source.id)).scalars()):
+        # Every subscription invoice (plan, seat or proration lines) is subscription money.
         raise Quarantine("subscription_refund_review", "no approved subscription refund disposition (Q4)")
     status = refund.get("status")
     if status in ("pending", "requires_action"):
@@ -956,7 +964,9 @@ def classify_failure(exc):
         if isinstance(item, DBAPIError) and _sqlstate(item) in RETRYABLE_SQLSTATES:
             return "retry", f"sqlstate_{_sqlstate(item)}"
         if isinstance(item, (stripe.error.APIConnectionError, stripe.error.RateLimitError,
-                             stripe.error.APIError)):
+                             stripe.error.APIError, stripe.error.AuthenticationError,
+                             stripe.error.PermissionError)):
+            # The processor or its credentials are unavailable: the event itself is not at fault.
             return "retry", "processor_unavailable"
     if isinstance(exc, FinancialEffectPolicyRequiredError):
         return "quarantine", "manual_review_policy"
@@ -991,8 +1001,13 @@ def process_events(session, *, limit, gateway=None, app_config=None, config=None
     from flask import current_app
 
     bc._require_family(FAMILY, config)
-    gateway = gateway or StripeGateway()
     app_config = app_config if app_config is not None else current_app.config
+    if gateway is None:
+        import stripe
+
+        # Outside a request the application never set the processor key (routes set it per request).
+        stripe.api_key = app_config.get("STRIPE_SECRET_KEY")
+        gateway = StripeGateway(stripe)
     session.rollback()
     summary = {"claimed": 0, "processed": 0, "retryable": 0, "quarantined": 0, "lost_claims": 0, "events": []}
     for _ in range(int(limit)):

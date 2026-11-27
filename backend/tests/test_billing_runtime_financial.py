@@ -210,6 +210,9 @@ def test_classify_failure_maps_retryable_causes():
     assert financial.classify_failure(wrapped) == ("retry", "OutboxConcurrentUpdateError")
     assert financial.classify_failure(financial.Quarantine("x")) == ("quarantine", "x")
     assert financial.classify_failure(RuntimeError("boom")) == ("quarantine", "unexpected:RuntimeError")
+    import stripe
+    assert financial.classify_failure(stripe.error.AuthenticationError("no key")) == ("retry",
+                                                                                   "processor_unavailable")
 
 
 # ---------------------------------------------------------------------------
@@ -317,3 +320,65 @@ def test_annual_releases_and_a_reapplied_dispute_announce_each_new_lot_f5(modern
     session.commit()
     assert again.outcome == "duplicate"
     assert session.query(FinancialCaseLotEvaluation).count() == 2 and lot_events.count() == 1
+
+
+def test_audit_fixes_seat_refunds_proration_disputes_and_ignored_failures(modern):
+    m, session = modern, modern["session"]
+    sub, anchor, inv, _pk = _activate(m, plan="starter")
+    _process(m)
+    now = bc._database_now(session).replace(microsecond=0)
+    end = s.add_calendar_months(anchor, 1)
+    upgrade = s.invoice(m["customer"], sub, [
+        s.invoice_line(s.PRICES["STRIPE_PRICE_IDS"]["starter"], -300, now, end),
+        s.invoice_line(s.PRICES["STRIPE_PRICE_IDS"]["essential"], 1800, now, end),
+    ], reason="subscription_update", paid_at=now)
+    s.record(session, m["gateway"], upgrade, "invoice.paid", created=now)
+    assert _process(m)["processed"] == 1
+    pi = f"pi_i2{uuid.uuid4().hex[:12]}"
+    m["gateway"].invoice_payments[pi] = upgrade["id"]
+    m["gateway"].payment_customers[pi] = m["customer"]
+    # Q4: any refund of subscription money, including a proration-only invoice, waits for review.
+    refund = {"id": f"re_i2{uuid.uuid4().hex[:12]}", "object": "refund", "status": "succeeded",
+              "amount": upgrade["total"], "payment_intent": pi}
+    refund_pk, _ = s.record(session, m["gateway"], refund, "refund.created", created=now)
+    # D5: a full dispute of an invoice with a negative proration line is not an exact allocation.
+    dispute = {"id": f"dp_i2{uuid.uuid4().hex[:12]}", "object": "dispute", "status": "needs_response",
+               "amount": upgrade["total"], "payment_intent": pi}
+    dispute_pk, _ = s.record(session, m["gateway"], dispute, "charge.dispute.created", created=now)
+    # A failed first payment and an abandoned checkout are evidence only.
+    failed = s.invoice(m["customer"], f"sub_i2{uuid.uuid4().hex[:8]}", [s.invoice_line(
+        s.PRICES["STRIPE_PRICE_IDS"]["essential"], 3900, now, s.add_calendar_months(now, 1))],
+        reason="subscription_create", paid_at=now, status="open")
+    failed_pk, _ = s.record(session, m["gateway"], failed, "invoice.payment_failed", created=now)
+    abandoned = {"id": f"sub_i2{uuid.uuid4().hex[:8]}", "object": "subscription", "customer": m["customer"],
+                 "status": "incomplete_expired"}
+    abandoned_pk, _ = s.record(session, m["gateway"], abandoned, "customer.subscription.deleted", created=now)
+    _process(m)
+    assert _state(session, refund_pk) == ("quarantined", "subscription_refund_review")
+    assert _state(session, dispute_pk) == ("quarantined", "allocation_manual_review")
+    assert _state(session, failed_pk) == ("processed", None)
+    assert _state(session, abandoned_pk) == ("processed", None)
+
+
+def test_legacy_value_is_held_when_its_organization_is_modern(client, modern, monkeypatch):
+    """The recorded checkout organization, or the active one a grant falls back to, is modern."""
+    session = modern["session"]
+    buyer = _user(session)
+    from app.models import OrganizationMember
+    session.add(OrganizationMember(organization_id=modern["org"].id, user_id=buyer.id, role="creator",
+                                   status="active"))
+    buyer.active_organization_id = modern["org"].id
+    session.commit()
+    now = bc._database_now(session)
+    grants = session.query(PersistentCreditGrant).count()
+    for recorded in (modern["org"].id, None):
+        metadata = {"user_id": buyer.id, "checkout_type": "credit_pack", "pack_key": "credits_3000",
+                    "tokens": "3000000"}
+        if recorded:
+            metadata["organization_id"] = recorded
+        checkout = {"id": f"cs_i2{uuid.uuid4().hex[:12]}", "object": "checkout.session", "customer": None,
+                    "payment_intent": f"pi_i2{uuid.uuid4().hex[:12]}", "amount_total": 1000,
+                    "amount_subtotal": 1000, "currency": "usd", "metadata": metadata}
+        raw, _ = s.event(checkout, "checkout.session.completed", created=now)
+        assert _post(client, monkeypatch, raw).status_code == 200
+    assert session.query(PersistentCreditGrant).count() == grants

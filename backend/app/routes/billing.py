@@ -230,21 +230,30 @@ def _checkout_organization_metadata(user):
     Fulfillment uses it, never the organization that happens to be active when the
     processor event arrives, so a later switch cannot move value between organizations.
     """
-    from app.billing_cutover import context_organization_id
-
-    return str(context_organization_id(db.session, user.id) or '')
+    return str(getattr(user, 'active_organization_id', None) or '')
 
 
-def _legacy_fulfillment_organization_id(user, metadata=None):
-    """The organization legacy fulfillment attributes value to: the one recorded at checkout,
-    else the active one, and never a modern organization (I2)."""
+def _legacy_fulfillment_organization(user, metadata=None):
+    """``(organization_id, blocked)`` for legacy fulfillment (I2).
+
+    The organization recorded at checkout, else the active one. ``blocked`` is true when
+    that organization, or the active one a legacy grant would fall back to, is modern:
+    legacy value is then never attributed to it and the grant waits for manual review."""
     from app.billing_cutover import organization_billing_model
 
     recorded = str(_stripe_field(metadata, 'organization_id') or '').strip() if metadata else ''
-    candidate = recorded or (getattr(user, 'active_organization_id', None) if user is not None else None)
-    if candidate and organization_billing_model(db.session, candidate) == 'modern':
-        return None
-    return candidate or None
+    active = getattr(user, 'active_organization_id', None) if user is not None else None
+    candidate = recorded or active
+    modern = {org for org in {candidate, active} if org and organization_billing_model(db.session, org) == 'modern'}
+    if candidate in modern:
+        return None, True
+    return candidate or None, bool(modern) and not candidate
+
+
+def _legacy_fulfillment_organization_id(user, metadata=None):
+    """The organization a legacy payment row names: never a modern one (I2)."""
+    organization_id, _blocked = _legacy_fulfillment_organization(user, metadata)
+    return organization_id
 
 
 @billing_bp.route('/plans', methods=['GET'])
@@ -596,7 +605,11 @@ def _fulfill_credit_pack_purchase(
     if tokens <= 0:
         return {'granted': False, 'reason': 'missing_tokens'}
 
-    organization_id = _legacy_fulfillment_organization_id(user, metadata)
+    organization_id, blocked = _legacy_fulfillment_organization(user, metadata)
+    if blocked:
+        current_app.logger.warning('%s: legacy credit pack for user=%s waits for review: its organization is modern',
+                                   event_type, user.id)
+        return {'granted': False, 'reason': 'organization_modern'}
     grant, created = grant_persistent_credit_pack(
         user,
         tokens,
@@ -723,7 +736,11 @@ def _fulfill_limited_time_300k_payment_intent(intent, expected_user=None):
     if tokens <= 0:
         return {'granted': False, 'reason': 'missing_tokens'}
 
-    organization_id = _legacy_fulfillment_organization_id(user, metadata)
+    organization_id, blocked = _legacy_fulfillment_organization(user, metadata)
+    if blocked:
+        current_app.logger.warning('payment_intent.succeeded: 300K grant for user=%s waits for review: modern organization',
+                                   user.id)
+        return {'granted': False, 'reason': 'organization_modern'}
     _entitlement, _grant, created = grant_limited_time_300k_offer(
         user,
         tokens,
@@ -946,7 +963,10 @@ def _fulfill_limited_time_300k_invoice(invoice, expected_user=None):
     if tokens <= 0:
         return {'granted': False, 'reason': 'missing_tokens'}
 
-    organization_id = _legacy_fulfillment_organization_id(user, metadata)
+    organization_id, blocked = _legacy_fulfillment_organization(user, metadata)
+    if blocked:
+        current_app.logger.warning('invoice.paid: 300K grant for user=%s waits for review: modern organization', user.id)
+        return {'granted': False, 'reason': 'organization_modern'}
     _entitlement, _grant, created = grant_limited_time_300k_offer(
         user,
         tokens,
@@ -2527,6 +2547,10 @@ def stripe_webhook():
                         "checkout.session.completed: no credit-pack grant for user=%s (%s)",
                         user_id, result.get('reason'),
                     )
+            elif checkout_type == LIMITED_TIME_300K_CHECKOUT_TYPE and _legacy_fulfillment_organization(
+                    user, metadata)[1]:
+                current_app.logger.warning(
+                    'checkout.session.completed: 300K grant for user=%s waits for review: modern organization', user_id)
             elif checkout_type == LIMITED_TIME_300K_CHECKOUT_TYPE:
                 tokens = int(metadata.get('tokens') or 0)
                 _entitlement, _grant, created = grant_limited_time_300k_offer(
@@ -3063,6 +3087,10 @@ def _modern_modify_subscription(user, ctx, data):
         if item is None:
             return jsonify({'msg': 'Subscription has no modifiable items'}), 400
         upgrade = int(target.funding_policy_json['credit_amount']) > int(current.funding_policy_json['credit_amount'])
+        if upgrade and mf._active_schedule(db.session, subscription) is not None:
+            # A scheduled downgrade or cancellation already changed the processor subscription;
+            # an upgrade priced from it would be wrong, and Phase 7 has no command to undo it here.
+            raise mf.CommandError('A plan change is already scheduled for this subscription.', 409)
         if upgrade:
             # The processor's paid proration invoice is the evidence; the inbox processor applies it.
             updated = stripe.Subscription.modify(
