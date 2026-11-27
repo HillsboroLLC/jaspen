@@ -192,6 +192,7 @@ def configured_candidates(session, config):
 def _run_registered(ctx):
     """The worker executor: run the submitting process's in-memory generation under the call recorder."""
     from .ai_providers import observer as provider_observer
+    from .session_access import worker_organization_scope
 
     worker = _worker()
     pending = _REGISTRY.pop(ctx.operation_id, None)  # the submitting caller keeps its own reference
@@ -207,7 +208,11 @@ def _run_registered(ctx):
 
     try:
         # No signed-in request carries the customer on the worker thread; the scope does (as for plan builds).
-        with provider_observer.observing(recorder), ai_customer_scope(ctx.actor_user_id):
+        with (
+            worker_organization_scope(ctx.actor_user_id, ctx.organization_id),
+            provider_observer.observing(recorder),
+            ai_customer_scope(ctx.actor_user_id),
+        ):
             value, usage = pending.generate(emit=emit, should_stop=ctx.should_stop)
     except Exception as exc:  # the generation's own failure: no usable response
         pending.failure = exc
@@ -223,8 +228,14 @@ def _run_registered(ctx):
         if recorder.recorded_calls:
             raise worker.DeliveryFailed("provider_undelivered")
         return worker.NoBillableUsage()
-    return worker.DeliveryResult(delivered_attempt_number=recorder.delivered_attempt,
-                                 response={"value": value, "usage": usage}, prepare_response=pending.prepare_response)
+    def prepare_response(session, response):
+        with worker_organization_scope(ctx.actor_user_id, ctx.organization_id):
+            return pending.prepare_response(session, response)
+
+    return worker.DeliveryResult(
+        delivered_attempt_number=recorder.delivered_attempt, response={"value": value, "usage": usage},
+        prepare_response=prepare_response if pending.prepare_response is not None else None,
+    )
 
 
 def modern_idempotency_key(context, user_id, operation_type, request_key):

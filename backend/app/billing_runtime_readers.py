@@ -375,7 +375,7 @@ def modern_entitlement_plan_for(user, *, organization_id=None, app_config=None):
     from flask import has_app_context
 
     from . import db
-    from .billing_cutover import context_organization_id, modern_context
+    from .billing_cutover import context_organization_id, cutover_config, modern_context
     from .models import User
     from .session_access import SessionNotFound, active_membership_for_user, active_org_id_for_user
 
@@ -386,7 +386,11 @@ def modern_entitlement_plan_for(user, *, organization_id=None, app_config=None):
         organization_id = (
             organization_id or active_org_id_for_user(user) or context_organization_id(session, user.id)
         )
-        context = modern_context(session, family=READERS_FAMILY, organization_id=organization_id)
+        config = cutover_config()
+        # AI needs entitlement facts during its own D18 activation step, while
+        # public billing status and meter routes still require the readers switch.
+        family = READERS_FAMILY if config.enabled(READERS_FAMILY) else "ai_reservation"
+        context = modern_context(session, family=family, organization_id=organization_id, config=config)
         if context is None:
             return None
         if active_membership_for_user(context.organization_id, user.id) is None:

@@ -131,3 +131,11 @@ def test_work_organization_uses_the_callers_canonical_project(db):
 
     assert rt.operation_organization_id(session, actor, "duplicate") == work_org.id
     assert rt.operation_organization_id(session, actor, "unrelated") == work_org.id
+
+    from app.session_access import worker_organization_scope
+
+    with worker_organization_scope(other.id, work_org.id):
+        # A worker keeps the organization it obtained before running, even if
+        # the same actor's active organization and same-id project differ.
+        assert rt.operation_organization_id(session, other, "duplicate") == work_org.id
+    assert rt.operation_organization_id(session, other, "duplicate") == unrelated.id

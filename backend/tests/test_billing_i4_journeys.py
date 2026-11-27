@@ -475,3 +475,16 @@ def test_governed_generation_failure_absorbs_reported_usage_and_keeps_the_fallba
     absorbed = db.session.query(AIAbsorbedUsage).filter_by(operation_id=settlement["operation_id"]).one()
     assert absorbed.absorbed_credits == CHARGE
     assert _spendable(db.session, modern["account"]) == (before, 0)
+
+
+def test_ai_family_can_deliver_before_public_readers_are_enabled(client, db, modern, monkeypatch):
+    monkeypatch.setenv(bc.SETTING, ALL.rsplit(",", 1)[0])
+    _script(monkeypatch)
+    before, _held = _spendable(db.session, modern["account"])
+    response = client.post(
+        CONTINUE_URL, headers=modern["headers"],
+        json={"thread_id": modern["thread"], "message": "Should we bid?"},
+    )
+    assert response.status_code == 200
+    assert response.get_json()["reply"] == REPLY
+    assert _spendable(db.session, modern["account"]) == (before - CHARGE, 0)

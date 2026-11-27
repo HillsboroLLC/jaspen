@@ -2519,14 +2519,18 @@ def _tool_access_error_response(plan_key, tool_id, access='read'):
     }), 403
 
 
-def _require_tool_access(user_id, tool_id, access='read'):
+def _require_tool_access(user_id, tool_id, access='read', *, thread_id=None):
     user = User.query.get(user_id)
     if not user:
         return None, None, (jsonify({'error': 'User not found'}), 404)
 
     from ..billing_runtime_readers import modern_entitlement_plan_for
 
-    plan_key = modern_entitlement_plan_for(user, app_config=current_app.config)
+    project = canonical_row(user, thread_id) if thread_id else None
+    plan_key = modern_entitlement_plan_for(
+        user, organization_id=project.organization_id if project is not None else None,
+        app_config=current_app.config,
+    )
     plan_key = plan_key or effective_plan_key(user, current_app.config)
     if not is_tool_allowed(plan_key, tool_id, access):
         return user, plan_key, _tool_access_error_response(plan_key, tool_id, access=access)
@@ -8358,14 +8362,14 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
     new_revision = None
     user = None
     try:
-        user, plan_key, read_access_err = _require_tool_access(user_id, 'wbs_read', access='read')
+        user, plan_key, read_access_err = _require_tool_access(user_id, 'wbs_read', access='read', thread_id=thread_id)
         if read_access_err:
             return read_access_err
 
         payload = payload if isinstance(payload, dict) else {}
         commit = bool(payload.get('commit', True))
         if commit:
-            _, plan_key, write_access_err = _require_tool_access(user_id, 'wbs_write', access='write')
+            _, plan_key, write_access_err = _require_tool_access(user_id, 'wbs_write', access='write', thread_id=thread_id)
             if write_access_err:
                 return write_access_err
         # The organization's project, before anything is generated, reserved or

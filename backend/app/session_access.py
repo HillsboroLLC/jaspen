@@ -27,6 +27,8 @@
 # Canonicity is therefore resolved here, deterministically: OLDEST created_at
 # wins, because the original always predates the fork.
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 
 from app import db, org_access
@@ -133,6 +135,18 @@ class LostRace(RevisionConflict):
 # --- Organization context ----------------------------------------------------
 
 _UNPINNED = object()
+_worker_organization = ContextVar("worker_project_organization", default=None)
+
+
+@contextmanager
+def worker_organization_scope(user_id, organization_id):
+    """Carry a worker's authorized organization into its project reads and writes."""
+    token = _worker_organization.set((str(user_id), organization_id))
+    try:
+        yield
+    finally:
+        _worker_organization.reset(token)
+
 
 
 def pin_active_organization(user_id, organization_id):
@@ -157,6 +171,9 @@ def pin_active_organization(user_id, organization_id):
 
 def _pinned_organization(user):
     from flask import g, has_request_context
+    worker_pin = _worker_organization.get()
+    if worker_pin is not None and worker_pin[0] == str(user.id):
+        return worker_pin[1]
     if not has_request_context():
         return _UNPINNED
     pins = getattr(g, 'pinned_active_organizations', None) or {}
