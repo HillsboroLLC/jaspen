@@ -242,6 +242,7 @@ dynamic writes):
 | `app/billing_config.py` `release_consumed_credits` | `credits_remaining`, `thinking_power` | both |
 | `app/billing_config.py` `reset_user_monthly_credits` | `credits_remaining`, `credits_reset_at` | both |
 | `app/billing_enterprise_contracts.py` `_transition` | `setattr(dynamic)` | both |
+| `app/billing_cutover.py` `legacy_billing_footprint` | `thinking_power` (read only) | both |
 | `app/billing_projections.py` `_meter` | `thinking_power` | both |
 | `app/conversation_turn.py` `ConversationTurn.__init__` | `credits_charged` | both |
 | `app/conversation_turn.py` `ConversationTurn.settle` | `credits_charged` | both |

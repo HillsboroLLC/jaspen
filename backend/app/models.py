@@ -2910,3 +2910,4 @@ from .models_billing_phase14 import (  # noqa: E402,F401
     BillingMigrationReview,
     BillingMigrationRun,
 )
+from .models_billing_identity import BillingModelAssignment  # noqa: E402,F401

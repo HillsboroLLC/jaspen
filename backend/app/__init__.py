@@ -663,6 +663,21 @@ def create_app():
     # a machine-readable `code` the frontend can branch on.
     from .session_access import SessionAccessError
 
+    # Billing row-17 boundary (I1): one billing model per account. The flush guard refuses legacy payer and
+    # money writes for modern accounts in every writer; a refusal reaches the client as 409.
+    from .billing_cutover import BillingModelConflictError, cutover_config, install_legacy_write_guard
+
+    install_legacy_write_guard()
+    _cutover = cutover_config()
+    for _error in _cutover.errors:
+        app.logger.error('billing cutover configuration refused: %s', _error)
+    if _cutover.families:
+        app.logger.warning('modern billing families enabled: %s', ', '.join(sorted(_cutover.families)))
+
+    @app.errorhandler(BillingModelConflictError)
+    def handle_billing_model_conflict(e):
+        return jsonify({'error': 'billing_model_conflict', 'msg': str(e), 'codes': list(e.codes)}), 409
+
     @app.errorhandler(SessionAccessError)
     def handle_session_access_error(e):
         body, status = e.to_response()

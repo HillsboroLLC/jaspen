@@ -1173,6 +1173,39 @@ Phase 16 handoff disposition for this increment:
    remain the durable cutover-preparation evidence. This increment consumes no
    readiness result and performs no cutover.
 
+### Row 17 integration record — I1: family switches, account boundary, identity family (inactive)
+
+Status: **implemented locally on `develop` `054228ed`; inactive by default;
+awaiting independent audit.** Founder decision 2026-11-26: on isolated staging,
+row 17 is integrated ahead of rows 14-16 with synthetic new-model
+organizations only. Rows 14-16 remain mandatory before any production cutover;
+this is a sequencing decision, not a waiver.
+
+| Concern | Implementation | Evidence |
+|---|---|---|
+| Family switches | `billing_cutover.FAMILIES` in D18 order; `BILLING_MODERN_FAMILIES` must be a prefix of it; refused in a production runtime (OD-1 Option C); any invalid value enables nothing; unset = all off | `test_every_family_is_off_by_default`; `test_families_must_be_enabled_in_d18_order`; `test_switches_are_refused_in_a_production_runtime` |
+| Account boundary | `billing_model_assignments` (migration `a1f3c5e7b9d0`): one immutable row per modern organization; absence = legacy; one-way (a switch turned off never returns an organization to legacy) | `test_establish_creates_the_account_owner_role_and_assignment_once`; SQLite and PostgreSQL guard tests |
+| Disjoint models | Assignment only with no legacy footprint (an existing billing account, processor ids, payments, grants, entitlements, AI operations, usage, legacy memberships, organization meter); the database also refuses any organization with a Phase 14 establishment. Legacy entitlement on the rows (plan, processor status, unlimited, credit balance above the Free allowance, seats; organization plan and seats) is footprint, and direct edits of it are refused for modern accounts; a flush guard refuses legacy payer/money writes and cross-model memberships for every writer; legacy billing commands answer 409 for modern accounts | `test_an_organization_with_legacy_billing_state_is_never_assigned`; `test_legacy_payer_and_money_writes_are_refused_for_a_modern_account`; `test_memberships_never_mix_the_two_models`; `test_legacy_billing_commands_answer_409_for_a_modern_account_and_never_reach_stripe` |
+| Legacy accounts unchanged | With no assignment, the guard returns before any check; legacy routes keep their behavior | `test_without_any_modern_organization_legacy_writes_are_untouched`; `test_a_legacy_account_keeps_its_legacy_billing_commands`; full suites |
+| Phase 14 exclusion | `plan_establishment` quarantines `modern_billing_account`; the database refuses a non-quarantine establishment of a modern organization | `test_phase14_quarantines_a_modern_organization`; SQLite guard test |
+| Identity commands | `establish_modern_billing_identity` (owner only; active account, `billing_owner` role, assignment; one idempotency claim); `bind_processor_customer` (once; billing authority; never a legacy payer's customer) | identity and binding tests; `scripts/billing_identity.py` tests |
+
+**Teams on staging (disjointness consequence):** every normal sign-up owns a
+lazily created personal (legacy) organization, so a normally registered user
+cannot join a modern organization (409 at invitation acceptance). Modern
+organizations take users with no other organization: the synthetic seed, or
+SSO-provisioned users. Staging scenarios with several members use seeded users.
+
+**Concurrency:** every guarded write takes `FOR KEY SHARE` on the organizations
+it touches before checking (it never conflicts with ordinary organization
+updates), and `establish` takes `FOR UPDATE`, so a membership,
+payer or money write racing the first assignment is serialized with it.
+
+**Carried to I4 (AI-reservation family):** legacy AI metering (`AIOperation`,
+`UsageEvent`, per-user compatibility counters) is not blocked for modern
+accounts in I1. Staging has no AI egress. I4 must refuse legacy charging for
+modern organizations at turn preflight and charge exactly one model.
+
 ## D18 Phase dependency and cutover map
 
 The original 18 phases are the authoritative implementation sequence because

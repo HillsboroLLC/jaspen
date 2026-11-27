@@ -49,6 +49,27 @@ from app.tool_registry import get_context_budget, get_tool_entitlements
 billing_bp = Blueprint('billing', __name__)
 
 
+@billing_bp.before_request
+def _refuse_legacy_billing_writes_for_modern_accounts():
+    """I1 boundary: legacy billing commands never act for a modern-model account (the webhook is not a command)."""
+    if request.method in ('GET', 'HEAD', 'OPTIONS') or request.endpoint == 'billing.stripe_webhook':
+        return None
+    from flask_jwt_extended import verify_jwt_in_request
+    from app.billing_cutover import BillingModelConflictError, assert_legacy_billing_allowed
+    try:
+        verify_jwt_in_request(optional=True)
+        identity = get_jwt_identity()
+    except Exception:
+        return None  # the route's own authentication answers
+    if not identity:
+        return None
+    try:
+        assert_legacy_billing_allowed(db.session, user_id=str(identity))
+    except BillingModelConflictError as exc:
+        return jsonify({'error': 'billing_model_conflict', 'msg': str(exc), 'codes': list(exc.codes)}), 409
+    return None
+
+
 @billing_bp.before_app_request
 def _set_stripe_key():
     stripe.api_key = current_app.config['STRIPE_SECRET_KEY']

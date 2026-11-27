@@ -556,6 +556,8 @@ def _email_verification_link(token, url_root=None):
 
 
 def _create_subscription_checkout_session_for_user(user, plan_key):
+    from app.billing_cutover import assert_legacy_billing_allowed
+    assert_legacy_billing_allowed(db.session, user_id=str(user.id))  # I1: never a legacy payer for a modern account
     requested_plan = normalize_plan_key(plan_key)
     if not requested_plan or requested_plan == 'free':
         return None

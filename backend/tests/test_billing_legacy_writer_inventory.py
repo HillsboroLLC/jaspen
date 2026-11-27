@@ -346,6 +346,7 @@ LEGACY_FIELD_WRITERS = (
     ("app/billing_config.py", "reset_user_monthly_credits", "credits_remaining", "both"),
     ("app/billing_config.py", "reset_user_monthly_credits", "credits_reset_at", "both"),
     ("app/billing_enterprise_contracts.py", "_transition", "setattr(dynamic)", "both"),
+    ("app/billing_cutover.py", "legacy_billing_footprint", "thinking_power", "both"),  # I1: read-only footprint
     ("app/billing_projections.py", "_meter", "thinking_power", "both"),
     ("app/conversation_turn.py", "ConversationTurn.__init__", "credits_charged", "both"),
     ("app/conversation_turn.py", "ConversationTurn.settle", "credits_charged", "both"),
