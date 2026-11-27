@@ -1018,7 +1018,9 @@ def test_phase9_service_has_no_live_runtime_callers():
     callers = [
         str(path.relative_to(BACKEND_DIR))
         for path in app_dir.rglob("*.py")
-        if path.name not in {"billing_financial_effects.py", "models_billing_phase9.py", "models.py"}
+        if path.name not in {"billing_financial_effects.py", "models_billing_phase9.py", "models.py",
+                              # I2 (D18 row 17): live only under BILLING_MODERN_FAMILIES (credit_funding).
+                              "billing_runtime_financial.py", "billing_runtime_funding.py"}
         and ("billing_financial_effects" in path.read_text() or "models_billing_phase9" in path.read_text())
     ]
     assert callers == []
