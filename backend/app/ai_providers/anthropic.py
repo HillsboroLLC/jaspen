@@ -10,7 +10,9 @@ import os
 
 from flask import current_app
 
+from . import observer as provider_observer
 from .content import block_text
+from .usage import reported_error_usage
 
 
 def load_sdk():
@@ -55,12 +57,19 @@ def message_create(client, *, candidates, stream=False, **kwargs):
     """Send one Messages request, trying each candidate model id in order.
 
     Returns ``(response_or_stream_manager, model_id_used)``. Sampling
-    parameters a model rejects are left out of its request.
+    parameters a model rejects are left out of its request. When a provider
+    call observer is installed (``observer.observing``), every candidate request
+    is announced before it is sent and reported after it ends.
     """
     last_error = None
     for candidate in candidates:
         if not candidate:
             continue
+        call = provider_observer.announce(
+            "anthropic", candidate, max_output_tokens=kwargs.get("max_tokens"),
+            input_chars=provider_observer.input_characters(kwargs.get("system"), kwargs.get("messages"),
+                                                           kwargs.get("tools")),
+        )
         try:
             request_kwargs = dict(kwargs)
             if not model_accepts_temperature(candidate):
@@ -72,14 +81,55 @@ def message_create(client, *, candidates, stream=False, **kwargs):
                 # Adaptive thinking can be benchmarked and enabled separately.
                 request_kwargs["thinking"] = {"type": "disabled"}
             if stream:
-                return client.messages.stream(model=candidate, **request_kwargs), candidate
-            return client.messages.create(model=candidate, **request_kwargs), candidate
+                manager = client.messages.stream(model=candidate, **request_kwargs)
+                return (manager if call is None else _ObservedStreamManager(manager, call)), candidate
+            response = client.messages.create(model=candidate, **request_kwargs)
         except Exception as exc:
+            if call is not None:
+                input_tokens, output_tokens = reported_error_usage(exc)
+                call.report("failed", input_tokens=input_tokens, output_tokens=output_tokens, error=exc,
+                            status_code=getattr(exc, "status_code", None))
             last_error = exc
             continue
+        if call is not None:
+            input_tokens, output_tokens = usage_counts(response)
+            call.report("succeeded", input_tokens=input_tokens, output_tokens=output_tokens,
+                        request_id=getattr(response, "id", None))
+        return response, candidate
     if last_error:
         raise last_error
     raise RuntimeError("No valid Anthropic model candidates configured")
+
+
+class _ObservedStreamManager:
+    """A Messages stream manager that reports its call when the stream ends, however it ends."""
+
+    def __init__(self, manager, call):
+        self._manager = manager
+        self._call = call
+        self._stream = None
+
+    def __enter__(self):
+        self._stream = self._manager.__enter__()
+        return self._stream
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            try:
+                final = self._stream.get_final_message()
+                input_tokens, output_tokens = usage_counts(final)
+                self._call.report("succeeded", input_tokens=input_tokens, output_tokens=output_tokens,
+                                  request_id=getattr(final, "id", None))
+            except Exception as error:  # usage unknown: reported, never guessed
+                self._call.report("abandoned", error=error)
+        else:
+            input_tokens, output_tokens = reported_error_usage(exc) if exc is not None else (None, None)
+            self._call.report("abandoned" if exc_type is GeneratorExit else "failed", input_tokens=input_tokens,
+                              output_tokens=output_tokens, error=exc, status_code=getattr(exc, "status_code", None))
+        return self._manager.__exit__(exc_type, exc, tb)
+
+    def __getattr__(self, name):
+        return getattr(self._manager, name)
 
 
 # ---------------------------------------------------------------------------

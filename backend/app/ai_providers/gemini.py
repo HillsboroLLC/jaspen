@@ -11,7 +11,9 @@ import os
 import requests
 from flask import current_app
 
+from . import observer as provider_observer
 from .content import block_text
+from .usage import reported_error_usage
 
 
 OPENAI_COMPAT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
@@ -118,17 +120,39 @@ def chat_completion(*, model_name, system_prompt, messages, tools, max_tokens, t
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}
 
-    response = requests.post(
-        OPENAI_COMPAT_URL,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
-        timeout=request_timeouts(),
-        stream=stream,
+    call = provider_observer.announce(
+        "google", model_name, max_output_tokens=max_tokens,
+        input_chars=provider_observer.input_characters(system_prompt, messages, tools),
     )
-    response.raise_for_status()
+    try:
+        response = requests.post(
+            OPENAI_COMPAT_URL,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=request_timeouts(),
+            stream=stream,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        if call is not None:
+            input_tokens, output_tokens = reported_error_usage(exc)
+            call.report("failed", input_tokens=input_tokens, output_tokens=output_tokens, error=exc,
+                        status_code=getattr(getattr(exc, "response", None), "status_code", None))
+        raise
+    if call is not None:
+        if stream:
+            response._jaspen_observed_call = call  # reported when iter_stream_payloads ends
+        else:
+            usage = {}
+            try:
+                usage = (response.json() or {}).get("usage") or {}
+            except Exception:  # an unreadable body: usage unknown
+                usage = {}
+            call.report("succeeded", input_tokens=usage.get("prompt_tokens"),
+                        output_tokens=usage.get("completion_tokens"), status_code=response.status_code)
     return response
 
 
@@ -219,15 +243,38 @@ def usage_to_internal(usage, *, provider, model):
 
 
 def iter_stream_payloads(response):
-    """Yield each JSON chunk of a streamed chat completion, in order."""
-    for raw_line in response.iter_lines(decode_unicode=True):
-        line = str(raw_line or "").strip()
-        if not line.startswith("data:"):
-            continue
-        data_text = line[5:].strip()
-        if not data_text or data_text == "[DONE]":
-            continue
-        yield json.loads(data_text)
+    """Yield each JSON chunk of a streamed chat completion, in order.
+
+    An observed call (see ``chat_completion``) is reported when the stream ends:
+    succeeded with the last usage chunk, or abandoned or failed when it stops early.
+    """
+    call = getattr(response, "_jaspen_observed_call", None)
+    usage = {}
+    try:
+        for raw_line in response.iter_lines(decode_unicode=True):
+            line = str(raw_line or "").strip()
+            if not line.startswith("data:"):
+                continue
+            data_text = line[5:].strip()
+            if not data_text or data_text == "[DONE]":
+                continue
+            payload = json.loads(data_text)
+            if isinstance(payload, dict) and isinstance(payload.get("usage"), dict):
+                usage = payload["usage"]
+            yield payload
+    except GeneratorExit:
+        if call is not None:
+            call.report("abandoned", input_tokens=usage.get("prompt_tokens"),
+                        output_tokens=usage.get("completion_tokens"))
+        raise
+    except Exception as exc:
+        if call is not None:
+            call.report("failed", input_tokens=usage.get("prompt_tokens"),
+                        output_tokens=usage.get("completion_tokens"), error=exc)
+        raise
+    if call is not None:
+        call.report("succeeded", input_tokens=usage.get("prompt_tokens"),
+                    output_tokens=usage.get("completion_tokens"), status_code=getattr(response, "status_code", None))
 
 
 def stream_chunk(payload):
