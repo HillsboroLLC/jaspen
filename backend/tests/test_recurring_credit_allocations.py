@@ -582,6 +582,9 @@ def test_phase6_service_has_no_live_runtime_callers():
     allowed = {
         "billing_allocations.py", "billing_enterprise_contracts.py", "billing_financial_effects.py", "billing_offers.py",
         "billing_plan_changes.py", "billing_seats.py", "models.py", "models_billing_phase6.py",
+        # I2 (D18 row 17): live only for modern organizations under BILLING_MODERN_FAMILIES
+        # (financial_events / credit_funding), off by default and refused in production.
+        "billing_runtime_financial.py", "billing_runtime_funding.py",
         "billing_migration.py",  # Phase 14 backfill is inactive and reuses the registry claim.
     }
     importers = []
@@ -664,7 +667,7 @@ def _migrated_engine():
         revision = connection.execute(sa.text(
             "SELECT version_num FROM alembic_version"
         )).scalar_one_or_none()
-    if revision not in {"f5c8d3e0b2a1", "a7d9e2f4b6c8", "b8c2d4e6f8a1", "e1a3c5b7d9f2", "f2b4d6e8a0c3", "b4d6f8a0c2e5", "c8e0a2b4d6f1", "d2f4a6c8e0b3", "f3a5c7e9b1d2", "c8a9989843b5", "a1f3c5e7b9d0"}:
+    if revision not in {"f5c8d3e0b2a1", "a7d9e2f4b6c8", "b8c2d4e6f8a1", "e1a3c5b7d9f2", "f2b4d6e8a0c3", "b4d6f8a0c2e5", "c8e0a2b4d6f1", "d2f4a6c8e0b3", "f3a5c7e9b1d2", "c8a9989843b5", "a1f3c5e7b9d0", "e7b9d1f3a5c6"}:
         engine.dispose()
         pytest.fail(
             "Phase 6 migrated-schema tests require the Phase 6 or Phase 7 Alembic head; "

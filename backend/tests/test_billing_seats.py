@@ -879,7 +879,9 @@ def test_seat_service_has_no_live_runtime_callers():
         # Phase 11 contract activation is itself inactive and reuses Phase 8 commitments;
         # Phase 13 projections are inactive and only read seat occupancy and commitments.
         if path.name not in {"billing_seats.py", "billing_enterprise_contracts.py", "models_billing_phase8.py", "models.py",
-                             "billing_projections.py"}
+                             "billing_projections.py",
+                             # I2 (D18 row 17): live only under BILLING_MODERN_FAMILIES (financial_events); off by default, refused in production.
+                             "billing_runtime_financial.py"}
         and ("billing_seats" in path.read_text() or "models_billing_phase8" in path.read_text())
     ]
     assert callers == []
@@ -945,7 +947,7 @@ def _assert_models_match(engine):
 
 def test_revision_extends_phase7_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["a1f3c5e7b9d0"]  # I1 follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14 without changing Phase 8.
+    assert script.get_heads() == ["e7b9d1f3a5c6"]  # I2 follows I1, which follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14 without changing Phase 8.
     assert script.get_revision("f2b4d6e8a0c3").down_revision == "e1a3c5b7d9f2"
     assert script.get_revision("e1a3c5b7d9f2").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == PARENT
@@ -1046,7 +1048,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=6, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "e1a3c5b7d9f2", "f2b4d6e8a0c3", "b4d6f8a0c2e5", "c8e0a2b4d6f1", "d2f4a6c8e0b3", "f3a5c7e9b1d2", "c8a9989843b5", "a1f3c5e7b9d0"}:
+    if revision not in {REVISION, "e1a3c5b7d9f2", "f2b4d6e8a0c3", "b4d6f8a0c2e5", "c8e0a2b4d6f1", "d2f4a6c8e0b3", "f3a5c7e9b1d2", "c8a9989843b5", "a1f3c5e7b9d0", "e7b9d1f3a5c6"}:
         engine.dispose()
         pytest.fail(f"Phase 8 migrated tests require Alembic head {REVISION}; found {revision!r}")
     return engine

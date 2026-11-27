@@ -302,6 +302,36 @@ def _event_matches(existing_event, case, fingerprint):
     )
 
 
+ALLOCATION_BASES = ("none", "full", "single_line", "derived")
+AUTHORITATIVE_ALLOCATION_BASES = frozenset({"none", "full", "single_line"})
+
+
+def classify_allocation_basis(session, source_transaction, line_allocations, cumulative_principal_minor):
+    """D5 (I2): how a version's line attribution follows from processor evidence alone.
+
+    ``none`` (nothing attributed), ``full`` (every eligible source line at its full net
+    principal), ``single_line`` (a one-line source without tax or fee), else ``derived``:
+    a split the processor did not allocate, which is never applied automatically. The
+    migration recomputes the same rule at commit on PostgreSQL.
+    """
+    lines = session.execute(
+        select(FinancialLine).where(FinancialLine.financial_transaction_id == source_transaction.id)
+    ).scalars().all()
+    attributed = {item["financial_line_id"]: int(item["attributed_principal_minor"]) for item in line_allocations}
+    if not attributed and int(cumulative_principal_minor) == 0:
+        return "none"
+    eligible = {
+        line.id: int(line.principal_minor) + int(line.discount_minor) for line in lines
+        if line.line_kind not in _INELIGIBLE_LINE_KINDS and int(line.principal_minor) + int(line.discount_minor) > 0
+    }
+    if eligible and attributed == eligible:
+        return "full"
+    if (len(lines) == 1 and len(attributed) == 1 and int(source_transaction.tax_minor) == 0
+            and int(source_transaction.fee_minor) == 0):
+        return "single_line"
+    return "derived"
+
+
 def record_financial_case_event(session, proposed_case):
     """Atomically append a case version and advance its cumulative projection.
 
@@ -434,6 +464,8 @@ def record_financial_case_event(session, proposed_case):
         cumulative_principal_minor=case["cumulative_principal_minor"],
         effective_at=effective_at,
         received_at=received_at,
+        allocation_basis=classify_allocation_basis(
+            session, source, case["line_allocations"], case["cumulative_principal_minor"]),
     )
     session.add(event)
     session.flush()

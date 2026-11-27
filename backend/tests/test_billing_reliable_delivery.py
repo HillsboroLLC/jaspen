@@ -71,7 +71,7 @@ def legacy_attempt(session, operation_id, *, duration_ms=10):
 
 def test_phase17_migration_extends_phase14_and_bi1_is_the_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["a1f3c5e7b9d0"]  # I1 follows BI-1; BI-1 extends this guard
+    assert script.get_heads() == ["e7b9d1f3a5c6"]  # I2 follows I1, which follows BI-1; BI-1 extends this guard
     assert script.get_revision("c8a9989843b5").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == "d2f4a6c8e0b3"
 

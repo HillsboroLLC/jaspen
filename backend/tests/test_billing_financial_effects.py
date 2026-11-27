@@ -559,10 +559,15 @@ def test_refund_excludes_tax_and_fees_and_uses_discounted_principal(db):
     purchase = pack_purchase(session, ns, discount=-200, extra_lines=(
         _line("tax-line", "tax", 0, tax=90), _line("fee-line", "fee", 0, fee=15),
     ))
-    # Net principal is 800; refunding 400 is half, whatever tax and fee were.
-    refund(session, ns, purchase, f"re_{ns.suffix}", 400)
-    assert balance(session, purchase.lots["base"]) == (BASE - BASE // 2, 0)
-    assert balance(session, purchase.lots["bonus"]) == (BONUS - BONUS // 2, 0)
+    # I2 (D5): a partial refund of a taxed source does not say, from processor evidence
+    # alone, how much was principal, so it waits for manual review and changes nothing.
+    with pytest.raises(FinancialEffectPolicyRequiredError), session.begin_nested():
+        refund(session, ns, purchase, f"re_{ns.suffix}", 400)
+    assert balance(session, purchase.lots["base"]) == (BASE, 0)
+    # Refunding the whole net principal (800; tax and fee excluded) is exact and reverses everything.
+    refund(session, ns, purchase, f"re_{ns.suffix}", 800)
+    assert balance(session, purchase.lots["base"]) == (0, 0)
+    assert balance(session, purchase.lots["bonus"]) == (0, 0)
     with pytest.raises(FinancialEffectError):
         refund(session, ns, purchase, f"re2_{ns.suffix}", 500, line=purchase.lines["tax-line"])
 
@@ -875,9 +880,14 @@ def test_partial_dispute_on_mixed_invoice_touches_only_attributed_lines(db):
     ns = seed_account(session)
     sub = monthly_subscription_lot(session, ns)
     purchase = pack_purchase(session, ns)
-    # The subscription line's principal is 10000 (tax 800 excluded): half disputed.
-    dispute(session, ns, sub.tx, f"dp_{ns.suffix}", {sub.line: 5000}, "opened")
-    assert balance(session, sub.lot) == (250, 250)
+    # The subscription line's principal is 10000 (tax 800 excluded). Half of it disputed is a
+    # partial split the processor did not allocate: I2 (D5) sends it to manual review untouched.
+    with pytest.raises(FinancialEffectPolicyRequiredError), session.begin_nested():
+        dispute(session, ns, sub.tx, f"dp_{ns.suffix}", {sub.line: 5000}, "opened")
+    assert balance(session, sub.lot) == (500, 0)
+    # The whole eligible principal is exact: it holds only that source's value.
+    dispute(session, ns, sub.tx, f"dp_{ns.suffix}", {sub.line: 10000}, "opened")
+    assert balance(session, sub.lot) == (0, 500)
     assert balance(session, purchase.lots["base"]) == (BASE, 0)
 
 
@@ -1018,7 +1028,9 @@ def test_phase9_service_has_no_live_runtime_callers():
     callers = [
         str(path.relative_to(BACKEND_DIR))
         for path in app_dir.rglob("*.py")
-        if path.name not in {"billing_financial_effects.py", "models_billing_phase9.py", "models.py"}
+        if path.name not in {"billing_financial_effects.py", "models_billing_phase9.py", "models.py",
+                              # I2 (D18 row 17): live only under BILLING_MODERN_FAMILIES (credit_funding).
+                              "billing_runtime_financial.py", "billing_runtime_funding.py"}
         and ("billing_financial_effects" in path.read_text() or "models_billing_phase9" in path.read_text())
     ]
     assert callers == []
@@ -1081,7 +1093,7 @@ def _assert_models_match(engine):
 
 def test_revision_extends_phase8_and_is_single_head():
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["a1f3c5e7b9d0"]  # I1 follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14 without changing Phase 9.
+    assert script.get_heads() == ["e7b9d1f3a5c6"]  # I2 follows I1, which follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14 without changing Phase 9.
     assert script.get_revision("f2b4d6e8a0c3").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == PARENT
 
@@ -1191,7 +1203,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=8, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "f2b4d6e8a0c3", "b4d6f8a0c2e5", "c8e0a2b4d6f1", "d2f4a6c8e0b3", "f3a5c7e9b1d2", "c8a9989843b5", "a1f3c5e7b9d0"}:
+    if revision not in {REVISION, "f2b4d6e8a0c3", "b4d6f8a0c2e5", "c8e0a2b4d6f1", "d2f4a6c8e0b3", "f3a5c7e9b1d2", "c8a9989843b5", "a1f3c5e7b9d0", "e7b9d1f3a5c6"}:
         engine.dispose()
         pytest.fail(f"Phase 9 migrated tests require Alembic head {REVISION} or later; found {revision!r}")
     return engine
