@@ -1201,6 +1201,31 @@ accounts in I1. Staging has no AI egress. I4 routes every turn by its
 project's organization, refuses legacy charging in a modern context and charges
 exactly one model.
 
+### Row 17 integration record: I2, financial-event and credit-funding families (inactive)
+
+Status: **implemented locally on `claude/billing-i2-financial-funding`; inactive by default.** Every path runs only
+for a modern organization while its family is enabled. `BILLING_MODERN_FAMILIES` is refused in a production runtime.
+
+| Concern | Implementation | Evidence |
+|---|---|---|
+| Account commands | `routes/billing.py` dispatches through `modern_context` and keeps the legacy request and response shapes. The modern commands are: subscription checkout/create/sync, upgrade, downgrade, cancel/resume, credit packs and confirmation, and seat purchase. Commands that fund credits need `credit_funding`; the others need `financial_events`. Every other POST, and any disabled family, keeps the I1 409 | `test_billing_runtime_routes.py` |
+| Processor customer | Created once per billing account, with idempotency key `jaspen-billing-account-customer:<account>` and `billing_account_id` in its metadata, and bound with `bind_processor_customer`. Processor metadata names the account and never a legacy `user_id` | `test_a_new_modern_subscription_creates_and_binds_the_account_customer` |
+| Webhook | A modern account's verified event goes only to `billing_inbox.record_event`. The account is found from the customer, the recorded `billing_account_id`, or (for refunds and disputes) the paying customer. Legacy payers keep the legacy path, and nothing changes while no modern organization exists | `test_a_modern_accounts_event_goes_only_to_the_inbox`; `test_legacy_payers_keep_the_legacy_webhook_even_when_modern_accounts_exist` |
+| Legacy attribution | Legacy checkouts record their context organization in processor metadata. Fulfillment uses it, and never a modern organization | `test_legacy_fulfillment_uses_the_checkout_organization_never_a_modern_one` |
+| Processor (`scripts/billing_events.py process`) | Bounded claim. Each event is re-fetched (D14.5) and applied in one transaction with `mark_processed`: Phase 5.2 recording; Phase 4/6 activation and renewal (per-term instances); Phase 7 upgrade proration, scheduled downgrade and cancellation; Phase 8 seat funding and increase; Phase 9 purchase and refund/dispute cases. A failure is marked retryable or quarantined in a fresh transaction | `test_billing_runtime_financial.py`; journeys |
+| D2 / D4 | `define-test-catalog` copies configured values only, labels each definition test, cites evidence `founder-decision-D2-2026-11-26` and requires an approver. `allocate-free` opens each organization's monthly Free lot from its account anchor. `allocate-annual` opens annual monthly releases | `test_billing_runtime_funding.py` |
+| D5 | The processor resolver applies only `none`, `full` or `single_line` allocations; anything else is quarantined as `allocation_manual_review`. Migration `e7b9d1f3a5c6` adds `financial_case_events.allocation_basis`, which the recorder classifies from evidence. PostgreSQL recomputes it at commit, and PostgreSQL and SQLite refuse credit evaluation of a `derived` version. Phase 9 refuses one in the service | `test_billing_i2_guards.py`; updated Phase 9 mixed-invoice tests |
+| Q4 | Every subscription refund, and every `charge_refunded` dispute, is quarantined for review | journeys; `test_subscription_refunds_and_refunded_disputes_are_quarantined_for_review` |
+| T-INBOX-01..03 | Only the identity unique violation counts as a duplicate, and an invisible duplicate raises a typed retry. Conflict evidence is suppressed only for the same-digest race, and quarantine requires visible evidence | `test_event_inbox.py` (PostgreSQL: three isolation levels) |
+| F4 / F5 | F4: an evaluation's amounts must equal its effects (service check plus a deferred PostgreSQL check). F5: a re-application records one event per newly evaluated lot | `test_billing_i2_guards.py`; `test_annual_releases_and_a_reapplied_dispute_announce_each_new_lot_f5` |
+| D10-10 | The I2 journeys run on a fully migrated PostgreSQL schema | `test_billing_i2_journeys.py` |
+
+**Pre-production items:**
+- Approved customer communication templates (the placeholder obligation is staging only).
+- Approved production plan and pack definitions (D2 is staging test pricing).
+- Subscription-refund dispositions and the `charge_refunded` dispute policy (Q4).
+- Rows 14–16.
+
 ### Row 17 integration record — I4: the ai_reservation family (inactive)
 
 Status: **implemented locally on the I1-I5 integration line; inactive by default;
