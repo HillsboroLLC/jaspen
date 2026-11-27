@@ -1185,26 +1185,21 @@ this is a sequencing decision, not a waiver.
 |---|---|---|
 | Family switches | `billing_cutover.FAMILIES` in D18 order; `BILLING_MODERN_FAMILIES` must be a prefix of it; refused in a production runtime (OD-1 Option C); any invalid value enables nothing; unset = all off | `test_every_family_is_off_by_default`; `test_families_must_be_enabled_in_d18_order`; `test_switches_are_refused_in_a_production_runtime` |
 | Account boundary | `billing_model_assignments` (migration `a1f3c5e7b9d0`): one immutable row per modern organization; absence = legacy; one-way (a switch turned off never returns an organization to legacy) | `test_establish_creates_the_account_owner_role_and_assignment_once`; SQLite and PostgreSQL guard tests |
-| Disjoint models | Assignment only with no legacy footprint (an existing billing account, processor ids, payments, grants, entitlements, AI operations, usage, legacy memberships, organization meter); the database also refuses any organization with a Phase 14 establishment. Legacy entitlement on the rows (plan, processor status, unlimited, credit balance above the Free allowance, seats; organization plan and seats) is footprint, and direct edits of it are refused for modern accounts; a flush guard refuses legacy payer/money writes and cross-model memberships for every writer; legacy billing commands answer 409 for modern accounts | `test_an_organization_with_legacy_billing_state_is_never_assigned`; `test_legacy_payer_and_money_writes_are_refused_for_a_modern_account`; `test_memberships_never_mix_the_two_models`; `test_legacy_billing_commands_answer_409_for_a_modern_account_and_never_reach_stripe` |
+| Organization-context ownership | Billing follows the organization, never the person: each command or AI operation runs in one organization's context (active organization for account commands, project organization for AI work), and that organization's model alone handles it. People may belong to both models (the multi-user model rows 14-16 complete). Assignment needs a clean organization and owner (an existing billing account, organization payments, grants, entitlements, AI operations, usage, meter, plan or seats; the owner's processor ids, plan, status, unlimited value, credits above the Free allowance, seats, payments); the database also refuses any organization with a Phase 14 establishment. The flush guard refuses legacy money attributed to a modern organization, direct plan or seat edits of its row, and giving a modern account's processor customer to a legacy payer; the owner's personal plan is never synced into a modern organization; legacy billing commands answer 409 in a modern context | `test_only_the_organization_and_its_owner_must_be_clean`; `test_legacy_money_attributed_to_a_modern_organization_is_refused`; `test_people_may_belong_to_both_models`; `test_billing_commands_follow_the_context_organization`; `test_legacy_billing_commands_answer_409_for_a_modern_account_and_never_reach_stripe` |
 | Legacy accounts unchanged | With no assignment, the guard returns before any check; legacy routes keep their behavior | `test_without_any_modern_organization_legacy_writes_are_untouched`; `test_a_legacy_account_keeps_its_legacy_billing_commands`; full suites |
 | Phase 14 exclusion | `plan_establishment` quarantines `modern_billing_account`; the database refuses a non-quarantine establishment of a modern organization | `test_phase14_quarantines_a_modern_organization`; SQLite guard test |
 | Identity commands | `establish_modern_billing_identity` (owner only; active account, `billing_owner` role, assignment; one idempotency claim); `bind_processor_customer` (once; billing authority; never a legacy payer's customer) | identity and binding tests; `scripts/billing_identity.py` tests |
 
-**Teams on staging (disjointness consequence):** every normal sign-up owns a
-lazily created personal (legacy) organization, so a normally registered user
-cannot join a modern organization (409 at invitation acceptance). Modern
-organizations take users with no other organization: the synthetic seed, or
-SSO-provisioned users. Staging scenarios with several members use seeded users.
-
 **Concurrency:** every guarded write takes `FOR KEY SHARE` on the organizations
 it touches before checking (it never conflicts with ordinary organization
-updates), and `establish` takes `FOR UPDATE`, so a membership,
-payer or money write racing the first assignment is serialized with it.
+updates), and `establish` takes `FOR UPDATE`, so a money or entitlement write
+racing the first assignment is serialized with it.
 
 **Carried to I4 (AI-reservation family):** legacy AI metering (`AIOperation`,
 `UsageEvent`, per-user compatibility counters) is not blocked for modern
-accounts in I1. Staging has no AI egress. I4 must refuse legacy charging for
-modern organizations at turn preflight and charge exactly one model.
+accounts in I1. Staging has no AI egress. I4 routes every turn by its
+project's organization, refuses legacy charging in a modern context and charges
+exactly one model.
 
 ## D18 Phase dependency and cutover map
 

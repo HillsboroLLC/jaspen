@@ -506,6 +506,9 @@ def sync_org_plan_from_owner(org):
     """
     if not isinstance(org, Organization) or not org.owner_user_id:
         return False
+    from .billing_cutover import organization_billing_model
+    if organization_billing_model(db.session, org.id) == "modern":
+        return False  # a modern organization's plan is its own entitlement, never the owner's legacy plan
     owner = User.query.filter_by(id=org.owner_user_id).first()
     if owner is None:
         return False

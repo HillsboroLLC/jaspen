@@ -198,7 +198,6 @@ def _attr(target, **values):
     (_payment, "payments"),
     (_grant, "persistent_credit_grants"),
     (_operation, "ai_operations"),
-    (_other_legacy_membership, "member_of_legacy_organization"),
     (_thinking_power, "organization_thinking_power"),
     (_phase14_account, "billing_account_exists"),
 ])
@@ -215,15 +214,18 @@ def test_an_organization_with_legacy_billing_state_is_never_assigned(db, make, c
     assert session.query(BillingModelAssignment).count() == 0
 
 
-def test_a_member_with_legacy_state_blocks_the_assignment(db):
+def test_only_the_organization_and_its_owner_must_be_clean(db):
+    """A member's personal legacy state stays theirs; the owner's is synced into the organization by legacy code."""
     session = db.session
     owner = _user(session)
     member = _user(session)
     org = _org(session, owner, members=[member])
     _payment(session, member, org)
+    _other_legacy_membership(session, member, org)
+    member.subscription_plan = "team"
     session.flush()
-    with pytest.raises(bc.BillingModelConflictError, match="legacy billing state"):
-        _establish(session, org)
+    assignment, state = _establish(session, org)
+    assert state == "inserted"
     session.rollback()
 
 
@@ -242,73 +244,91 @@ def test_without_any_modern_organization_legacy_writes_are_untouched(db):
     session.commit()
 
 
-def test_legacy_payer_and_money_writes_are_refused_for_a_modern_account(db):
+def _org_payment(session, user, org):
+    session.add(Payment(external_reference=f"pi_{uuid.uuid4().hex[:10]}", source="stripe", user_id=user.id,
+                        organization_id=org.id, amount_paid_cents=100, amount_due_cents=100, currency="usd"))
+
+
+def test_legacy_money_attributed_to_a_modern_organization_is_refused(db):
     session = db.session
     owner, org, _assignment = _modern(session)
-    for write in (_stripe_customer, _payment, _grant):
+    for write in (_org_payment, _grant):
         write(session, owner, org)
         with pytest.raises(bc.BillingModelConflictError):
             session.flush()
         session.rollback()
-    # A legacy account next to a modern one keeps every legacy write.
+    # Personal legacy state of the same person stays legacy, and a legacy organization keeps every write.
+    _stripe_customer(session, owner, org)
+    _payment(session, owner, org)
+    session.commit()
     legacy = _user(session)
     legacy_org = _org(session, legacy)
-    for write in (_stripe_customer, _payment, _grant):
+    for write in (_stripe_customer, _org_payment, _grant):
         write(session, legacy, legacy_org)
     session.commit()
 
 
-@pytest.mark.parametrize("target,field,value", [
-    ("user", "subscription_plan", "enterprise"), ("user", "subscription_status", "active"),
-    ("user", "unlimited_analysis", True), ("user", "seat_limit", 10), ("user", "max_seats", 10),
-    ("org", "plan_key", "business"), ("org", "max_total_paid_seats", 9),
-    ("org", "seat_policy_overrides", {"creator": 9}),
-])
-def test_direct_legacy_entitlement_edits_are_refused_for_a_modern_account(db, target, field, value):
-    """Admin edits and legacy webhooks write these straight onto the rows; a modern account never takes them."""
+def test_a_modern_accounts_processor_customer_never_becomes_a_legacy_payer(db):
     session = db.session
-    owner, org, _assignment = _modern(session)
-    setattr(owner if target == "user" else org, field, value)
+    owner, org, assignment = _modern(session)
+    bc.bind_processor_customer(session, billing_account_id=assignment.billing_account_id, processor="stripe",
+                               processor_customer_id="cus_modern_only", actor_user_id=owner.id, config=ON)
+    session.commit()
+    legacy = _user(session)
+    legacy.stripe_customer_id = "cus_modern_only"
+    with pytest.raises(bc.BillingModelConflictError, match="modern billing account"):
+        session.flush()
+    session.rollback()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("plan_key", "business"), ("max_total_paid_seats", 9), ("seat_policy_overrides", {"creator": 9}),
+])
+def test_direct_legacy_entitlement_edits_of_a_modern_organization_are_refused(db, field, value):
+    """Admin edits and plan sync write these straight onto the row; a modern organization never takes them."""
+    session = db.session
+    _owner, org, _assignment = _modern(session)
+    setattr(org, field, value)
     with pytest.raises(bc.BillingModelConflictError):
         session.flush()
     session.rollback()
-    legacy = _user(session)
-    legacy_org = _org(session, legacy)
+    legacy_org = _org(session, _user(session))
     session.commit()
-    setattr(legacy if target == "user" else legacy_org, field, value)
-    session.commit()  # a legacy account keeps them
+    setattr(legacy_org, field, value)
+    session.commit()  # a legacy organization keeps them
+
+
+def test_the_owners_personal_plan_is_never_synced_into_a_modern_organization(db):
+    from app.orgs import sync_org_plan_from_owner
+    session = db.session
+    owner, org, _assignment = _modern(session)
+    owner.subscription_plan = "team"  # personal legacy state: allowed
+    session.commit()
+    assert sync_org_plan_from_owner(org) is False and org.plan_key == "free"
+    session.commit()
 
 
 def test_rewriting_an_unchanged_value_is_not_an_edit(db):
     session = db.session
     owner, org, _assignment = _modern(session)
-    owner.subscription_plan = "free"
     org.plan_key = "free"
     session.commit()
 
 
-def test_memberships_never_mix_the_two_models(db):
+def test_people_may_belong_to_both_models(db):
+    """The multi-user organization model: memberships never decide billing ownership."""
     session = db.session
     owner, org, _assignment = _modern(session)
-    clean = _user(session)
-    session.add(OrganizationMember(organization_id=org.id, user_id=clean.id, role="creator", status="active"))
-    session.commit()
-    assert bc.user_billing_model(session, clean.id) == "modern"
-
     paid = _user(session)
     _payment(session, paid, org)
-    session.commit()
+    _other_legacy_membership(session, paid, org)
     session.add(OrganizationMember(organization_id=org.id, user_id=paid.id, role="creator", status="active"))
-    with pytest.raises(bc.BillingModelConflictError, match="cannot hold legacy billing"):
-        session.flush()
-    session.rollback()
-
     legacy_org = _org(session, _user(session))
     session.add(OrganizationMember(organization_id=legacy_org.id, user_id=owner.id, role="creator",
                                    status="active"))
-    with pytest.raises(bc.BillingModelConflictError, match="cannot join a legacy"):
-        session.flush()
-    session.rollback()
+    session.commit()
+    assert bc.organization_billing_model(session, org.id) == "modern"
+    assert bc.organization_billing_model(session, legacy_org.id) == "legacy"
 
 
 def test_legacy_billing_commands_answer_409_for_a_modern_account_and_never_reach_stripe(
@@ -333,12 +353,22 @@ def test_legacy_billing_commands_answer_409_for_a_modern_account_and_never_reach
     assert client.post("/api/v1/billing/webhook", data=b"{}", headers=auth_headers).status_code != 409
 
 
-def test_a_legacy_account_keeps_its_legacy_billing_commands(client, db, test_user, auth_headers):
+def test_billing_commands_follow_the_context_organization(client, db, test_user, auth_headers):
+    """A member of a modern organization whose context is a legacy organization keeps legacy commands."""
     session = db.session
-    owner, _org_modern, _assignment = _modern(session)
-    assert bc.user_billing_model(session, test_user.id) == "legacy"
+    _owner, modern_org, _assignment = _modern(session)
+    own = _org(session, test_user)
+    session.add(OrganizationMember(organization_id=modern_org.id, user_id=test_user.id, role="creator",
+                                   status="active"))
+    test_user.active_organization_id = own.id
+    session.commit()
+    assert bc.context_organization_id(session, test_user.id) == own.id
     response = client.post("/api/v1/billing/create-payment-intent", json={"amount": 0}, headers=auth_headers)
     assert response.status_code == 400  # the route's own validation, not the boundary
+    test_user.active_organization_id = modern_org.id
+    session.commit()
+    response = client.post("/api/v1/billing/create-payment-intent", json={"amount": 0}, headers=auth_headers)
+    assert response.status_code == 409
 
 
 # ---------------------------------------------------------------------------
@@ -614,7 +644,7 @@ def test_the_command_line_establishes_only_when_confirmed_and_enabled(db, app, c
 
 
 @PG
-def test_postgres_a_membership_racing_the_first_assignment_is_serialized_and_refused():
+def test_postgres_a_legacy_grant_racing_the_first_assignment_is_serialized_and_refused():
     """The guard's FOR KEY SHARE waits for establish's FOR UPDATE, then sees the committed assignment."""
     import threading
     from sqlalchemy.orm import Session
@@ -623,33 +653,29 @@ def test_postgres_a_membership_racing_the_first_assignment_is_serialized_and_ref
         with Session(engine, expire_on_commit=False) as session:
             owner = _user(session)
             org = _org(session, owner)
-            joiner = _user(session)
-            _org(session, joiner)  # the joiner owns a personal legacy organization
             session.commit()
-        establishing, joined = threading.Event(), {}
+        written = {}
         with Session(engine.execution_options(isolation_level="READ COMMITTED"), expire_on_commit=False) as first:
             _establish(first, org)  # holds FOR UPDATE on the organization until commit
-            establishing.set()
 
-            def join():
+            def grant():
                 with Session(engine.execution_options(isolation_level="READ COMMITTED")) as second:
-                    second.add(OrganizationMember(organization_id=org.id, user_id=joiner.id, role="creator",
-                                                  status="active"))
+                    _grant(second, owner, org)
                     try:
                         second.flush()
                         second.commit()
-                        joined["result"] = "joined"
+                        written["result"] = "written"
                     except bc.BillingModelConflictError:
                         second.rollback()
-                        joined["result"] = "refused"
+                        written["result"] = "refused"
 
-            worker = threading.Thread(target=join)
+            worker = threading.Thread(target=grant)
             worker.start()
             worker.join(timeout=2)
-            assert worker.is_alive(), "the membership check must wait for the assignment's transaction"
+            assert worker.is_alive(), "the guarded write must wait for the assignment's transaction"
             first.commit()
         worker.join(timeout=30)
-        assert joined == {"result": "refused"}
+        assert written == {"result": "refused"}
     finally:
         engine.dispose()
 
@@ -672,7 +698,7 @@ def test_postgres_the_guard_lock_never_deadlocks_two_legacy_updates_of_one_organ
         def work(label, user_id, seats):
             with Session(engine.execution_options(isolation_level="READ COMMITTED")) as session:
                 try:
-                    session.get(User, user_id).seat_limit = seats
+                    _grant(session, session.get(User, user_id), session.get(Organization, org.id))
                     session.flush()  # the guard runs and locks the organization
                     barrier.wait()
                     session.get(Organization, org.id).name = f"Updated by {label}"

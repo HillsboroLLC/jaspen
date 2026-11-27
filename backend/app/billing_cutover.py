@@ -17,34 +17,37 @@ Unset, every family is off.
 ``BillingModelAssignment``. Otherwise it is legacy, and nothing here changes it.
 The assignment is one-way: switching a family off never returns an organization
 to legacy billing. Its modern commands are refused while legacy writers stay
-blocked, so one organization never has two billing authorities. A user is
-modern when they own or are a member (any status, as in the Phase 14 candidate
-rules) of a modern organization. Modern and legacy users are disjoint:
+blocked, so one organization never has two billing authorities.
 
-* only an organization with no legacy billing footprint can be assigned;
-* a user cannot join a modern organization while they hold legacy billing
-  state or legacy memberships, and a modern user cannot join a legacy one;
-* legacy payer, money and entitlement writers (processor customer or
-  subscription on a user, legacy payments, credit grants, account entitlements,
-  direct plan, status, seat or unlimited edits on the user or organization row)
-  refuse modern users and organizations.
+**Ownership follows the organization, not the person** (ADR-0001: every credit
+belongs to one organization account; the active organization is context, never
+payer selection). Every billing command and AI operation runs in exactly one
+organization's context: the active organization for account commands, the
+project's organization for AI work. That organization's model alone handles it.
+People may belong to legacy and modern organizations at once, which is the
+multi-user model rows 14-16 complete. A member's personal legacy state stays
+with legacy contexts and is never read by a modern account.
 
-``install_legacy_write_guard`` enforces the last two at flush time for every
+* Only an organization with no legacy billing footprint (its own, and its
+  owner's personal state, which legacy code syncs into the organization) can be
+  assigned.
+* Legacy money and entitlement writers refuse a modern organization: payments,
+  credit grants and account entitlements attributed to it, and direct plan or
+  seat edits on its row. A user is never given a modern account's processor
+  customer as a legacy payer.
+* Legacy billing commands refuse a user whose context organization is modern
+  (the modern families answer there instead).
+
+``install_legacy_write_guard`` enforces the writer rules at flush time for every
 writer, after a ``FOR KEY SHARE`` lock on the organizations involved, so a write
-racing the first assignment of its organization is serialized with it. Phase 14 quarantines modern organizations (``modern_billing_account``),
-and the database refuses a modern establishment.
+racing the first assignment of its organization is serialized with it. Phase 14
+quarantines modern organizations (``modern_billing_account``), and the database
+refuses a modern establishment.
 
 **Known boundary (I4).** Legacy AI metering (``AIOperation``, ``UsageEvent``,
-the per-user compatibility counters) is not blocked here. It is written on
-ordinary reads and turns, and staging has no AI egress. The AI-reservation
-family (I4) must refuse legacy charging for modern organizations at turn
-preflight and charge exactly one model.
-
-**Consequence for teams (until rows 14-16).** A normal sign-up owns a lazily
-created personal (legacy) organization, so a normally registered user cannot
-join a modern organization. Modern organizations take only users with no other
-organization (for example the synthetic seed, or SSO-provisioned users). This is
-the disjointness guardrail, not a workflow rule.
+the per-user compatibility counters) is not blocked here. The AI-reservation
+family (I4) routes every turn by its project's organization and charges exactly
+one model.
 
 **Identity family.** ``establish_modern_billing_identity`` is the onboarding
 command (ADR-0001: organization, membership, billing account and billing roles
@@ -205,7 +208,8 @@ def _modern_ids(session, organization_ids):
 
 
 def user_billing_model(session, user_id):
-    """``"modern"`` when the user owns or belongs to a modern organization, else ``"legacy"``."""
+    """``"modern"`` when the user owns or belongs to any modern organization (informational; billing follows the
+    context organization, never the person)."""
     if not user_id:
         return "legacy"
     with session.no_autoflush:
@@ -288,47 +292,57 @@ def legacy_billing_footprint(session, organization_id):
         codes.append({"code": "organization_plan", "subject": organization.id})
     if organization.max_total_paid_seats is not None or organization.seat_policy_overrides:
         codes.append({"code": "organization_seats", "subject": organization.id})
-    people = {organization.owner_user_id} if organization.owner_user_id else set()
-    people |= set(session.execute(
-        select(OrganizationMember.user_id).where(OrganizationMember.organization_id == organization.id)
-    ).scalars().all())
-    for user_id in sorted(people):
-        codes.extend(_user_footprint(session, user_id))
-        others = _organization_ids_for_user(session, user_id) - {organization.id}
-        for other in sorted(others - _modern_ids(session, others)):
-            codes.append({"code": "member_of_legacy_organization", "subject": user_id, "organization": other})
+    if organization.owner_user_id:
+        # Legacy code syncs the owner's personal plan into the organization, so the owner must be clean too.
+        codes.extend(_user_footprint(session, organization.owner_user_id))
     return codes
 
 
-def assert_legacy_billing_allowed(session, *, user_id=None, organization_id=None):
-    """Refuse a legacy payer or money write for a modern user or organization."""
+def context_organization_id(session, user_id):
+    """The organization a user's account-level billing commands run in: their active organization, else their
+    first active membership by role (the order ``ensure_default_organization_for_user`` uses). A pure read."""
+    if not user_id:
+        return None
+    from sqlalchemy import case
+
     with session.no_autoflush:
-        _share_lock(session, ({organization_id} if organization_id else set())
-                    | (_organization_ids_for_user(session, user_id) if user_id else set()))
-        if organization_id and organization_billing_model(session, organization_id) == "modern":
+        user = session.get(User, str(user_id))
+        if user is None:
+            return None
+        active = select(OrganizationMember.organization_id).where(
+            OrganizationMember.user_id == user.id, OrganizationMember.status == "active")
+        if user.active_organization_id and session.execute(
+                active.where(OrganizationMember.organization_id == user.active_organization_id)).first():
+            return user.active_organization_id
+        order = case((OrganizationMember.role == "owner", 0), (OrganizationMember.role == "admin", 1),
+                     (OrganizationMember.role == "creator", 2), (OrganizationMember.role == "collaborator", 3),
+                     (OrganizationMember.role == "viewer", 4), else_=9)
+        return session.execute(active.order_by(order, OrganizationMember.created_at.asc()).limit(1)).scalar()
+
+
+def assert_legacy_billing_allowed(session, *, user_id=None, organization_id=None):
+    """Refuse a legacy billing command or write in a modern organization's context.
+
+    With ``organization_id``, that organization is the context; otherwise the user's context organization.
+    """
+    with session.no_autoflush:
+        context = organization_id or context_organization_id(session, user_id)
+        _share_lock(session, {context} if context else set())
+        if context and organization_billing_model(session, context) == "modern":
             raise BillingModelConflictError(
                 "this organization's billing is managed by the modern billing model", ("modern_organization",))
-        if user_id and user_billing_model(session, user_id) == "modern":
-            raise BillingModelConflictError(
-                "this account's billing is managed by the modern billing model", ("modern_user",))
 
 
-def assert_membership_compatible(session, *, organization_id, user_id):
-    """Refuse a membership that would give one user both billing models."""
+def assert_not_modern_processor_customer(session, processor_customer_id):
+    """A modern account's processor customer never becomes a legacy payer."""
+    if not processor_customer_id:
+        return
     with session.no_autoflush:
-        others = _organization_ids_for_user(session, user_id) - {str(organization_id)}
-        _share_lock(session, others | {str(organization_id)})
-        if organization_billing_model(session, organization_id) == "modern":
-            codes = [c["code"] for c in _user_footprint(session, str(user_id))]
-            if others - _modern_ids(session, others):
-                codes.append("member_of_legacy_organization")
-            if codes:
-                raise BillingModelConflictError(
-                    "a member of a modern billing organization cannot hold legacy billing", codes)
-        elif _modern_ids(session, others):
-            raise BillingModelConflictError(
-                "a member of a modern billing organization cannot join a legacy billing organization",
-                ("member_of_modern_organization",))
+        bound = session.execute(select(BillingAccount.organization_id).where(
+            BillingAccount.processor_customer_id == processor_customer_id)).scalars().all()
+        if _modern_ids(session, set(bound)):
+            raise BillingModelConflictError("this processor customer belongs to a modern billing account",
+                                            ("modern_processor_customer",))
 
 
 # ---------------------------------------------------------------------------
@@ -336,11 +350,8 @@ def assert_membership_compatible(session, *, organization_id, user_id):
 # ---------------------------------------------------------------------------
 
 _MONEY_MODELS = (Payment, PersistentCreditGrant, AccountEntitlement)
-_PAYER_FIELDS = ("stripe_customer_id", "stripe_subscription_id")
-# Legacy entitlement written straight onto the rows (admin edits, legacy webhooks). Credit counters are not here:
-# legacy metering writes them on reads and turns, and that boundary belongs to the AI-reservation family (I4).
-_USER_ENTITLEMENT_FIELDS = ("subscription_plan", "subscription_status", "unlimited_analysis", "seat_limit",
-                            "max_seats")
+# Legacy entitlement written straight onto an organization row (admin edits, plan sync). A member's personal
+# user-row state stays legacy and is never read by a modern account, so it is not governed here.
 _ORGANIZATION_ENTITLEMENT_FIELDS = ("plan_key", "max_total_paid_seats", "seat_policy_overrides")
 
 
@@ -368,18 +379,15 @@ def _changed(session, obj, names, *, assigned_only=False):
 
 
 def _guard_targets(session):
-    """``(kind, obj)`` for every pending write the boundary governs, with the organizations each one locks."""
+    """``(kind, obj, organizations)`` for every pending write the boundary governs."""
     for obj in session.new:
-        if isinstance(obj, OrganizationMember):
-            yield "membership", obj, {obj.organization_id}
-        elif isinstance(obj, _MONEY_MODELS):
-            yield "money", obj, {getattr(obj, "organization_id", None)}
+        if isinstance(obj, _MONEY_MODELS) and getattr(obj, "organization_id", None):
+            yield "money", obj, {obj.organization_id}
     for obj in session.dirty:
-        if isinstance(obj, User) and (_changed(session, obj, _PAYER_FIELDS, assigned_only=True)
-                                      or _changed(session, obj, _USER_ENTITLEMENT_FIELDS)):
-            yield "user", obj, set()
-        elif isinstance(obj, Organization) and _changed(session, obj, _ORGANIZATION_ENTITLEMENT_FIELDS):
+        if isinstance(obj, Organization) and _changed(session, obj, _ORGANIZATION_ENTITLEMENT_FIELDS):
             yield "organization", obj, {obj.id}
+        elif isinstance(obj, User) and _changed(session, obj, ("stripe_customer_id",), assigned_only=True):
+            yield "payer", obj, set()
 
 
 def _guard_flush(session, flush_context, instances):
@@ -387,23 +395,16 @@ def _guard_flush(session, flush_context, instances):
     if not targets:
         return
     with session.no_autoflush:
-        locked = set()
-        for kind, obj, organizations in targets:
-            user_id = obj.id if kind == "user" else getattr(obj, "user_id", None)
-            locked |= organizations | (_organization_ids_for_user(session, user_id) if user_id else set())
-        _share_lock(session, locked)  # before the shortcut, so a concurrent first assignment cannot slip past it
+        _share_lock(session, set().union(*(organizations for _kind, _obj, organizations in targets)))
+        # The lock comes before this shortcut, so a concurrent first assignment cannot slip past it.
         if session.execute(select(BillingModelAssignment.id).limit(1)).first() is None:
             return  # no modern organization exists: legacy behavior is untouched
         for kind, obj, _organizations in targets:
-            if kind == "membership":
-                assert_membership_compatible(session, organization_id=obj.organization_id, user_id=obj.user_id)
-            elif kind == "user":
-                assert_legacy_billing_allowed(session, user_id=obj.id)
-            elif kind == "organization":
-                assert_legacy_billing_allowed(session, organization_id=obj.id)
+            if kind == "payer":
+                assert_not_modern_processor_customer(session, obj.stripe_customer_id)
             else:
-                assert_legacy_billing_allowed(session, user_id=getattr(obj, "user_id", None),
-                                              organization_id=getattr(obj, "organization_id", None))
+                assert_legacy_billing_allowed(session, organization_id=obj.organization_id if kind == "money"
+                                              else obj.id)
 
 
 def install_legacy_write_guard():
