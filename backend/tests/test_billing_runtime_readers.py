@@ -550,6 +550,8 @@ def _headers(app, user_id):
 def test_team_routes_answer_from_the_modern_records(app, client, db, monkeypatch):
     session = db.session
     ns = modern_org(session, members=2, included_seats=3)
+    org = session.get(Organization, ns.org)
+    org.max_admin_seats, org.max_creator_seats, org.max_collaborator_seats = 9, 9, 9  # legacy columns
     owner = session.get(User, ns.owner)
     owner.active_organization_id = ns.org
     session.commit()
@@ -564,6 +566,9 @@ def test_team_routes_answer_from_the_modern_records(app, client, db, monkeypatch
     teams = client.get(f"/api/v1/teams/{ns.org}", headers=headers)
     assert teams.status_code == 200, teams.get_json()
     assert teams.get_json()["organization"]["plan"] == "team"
+    assert teams.get_json()["organization"]["max_total_paid_seats"] == 3
+    assert {teams.get_json()["organization"][k] for k in
+            ("max_admin_seats", "max_creator_seats", "max_collaborator_seats")} == {None}
 
     monkeypatch.setenv(bc.SETTING, WITHOUT_READERS)
     refused = client.get("/api/v1/team/summary", headers=headers)
