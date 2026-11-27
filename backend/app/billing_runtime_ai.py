@@ -81,6 +81,7 @@ class Phase12CallRecorder:
     def __init__(self, ctx):
         self._ctx = ctx
         self._attempt = None
+        self.current_attempt = None
         self._call_index = 0
         self._component = "primary"
         self._new_attempt = False
@@ -90,6 +91,7 @@ class Phase12CallRecorder:
         if self._attempt is None or self._new_attempt:
             component = "primary" if self._attempt is None else "fallback"
             self._attempt, self._call_index, self._new_attempt = self._ctx.begin_attempt(), 0, False
+            self.current_attempt = self._attempt
         else:
             self._call_index += 1
             component = "tool_iteration"
@@ -120,3 +122,136 @@ class Phase12CallRecorder:
             self.delivered_attempt = handle["attempt"]
         else:
             self._new_attempt = True
+
+
+# ---------------------------------------------------------------------------
+# Running a modern operation through Phase 12 and the reliable-delivery worker
+# ---------------------------------------------------------------------------
+
+INITIAL_INPUT_BOUND = 8000  # the first hold's input assumption; settlement holds more up to the policy ceiling
+EXECUTOR_NAME = "in_process"
+_REGISTRY = {}  # operation id -> _Pending, for the process that submitted it
+
+
+class _Pending:
+    __slots__ = ("generate", "on_persist", "result", "failure")
+
+    def __init__(self, generate, on_persist):
+        self.generate, self.on_persist, self.result, self.failure = generate, on_persist, None, None
+
+
+def _worker():
+    from . import billing_delivery_worker as worker
+
+    if EXECUTOR_NAME not in getattr(worker, "_EXECUTORS", {}):
+        worker.executor(EXECUTOR_NAME)(_run_registered)
+    return worker
+
+
+def configured_candidates(session, config):
+    """The deployment's configured models that the effective pricing version prices, as (provider, model).
+
+    A generation that calls any other model is refused before the call (Phase 12
+    ``UnpricedModelError``), so the operation fails closed with no charge.
+    """
+    from sqlalchemy import select
+
+    from .ai_governance import resolve_anthropic_model
+    from .models import PricingPolicyVersion, ProviderRateEntry
+
+    models = config.get("LLM_PROVIDER_MODELS") if isinstance(config.get("LLM_PROVIDER_MODELS"), dict) else {}
+    wanted = set()
+    for key in ("claude_haiku", "claude_sonnet", "claude_opus"):
+        wanted.add(("anthropic", resolve_anthropic_model(models.get(key), model_key=key)))
+    for key in ("gemini_flash", "gemini_pro"):
+        if models.get(key):
+            wanted.add(("google", str(models[key]).strip()))
+    priced = set(session.execute(
+        select(ProviderRateEntry.provider, ProviderRateEntry.model)
+        .join(PricingPolicyVersion, PricingPolicyVersion.id == ProviderRateEntry.pricing_policy_version_id)
+        .where(PricingPolicyVersion.state == "effective")
+    ).all())
+    candidates = sorted(wanted & {tuple(row) for row in priced})
+    if not candidates:
+        raise ModernOperationRefused("pricing_required", "no configured model is priced by the effective policy")
+    return candidates
+
+
+def _run_registered(ctx):
+    """The worker executor: run the submitting process's in-memory generation under the call recorder."""
+    from .ai_providers import observer as provider_observer
+
+    worker = _worker()
+    pending = _REGISTRY.get(ctx.operation_id)
+    if pending is None:
+        raise worker.DeliveryFailed("not_resumable")  # another process or a restart: closed undelivered, no charge
+    recorder = Phase12CallRecorder(ctx)
+
+    def emit(text):
+        if recorder.current_attempt is not None and text:
+            ctx.emit(recorder.current_attempt, text)
+
+    from .routes.ai_agent import ai_customer_scope
+
+    try:
+        # No signed-in request carries the customer on the worker thread; the scope does (as for plan builds).
+        with provider_observer.observing(recorder), ai_customer_scope(ctx.actor_user_id):
+            value, usage = pending.generate(emit=emit, should_stop=ctx.should_stop)
+    except Exception as exc:  # the generation's own failure: no usable response
+        pending.failure = exc
+        raise worker.DeliveryFailed(type(exc).__name__) from exc
+    if recorder.delivered_attempt is None:
+        return worker.NoBillableUsage()
+    pending.result = (value, usage)
+    return worker.DeliveryResult(delivered_attempt_number=recorder.delivered_attempt,
+                                 response={"value": value, "usage": usage}, on_persist=pending.on_persist)
+
+
+def submit_modern_operation(session, *, context, user_id, operation_type, generate, max_output_tokens,
+                            config, provider_timeout_seconds, thread_id=None, route=None, streaming=None,
+                            idempotency_key=None, request_fingerprint=None, prompt_family=None, on_persist=None):
+    """Claim, authorize and submit one modern operation; commits. Returns the operation id.
+
+    ``generate(emit, should_stop) -> (value, usage)`` runs on the worker thread.
+    ``on_persist(session, response)`` runs inside the transaction that saves the
+    response. Refusals raise ``ModernOperationRefused`` (``credit_exhausted``,
+    ``capacity_denied``, ``pricing_required``) with nothing reserved.
+    """
+    from .billing_ai_operations import authorize_ai_operation
+
+    worker = _worker()
+    operation = claim_modern_operation(
+        session, user_id=user_id, organization_id=context.organization_id, operation_type=operation_type,
+        thread_id=thread_id, route=route, streaming=streaming, idempotency_key=idempotency_key,
+        request_fingerprint=request_fingerprint, prompt_family=prompt_family,
+    )
+    auth = authorize_ai_operation(
+        session, operation_id=operation.id, actor_user_id=str(user_id), step_key=f"{operation_type}:1",
+        candidates=[list(pair) for pair in configured_candidates(session, config)],
+        max_input_tokens=INITIAL_INPUT_BOUND, max_output_tokens=max(1, int(max_output_tokens or 1)),
+    )
+    if auth.outcome != "authorized":
+        operation.status, operation.error_code = "failed", auth.outcome
+        session.commit()
+        raise ModernOperationRefused(auth.outcome)
+    try:
+        worker.submit_delivery(
+            session, operation_id=operation.id, organization_id=context.organization_id,
+            actor_user_id=str(user_id), executor=EXECUTOR_NAME,
+            payload={"operation_type": operation_type, "thread_id": thread_id, "route": route},
+            provider_timeout_seconds=provider_timeout_seconds,
+        )
+    except worker.DeliveryTimingError:
+        worker.release_unsubmitted_operation(session, operation_id=operation.id,
+                                             organization_id=context.organization_id, actor_user_id=str(user_id))
+        session.commit()
+        raise ModernOperationRefused("delivery_timing")
+    session.commit()  # the job is durable before any provider call
+    _REGISTRY[operation.id] = _Pending(generate, on_persist)
+    worker.start_in_process(operation.id)
+    return operation.id
+
+
+def forget(operation_id):
+    """Drop the in-memory generation once the operation has an outcome."""
+    return _REGISTRY.pop(operation_id, None)
