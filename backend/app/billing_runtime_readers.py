@@ -38,7 +38,6 @@ from .billing_config import (
     get_allowed_model_types,
     get_default_model_type,
     get_plan_catalog,
-    normalize_plan_key,
     tokens_to_credits,
 )
 from .billing_projections import project_billing_account, project_plan_terms
@@ -50,6 +49,8 @@ MODEL = "modern"
 
 # Plans whose base entitlement is an executed Phase 11 contract are Enterprise, never inferred from text.
 CONTRACT_PLAN_KEY = "enterprise_custom"
+# Canonical base-plan definition keys: ``plan.<catalog plan key>`` (I2 ``plan_definition_key``; I4 tiers).
+PLAN_DEFINITION_PREFIX = "plan."
 # Phase 4 subscription states, written in the processor spelling the existing frontend compares against.
 # ``cancel_at_period_end`` is an active subscription whose cancellation is scheduled (reported separately).
 _STATUS_SPELLING = {"cancelled": "canceled", "cancel_at_period_end": "active"}
@@ -78,14 +79,15 @@ def _naive(value):
 def public_plan_key(definition_key, plan_source_type, app_config):
     """The public plan key of a modern base-plan entitlement, or None when it names no catalog plan.
 
-    An executed-contract plan is Enterprise. A self-serve definition is named by its catalog plan key
-    (aliases normalized). Any other key is not a recognized plan: gates fail closed on it.
+    An executed-contract plan is Enterprise. A self-serve plan definition is named ``plan.<catalog plan
+    key>`` (the canonical key the funding family writes, e.g. ``plan.team``). Any other key is not a
+    recognized plan: gates fail closed on it.
     """
     if plan_source_type == "enterprise_contract":
         return CONTRACT_PLAN_KEY
-    if not definition_key:
+    if not isinstance(definition_key, str) or not definition_key.startswith(PLAN_DEFINITION_PREFIX):
         return None
-    key = normalize_plan_key(definition_key)
+    key = definition_key[len(PLAN_DEFINITION_PREFIX):]
     return key if key in get_plan_catalog(app_config or {}) else None
 
 

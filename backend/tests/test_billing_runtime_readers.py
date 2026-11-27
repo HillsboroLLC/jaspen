@@ -91,14 +91,15 @@ def modern_org(session, *, plan="team", members=1, credits=500, included_seats=N
     """A funded modern organization on ``plan`` (the definition key), with pricing and capacity for AI use."""
     ns = funded_account(session, members=members, credits=credits)
     definition = session.get(EntitlementDefinition, ns.sub.instance.entitlement_definition_id)
-    definition.key, definition.version = plan, random.randint(10_000, 2**30)
+    key = plan if plan.startswith("pro-") else f"plan.{plan}"  # the canonical plan.<catalog key>
+    definition.key, definition.version = key, random.randint(10_000, 2**30)
     if included_seats is not None:
         definition.capability_json = {"schema_version": 1,
                                       "capabilities": {"analysis": True, "included_seats": included_seats}}
     session.flush()
-    ns.tier = plan
+    ns.tier = key
     ns.pricing = pricing(session)
-    ns.capacity = capacity(session, [plan])
+    ns.capacity = capacity(session, [key])
     if poison:
         _poison_legacy_columns(session, ns)
     _assign(session, ns)
@@ -219,9 +220,10 @@ def test_an_unrecognized_plan_definition_fails_closed(db):
 
 def test_a_contract_plan_is_enterprise_and_definition_keys_follow_the_catalog():
     assert readers.public_plan_key("enterprise-contract:x", "enterprise_contract", {}) == "enterprise_custom"
-    assert readers.public_plan_key("team", "subscription", {}) == "team"
-    assert readers.public_plan_key("enterprise", "subscription", {}) == "business"  # catalog alias
-    assert readers.public_plan_key("pro-123", "subscription", {}) is None
+    for plan in ("free", "starter", "essential", "team", "business", "enterprise_custom"):
+        assert readers.public_plan_key(f"plan.{plan}", "subscription", {}) == plan
+    for unrecognized in ("team", "plan.enterprise", "plan.", "plan.unknown", "pro-123", "PLAN.team"):
+        assert readers.public_plan_key(unrecognized, "subscription", {}) is None
     assert readers.public_plan_key(None, None, {}) is None
 
 
