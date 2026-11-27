@@ -413,14 +413,10 @@ def _settlement(outcome, operation_id, *, replay=False):
 def operation_organization_id(session, user, thread_id=None):
     """The organization whose work an operation is: the thread's project organization, else the member's
     context organization (D4: the work's organization pays)."""
-    from sqlalchemy import select
-
     from .billing_cutover import context_organization_id
-    from .models import UserSession
+    from .session_access import canonical_row
 
-    if thread_id:
-        organizations = {row for row in session.execute(select(UserSession.organization_id).where(
-            UserSession.session_id == str(thread_id), UserSession.organization_id.isnot(None))).scalars()}
-        if len(organizations) == 1:
-            return organizations.pop()
+    project = canonical_row(user, thread_id) if thread_id else None
+    if project is not None and project.organization_id:
+        return project.organization_id
     return context_organization_id(session, getattr(user, "id", None))

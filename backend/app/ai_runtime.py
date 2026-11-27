@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from . import db
 from .ai_audit import (
+    is_phase12_bound,
     persist_operation,
     projected_charge_for_usage,
     subsidy_classification,
@@ -75,6 +76,8 @@ def _claim_operation(user, *, operation_type, thread_id, customer_visible,
         return None, None
     existing = AIOperation.query.filter_by(idempotency_key=idempotency_key).first()
     if existing is not None:
+        if is_phase12_bound(existing):
+            raise AIOperationIdempotencyConflict("This key belongs to a modern billing operation.")
         if existing.request_fingerprint != request_fingerprint:
             raise AIOperationIdempotencyConflict(
                 'This idempotency key was already used for a different AI request.'
@@ -351,12 +354,14 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
 
 
 def reverse_customer_operation_charge(user, settlement, *, error_code='persistence_rolled_back'):
-    """Void a settled charge once when its result was not durably retained."""
+    """Void a legacy charge once when its result was not durably retained."""
     from .routes.ai_agent import _release_reserved_credits
 
     details = dict(settlement or {})
     operation_id = str(details.get('operation_id') or '').strip()
-    operation = AIOperation.query.get(operation_id) if operation_id else None
+    operation = db.session.get(AIOperation, operation_id) if operation_id else None
+    if details.get('policy_mode') == 'phase12' or is_phase12_bound(operation):
+        return 0  # Phase 12 owns the delivered operation's settlement.
     if operation is not None and (operation.metadata_json or {}).get('charge_reversed'):
         return 0
     charged = max(0, int(details.get('charged_credits') or 0))
@@ -394,7 +399,14 @@ def finalize_batch_charge_allocation(user, settlement, *, component_ids, persist
 
     details = dict(settlement or {})
     operation_id = str(details.get('operation_id') or '').strip()
-    operation = AIOperation.query.get(operation_id) if operation_id else None
+    operation = db.session.get(AIOperation, operation_id) if operation_id else None
+    if details.get('policy_mode') == 'phase12' or is_phase12_bound(operation):
+        # A modern batch settles the delivering attempt once. Cards have no
+        # separate charge or legacy refund against that operation.
+        from .models_billing_phase12 import AIBillingOperation
+        binding = db.session.get(AIBillingOperation, operation_id) if operation_id else None
+        charged = binding.charged_credits if binding is not None else details.get('charged_credits')
+        return {'charged_credits': int(charged or 0), 'allocations': []}
     if operation is None:
         return {'charged_credits': int(details.get('charged_credits') or 0), 'allocations': []}
     metadata = dict(operation.metadata_json or {})

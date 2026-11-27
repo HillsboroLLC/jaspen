@@ -111,3 +111,23 @@ def test_an_unsaved_request_does_not_leave_a_keyed_claim(db):
         )
     session.rollback()
     assert session.query(AIOperation).filter_by(idempotency_key="unsaved-request").count() == 0
+
+
+def test_work_organization_uses_the_callers_canonical_project(db):
+    from app.models import UserSession
+
+    session = db.session
+    actor = _user(session)
+    other = _user(session)
+    work_org = _org(session, actor)
+    unrelated = _org(session, other)
+    actor.active_organization_id = work_org.id
+    session.add_all([
+        UserSession(user_id=actor.id, organization_id=work_org.id, session_id="duplicate", payload={}),
+        UserSession(user_id=other.id, organization_id=unrelated.id, session_id="duplicate", payload={}),
+        UserSession(user_id=other.id, organization_id=unrelated.id, session_id="unrelated", payload={}),
+    ])
+    session.commit()
+
+    assert rt.operation_organization_id(session, actor, "duplicate") == work_org.id
+    assert rt.operation_organization_id(session, actor, "unrelated") == work_org.id

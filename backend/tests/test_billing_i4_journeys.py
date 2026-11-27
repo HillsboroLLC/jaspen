@@ -397,3 +397,58 @@ def test_failed_delivery_envelope_rolls_back_a_new_reply_and_its_audit_event(cli
     assert REPLY not in _history(db.session, thread_id)
     events = db.session.query(AdminAuditEvent).filter_by(action="session.created").all()
     assert all(event.details.get("thread_id") != thread_id for event in events)
+
+
+def test_modern_batch_uses_one_phase12_settlement_after_artifact_processing(app, db, modern, monkeypatch):
+    from app.ai_runtime import (
+        execute_customer_operation, finalize_batch_charge_allocation, reverse_customer_operation_charge,
+    )
+    from app.models import AIOperation
+    from app.routes import ai_agent
+
+    def legacy_release(*args, **kwargs):
+        raise AssertionError("a modern charge reached the legacy credit meter")
+
+    monkeypatch.setattr(ai_agent, "_release_reserved_credits", legacy_release)
+    before, _held = _spendable(db.session, modern["account"])
+    user = db.session.get(User, modern["owner"].id)
+
+    def generate():
+        _provider_reply()
+        return {"results": [{"name": "Option A"}, {"name": "Option B"}]}, {"input_tokens": 11, "output_tokens": 7}
+
+    with app.test_request_context():
+        _, _, settlement = execute_customer_operation(
+            user, generate=generate, operation_type="score_batch", request_payload={"batch": 1},
+            max_tokens=500, thread_id=modern["thread"],
+        )
+        operation = db.session.get(AIOperation, settlement["operation_id"])
+        envelope = operation.result_json
+        assert reverse_customer_operation_charge(user, settlement, error_code="later_workflow_failure") == 0
+        assert finalize_batch_charge_allocation(
+            user, settlement, component_ids=["a", "b"], persisted_component_ids=["a"],
+        ) == {"charged_credits": CHARGE, "allocations": []}
+        assert operation.result_json == envelope
+    assert _spendable(db.session, modern["account"]) == (before - CHARGE, 0)
+
+
+def test_decision_kit_provider_call_runs_under_the_modern_reservation(client, db, modern, monkeypatch):
+    from app.models_billing_phase12 import AIProviderCallUsage
+    from app.routes import ai_agent
+
+    _script(monkeypatch)
+
+    def classify(*args, **kwargs):
+        _provider_reply()
+        return {"kit": "none", "confidence": "high", "evidence_quote": ""}
+
+    monkeypatch.setattr(ai_agent, "_classify_decision_kit", classify)
+    response = client.post(
+        "/api/v1/ai-agent/conversation/start", headers=modern["headers"],
+        json={"thread_id": f"t-{uuid.uuid4().hex[:8]}", "message": "Should we bid?"},
+    )
+    assert response.status_code == 200
+    [operation] = _operations(db.session, modern["org"])
+    calls = db.session.query(AIProviderCallUsage).filter_by(operation_id=operation.operation_id).all()
+    assert len(calls) == 2
+    assert {call.attempt_number for call in calls} == {operation.delivered_attempt_number}

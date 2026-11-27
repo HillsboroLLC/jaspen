@@ -8284,6 +8284,7 @@ def _release_interrupted_plan_operation(job):
     """A dead run leaves its AI operation 'started'; free it so the resumed run
     can reuse the same idempotency key (a finished AI result then replays
     instead of being charged twice)."""
+    from ..ai_audit import is_phase12_bound
     from ..models import AIOperation
     keys = [
         hashlib.sha256(f"{job.user_id}:{operation_type}:plan-build:{job.id}".encode('utf-8')).hexdigest()
@@ -8292,6 +8293,8 @@ def _release_interrupted_plan_operation(job):
     for operation in AIOperation.query.filter(
         AIOperation.idempotency_key.in_(keys), AIOperation.status == 'started',
     ).all():
+        if is_phase12_bound(operation):
+            continue
         operation.status = 'failed'
         operation.error_code = 'interrupted'
     db.session.commit()

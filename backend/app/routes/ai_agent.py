@@ -15776,6 +15776,10 @@ def _streamed_reply(events, emit):
 
 def _submit_modern_conversation_turn(turn, req, *, streaming):
     def produce(emit):
+        if req.classify_decision_kit:
+            judgment = _decision_kit_judgment_for_turn(turn.session, req.user_message, req.model_selection)
+            _apply_rfp_decision_context(turn.session, req.user_message, judgment=judgment)
+            _ensure_decision_kit_starter_rubric(turn.session, user_message=req.user_message)
         if streaming:
             state = _streamed_reply(lambda st: _stream_assistant_reply_events(
                 req.user_message, req.chat_history, req.readiness, req.model_selection,
@@ -15917,13 +15921,13 @@ class _TurnRequest:
         "route", "user_message", "attachments", "chat_history",
         "previous_readiness", "readiness", "context_budget", "model_selection",
         "idempotency_key", "request_fingerprint", "session_created", "name",
-        "project",
+        "project", "classify_decision_kit",
     )
 
     def __init__(self, *, route, user_message, attachments, chat_history,
                  previous_readiness, readiness, context_budget, model_selection,
                  idempotency_key, request_fingerprint, session_created, name=None,
-                 project=None):
+                 project=None, classify_decision_kit=False):
         self.route = route                      # "conversation_start" | "conversation_continue"
         self.user_message = user_message
         self.attachments = attachments
@@ -15937,6 +15941,7 @@ class _TurnRequest:
         self.session_created = session_created
         self.name = name                        # conversation/start only
         self.project = project                  # TurnProject authorized by the route
+        self.classify_decision_kit = classify_decision_kit
 
 
 def _turn_readiness_payload(final_readiness):
@@ -16485,9 +16490,14 @@ def conversation_start():
         session["objective_explicitly_set"] = True
     elif "objective_explicitly_set" not in session:
         session["objective_explicitly_set"] = False
-    kit_judgment = _decision_kit_judgment_for_turn(
-        session, user_message, model_selection, explicit_selection=raw_decision_kit or None,
-    )
+    from app.billing_cutover import modern_context
+
+    modern = modern_context(db.session, family="ai_reservation", organization_id=session["organization_id"])
+    kit_judgment = None
+    if modern is None:
+        kit_judgment = _decision_kit_judgment_for_turn(
+            session, user_message, model_selection, explicit_selection=raw_decision_kit or None,
+        )
     _apply_rfp_decision_context(
         session, user_message, explicit_selection=raw_decision_kit or None, judgment=kit_judgment,
     )
@@ -16604,6 +16614,7 @@ def conversation_start():
         session_created=session_created,
         name=name,
         project=turn_project,
+        classify_decision_kit=modern is not None and requested_decision_kit is None,
     )
     if stream_requested:
         return _stream_conversation_turn(turn, turn_request)
@@ -16704,7 +16715,14 @@ def conversation_continue():
 
     # Manual selection is a shortcut. Discovery inference reaches this same
     # persisted state when the user did not click the RFP pill.
-    kit_judgment = _decision_kit_judgment_for_turn(session, user_message, model_selection)
+    from app.billing_cutover import modern_context
+
+    modern = modern_context(
+        db.session, family="ai_reservation", organization_id=session.get("organization_id") or active_org_id,
+    )
+    kit_judgment = None if modern is not None else _decision_kit_judgment_for_turn(
+        session, user_message, model_selection,
+    )
     _apply_rfp_decision_context(session, user_message, judgment=kit_judgment)
     _ensure_decision_kit_starter_rubric(session, user_message=user_message)
 
@@ -16827,6 +16845,7 @@ def conversation_continue():
         session_created=session_created,
         name=None,
         project=turn_project,
+        classify_decision_kit=modern is not None,
     )
     if stream_requested:
         return _stream_conversation_turn(turn, turn_request)

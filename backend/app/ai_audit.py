@@ -135,6 +135,15 @@ def _attempt_cost(item):
     return provider_cost_usd(item.get('model'), input_tokens, output_tokens), True
 
 
+def is_phase12_bound(operation):
+    """Whether the authoritative billing runtime owns this operation."""
+    return operation is not None and all(
+        value is not None for value in (
+            operation.billing_account_id, operation.pricing_policy_version_id, operation.capacity_policy_version_id,
+        )
+    )
+
+
 def persist_operation(
     user,
     *,
@@ -166,11 +175,7 @@ def persist_operation(
         # intentionally retained for legacy operations but is forbidden once
         # authoritative billing has bound the operation.  Phase 17 appends the
         # operational attempt through billing_reliable_delivery instead.
-        if (
-            existing.billing_account_id is not None
-            and existing.pricing_policy_version_id is not None
-            and existing.capacity_policy_version_id is not None
-        ):
+        if is_phase12_bound(existing):
             raise RuntimeError(
                 'Phase 12-bound provider attempts are append-only; '
                 'use append_provider_attempt().'
