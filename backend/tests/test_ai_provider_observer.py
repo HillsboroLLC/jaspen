@@ -108,6 +108,40 @@ def test_a_stream_reports_its_final_usage_or_its_abandonment():
     assert [(c["outcome"], c["output_tokens"]) for c in recorder.calls] == [("succeeded", 30), ("failed", None)]
 
 
+def test_observed_anthropic_request_does_not_retry_inside_the_sdk():
+    import httpx
+
+    requests = []
+
+    def fail(request):
+        requests.append(request)
+        return httpx.Response(503, json={"type": "error", "error": {"type": "overloaded_error"}})
+
+    sdk = anthropic_provider.load_sdk()
+    recorder = Recorder()
+    with sdk.Anthropic(api_key="fake", http_client=httpx.Client(transport=httpx.MockTransport(fail))) as client:
+        with observer.observing(recorder), pytest.raises(sdk.APIStatusError):
+            anthropic_provider.message_create(client, candidates=["m1"], **KW)
+    assert len(requests) == 1
+    assert [call["outcome"] for call in recorder.calls] == ["failed"]
+
+
+def test_a_stream_opening_error_is_reported_once():
+    class UnavailableStream:
+        def __enter__(self):
+            raise RuntimeError("stream unavailable")
+
+    client = FakeClient()
+    client.stream = lambda **kwargs: UnavailableStream()
+    recorder = Recorder()
+    with observer.observing(recorder):
+        manager, _model = anthropic_provider.message_create(client, candidates=["m1"], stream=True, **KW)
+        with pytest.raises(RuntimeError, match="stream unavailable"):
+            with manager:
+                pass
+    assert [call["outcome"] for call in recorder.calls] == ["failed"]
+
+
 class FakeResponse:
     def __init__(self, lines=(), body=None, status_code=200):
         self._lines, self._body, self.status_code = list(lines), body or {}, status_code

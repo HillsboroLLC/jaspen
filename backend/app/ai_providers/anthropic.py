@@ -71,6 +71,10 @@ def message_create(client, *, candidates, stream=False, **kwargs):
                                                            kwargs.get("tools")),
         )
         try:
+            # Phase 12 authorizes each outbound request. Keep retry decisions at
+            # this adapter boundary when the SDK client supports cloning options.
+            with_options = getattr(client, "with_options", None) if call is not None else None
+            request_client = with_options(max_retries=0) if callable(with_options) else client
             request_kwargs = dict(kwargs)
             if not model_accepts_temperature(candidate):
                 request_kwargs.pop("temperature", None)
@@ -81,9 +85,9 @@ def message_create(client, *, candidates, stream=False, **kwargs):
                 # Adaptive thinking can be benchmarked and enabled separately.
                 request_kwargs["thinking"] = {"type": "disabled"}
             if stream:
-                manager = client.messages.stream(model=candidate, **request_kwargs)
+                manager = request_client.messages.stream(model=candidate, **request_kwargs)
                 return (manager if call is None else _ObservedStreamManager(manager, call)), candidate
-            response = client.messages.create(model=candidate, **request_kwargs)
+            response = request_client.messages.create(model=candidate, **request_kwargs)
         except Exception as exc:
             if call is not None:
                 input_tokens, output_tokens = reported_error_usage(exc)
@@ -110,7 +114,13 @@ class _ObservedStreamManager:
         self._stream = None
 
     def __enter__(self):
-        self._stream = self._manager.__enter__()
+        try:
+            self._stream = self._manager.__enter__()
+        except Exception as exc:
+            input_tokens, output_tokens = reported_error_usage(exc)
+            self._call.report("failed", input_tokens=input_tokens, output_tokens=output_tokens, error=exc,
+                              status_code=getattr(exc, "status_code", None))
+            raise
         return self._stream
 
     def __exit__(self, exc_type, exc, tb):
