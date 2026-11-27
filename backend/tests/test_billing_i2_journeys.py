@@ -32,6 +32,7 @@ from app.models_billing_phase8 import SeatCommitment
 from tests import billing_i2_support as s
 
 HEAD = "e7b9d1f3a5c6"
+HEADS = {HEAD, "d7e9b1c3a5f8"}  # I3 follows I2 at integration
 pytestmark = [pytest.mark.postgres, pytest.mark.skipif(
     not os.environ.get("TEST_DATABASE_URL"), reason="local disposable PostgreSQL is not configured")]
 
@@ -40,7 +41,7 @@ pytestmark = [pytest.mark.postgres, pytest.mark.skipif(
 def journey(app, monkeypatch):
     engine = sa.create_engine(os.environ["TEST_DATABASE_URL"], pool_size=4)
     with engine.connect() as connection:
-        if connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one() != HEAD:
+        if connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one() not in HEADS:
             engine.dispose()
             pytest.fail(f"I2 journeys require Alembic head {HEAD}")
     monkeypatch.setenv(bc.SETTING, s.ALL_I2)

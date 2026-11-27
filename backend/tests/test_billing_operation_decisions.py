@@ -586,7 +586,7 @@ def test_revision_extends_phase17_and_is_the_single_head():
     from alembic.script import ScriptDirectory
     from tests.test_billing_migration import MIGRATIONS_DIR
     script = ScriptDirectory(str(MIGRATIONS_DIR))
-    assert script.get_heads() == ["e7b9d1f3a5c6"]  # I2 follows I1, which follows BI-1
+    assert script.get_heads() == ["d7e9b1c3a5f8"]  # I3 follows I2; I2 follows I1; I1 follows BI-1
     assert script.get_revision(REVISION).down_revision == "f3a5c7e9b1d2"
 
 
