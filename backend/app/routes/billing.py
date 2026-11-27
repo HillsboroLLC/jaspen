@@ -210,6 +210,32 @@ def _find_user_for_billing_event(subscription_id=None, customer_id=None):
     return user
 
 
+_ACTIVE_ORGANIZATION = object()
+
+
+def _checkout_organization_metadata(user):
+    """I2: the organization a legacy purchase is made in, recorded at checkout.
+
+    Fulfillment uses it, never the organization that happens to be active when the
+    processor event arrives, so a later switch cannot move value between organizations.
+    """
+    from app.billing_cutover import context_organization_id
+
+    return str(context_organization_id(db.session, user.id) or '')
+
+
+def _legacy_fulfillment_organization_id(user, metadata=None):
+    """The organization legacy fulfillment attributes value to: the one recorded at checkout,
+    else the active one, and never a modern organization (I2)."""
+    from app.billing_cutover import organization_billing_model
+
+    recorded = str(_stripe_field(metadata, 'organization_id') or '').strip() if metadata else ''
+    candidate = recorded or (getattr(user, 'active_organization_id', None) if user is not None else None)
+    if candidate and organization_billing_model(db.session, candidate) == 'modern':
+        return None
+    return candidate or None
+
+
 @billing_bp.route('/plans', methods=['GET'])
 def list_plans():
     """Legacy response: plan_key -> Stripe Price ID."""
@@ -559,11 +585,13 @@ def _fulfill_credit_pack_purchase(
     if tokens <= 0:
         return {'granted': False, 'reason': 'missing_tokens'}
 
+    organization_id = _legacy_fulfillment_organization_id(user, metadata)
     grant, created = grant_persistent_credit_pack(
         user,
         tokens,
         payment_reference=reference,
         checkout_id=_stripe_field(metadata, 'checkout_session_id'),
+        organization_id=organization_id,
         metadata={
             'stripe_payment_intent_id': reference,
             'pack_key': str(_stripe_field(metadata, 'pack_key') or '').strip() or None,
@@ -581,6 +609,7 @@ def _fulfill_credit_pack_purchase(
             external_reference=reference,
             source='credit_pack',
             user=user,
+            organization_id=organization_id,
             amount_paid=amount_paid if amount_paid is not None else amount_due,
             amount_due=amount_due if amount_due is not None else amount_paid,
             currency=currency,
@@ -683,11 +712,13 @@ def _fulfill_limited_time_300k_payment_intent(intent, expected_user=None):
     if tokens <= 0:
         return {'granted': False, 'reason': 'missing_tokens'}
 
+    organization_id = _legacy_fulfillment_organization_id(user, metadata)
     _entitlement, _grant, created = grant_limited_time_300k_offer(
         user,
         tokens,
         payment_reference=payment_intent_id,
         checkout_id=payment_intent_id,
+        organization_id=organization_id,
         metadata={
             'campaign_id': metadata.get('campaign_id'),
             'stripe_payment_intent_id': payment_intent_id,
@@ -700,6 +731,7 @@ def _fulfill_limited_time_300k_payment_intent(intent, expected_user=None):
         external_reference=payment_intent_id,
         source='limited_time_300k',
         user=user,
+        organization_id=organization_id,
         amount_paid=intent.get('amount_received') or 0,
         amount_due=intent.get('amount') or 0,
         currency=intent.get('currency') or 'usd',
@@ -792,6 +824,7 @@ def _record_payment(
     subscription_id=None,
     promotion_code=None,
     paid_at=None,
+    organization_id=_ACTIVE_ORGANIZATION,
 ):
     """Record money received, idempotently by `external_reference`.
 
@@ -819,7 +852,9 @@ def _record_payment(
 
     payment = Payment(
         user_id=str(user.id) if user is not None else None,
-        organization_id=getattr(user, 'active_organization_id', None) if user is not None else None,
+        organization_id=(
+            _legacy_fulfillment_organization_id(user) if organization_id is _ACTIVE_ORGANIZATION else organization_id
+        ),
         external_reference=external_reference,
         source=str(source),
         amount_paid_cents=amount_paid_cents,
@@ -900,11 +935,13 @@ def _fulfill_limited_time_300k_invoice(invoice, expected_user=None):
     if tokens <= 0:
         return {'granted': False, 'reason': 'missing_tokens'}
 
+    organization_id = _legacy_fulfillment_organization_id(user, metadata)
     _entitlement, _grant, created = grant_limited_time_300k_offer(
         user,
         tokens,
         payment_reference=invoice_id,
         checkout_id=invoice_id,
+        organization_id=organization_id,
         metadata={
             'campaign_id': _stripe_field(metadata, 'campaign_id'),
             'stripe_invoice_id': invoice_id,
@@ -922,6 +959,7 @@ def _fulfill_limited_time_300k_invoice(invoice, expected_user=None):
         external_reference=invoice_id,
         source='limited_time_300k',
         user=user,
+        organization_id=organization_id,
         amount_paid=_stripe_field(invoice, 'amount_paid', 0) or 0,
         amount_due=_stripe_field(invoice, 'amount_due', 0) or 0,
         currency=_stripe_field(invoice, 'currency') or 'usd',
@@ -982,6 +1020,7 @@ def create_credit_pack_payment_intent():
             'credits': str(int(tokens_to_credits(tokens, precision=0) or 0)),
             'tokens': str(tokens),
             'checkout_type': 'credit_pack',
+            'organization_id': _checkout_organization_metadata(user),
         },
     )
     return jsonify({
@@ -1083,6 +1122,7 @@ def create_checkout_session():
             'plan_key': plan_key,
             'billing_interval': billing_interval,
             'checkout_type': 'subscription',
+            'organization_id': _checkout_organization_metadata(user),
         },
         success_url=success_url,
         cancel_url=cancel_url,
@@ -1297,6 +1337,7 @@ def create_subscription_embedded():
                 'plan_key': plan_key,
                 'billing_interval': billing_interval,
                 'checkout_type': 'subscription_embedded',
+                'organization_id': _checkout_organization_metadata(user),
             },
         }
         if discounts:
@@ -1578,6 +1619,7 @@ def create_300k_limited_time_payment_intent():
     metadata = {
         'user_id': str(user.id),
         'checkout_type': LIMITED_TIME_300K_CHECKOUT_TYPE,
+        'organization_id': _checkout_organization_metadata(user),
         'tokens': str(credit_tokens),
         'campaign_id': str(data.get('campaign_id') or '').strip()[:80],
         'terms_accepted': 'true',
@@ -1668,6 +1710,7 @@ def apply_300k_limited_time_coupon():
             metadata={
                 'user_id': str(user.id),
                 'checkout_type': LIMITED_TIME_300K_CHECKOUT_TYPE,
+                'organization_id': _checkout_organization_metadata(user),
                 'tokens': str(_stripe_field(intent_metadata, 'tokens') or ''),
                 'campaign_id': str(_stripe_field(intent_metadata, 'campaign_id') or ''),
                 'promotion_code': coupon_code,
@@ -2259,6 +2302,7 @@ def _create_credit_pack_checkout_session():
             'credits': str(int(tokens_to_credits(pack.get('credits', 0), precision=0) or 0)),
             'tokens': str(pack.get('credits', 0)),
             'checkout_type': 'credit_pack',
+            'organization_id': _checkout_organization_metadata(user),
         },
         success_url=success_url,
         cancel_url=cancel_url,
@@ -2324,6 +2368,42 @@ def get_checkout_session():
         return jsonify({'msg': str(e)}), 400
 
 
+def _route_modern_webhook(payload):
+    """I2: a modern account's verified event goes only to the inbox; ``None`` keeps the legacy path.
+
+    With no modern organization this returns ``None`` before any other work, so legacy
+    webhook behavior is unchanged. A modern event is never seen by legacy fulfillment.
+    """
+    import json
+
+    from app import billing_runtime_financial as modern_financial
+    from app.billing_cutover import BillingFamilyDisabledError
+
+    try:
+        event = json.loads(payload)
+        account = modern_financial.webhook_billing_account(db.session, event)
+    except ValueError:
+        return abort(400)
+    except stripe.error.StripeError:
+        db.session.rollback()
+        return jsonify({'error': 'processor_unavailable'}), 503
+    if account is None:
+        return None
+    try:
+        modern_financial.record_modern_webhook(db.session, payload, event, account)
+        db.session.commit()
+    except BillingFamilyDisabledError:
+        db.session.rollback()
+        return jsonify({'error': 'billing_family_disabled'}), 503
+    except modern_financial.inbox.InboxRetryError:
+        db.session.rollback()
+        return jsonify({'error': 'retry'}), 503
+    except modern_financial.inbox.InboxInvariantError:
+        db.session.rollback()
+        return abort(400)
+    return '', 200
+
+
 @billing_bp.route('/webhook', methods=['POST'])
 def stripe_webhook():
     """Receive Stripe events and keep user subscription and thinking power in sync."""
@@ -2343,6 +2423,10 @@ def stripe_webhook():
     event_type = str(event.get('type') or '').strip()
     if not event_id:
         return abort(400)
+
+    modern = _route_modern_webhook(payload)
+    if modern is not None:
+        return modern
 
     existing_event = StripeWebhookEvent.query.filter_by(stripe_event_id=event_id).first()
     if existing_event and bool(existing_event.processed):
@@ -2406,6 +2490,7 @@ def stripe_webhook():
                 _entitlement, _grant, created = grant_limited_time_300k_offer(
                     user,
                     tokens,
+                    organization_id=_legacy_fulfillment_organization_id(user, metadata),
                     payment_reference=sess.get('payment_intent') or sess.get('id'),
                     checkout_id=sess.get('id'),
                     metadata={
@@ -2524,6 +2609,7 @@ def stripe_webhook():
                 external_reference=inv.get('id'),
                 source='subscription_invoice',
                 user=user,
+                organization_id=_legacy_fulfillment_organization_id(user, meta),
                 amount_paid=inv.get('amount_paid') or 0,
                 amount_due=inv.get('amount_due') or 0,
                 currency=inv.get('currency') or 'usd',

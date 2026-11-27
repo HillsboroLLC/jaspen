@@ -879,7 +879,9 @@ def test_seat_service_has_no_live_runtime_callers():
         # Phase 11 contract activation is itself inactive and reuses Phase 8 commitments;
         # Phase 13 projections are inactive and only read seat occupancy and commitments.
         if path.name not in {"billing_seats.py", "billing_enterprise_contracts.py", "models_billing_phase8.py", "models.py",
-                             "billing_projections.py"}
+                             "billing_projections.py",
+                             # I2 (D18 row 17): live only under BILLING_MODERN_FAMILIES (financial_events); off by default, refused in production.
+                             "billing_runtime_financial.py"}
         and ("billing_seats" in path.read_text() or "models_billing_phase8" in path.read_text())
     ]
     assert callers == []

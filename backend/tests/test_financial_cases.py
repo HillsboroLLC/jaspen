@@ -1026,6 +1026,8 @@ def test_case_recorder_has_no_live_runtime_callers():
     for path in app_dir.rglob("*.py"):
         if path.name in {
             "billing_financial_cases.py", "billing_financial_effects.py", "models_billing_phase5.py", "models.py",
+            # I2 (D18 row 17): live only under BILLING_MODERN_FAMILIES (financial_events); off by default, refused in production.
+            "billing_runtime_financial.py",
         }:
             continue
         if "billing_financial_cases" in path.read_text():

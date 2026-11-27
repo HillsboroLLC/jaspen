@@ -220,6 +220,8 @@ def test_inbox_has_no_live_runtime_importers():
             # Phase 13 projections (inactive) read financial cases only.
             "billing_projections.py",
             "billing_shadow.py",  # Phase 16 shadow comparison (inactive) reads financial cases only.
+            # I2 (D18 row 17): live only under BILLING_MODERN_FAMILIES (financial_events); off by default, refused in production.
+            "billing_runtime_financial.py",
         }:
             continue
         text = path.read_text()
