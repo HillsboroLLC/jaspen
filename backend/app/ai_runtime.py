@@ -144,7 +144,8 @@ def _claim_operation(user, *, operation_type, thread_id, customer_visible,
 def execute_customer_operation(user, *, generate, operation_type, request_payload,
                                model_type='orbit', max_tokens=900, thread_id=None,
                                customer_visible=True, subsidy_reason=None,
-                               idempotency_key=None, validate=None, prompt_family=None):
+                               idempotency_key=None, validate=None, prompt_family=None,
+                               prepare_modern_response=None):
     """Execute an arbitrary AI generator and settle its visible result once.
 
     ``prompt_family`` names the prompt the generator uses (P5b evidence only;
@@ -172,6 +173,7 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
                 request_fingerprint=_fingerprint(user=user, operation_type=operation_type,
                                                  request_payload=request_payload),
                 max_tokens=max_tokens, thread_id=thread_id, validate=validate, prompt_family=prompt_family,
+                prepare=prepare_modern_response,
             )
 
     raw_key = _request_idempotency_key(idempotency_key)

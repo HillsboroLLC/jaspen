@@ -519,3 +519,38 @@ def test_a_modern_scoring_failure_keeps_the_existing_retry_card_without_a_charge
     assert _spendable(db.session, modern["account"]) == (before, 0)
     replay = client.post(CONTINUE_URL, headers=headers, json=payload)
     assert replay.status_code == 200 and replay.get_json()["idempotent_replay"] is True
+
+
+@pytest.mark.parametrize("save_fails", [False, True])
+def test_modern_plan_settles_only_if_its_existing_delivery_path_succeeds(client, db, modern, monkeypatch, save_fails):
+    import json
+
+    from app.routes import strategy
+    from tests.test_plan_build_jobs import _ai_plan, _seed
+
+    _seed(modern["owner"], db, modern["thread"])
+    monkeypatch.setattr(strategy, "get_llm_client", lambda: object())
+
+    def provider(*args, **kwargs):
+        _reply, usage, _actions, _mutations, _undo = _provider_reply()
+        return json.dumps(_ai_plan()), usage
+
+    monkeypatch.setattr(strategy, "_strategy_generate_reply", provider)
+    if save_fails:
+        def reject_save(*args, **kwargs):
+            raise RuntimeError("plan store unavailable")
+
+        monkeypatch.setattr(strategy, "_persist_generated_plan", reject_save)
+
+    before, _held = _spendable(db.session, modern["account"])
+    response = client.post(
+        f"/api/v1/strategy/threads/{modern['thread']}/ai-wbs", headers=modern["headers"],
+        json={"commit": True, "scorecard_id": "planner-card"},
+    )
+    [operation] = _operations(db.session, modern["org"])
+    assert operation.delivery_status == ("undelivered" if save_fails else "delivered")
+    assert _spendable(db.session, modern["account"]) == (before if save_fails else before - CHARGE, 0)
+    if save_fails:
+        assert response.status_code == 500
+    else:
+        assert response.status_code == 200 and len(response.get_json()["project_wbs"]["tasks"]) == 12

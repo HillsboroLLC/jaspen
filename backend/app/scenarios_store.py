@@ -172,12 +172,14 @@ def save_project_scenarios_data(
     base_revision=REVISION_UNSET,
     updater=None,
     max_attempts=3,
+    commit=True,
 ):
     """Atomically write scenario data for exactly one canonical project.
 
     Request snapshots are converted to a delta and applied to current data.
     Updater writes likewise re-read and re-apply after a lost race, unless the
-    caller declared a project-wide ``base_revision``. Returns the new revision.
+    caller declared a project-wide ``base_revision``. With ``commit=False``
+    the caller owns the transaction and retries. Returns the new revision.
     """
     sid = str(project_id or '').strip()
     if not sid:
@@ -202,7 +204,7 @@ def save_project_scenarios_data(
         def updater(current):
             return _apply_snapshot_delta(snapshot_original, desired, current)
 
-    attempts = 1 if explicit_revision or updater is None else max(1, int(max_attempts))
+    attempts = 1 if not commit or explicit_revision or updater is None else max(1, int(max_attempts))
 
     for attempt in range(attempts):
         try:
@@ -224,7 +226,10 @@ def save_project_scenarios_data(
                 if not isinstance(next_payload, dict):
                     raise ValueError('project scenario data must be a dict')
                 row.scenarios_json = copy.deepcopy(next_payload)
-                db.session.commit()
+                if commit:
+                    db.session.commit()
+                else:
+                    db.session.flush()
                 return int(row.revision or 1)
 
             # Decide against what is stored now, locked until this transaction
@@ -253,6 +258,8 @@ def save_project_scenarios_data(
 
             changed = _compare_and_swap(row, expected, next_payload, user_id)
             if changed != 1:
+                if not commit:
+                    raise LostRace(expected, None, session_id=sid)
                 db.session.rollback()
                 current_row = db.session.get(UserSession, row.id)
                 conflict = LostRace(
@@ -264,15 +271,14 @@ def save_project_scenarios_data(
                     raise conflict
                 continue
 
-            db.session.commit()
+            if commit:
+                db.session.commit()
             set_committed_value(row, 'revision', expected + 1)
             set_committed_value(row, 'scenarios_json', next_payload)
             return expected + 1
-        except RevisionConflict:
-            db.session.rollback()
-            raise
         except Exception:
-            db.session.rollback()
+            if commit:
+                db.session.rollback()
             raise
 
     raise RevisionConflict(None, None, session_id=sid)

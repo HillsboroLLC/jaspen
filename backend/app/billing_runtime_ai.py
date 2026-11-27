@@ -393,7 +393,7 @@ def _jsonable(value):
 
 
 def execute_modern_operation(user, *, context, generate, operation_type, idempotency_key, request_fingerprint,
-                             max_tokens, thread_id=None, validate=None, prompt_family=None):
+                             max_tokens, thread_id=None, validate=None, prompt_family=None, prepare=None):
     """``ai_runtime.execute_customer_operation`` for a modern organization: the same ``(value, usage,
     settlement)`` contract, through Phase 12 and the worker. A failure is never charged and raises the
     generation's own error, as the legacy path does."""
@@ -409,12 +409,23 @@ def execute_modern_operation(user, *, context, generate, operation_type, idempot
             value = validate(value)
         return _jsonable(value), _jsonable(dict(usage or {}))
 
+    persistence_error = None
+
+    def prepare_response(persist_session, response):
+        nonlocal persistence_error
+        try:
+            value = prepare(response["value"], response["usage"])
+        except Exception as exc:
+            persistence_error = exc
+            raise
+        return {**response, "value": _jsonable(value)}
+
     operation_id, pending = submit_modern_operation(
         session, context=context, user_id=user.id, operation_type=operation_type, generate=run,
         max_output_tokens=max_tokens, config=current_app.config,
         provider_timeout_seconds=anthropic_provider.request_timeout_seconds(), thread_id=thread_id,
         streaming=False, idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
-        prompt_family=prompt_family,
+        prompt_family=prompt_family, prepare_response=prepare_response if prepare is not None else None,
     )
     try:
         outcome = wait_for_outcome(operation_id=operation_id, context=context, user_id=user.id,
@@ -424,6 +435,8 @@ def execute_modern_operation(user, *, context, generate, operation_type, idempot
             forget(operation_id)
     session.expire_all()
     if not outcome["persisted"]:
+        if persistence_error is not None:
+            raise persistence_error
         if pending is not None:
             if pending.failure is not None:
                 raise pending.failure

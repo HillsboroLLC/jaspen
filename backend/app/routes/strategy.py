@@ -6479,6 +6479,12 @@ class InvalidTaskDate(ValueError):
         }, 400
 
 
+class GeneratedWbsLimitError(ValueError):
+    def __init__(self, payload):
+        super().__init__(payload["error"])
+        self.payload = payload
+
+
 def _strict_task_date(value, *, task_id, field, prior_value=None, has_prior=False):
     """Return an empty or real YYYY-MM-DD task date, preserving unchanged legacy data."""
     if has_prior and value == prior_value:
@@ -8630,6 +8636,69 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
         if validate_only:
             return None
 
+        def prepare_wbs(raw_wbs, starter_plan, provider_error):
+            materialized = _materialize_ai_wbs(raw_wbs, start_date=requested_start_date)
+            if deadline:
+                from ..decision_lineage import schedule_backward
+                materialized = schedule_backward(materialized, deadline, buffer_days=1)
+            regeneration_base = plan_guard if force_new and isinstance(plan_guard, dict) else None
+            normalized_wbs = _normalize_project_wbs(
+                {'project_wbs': materialized}, existing=regeneration_base,
+                change_source='regeneration' if regeneration_base else 'generation',
+            )
+            normalized_wbs['ai_generated'] = not starter_plan
+            normalized_wbs['generation_status'] = 'starter_plan' if starter_plan else 'ai_generated'
+            if starter_plan:
+                normalized_wbs['starter_plan_note'] = raw_wbs['summary']
+            normalized_wbs['generation_error'] = provider_error
+            normalized_wbs['ai_generated_at'] = datetime.utcnow().isoformat()
+            normalized_wbs['ai_summary'] = str(raw_wbs.get('summary') or '').strip()
+            if scenario_id:
+                normalized_wbs['source_scenario_id'] = scenario_id
+            # Stamp the originating idea's id + name so this plan knows which idea it
+            # belongs to (header naming + Session Artifacts registration). Built from
+            # the resolved scorecard, falling back to the explicit CTA scorecard_id.
+            _stamp_wbs_identity(normalized_wbs, current_scorecard, fallback_id=scorecard_id)
+            _attach_decision_basis(normalized_wbs, current_scorecard, existing=regeneration_base)
+            return normalized_wbs
+
+        limits = get_wbs_limits_for_plan(plan_key)
+
+        def assert_wbs_limits(normalized_wbs):
+            max_tasks = limits.get('max_tasks_per_wbs')
+            max_deps = limits.get('max_dependencies_per_wbs')
+            task_count = len(normalized_wbs.get('tasks', []))
+            dep_count = _wbs_dependency_count(normalized_wbs)
+            if isinstance(max_tasks, int) and task_count > max_tasks:
+                raise GeneratedWbsLimitError({
+                    'error': 'Generated WBS exceeds task limit for current plan',
+                    'code': 'wbs_task_limit_reached',
+                    'plan_key': plan_key,
+                    'max_tasks_per_wbs': max_tasks,
+                    'task_count': task_count,
+                })
+            if isinstance(max_deps, int) and dep_count > max_deps:
+                raise GeneratedWbsLimitError({
+                    'error': 'Generated WBS exceeds dependency limit for current plan',
+                    'code': 'wbs_dependency_limit_reached',
+                    'plan_key': plan_key,
+                    'max_dependencies_per_wbs': max_deps,
+                    'dependency_count': dep_count,
+                })
+
+        def prepare_modern_wbs(generated, usage):
+            normalized = prepare_wbs(generated['wbs'], False, generated.get('provider_error'))
+            assert_wbs_limits(normalized)
+            revision = None
+            if commit:
+                canonical_id = str(normalized.get('scorecard_id') or scorecard_id or '').strip() or None
+                revision = _persist_generated_plan(
+                    user_id, thread_id, canonical_id, normalized, plan_guard, commit=False,
+                )
+                if not revision:
+                    raise RuntimeError('Failed to persist generated execution plan.')
+            return {**generated, '_prepared_wbs': normalized, '_prepared_revision': revision}
+
         client = get_llm_client()
         background_attempts = {
             'max_attempts': 3,
@@ -8679,6 +8748,7 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                 max_tokens=8000,
                 thread_id=thread_id,
                 idempotency_key=f'plan-build:{job_id}' if job_id else None,
+                prepare_modern_response=prepare_modern_wbs,
             )
         except AIOperationPaymentRequired as payment_error:
             return jsonify(payment_error.payload or {'error': 'Thinking Power exhausted.'}), 402
@@ -8771,29 +8841,8 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                 'provider_error': provider_error,
                 'source_item_count': len(lineage_sources),
             }), 503
-        materialized = _materialize_ai_wbs(raw_wbs, start_date=requested_start_date)
-        if deadline:
-            from ..decision_lineage import schedule_backward
-            materialized = schedule_backward(materialized, deadline, buffer_days=1)
-        regeneration_base = plan_guard if force_new and isinstance(plan_guard, dict) else None
-        normalized_wbs = _normalize_project_wbs(
-            {'project_wbs': materialized}, existing=regeneration_base,
-            change_source='regeneration' if regeneration_base else 'generation',
-        )
-        normalized_wbs['ai_generated'] = not starter_plan
-        normalized_wbs['generation_status'] = 'starter_plan' if starter_plan else 'ai_generated'
-        if starter_plan:
-            normalized_wbs['starter_plan_note'] = raw_wbs['summary']
-        normalized_wbs['generation_error'] = provider_error
-        normalized_wbs['ai_generated_at'] = datetime.utcnow().isoformat()
-        normalized_wbs['ai_summary'] = str(raw_wbs.get('summary') or '').strip()
-        if scenario_id:
-            normalized_wbs['source_scenario_id'] = scenario_id
-        # Stamp the originating idea's id + name so this plan knows which idea it
-        # belongs to (header naming + Session Artifacts registration). Built from
-        # the resolved scorecard, falling back to the explicit CTA scorecard_id.
-        _stamp_wbs_identity(normalized_wbs, current_scorecard, fallback_id=scorecard_id)
-        _attach_decision_basis(normalized_wbs, current_scorecard, existing=regeneration_base)
+        prepared_wbs = generated_wbs.get('_prepared_wbs')
+        normalized_wbs = prepared_wbs or prepare_wbs(raw_wbs, starter_plan, provider_error)
         canonical_scorecard_id = str(normalized_wbs.get('scorecard_id') or scorecard_id or '').strip() or None
         if canonical_scorecard_id:
             scorecard_row = _thread_scorecard_row(
@@ -8803,40 +8852,12 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
             if scorecard_row is not None:
                 scorecard_row.execution_plan_ref = f'thread:{thread_id}:wbs'
 
-        limits = get_wbs_limits_for_plan(plan_key)
-        max_tasks = limits.get('max_tasks_per_wbs')
-        max_deps = limits.get('max_dependencies_per_wbs')
-        task_count = len(normalized_wbs.get('tasks', []))
-        dep_count = _wbs_dependency_count(normalized_wbs)
-
-        if isinstance(max_tasks, int) and task_count > max_tasks:
-            if int((ai_settlement or {}).get('charged_credits') or 0) > 0:
-                reverse_customer_operation_charge(user, ai_settlement, error_code='wbs_task_limit_reached')
-            ai_settlement = None
-            return jsonify({
-                'error': 'Generated WBS exceeds task limit for current plan',
-                'code': 'wbs_task_limit_reached',
-                'plan_key': plan_key,
-                'max_tasks_per_wbs': max_tasks,
-                'task_count': task_count,
-            }), 403
-
-        if isinstance(max_deps, int) and dep_count > max_deps:
-            if int((ai_settlement or {}).get('charged_credits') or 0) > 0:
-                reverse_customer_operation_charge(user, ai_settlement, error_code='wbs_dependency_limit_reached')
-            ai_settlement = None
-            return jsonify({
-                'error': 'Generated WBS exceeds dependency limit for current plan',
-                'code': 'wbs_dependency_limit_reached',
-                'plan_key': plan_key,
-                'max_dependencies_per_wbs': max_deps,
-                'dependency_count': dep_count,
-            }), 403
+        if not prepared_wbs:
+            assert_wbs_limits(normalized_wbs)
 
         if commit:
-            new_revision = _persist_generated_plan(
-                user_id, thread_id, canonical_scorecard_id, normalized_wbs,
-                plan_guard,
+            new_revision = generated_wbs.get('_prepared_revision') if prepared_wbs else _persist_generated_plan(
+                user_id, thread_id, canonical_scorecard_id, normalized_wbs, plan_guard,
             )
             if not new_revision:
                 raise RuntimeError('Failed to persist generated execution plan.')
@@ -8925,6 +8946,10 @@ def _build_execution_plan(user_id, thread_id, payload, *, validate_only=False, j
                 'final_decision': (recorded_decision or {}).get('final_decision'),
             } if recorded_decision else None),
         }), 200
+    except GeneratedWbsLimitError as error:
+        if user is not None and int((ai_settlement or {}).get('charged_credits') or 0) > 0:
+            reverse_customer_operation_charge(user, ai_settlement, error_code=error.payload['code'])
+        return jsonify(error.payload), 403
     except RevisionConflict as e:
         if user is not None and int((ai_settlement or {}).get('charged_credits') or 0) > 0 and not plan_persisted:
             reverse_customer_operation_charge(
@@ -9664,7 +9689,7 @@ def _assert_object_basis(current, expected_updated_at, *, session_id):
         raise RevisionConflict(expected, None, session_id=session_id)
 
 
-def _persist_generated_plan(user_id, thread_id, scorecard_id, normalized_wbs, plan_guard):
+def _persist_generated_plan(user_id, thread_id, scorecard_id, normalized_wbs, plan_guard, *, commit=True):
     """Shared atomic save for background and chat-generated plans."""
     def _apply(current_thread):
         current_plan = _resolve_thread_wbs(current_thread, scorecard_id)
@@ -9674,7 +9699,7 @@ def _persist_generated_plan(user_id, thread_id, scorecard_id, normalized_wbs, pl
         return current_thread
 
     return save_project_scenarios_data(
-        user_id, thread_id, updater=_apply,
+        user_id, thread_id, updater=_apply, commit=commit,
     )
 
 
