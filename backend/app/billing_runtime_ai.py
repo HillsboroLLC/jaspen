@@ -145,11 +145,12 @@ _REGISTRY = {}  # operation id -> _Pending, for the process that submitted it
 
 
 class _Pending:
-    __slots__ = ("generate", "prepare_response", "failure", "generation_failure")
+    __slots__ = ("generate", "prepare_response", "prepare_failure", "failure", "generation_failure", "failure_response")
 
-    def __init__(self, generate, prepare_response):
-        self.generate, self.prepare_response, self.failure = generate, prepare_response, None
-        self.generation_failure = None
+    def __init__(self, generate, prepare_response, prepare_failure):
+        self.generate, self.prepare_response = generate, prepare_response
+        self.prepare_failure = prepare_failure
+        self.failure = self.generation_failure = self.failure_response = None
 
 
 def _worker():
@@ -221,8 +222,14 @@ def _run_registered(ctx):
         # A governed generator rejected its own output before it could be
         # delivered. Keep the existing failure/fallback path for its caller.
         pending.generation_failure = (value, usage)
-        if recorder.recorded_calls:
-            raise worker.DeliveryFailed("generation_failed")
+        if recorder.recorded_calls or pending.prepare_failure is not None:
+            def preserve_failure(session):
+                with worker_organization_scope(ctx.actor_user_id, ctx.organization_id):
+                    pending.failure_response = pending.prepare_failure(session, {"value": value, "usage": usage})
+
+            raise worker.DeliveryFailed(
+                "generation_failed", on_close=preserve_failure if pending.prepare_failure is not None else None,
+            )
         return worker.NoBillableUsage()
     if recorder.delivered_attempt is None:
         if recorder.recorded_calls:
@@ -265,7 +272,7 @@ def _find_replay(session, *, context, user_id, key, fingerprint):
 def submit_modern_operation(session, *, context, user_id, operation_type, generate, max_output_tokens,
                             config, provider_timeout_seconds, thread_id=None, route=None, streaming=None,
                             idempotency_key=None, request_fingerprint=None, prompt_family=None,
-                            before_authorize=None, prepare_response=None):
+                            before_authorize=None, prepare_response=None, prepare_failure=None):
     """Claim, authorize and submit one modern operation; commits.
 
     Returns the operation ID and its local pending executor, if this request
@@ -323,7 +330,7 @@ def submit_modern_operation(session, *, context, user_id, operation_type, genera
     session.commit()  # the job is durable before any provider call
     if refusal is not None:
         raise ModernOperationRefused(refusal, billing_context=context)
-    pending = _REGISTRY[operation.id] = _Pending(generate, prepare_response)
+    pending = _REGISTRY[operation.id] = _Pending(generate, prepare_response, prepare_failure)
     worker.start_in_process(operation.id)
     return operation.id, pending
 

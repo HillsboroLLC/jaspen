@@ -77,9 +77,10 @@ class LeaseLostError(DeliveryError):
 class DeliveryFailed(Exception):
     """Raised by an executor: no usable response. ``code`` is operational, never customer wording."""
 
-    def __init__(self, code):
+    def __init__(self, code, *, on_close=None):
         super().__init__(code)
         self.code = str(code)[:80]
+        self.on_close = on_close
 
 
 @dataclass(frozen=True)
@@ -797,7 +798,7 @@ class DeliveryWorker:
             except LeaseLostError:
                 return None
             except DeliveryFailed as failure:
-                return self._close(claim, "undelivered", error_code=failure.code)
+                return self._close(claim, "undelivered", error_code=failure.code, on_close=failure.on_close)
             except Exception as exc:  # the executor failed; the customer is never charged for it
                 if signals.lease_lost.is_set():
                     return None
@@ -957,7 +958,7 @@ class DeliveryWorker:
                 return None
         return None
 
-    def _close(self, claim, outcome, *, error_code=None):
+    def _close(self, claim, outcome, *, error_code=None, on_close=None):
         """Close without a charge (Phase 12 release/absorb) and finish the job in one transaction."""
         with self._session() as session:
             job = _job(session, claim.operation_id, lock=True)
@@ -990,6 +991,13 @@ class DeliveryWorker:
                     delivery_status = rd.delivery_billing_state(session, **identity)["delivery_status"]
                     if delivery_status in (None, "unsettled"):
                         raise
+            if on_close is not None and delivery_status == "undelivered" and job.cancel_requested_at is None:
+                try:
+                    with session.begin_nested():
+                        on_close(session)
+                except Exception:
+                    # A failure card must never prevent release of a reservation.
+                    log.warning("could not save operational failure for %s", claim.operation_id, exc_info=True)
             _finish(session, job, delivery_status, error_code=error_code)
             session.commit()
         return delivery_status

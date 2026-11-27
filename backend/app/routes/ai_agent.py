@@ -15776,6 +15776,7 @@ def _submit_modern_turn(turn, *, produce, finish, streaming, route, idempotency_
         idempotency_key=modern_ai.modern_idempotency_key(turn.modern, turn.user_id, route, idempotency_key),
         request_fingerprint=request_fingerprint, prompt_family="conversation",
         before_authorize=save_user_turn if save_before_generation else None, prepare_response=prepare_response,
+        prepare_failure=prepare_response if save_before_generation else None,
     )
 
 
@@ -15808,6 +15809,8 @@ def _submit_modern_conversation_turn(turn, req, *, streaming):
                 req.user_message, req.chat_history, req.readiness, req.model_selection,
                 **_turn_generation_kwargs(turn, req),
             )
+        if _failed_scoring_action(actions):
+            usage = {**(usage or {}), "generation_failed": True}
         return {"reply": reply, "actions": actions or [], "mutations": mutations or [],
                 "undo_snapshot": undo if isinstance(undo, dict) else None}, usage
 
@@ -15855,10 +15858,11 @@ def _run_modern_conversation_turn(turn, req, submission=None):
     outcome = modern_ai.wait_for_outcome(operation_id=operation_id, context=turn.modern, user_id=turn.user_id,
                                          timeout_seconds=modern_ai.operation_timeout_seconds(db.session))
     db.session.expire_all()
-    if not outcome["persisted"]:
+    response = outcome["response"] if outcome["persisted"] else getattr(pending, "failure_response", None)
+    if response is None:
         body, status = _modern_turn_failure(turn, req, pending, outcome)
         return jsonify(body), status
-    payload = _modern_conversation_payload(turn, outcome["response"], outcome, streaming=False, replay=pending is None)
+    payload = _modern_conversation_payload(turn, response, outcome, streaming=False, replay=pending is None)
     return jsonify(payload), 200
 
 
@@ -15893,12 +15897,13 @@ def _stream_modern_conversation_turn(turn, req, submission=None):
                 _time.sleep(min(remaining, worker.STREAM_POLL_SECONDS))
             outcome = worker.delivery_outcome(watch, **identity)
         db.session.expire_all()
-        if not outcome["persisted"]:
+        response = view.response if outcome["persisted"] else getattr(pending, "failure_response", None)
+        if response is None:
             body, _status = _modern_turn_failure(turn, req, pending, outcome)
             yield _sse_payload({"type": "error", **body})
             return
         yield _sse_payload(_modern_conversation_payload(
-            turn, view.response, outcome, streaming=True, replay=pending is None,
+            turn, response, outcome, streaming=True, replay=pending is None,
         ))
 
     return Response(event_stream(), mimetype="text/event-stream", headers=dict(_SSE_HEADERS))
@@ -16132,7 +16137,7 @@ def _finish_conversation_turn(turn, req, *, reply, usage, actions, mutations, un
             "action": scoring_failure.get("action") or {"type": "retry", "label": "Retry"},
             "message_saved": True,
         })
-    if getattr(turn, "modern", None) is None:
+    if getattr(turn, "modern", None) is None or scoring_failure:
         _remember_conversation_payload(
             session, req.idempotency_key, req.request_fingerprint, payload,
         )

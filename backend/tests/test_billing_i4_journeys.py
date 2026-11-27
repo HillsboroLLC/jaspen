@@ -488,3 +488,34 @@ def test_ai_family_can_deliver_before_public_readers_are_enabled(client, db, mod
     assert response.status_code == 200
     assert response.get_json()["reply"] == REPLY
     assert _spendable(db.session, modern["account"]) == (before - CHARGE, 0)
+
+
+def test_a_modern_scoring_failure_keeps_the_existing_retry_card_without_a_charge(client, db, modern, monkeypatch):
+    from app.models_billing_phase12 import AIAbsorbedUsage
+    from app.routes import ai_agent
+
+    _script(monkeypatch)
+
+    def fail_scoring(*args, **kwargs):
+        reply, usage, _actions, mutations, undo = _provider_reply()
+        actions = [{"tool": "generate_scorecard", "result": {
+            "ok": False, "failure_state": True, "error": "The scoring step failed.", "code": "scoring_failed",
+        }}]
+        return reply, usage, actions, mutations, undo
+
+    monkeypatch.setattr(ai_agent, "_generate_assistant_reply", fail_scoring)
+    before, _held = _spendable(db.session, modern["account"])
+    headers = {**modern["headers"], "X-Jaspen-Idempotency-Key": "score-failed"}
+    payload = {"thread_id": modern["thread"], "message": "Should we bid?"}
+    response = client.post(CONTINUE_URL, headers=headers, json=payload)
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["retryable"] is True and body["failure_state"] is True and body["reply"] == ""
+    assert body["artifact_messages"]
+    [operation] = _operations(db.session, modern["org"])
+    assert operation.delivery_status == "undelivered" and operation.charged_credits == 0
+    absorbed = db.session.query(AIAbsorbedUsage).filter_by(operation_id=operation.operation_id).one()
+    assert absorbed.absorbed_credits == CHARGE
+    assert _spendable(db.session, modern["account"]) == (before, 0)
+    replay = client.post(CONTINUE_URL, headers=headers, json=payload)
+    assert replay.status_code == 200 and replay.get_json()["idempotent_replay"] is True
