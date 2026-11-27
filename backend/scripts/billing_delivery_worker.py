@@ -25,9 +25,13 @@ Usage: PYTHONPATH=. python scripts/billing_delivery_worker.py <command> [options
 import argparse
 import importlib
 import json
+import logging
 import signal
 import sys
 import threading
+
+
+log = logging.getLogger("billing_delivery_worker")
 
 
 def _emit(value):
@@ -50,6 +54,8 @@ def _parser():
     run.add_argument("--limit", type=int, default=100)
     run.add_argument("--scan-limit", type=int, default=1000)
     run.add_argument("--once", action="store_true")
+    run.add_argument("--shutdown-seconds", type=float, default=60.0,
+                     help="how long SIGTERM waits for running jobs before exiting")
     return parser
 
 
@@ -89,8 +95,16 @@ def _run(worker, args):
     lock = threading.Lock()
 
     def loop():
+        failures = 0
         while not stop.is_set():
-            outcomes = worker.run_once()
+            try:
+                outcomes = worker.run_once()
+                failures = 0
+            except Exception:  # a runner never dies silently; the job lease returns the job to recovery
+                failures += 1
+                log.warning("delivery runner pass failed", exc_info=True)
+                stop.wait(min(args.idle_seconds * (2 ** failures), 30.0))
+                continue
             with lock:
                 results["jobs"] += len(outcomes)
             if args.once:
@@ -108,9 +122,11 @@ def _run(worker, args):
         if code == 1 or args.once or stop.wait(args.recover_every):
             break
     stop.set()
+    unfinished = 0
     for thread in threads:
-        thread.join()
-    _emit({"jobs_run": results["jobs"]})
+        thread.join(args.shutdown_seconds)  # a hung executor never blocks shutdown; its job lease lapses
+        unfinished += thread.is_alive()
+    _emit({"jobs_run": results["jobs"], "runners_unfinished_at_shutdown": unfinished})
     return code
 
 

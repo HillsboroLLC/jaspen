@@ -435,12 +435,12 @@ def delivery_view(session, *, operation_id, organization_id, actor_user_id):
     }
 
 
-def closed_or_lapsed_operations(session, operation_ids, *, at, limit):
-    """Of the given operation ids (a select), those whose reservation is closed or whose lease lapsed."""
-    return session.execute(select(AIBillingOperation.operation_id).where(
-        AIBillingOperation.operation_id.in_(operation_ids),
+def closed_or_lapsed_filter(operation_id_column, *, at):
+    """A filter on ``operation_id_column``: the operation's reservation is closed or its lease lapsed."""
+    return select(AIBillingOperation.operation_id).where(
+        AIBillingOperation.operation_id == operation_id_column,
         or_(AIBillingOperation.state != "authorized", AIBillingOperation.expires_at <= at),
-    ).order_by(AIBillingOperation.expires_at, AIBillingOperation.operation_id).limit(limit)).scalars().all()
+    ).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +473,10 @@ def _row_error(exc):
         return f"database refused the row: {type(exc.orig).__name__ if exc.orig is not None else type(exc).__name__}"
     if isinstance(exc, sa_exc.OperationalError) and getattr(exc.orig, "pgcode", None) in TRANSIENT_PGCODES:
         return "lock contention; retried by a later sweep"
+    if isinstance(exc, (KeyError, TypeError, ValueError)):
+        # Malformed data in this row (for example a non-integer delivered attempt in a saved envelope).
+        # A genuine code defect also lands here, as every row blocked: the CLI then exits 3 and alerts.
+        return f"malformed row data: {type(exc).__name__}"
     return None
 
 

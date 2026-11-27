@@ -15,6 +15,13 @@ the operation's Phase 17 envelope (``ai_operations.result_json.reliable_delivery
 exists and names the same delivered attempt. Operations without a job are not
 affected.
 
+And one guard on ``ai_operations`` (M3) for Phase 12-bound rows: the durable
+identity (``organization_id``, ``user_id``, ``billing_account_id``) is never
+rewritten to another value (only a first binding from NULL, or the foreign keys'
+``ON DELETE SET NULL``, which recovery reports as blocked and fails closed); and
+once a Phase 17 envelope is saved it cannot be removed or changed, except that its
+``settlement`` is recorded once.
+
 Downgrade refuses while any delivery job exists.
 
 Revision ID: d7e9b1c3a5f8
@@ -44,7 +51,8 @@ JOB_CHECKS = (
     ("length(payload_sha256) = 64 AND length(trim(executor)) > 0", "ck_ai_delivery_jobs_payload"),
 )
 
-PG_FUNCTIONS = ("i3_delivery_job_guard", "i3_delivery_chunk_guard", "i3_delivered_requires_envelope")
+PG_FUNCTIONS = ("i3_delivery_job_guard", "i3_delivery_chunk_guard", "i3_delivered_requires_envelope",
+                "i3_bound_operation_guard")
 
 
 class DeliveryJobsNotEmptyError(RuntimeError):
@@ -197,6 +205,41 @@ def _postgres_guards():
         BEFORE UPDATE ON ai_billing_operations
         FOR EACH ROW EXECUTE FUNCTION i3_delivered_requires_envelope()
     """
+    yield """
+        CREATE FUNCTION i3_bound_operation_guard() RETURNS trigger AS $$
+        DECLARE
+            before_envelope jsonb := OLD.result_json::jsonb -> 'reliable_delivery';
+            after_envelope jsonb := NEW.result_json::jsonb -> 'reliable_delivery';
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM ai_billing_operations WHERE operation_id = OLD.id) THEN
+                RETURN NEW;
+            END IF;
+            IF (OLD.organization_id IS NOT NULL AND NEW.organization_id IS NOT NULL
+                    AND NEW.organization_id <> OLD.organization_id)
+               OR (OLD.user_id IS NOT NULL AND NEW.user_id IS NOT NULL AND NEW.user_id <> OLD.user_id)
+               OR (OLD.billing_account_id IS NOT NULL
+                   AND NEW.billing_account_id IS DISTINCT FROM OLD.billing_account_id) THEN
+                RAISE EXCEPTION USING ERRCODE = '23514',
+                    MESSAGE = 'a Phase 12-bound operation''s identity is immutable';
+            END IF;
+            IF before_envelope IS NOT NULL AND (
+                after_envelope IS NULL
+                OR (before_envelope - 'settlement') IS DISTINCT FROM (after_envelope - 'settlement')
+                OR (before_envelope -> 'settlement' <> 'null'::jsonb
+                    AND (before_envelope -> 'settlement') IS DISTINCT FROM (after_envelope -> 'settlement'))
+            ) THEN
+                RAISE EXCEPTION USING ERRCODE = '23514',
+                    MESSAGE = 'a saved reliable-delivery response is immutable';
+            END IF;
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+    """
+    yield """
+        CREATE TRIGGER trg_i3_bound_operation_guard
+        BEFORE UPDATE ON ai_operations
+        FOR EACH ROW EXECUTE FUNCTION i3_bound_operation_guard()
+    """
 
 
 def _sqlite_raise(message, condition):
@@ -240,11 +283,34 @@ def _sqlite_guards():
                "AND json_extract(operation.result_json, '$.reliable_delivery.delivered_attempt_number') "
                "= NEW.delivered_attempt_number)",
            ))
+    bound = "EXISTS (SELECT 1 FROM ai_billing_operations WHERE operation_id = OLD.id)"
+    yield ("CREATE TRIGGER trg_i3_bound_operation_identity BEFORE UPDATE ON ai_operations FOR EACH ROW "
+           + _sqlite_raise(
+               "a Phase 12-bound operation identity is immutable",
+               f"{bound} AND ((OLD.organization_id IS NOT NULL AND NEW.organization_id IS NOT NULL "
+               "AND NEW.organization_id <> OLD.organization_id) "
+               "OR (OLD.user_id IS NOT NULL AND NEW.user_id IS NOT NULL AND NEW.user_id <> OLD.user_id) "
+               "OR (OLD.billing_account_id IS NOT NULL AND NEW.billing_account_id IS NOT OLD.billing_account_id))",
+           ))
+    # SQLite compares the envelope as JSON text, so it relies on writers keeping its key order
+    # (``settle_persisted_response`` copies the dict); PostgreSQL compares jsonb.
+    before = "json_extract(OLD.result_json, '$.reliable_delivery')"
+    after = "json_extract(NEW.result_json, '$.reliable_delivery')"
+    yield ("CREATE TRIGGER trg_i3_bound_operation_envelope BEFORE UPDATE ON ai_operations FOR EACH ROW "
+           + _sqlite_raise(
+               "a saved reliable-delivery response is immutable",
+               f"{bound} AND {before} IS NOT NULL AND ({after} IS NULL "
+               f"OR json_remove({before}, '$.settlement') IS NOT json_remove({after}, '$.settlement') "
+               "OR (json_extract(OLD.result_json, '$.reliable_delivery.settlement') IS NOT NULL "
+               "AND json(json_extract(OLD.result_json, '$.reliable_delivery.settlement')) IS NOT "
+               "json(json_extract(NEW.result_json, '$.reliable_delivery.settlement'))))",
+           ))
 
 
 SQLITE_TRIGGERS = (
     "trg_i3_delivery_job_insert", "trg_i3_delivery_job_update", "trg_i3_delivery_job_delete",
     "trg_i3_delivery_chunk_update", "trg_i3_delivery_chunk_delete", "trg_i3_delivered_requires_envelope",
+    "trg_i3_bound_operation_identity", "trg_i3_bound_operation_envelope",
 )
 
 
@@ -260,6 +326,7 @@ def downgrade():
     if bind.execute(sa.text("SELECT 1 FROM ai_delivery_jobs LIMIT 1")).first() is not None:
         raise DeliveryJobsNotEmptyError("cannot remove the delivery worker tables while delivery jobs exist")
     if bind.dialect.name == "postgresql":
+        op.execute(sa.text("DROP TRIGGER IF EXISTS trg_i3_bound_operation_guard ON ai_operations"))
         op.execute(sa.text("DROP TRIGGER IF EXISTS trg_i3_delivered_requires_envelope ON ai_billing_operations"))
         op.execute(sa.text("DROP TRIGGER IF EXISTS trg_i3_delivery_chunk_guard ON ai_delivery_stream_chunks"))
         op.execute(sa.text("DROP TRIGGER IF EXISTS trg_i3_delivery_job_guard ON ai_delivery_jobs"))

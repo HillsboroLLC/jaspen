@@ -115,6 +115,13 @@ def fake_provider(ctx):
     raise bdw.DeliveryFailed("provider_failed")
 
 
+# The same fake under names only one PostgreSQL journey uses: the migrated database is shared
+# across runs, and ``run_once`` must never pick up another journey's leftover job.
+bdw.executor("i3-concurrent")(fake_provider)
+bdw.executor("i3-crash-journey")(fake_provider)
+UNREGISTERED = "i3-never-registered"  # guard-test jobs that no worker may run
+
+
 def _factory(engine):
     if engine.dialect.name == "postgresql":
         engine = engine.execution_options(isolation_level="READ COMMITTED")
@@ -122,14 +129,14 @@ def _factory(engine):
 
 
 def _submit(session, ns, *, attempts=("ok",), after_restart=None, heartbeat=60, job_lease=90, timeout=30,
-            max_claims=None, step=None, user=None):
+            max_claims=None, step=None, user=None, executor="i3-fake-provider"):
     authorization = authorize(session, ns, user=user, step=step or f"step-{uuid.uuid4().hex[:8]}")
     payload = {"attempts": list(attempts)}
     if after_restart:
         payload["after_restart"] = list(after_restart)
     bdw.submit_delivery(
         session, operation_id=authorization.operation_id, organization_id=ns.org,
-        actor_user_id=user or ns.owner, executor="i3-fake-provider", payload=payload,
+        actor_user_id=user or ns.owner, executor=executor, payload=payload,
         provider_timeout_seconds=timeout, heartbeat_interval_seconds=heartbeat, job_lease_seconds=job_lease,
         max_claims=max_claims,
     )
@@ -162,6 +169,36 @@ def _mismatched_job(session, ns, actor_user_id):
     session.flush()
 
 
+def _assert_m3_guard(session, ns, *, sqlite):
+    """M3: a bound operation's identity and saved response cannot be rewritten by direct SQL."""
+    operation_id = _saved(session, ns, step=f"m3-{uuid.uuid4().hex[:8]}")
+    rd.settle_persisted_response(session, operation_id=operation_id, organization_id=ns.org,
+                                 actor_user_id=ns.owner)  # the one permitted envelope change
+    session.commit()
+    envelope = session.get(AIOperation, operation_id).result_json["reliable_delivery"]
+
+    def refused(values, message):
+        with pytest.raises(sa.exc.IntegrityError, match=message):
+            with session.begin_nested():
+                session.execute(sa.update(AIOperation).where(AIOperation.id == operation_id).values(**values)
+                                .execution_options(synchronize_session=False))
+        if not sqlite:
+            session.rollback()
+
+    from tests.test_billing_enterprise_contracts import seed_org
+    stranger = seed_org(session)
+    session.commit()
+    refused({"organization_id": stranger.org}, "identity is immutable")
+    refused({"user_id": stranger.owner}, "identity is immutable")
+    refused({"result_json": None}, "response is immutable")
+    refused({"result_json": {"reliable_delivery": {**envelope, "response": {"m": "forged"}}}}, "response is immutable")
+    refused({"result_json": {"reliable_delivery": {**envelope, "settlement": None}}}, "response is immutable")
+    # Other columns stay writable, and the foreign key's SET NULL still applies.
+    session.execute(sa.update(AIOperation).where(AIOperation.id == operation_id).values(
+        status="succeeded", user_id=None).execution_options(synchronize_session=False))
+    session.commit()
+
+
 def _reconciled(session, operation_id):
     return rd.provider_cost_reconciliation(session, operation_id=operation_id)["reconciled"]
 
@@ -176,10 +213,13 @@ def _sources():
             yield path
 
 
-def test_m2_only_the_phase17_boundary_calls_phase12_settlement():
-    """The AI runtime settles only through ``settle_persisted_response`` (M2)."""
-    callers = sorted(str(path.relative_to(BACKEND)) for path in _sources()
-                     if "settle_delivered_operation" in path.read_text())
+@pytest.mark.parametrize("finalizer", [
+    "settle_delivered_operation", "record_undelivered_operation", "expire_ai_operation",
+])
+def test_m2_only_the_phase17_boundary_calls_phase12_finalizers(finalizer):
+    """The AI runtime settles only through ``settle_persisted_response`` (M2) and closes or
+    expires only through the Phase 17 boundary: no other module names a Phase 12 finalizer."""
+    callers = sorted(str(path.relative_to(BACKEND)) for path in _sources() if finalizer in path.read_text())
     assert callers == ["app/billing_ai_operations.py", "app/billing_reliable_delivery.py"]
 
 
@@ -635,6 +675,7 @@ def test_sqlite_migration_guards_jobs_chunks_and_persist_before_settle(tmp_path)
             assert settle_delivered_operation(session, operation_id=plain.operation_id,
                                               delivered_attempt_number=1).charged_credits == 18
             session.commit()
+            _assert_m3_guard(session, ns, sqlite=True)
         with engine.begin() as connection:
             with mock.patch.object(module, "op", Operations(MigrationContext.configure(connection))):
                 with pytest.raises(module.DeliveryJobsNotEmptyError):
@@ -729,11 +770,13 @@ def test_postgres_a_disconnect_never_stops_delivery_and_the_heartbeat_renews_dur
 def test_postgres_concurrent_workers_run_each_job_exactly_once():
     with pg() as engine:
         ns = _pg_world(engine, credits=5000, member={"max_concurrent": 20}, organization={"max_concurrent": 20})
-        operations = [_pg_submit(engine, ns) for _ in range(6)]
+        operations = [_pg_submit(engine, ns, executor="i3-concurrent") for _ in range(6)]
         barrier = threading.Barrier(4)
 
         def run(index):
-            worker = bdw.DeliveryWorker(_factory(engine), owner=f"pg-concurrent-{index}")
+            # Scoped to this journey's executor: other jobs in the shared database are not its work.
+            worker = bdw.DeliveryWorker(_factory(engine), owner=f"pg-concurrent-{index}",
+                                        executors=("i3-concurrent",))
             barrier.wait()
             done = []
             while True:
@@ -790,10 +833,10 @@ def test_postgres_a_crashed_worker_is_recovered_by_another_process():
     with pg() as engine:
         ns = _pg_world(engine)
         operation_id = _pg_submit(engine, ns, attempts=("crash",), after_restart=("ok",), heartbeat=1,
-                                  job_lease=3, timeout=5)
+                                  job_lease=3, timeout=5, executor="i3-crash-journey")
         with pytest.raises(SimulatedCrash):
             bdw.DeliveryWorker(_factory(engine), owner="pg-crashing").run_job(operation_id)
-        restarted = bdw.DeliveryWorker(_factory(engine), owner="pg-restarted")
+        restarted = bdw.DeliveryWorker(_factory(engine), owner="pg-restarted", executors=("i3-crash-journey",))
         assert restarted.run_once() == []  # the dead worker's job lease has not lapsed yet
         assert _wait(lambda: restarted.run_once() == [(operation_id, "delivered")], timeout=10)
         with migrated_session(engine) as session:
@@ -837,9 +880,9 @@ def test_postgres_a_late_response_after_the_lease_lapsed_is_delivered_never_char
         sweeper = bdw.DeliveryWorker(_factory(engine), owner="pg-sweeper")
 
         def lapsed():
+            sweeper.recover()
             with migrated_session(engine) as session:
-                return _billing(session, operation_id).state == "expired" or bool(
-                    sweeper.recover()["expired"])
+                return _billing(session, operation_id).state == "expired"
         assert _wait(lapsed, timeout=15)  # renewal is capped at the deadline plus one lease
         hook["release"].set()
         thread.join(20)
@@ -870,12 +913,13 @@ def test_postgres_recovery_retries_settlement_and_concurrent_sweeps_charge_once(
 
         with ThreadPoolExecutor(3) as pool:
             reports = list(pool.map(sweep, range(3)))
-        assert all(report["blocked"] == [] for report in reports)
+        assert not {row["operation_id"] for report in reports for row in report["blocked"]} & set(operations)
         with migrated_session(engine) as session:
             for operation_id in operations:
                 assert charged(session, operation_id) == 18 and _job(session, operation_id).outcome == "delivered"
             assert sums(session, ns.account) == (5000 - 4 * 18, 0)
-        assert bdw.DeliveryWorker(_factory(engine)).recover()["jobs_settled"] == []
+        final = bdw.DeliveryWorker(_factory(engine)).recover()
+        assert not {row["operation_id"] for row in final["jobs_settled"] + final["settled"]} & set(operations)
 
 
 @PG
@@ -898,7 +942,7 @@ def test_postgres_migrated_guards_protect_jobs_chunks_and_persist_before_settle(
             with pytest.raises(sa.exc.IntegrityError, match="Phase 12 identity"):
                 _mismatched_job(session, ns, other.owner)
             session.rollback()
-        operation_id = _pg_submit(engine, ns)
+        operation_id = _pg_submit(engine, ns, executor=UNREGISTERED)
         with migrated_session(engine) as session:
             for statement, message in (
                 (sa.update(AIDeliveryJob).values(organization_id=other.org), "immutable"),
@@ -921,6 +965,8 @@ def test_postgres_migrated_guards_protect_jobs_chunks_and_persist_before_settle(
                 settle_delivered_operation(session, operation_id=operation_id, delivered_attempt_number=1)
             session.rollback()
             assert charged(session, operation_id) == 0
+        with migrated_session(engine) as session:
+            _assert_m3_guard(session, ns, sqlite=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1049,3 +1095,184 @@ def test_the_payload_bound_is_refused_cleanly(db, monkeypatch):
                             actor_user_id=ns.owner, executor="i3-in-process",
                             payload={"history": "x" * (1024 * 1024)}, provider_timeout_seconds=30)
     assert session.get(AIDeliveryJob, authorization.operation_id) is None
+
+
+# ---------------------------------------------------------------------------
+# Audit regressions: lock order (B1), cancel race (S1), recovery isolation (S2),
+# heartbeat renewal failure (S3), sweep wrap-around (N4)
+# ---------------------------------------------------------------------------
+
+def test_s1_a_cancel_committed_before_persistence_is_never_charged(db, sqlite_worker, monkeypatch):
+    session = db.session
+    ns = world(session)
+    operation_id = _submit(session, ns)
+    session.commit()
+    real = bdw.DeliveryWorker._persist
+
+    def cancel_first(self, claim, result):
+        with Session(db.engine) as other:  # the customer presses Stop after the final in-memory check
+            bdw.request_cancellation(other, operation_id=operation_id, organization_id=ns.org,
+                                     actor_user_id=ns.owner)
+            other.commit()
+        return real(self, claim, result)
+
+    monkeypatch.setattr(bdw.DeliveryWorker, "_persist", cancel_first)
+    assert sqlite_worker.run_job(operation_id) == "undelivered"
+    session.expire_all()
+    job = _job(session, operation_id)
+    assert (job.outcome, job.error_code) == ("undelivered", "cancelled")
+    assert session.get(AIOperation, operation_id).result_json is None
+    assert charged(session, operation_id) == 0 and sums(session, ns.account) == (500, 0)
+    assert _reconciled(session, operation_id)
+
+
+def test_n3_a_kept_response_cannot_be_cancelled(db, sqlite_worker):
+    session = db.session
+    ns = world(session)
+    operation_id = _submit(session, ns)
+    session.commit()
+    sqlite_worker.run_job(operation_id)
+    session.expire_all()
+    assert not bdw.request_cancellation(session, operation_id=operation_id, organization_id=ns.org,
+                                        actor_user_id=ns.owner)
+
+
+def test_s2_one_poisoned_abandoned_job_never_stops_recovery(db, monkeypatch):
+    session = db.session
+    ns = world(session, member={"max_concurrent": 20}, organization={"max_concurrent": 20})
+    poisoned = _submit(session, ns)
+    healthy = _submit(session, ns)
+    session.get(AIOperation, poisoned).user_id = None  # identity disagrees with the Phase 12 binding
+    session.commit()
+    after_lapse = rd._clock(session) + timedelta(seconds=int(_billing(session, healthy).lease_seconds) + 5)
+    monkeypatch.setattr("app.billing_ai_operations._clock", lambda _session: after_lapse)
+    monkeypatch.setattr("app.billing_reliable_delivery._clock", lambda _session: after_lapse)
+    with mock.patch.dict(bdw._EXECUTORS, {}, clear=True):
+        worker = bdw.DeliveryWorker(_factory(db.engine), owner="recovery-only")
+        first = worker.recover()
+        second = worker.recover()
+    assert first["jobs_closed"] == [{"operation_id": healthy, "outcome": "undelivered"}]
+    assert poisoned in {row["operation_id"] for row in first["blocked"]}
+    assert poisoned in {row["operation_id"] for row in second["blocked"]}
+    session.expire_all()
+    assert _job(session, poisoned).lease_token is None and _job(session, poisoned).claims == 0  # never claimed
+    assert charged(session, poisoned) == 0  # fail closed
+
+
+def test_s3_a_failed_reservation_renewal_still_renews_the_job_lease(db, monkeypatch):
+    session = db.session
+    ns = world(session)
+    operation_id = _submit(session, ns, heartbeat=1, job_lease=3)
+    session.commit()
+    worker = bdw.DeliveryWorker(_factory(db.engine), owner="hb")
+    claim = worker.claim(operation_id)
+    before = _job(session, operation_id).lease_expires_at
+    monkeypatch.setattr(rd, "heartbeat_reliable_delivery",
+                        mock.Mock(side_effect=rd.AIBillingError("renewal refused")))
+    time.sleep(0.01)
+    assert bdw._Heartbeat(worker, claim, bdw._Signals()).tick()
+    after = _job(session, operation_id).lease_expires_at
+    assert bdw._utc(after) > bdw._utc(before)
+
+
+def test_n4_the_sweep_wraps_around_to_rows_before_its_cursor(db):
+    session = db.session
+    ns = world(session)
+    saved = _saved(session, ns, step="before-the-cursor")
+    far = rd.encode_cursor((_billing(session, saved).expires_at + timedelta(days=1), "z" * 36))
+    report = rd.recover_reliable_deliveries(session, cursors={"settle": far, "expire": far})
+    assert [row["operation_id"] for row in report["settled"]] == [saved]
+    assert report["cursors"] == {"settle": None, "expire": None}  # a full cycle completed
+
+
+@PG
+def test_postgres_b1_a_heartbeat_during_call_recording_never_deadlocks(monkeypatch):
+    with pg() as engine:
+        ns = _pg_world(engine)
+        operation_id = _pg_submit(engine, ns, heartbeat=1, job_lease=3, timeout=5)
+        worker = bdw.DeliveryWorker(_factory(engine), owner="pg-b1")
+        claim = worker.claim(operation_id)
+        signals = bdw._Signals()
+        context = bdw.DeliveryContext(worker, claim, signals)
+        attempt = context.begin_attempt()
+        context.check_call(attempt_number=attempt, call_index=0, provider=CLAUDE[0], model=CLAUDE[1],
+                           max_input_tokens=1000, max_output_tokens=1000)
+        real = rd.record_delivery_call
+        recording = threading.Event()
+
+        def slow_record(session, **kwargs):
+            result = real(session, **kwargs)  # holds the account and operation locks
+            recording.set()
+            time.sleep(1.0)  # the heartbeat ticks now
+            return result
+
+        monkeypatch.setattr(rd, "record_delivery_call", slow_record)
+        ticks = []
+        heartbeat = threading.Thread(target=lambda: (recording.wait(10), ticks.append(
+            bdw._Heartbeat(worker, claim, signals).tick())))
+        heartbeat.start()
+        context.record_call(attempt_number=attempt, call_index=0, provider=CLAUDE[0], model=CLAUDE[1],
+                            outcome="succeeded", usage_label="reported", input_tokens=1000, output_tokens=1000,
+                            requested_at=context.now(), finished_at=context.now(), provider_request_id="b1")
+        heartbeat.join(20)
+        assert ticks == [True]
+        with migrated_session(engine) as session:
+            assert session.execute(sa.select(sa.func.count()).select_from(AIProviderCallUsage).where(
+                AIProviderCallUsage.operation_id == operation_id)).scalar_one() == 1
+
+
+def test_s2_a_malformed_saved_envelope_is_a_row_block_and_the_sweep_moves_on(db):
+    session = db.session
+    ns = world(session, member={"max_concurrent": 20}, organization={"max_concurrent": 20})
+    malformed = _saved(session, ns, step="malformed")
+    good = _saved(session, ns, step="good")
+    operation = session.get(AIOperation, malformed)
+    result = dict(operation.result_json)
+    result["reliable_delivery"] = {**result["reliable_delivery"], "delivered_attempt_number": "not-a-number"}
+    operation.result_json = result
+    session.flush()
+    report = rd.recover_reliable_deliveries(session)
+    assert report["blocked"] == [{"operation_id": malformed, "reason": "malformed row data: ValueError"}]
+    assert [row["operation_id"] for row in report["settled"]] == [good]
+
+
+def test_s3_a_failing_runner_pass_is_logged_and_retried_not_fatal(db, app, monkeypatch, capsys, caplog):
+    cli = _cli()
+    monkeypatch.setenv("BILLING_MODERN_FAMILIES", FAMILIES)
+    calls = []
+
+    def flaky(self, **_kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("database went away")
+        return []
+
+    monkeypatch.setattr(bdw.DeliveryWorker, "run_once", flaky)
+    real_recover = bdw.DeliveryWorker.recover
+
+    def slow_recover(self, **kwargs):  # keep the round open long enough for the runner to retry
+        assert _wait(lambda: len(calls) >= 2, timeout=5)
+        return real_recover(self, **kwargs)
+
+    monkeypatch.setattr(bdw.DeliveryWorker, "recover", slow_recover)
+    assert cli.run(["run", "--once", "--idle-seconds", "0.01", "--concurrency", "1",
+                    "--executor-module", "app.billing_delivery_worker"],
+                   app=app, session_factory=_factory(db.engine)) == 0
+    assert len(calls) == 2 and "delivery runner pass failed" in caplog.text
+    assert '"runners_unfinished_at_shutdown": 0' in capsys.readouterr().out
+
+
+def test_n3_a_hung_executor_stops_holding_its_job_after_the_reservation_lapsed(db):
+    session = db.session
+    ns = world(session)
+    operation_id = _submit(session, ns, heartbeat=1, job_lease=3, timeout=5)
+    session.commit()
+    worker = bdw.DeliveryWorker(_factory(db.engine), owner="hung")
+    claim = worker.claim(operation_id)
+    signals = bdw._Signals()
+    signals.lapsed.set()
+    signals.lapsed_at.append(time.monotonic() - (claim.provider_timeout_seconds + claim.heartbeat_interval_seconds + 1))
+    before = _job(session, operation_id).lease_expires_at
+    assert bdw._Heartbeat(worker, claim, signals).tick() is False
+    assert signals.lease_lost.is_set()
+    assert _job(session, operation_id).lease_expires_at == before  # not renewed: recovery takes it back
