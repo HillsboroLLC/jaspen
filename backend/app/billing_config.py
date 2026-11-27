@@ -466,10 +466,14 @@ def _cycle_reset_due(last_reset, now):
 
 
 def _active_org_for_user(user):
-    org_id = str(getattr(user, "active_organization_id", "") or "").strip()
-    if not org_id:
-        return None
+    from app import db
+    from app.billing_cutover import organization_billing_model
     from app.models import Organization
+    from app.session_access import active_org_id_for_user
+
+    org_id = active_org_id_for_user(user)
+    if not org_id or organization_billing_model(db.session, org_id) == "modern":
+        return None
     return Organization.query.filter_by(id=org_id).first()
 
 

@@ -733,3 +733,27 @@ def test_the_dispatch_contract_names_exactly_one_handler(db):
     both = bc.CutoverConfig(frozenset({"identity", "financial_events"}), ())
     context = bc.modern_context(session, family="financial_events", organization_id=org.id, config=both)
     assert context == bc.ModernContext(org.id, assignment.billing_account_id)
+
+
+def test_a_legacy_shared_credit_writer_cannot_use_a_modern_org_pool(db):
+    from flask import current_app
+
+    from app.billing_config import consume_credits
+    from app.session_access import pin_active_organization
+
+    session = db.session
+    _owner, modern, _assignment = _modern(session)
+    member = _user(session)
+    legacy = _org(session, member)
+    session.add(OrganizationMember(organization_id=modern.id, user_id=member.id, role="creator", status="active"))
+    member.subscription_plan = "team"
+    member.active_organization_id = modern.id
+    session.commit()
+
+    assert consume_credits(member, 1)[0] is False
+    assert "thinking_power" not in (modern.settings or {})
+    with current_app.test_request_context():
+        pin_active_organization(member.id, legacy.id)
+        assert consume_credits(member, 1)[0] is True
+    assert "thinking_power" in legacy.settings
+    assert "thinking_power" not in (modern.settings or {})
