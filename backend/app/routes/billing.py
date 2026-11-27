@@ -292,12 +292,50 @@ def get_billing_catalog():
     }), 200
 
 
+def _decorate_connector_tools(user, tool_entitlements):
+    """Connector connection state on the tool entitlements (not billing state; shared by both models)."""
+    connector_settings = get_all_connector_settings(user.id)
+    for tool in tool_entitlements:
+        if str(tool.get('type') or '').lower() != 'connector':
+            continue
+        connector_id = str(tool.get('id') or '').strip().lower()
+        settings = connector_settings.get(connector_id) or {}
+        connection_status = str(settings.get('connection_status') or 'disconnected').strip().lower()
+        if connection_status not in ('connected', 'disconnected'):
+            connection_status = 'disconnected'
+        tool['connection_status'] = connection_status
+        tool['connected'] = bool(tool.get('enabled')) and connection_status == 'connected'
+        tool['sync_mode'] = settings.get('sync_mode') or 'import'
+        tool['conflict_policy'] = settings.get('conflict_policy') or 'prefer_external'
+        tool['last_sync_at'] = settings.get('last_sync_at')
+        tool['auto_sync'] = bool(settings.get('auto_sync', True))
+        tool['external_workspace'] = settings.get('external_workspace') or ''
+
+
 @billing_bp.route('/status', methods=['GET'])
 @jwt_required()
 def get_billing_status():
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
+
+    # Readers family: a modern organization's status is a pure projection, answered before any legacy
+    # pre-read (bootstrap, the admin plan override, Stripe), all of which write or call the processor.
+    from app.billing_cutover import modern_context
+    from app.billing_projections import ProjectionError
+    try:
+        readers = modern_context(db.session, family='readers', user_id=user.id)
+        if readers is not None:
+            from app.billing_runtime_readers import modern_billing_status
+            payload = modern_billing_status(
+                db.session, context=readers, user=user, app_config=current_app.config,
+                usage_warning_fields=_usage_warning_fields,
+                is_admin=is_global_admin(user, app_config=current_app.config))
+            _decorate_connector_tools(user, payload['tool_entitlements'])
+            return jsonify(payload), 200
+    except ProjectionError as exc:  # an invariant violation is refused, never hidden
+        current_app.logger.error('billing status projection refused: %s', exc)
+        return jsonify({'error': 'billing_projection_unavailable'}), 409
 
     if bootstrap_legacy_credits(user, current_app.config):
         db.session.commit()
@@ -334,22 +372,7 @@ def get_billing_status():
     allowed_model_types = get_allowed_model_types(access_plan_key, current_app.config)
     default_model_type = get_default_model_type(access_plan_key, current_app.config)
     tool_entitlements = get_tool_entitlements(access_plan_key)
-    connector_settings = get_all_connector_settings(user.id)
-    for tool in tool_entitlements:
-        if str(tool.get('type') or '').lower() != 'connector':
-            continue
-        connector_id = str(tool.get('id') or '').strip().lower()
-        settings = connector_settings.get(connector_id) or {}
-        connection_status = str(settings.get('connection_status') or 'disconnected').strip().lower()
-        if connection_status not in ('connected', 'disconnected'):
-            connection_status = 'disconnected'
-        tool['connection_status'] = connection_status
-        tool['connected'] = bool(tool.get('enabled')) and connection_status == 'connected'
-        tool['sync_mode'] = settings.get('sync_mode') or 'import'
-        tool['conflict_policy'] = settings.get('conflict_policy') or 'prefer_external'
-        tool['last_sync_at'] = settings.get('last_sync_at')
-        tool['auto_sync'] = bool(settings.get('auto_sync', True))
-        tool['external_workspace'] = settings.get('external_workspace') or ''
+    _decorate_connector_tools(user, tool_entitlements)
     usage_meta = _usage_warning_fields(cycle_limit, tokens_used)
 
     # Surface pending-state details from the live Stripe subscription so the UI
@@ -2017,8 +2040,16 @@ _PLAN_TIER = {'free': 0, 'starter': 1, 'essential': 2, 'team': 3, 'business': 4}
 
 
 def _seat_billing_context(user):
+    from app.billing_cutover import modern_context
+    from app.orgs import org_plan_key, org_total_paid_seat_limit
     org, membership = resolve_active_org_for_user(user)
-    plan_key = to_public_plan(getattr(org, 'plan_key', None) or user.subscription_plan)
+    modern = modern_context(db.session, family='readers', organization_id=org.id) if org else None
+    if modern is not None:
+        # A modern organization's plan and seat commitment are its entitlements, never the legacy row or a
+        # person's processor subscription.
+        plan_key = to_public_plan(org_plan_key(org))
+    else:
+        plan_key = to_public_plan(getattr(org, 'plan_key', None) or user.subscription_plan)
     plan = get_plan_catalog(current_app.config).get(plan_key) or {}
     if plan_key not in {'team', 'business'}:
         return None, ({'msg': 'Seat add-ons are available only on Team and Business.'}, 404)
@@ -2027,12 +2058,18 @@ def _seat_billing_context(user):
 
     included = int(plan.get('included_seats') or plan.get('min_seats') or 0)
     maximum = int(plan.get('max_total_paid_seats') or included)
-    current = int(getattr(org, 'max_total_paid_seats', None) or included)
+    current = int((org_total_paid_seat_limit(org) if modern is not None else getattr(org, 'max_total_paid_seats', None))
+                  or included)
     current = max(included, min(current, maximum))
     usage = build_seat_usage(org) or {}
     subscription = None
     billing_interval = 'monthly'
-    if user.stripe_subscription_id:
+    if modern is not None:
+        from app.billing_runtime_readers import modern_billing_status
+        status = modern_billing_status(db.session, context=modern, user=user, app_config=current_app.config,
+                                       usage_warning_fields=_usage_warning_fields)
+        billing_interval = status.get('billing_interval') or 'monthly'
+    elif user.stripe_subscription_id:
         try:
             subscription = stripe.Subscription.retrieve(user.stripe_subscription_id)
         except stripe.error.StripeError as exc:
