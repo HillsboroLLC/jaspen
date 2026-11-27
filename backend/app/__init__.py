@@ -681,6 +681,22 @@ def create_app():
 
     from .billing_cutover import BillingFamilyDisabledError
 
+    from .billing_runtime_ai import ModernOperationRefused
+
+    @app.errorhandler(ModernOperationRefused)
+    def handle_modern_operation_refused(e):
+        # Operational answers only (Article 17A). Nothing was charged.
+        db.session.rollback()
+        status = {'credit_exhausted': 402, 'capacity_denied': 429, 'delivery_pending': 202}.get(e.code, 503)
+        if e.code == 'credit_exhausted':
+            from .routes.ai_agent import _insufficient_credits_payload
+            from flask_jwt_extended import get_jwt_identity
+            from .models import User
+            user = db.session.get(User, str(get_jwt_identity() or ''))
+            if user is not None:
+                return jsonify(_insufficient_credits_payload(user, 0)), 402
+        return jsonify({'error': 'ai_operation_unavailable', 'code': e.code}), status
+
     @app.errorhandler(BillingFamilyDisabledError)
     def handle_billing_family_disabled(e):
         # A modern organization whose family is off: nobody answers, never a fall back to legacy billing.

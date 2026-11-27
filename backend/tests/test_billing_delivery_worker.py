@@ -190,7 +190,8 @@ def test_the_worker_has_no_live_caller():
                      if str(path.relative_to(BACKEND)) not in {"app/billing_delivery_worker.py",
                                                                "app/models_billing_delivery.py"}
                      and ("billing_delivery_worker" in path.read_text() or "models_billing_delivery" in path.read_text()))
-    assert callers == ["scripts/billing_delivery_worker.py"]
+    # I4: the ai_reservation family runtime, reached only through modern_context(family="ai_reservation").
+    assert callers == ["app/billing_runtime_ai.py", "scripts/billing_delivery_worker.py"]
 
 
 def test_worker_migration_follows_i1_and_is_the_single_head():

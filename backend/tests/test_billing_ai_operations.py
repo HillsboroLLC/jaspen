@@ -1045,7 +1045,10 @@ def test_phase12_service_has_no_live_runtime_callers():
                              "billing_shadow.py",  # Phase 16 shadow comparison is inactive and read only
                              # I4: operator-only staging test policy installer (scripts/billing_policies.py);
                              # no route, job or startup path imports it.
-                             "billing_runtime_policies.py"}
+                             "billing_runtime_policies.py",
+                             # I4: the ai_reservation family runtime, reached only through
+                             # modern_context(family="ai_reservation"); legacy contexts never import it.
+                             "billing_runtime_ai.py"}
         and ("billing_ai_operations" in path.read_text() or "models_billing_phase12" in path.read_text())
     ]
     assert callers == []

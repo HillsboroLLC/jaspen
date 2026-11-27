@@ -154,6 +154,24 @@ def execute_customer_operation(user, *, generate, operation_type, request_payloa
         _settle_reserved_credits,
     )
 
+    if customer_visible and user is not None:
+        # I4: the work's organization decides the billing model (I1 dispatch contract). A modern organization
+        # runs through Phase 12 and the reliable-delivery worker; a legacy one keeps the path below unchanged.
+        from .billing_cutover import modern_context
+        from .billing_runtime_ai import execute_modern_operation, operation_organization_id
+        context = modern_context(db.session, family='ai_reservation',
+                                 organization_id=operation_organization_id(db.session, user, thread_id))
+        if context is not None:
+            raw = _request_idempotency_key(idempotency_key)
+            return execute_modern_operation(
+                user, context=context, generate=generate, operation_type=operation_type,
+                idempotency_key=(hashlib.sha256(f"{user.id}:{operation_type}:{raw}".encode('utf-8')).hexdigest()
+                                 if raw else None),
+                request_fingerprint=_fingerprint(user=user, operation_type=operation_type,
+                                                 request_payload=request_payload),
+                max_tokens=max_tokens, thread_id=thread_id, validate=validate, prompt_family=prompt_family,
+            )
+
     raw_key = _request_idempotency_key(idempotency_key)
     # One HTTP action can legitimately contain several governed components
     # (for example, a scorecard tool call plus the surrounding assistant turn).

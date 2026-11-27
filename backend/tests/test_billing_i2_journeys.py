@@ -121,7 +121,7 @@ def test_journey_free_then_paid_then_renewal_then_pack_and_refund(journey):
     # D4: the organization's own Free lot, from its account anchor.
     free = funding.allocate_free(session, _context(j))
     session.commit()
-    assert (free.outcome, free.credit_amount) == ("inserted", 300)
+    assert (free.outcome, free.credit_amount) == ("inserted", 300_000)
     # The first paid invoice replaces Free (Phase 7 free-to-paid) and funds the full period. The account
     # anchor is the organization's creation time, so the paid anchor starts after it.
     import time
@@ -131,7 +131,7 @@ def test_journey_free_then_paid_then_renewal_then_pack_and_refund(journey):
     assert _process(j)["processed"] == 1, _state(j, activation)
     paid = session.query(CreditLot).filter_by(billing_account_id=j["account_id"],
                                               source_type="subscription_recurring").one()
-    assert paid.original_amount == 7000
+    assert paid.original_amount == 7_000_000
     assert funding.allocate_free(session, _context(j)).outcome == "paid_plan_active"
     session.rollback()
     # A credit pack during the paid term funds once, even when delivered twice.
@@ -145,7 +145,7 @@ def test_journey_free_then_paid_then_renewal_then_pack_and_refund(journey):
     assert _state(j, first) == ("processed", None) and _state(j, second) == ("processed", None)
     pack = session.query(CreditLot).filter_by(billing_account_id=j["account_id"],
                                               source_type="credit_pack_purchase").one()
-    assert _balance(session, pack.id) == (3000, 0)
+    assert _balance(session, pack.id) == (3_000_000, 0)
     # A full refund reverses the unused pack value (single-line evidence, D5 basis recorded).
     j["gateway"].payment_customers[intent["id"]] = j["customer"]
     refund = {"id": f"re_i2{uuid.uuid4().hex[:12]}", "object": "refund", "status": "succeeded", "amount": 1000,
@@ -191,7 +191,7 @@ def test_journey_monthly_renewal_scheduled_downgrade_and_cancellation(journey):
         "plan.starter.monthly"
     lots = session.query(CreditLot).filter_by(billing_account_id=j["account_id"],
                                               source_type="subscription_recurring").order_by(CreditLot.available_at)
-    assert [lot.original_amount for lot in lots] == [7000, 7000, 1000]
+    assert [lot.original_amount for lot in lots] == [7_000_000, 7_000_000, 1_000_000]
 
 
 def test_journey_annual_dispute_release_and_review_quarantines(journey):
@@ -225,7 +225,7 @@ def test_journey_annual_dispute_release_and_review_quarantines(journey):
     assert (release.outcome, release.period_index, release.reapplied_cases) == ("inserted", 1, 1)
     lots = session.query(CreditLot).filter_by(billing_account_id=j["account_id"],
                                               source_type="subscription_recurring").all()
-    assert sorted(_balance(session, lot.id) for lot in lots) == [(0, 29000), (0, 29000)]
+    assert sorted(_balance(session, lot.id) for lot in lots) == [(0, 29_000_000), (0, 29_000_000)]
     assert session.query(DomainEvent).filter(
         DomainEvent.billing_account_id == j["account_id"],
         DomainEvent.event_key.like("financial_case_version_applied:%:lot:%")).count() == 1
@@ -233,7 +233,7 @@ def test_journey_annual_dispute_release_and_review_quarantines(journey):
     full["status"] = "won"
     won_pk = _record(j, full, "charge.dispute.closed", _now(j))
     assert _process(j)["processed"] == 1, _state(j, won_pk)
-    assert sorted(_balance(session, lot.id) for lot in lots) == [(29000, 0), (29000, 0)]
+    assert sorted(_balance(session, lot.id) for lot in lots) == [(29_000_000, 0), (29_000_000, 0)]
     assert session.query(FinancialCase).filter_by(case_object_id=full["id"]).one().state == "won"
 
 

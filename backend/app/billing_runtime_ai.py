@@ -128,7 +128,11 @@ class Phase12CallRecorder:
 # Running a modern operation through Phase 12 and the reliable-delivery worker
 # ---------------------------------------------------------------------------
 
-INITIAL_INPUT_BOUND = 8000  # the first hold's input assumption; settlement holds more up to the policy ceiling
+# The first hold's token assumption. It is not a cap: every call is still checked against the policy's per-call
+# bounds, and settlement holds more, up to the reservation ceiling and what the account can spend (Phase 12).
+# Kept small so a Free organization's allowance can start an ordinary turn.
+INITIAL_INPUT_BOUND = 2000
+INITIAL_OUTPUT_BOUND = 1000
 EXECUTOR_NAME = "in_process"
 _REGISTRY = {}  # operation id -> _Pending, for the process that submitted it
 
@@ -182,7 +186,7 @@ def _run_registered(ctx):
     from .ai_providers import observer as provider_observer
 
     worker = _worker()
-    pending = _REGISTRY.get(ctx.operation_id)
+    pending = _REGISTRY.pop(ctx.operation_id, None)  # the submitting caller keeps its own reference
     if pending is None:
         raise worker.DeliveryFailed("not_resumable")  # another process or a restart: closed undelivered, no charge
     recorder = Phase12CallRecorder(ctx)
@@ -210,7 +214,7 @@ def _run_registered(ctx):
 def submit_modern_operation(session, *, context, user_id, operation_type, generate, max_output_tokens,
                             config, provider_timeout_seconds, thread_id=None, route=None, streaming=None,
                             idempotency_key=None, request_fingerprint=None, prompt_family=None, on_persist=None):
-    """Claim, authorize and submit one modern operation; commits. Returns the operation id.
+    """Claim, authorize and submit one modern operation; commits. Returns ``(operation_id, pending)``.
 
     ``generate(emit, should_stop) -> (value, usage)`` runs on the worker thread.
     ``on_persist(session, response)`` runs inside the transaction that saves the
@@ -228,7 +232,8 @@ def submit_modern_operation(session, *, context, user_id, operation_type, genera
     auth = authorize_ai_operation(
         session, operation_id=operation.id, actor_user_id=str(user_id), step_key=f"{operation_type}:1",
         candidates=[list(pair) for pair in configured_candidates(session, config)],
-        max_input_tokens=INITIAL_INPUT_BOUND, max_output_tokens=max(1, int(max_output_tokens or 1)),
+        max_input_tokens=INITIAL_INPUT_BOUND,
+        max_output_tokens=max(1, min(int(max_output_tokens or 1), INITIAL_OUTPUT_BOUND)),
     )
     if auth.outcome != "authorized":
         operation.status, operation.error_code = "failed", auth.outcome
@@ -247,11 +252,144 @@ def submit_modern_operation(session, *, context, user_id, operation_type, genera
         session.commit()
         raise ModernOperationRefused("delivery_timing")
     session.commit()  # the job is durable before any provider call
-    _REGISTRY[operation.id] = _Pending(generate, on_persist)
+    pending = _REGISTRY[operation.id] = _Pending(generate, on_persist)
     worker.start_in_process(operation.id)
-    return operation.id
+    return operation.id, pending
 
 
 def forget(operation_id):
-    """Drop the in-memory generation once the operation has an outcome."""
+    """Drop an in-memory generation the worker never claimed (for example after a refused submit)."""
     return _REGISTRY.pop(operation_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Waiting for an outcome, and the governed-operation entry point
+# ---------------------------------------------------------------------------
+
+POLL_SECONDS = 0.1
+
+
+def _outcome_session_factory():
+    """Independent sessions for watching an operation, so the request's own session is never used by two
+    threads at once while the worker thread runs the generation."""
+    return _worker().default_session_factory()
+
+
+def wait_for_outcome(*, operation_id, context, user_id, timeout_seconds, sessions=None):
+    """Poll the job until it finished (settled, absorbed or closed). Raises ``delivery_pending`` on timeout."""
+    import time
+
+    worker = _worker()
+    factory = sessions or _outcome_session_factory()
+    deadline = time.monotonic() + max(1.0, float(timeout_seconds))
+    with factory() as watch:
+        while True:
+            outcome = worker.delivery_outcome(watch, operation_id=operation_id,
+                                              organization_id=context.organization_id,
+                                              actor_user_id=str(user_id))
+            watch.rollback()  # the next poll reads a fresh snapshot
+            if outcome["finished"]:
+                return outcome
+            if time.monotonic() >= deadline:
+                raise ModernOperationRefused("delivery_pending")
+            time.sleep(POLL_SECONDS)
+
+
+def operation_timeout_seconds(session):
+    """How long a caller waits: the effective capacity policy's execution bound plus a settlement margin."""
+    from sqlalchemy import select
+
+    from .models import CapacityPolicyVersion
+
+    rules = session.execute(select(CapacityPolicyVersion.rules_json).where(
+        CapacityPolicyVersion.state == "effective")).scalar_one_or_none() or {}
+    runaway = rules.get("runaway") if isinstance(rules, dict) else {}
+    return int((runaway or {}).get("max_operation_seconds") or 600) + 60
+
+
+def _jsonable(value):
+    import json
+
+    return json.loads(json.dumps(value, default=str))
+
+
+def execute_modern_operation(user, *, context, generate, operation_type, idempotency_key, request_fingerprint,
+                             max_tokens, thread_id=None, validate=None, prompt_family=None):
+    """``ai_runtime.execute_customer_operation`` for a modern organization: the same ``(value, usage,
+    settlement)`` contract, through Phase 12 and the worker. A failure is never charged and raises the
+    generation's own error, as the legacy path does."""
+    from flask import current_app
+
+    from . import db
+    from .ai_providers import anthropic as anthropic_provider
+    from .ai_runtime import AIOperationInProgress
+
+    session = db.session
+    if idempotency_key:
+        from sqlalchemy import select
+
+        existing = session.execute(select(AIOperation).where(
+            AIOperation.idempotency_key == idempotency_key)).scalar_one_or_none()
+        if existing is not None:
+            identity = dict(operation_id=existing.id, organization_id=context.organization_id,
+                            actor_user_id=str(user.id))
+            outcome = _worker().delivery_outcome(session, **identity)
+            if not outcome["finished"]:
+                raise AIOperationInProgress("This request is already being processed.")
+            response = _worker().read_delivery(session, include_chunks=False, **identity).response
+            if not outcome["persisted"] or not isinstance(response, dict):
+                raise ModernOperationRefused(outcome["outcome"] or "not_delivered")
+            return response.get("value"), dict(response.get("usage") or {}), _settlement(
+                outcome, existing.id, replay=True)
+
+    def run(emit, should_stop):
+        value, usage = generate()
+        if validate is not None:
+            value = validate(value)
+        return _jsonable(value), _jsonable(dict(usage or {}))
+
+    operation_id, pending = submit_modern_operation(
+        session, context=context, user_id=user.id, operation_type=operation_type, generate=run,
+        max_output_tokens=max_tokens, config=current_app.config,
+        provider_timeout_seconds=anthropic_provider.request_timeout_seconds(), thread_id=thread_id,
+        streaming=False, idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
+        prompt_family=prompt_family,
+    )
+    try:
+        outcome = wait_for_outcome(operation_id=operation_id, context=context, user_id=user.id,
+                                   timeout_seconds=operation_timeout_seconds(session))
+    finally:
+        forget(operation_id)
+    session.expire_all()
+    if not outcome["persisted"]:
+        if pending is not None and pending.failure is not None:
+            raise pending.failure
+        raise ModernOperationRefused(outcome["outcome"] or "not_delivered")
+    value, usage = pending.result if pending is not None and pending.result else (None, {})
+    return value, dict(usage or {}), _settlement(outcome, operation_id)
+
+
+def _settlement(outcome, operation_id, *, replay=False):
+    return {
+        "charged_credits": int(outcome.get("charged_credits") or 0), "reserved_credits": 0,
+        "projected_credits": int(outcome.get("charged_credits") or 0), "provider_cost_usd": None,
+        "policy_mode": "phase12", "remaining": None, "customer_visible": True, "idempotent_replay": replay,
+        "operation_id": operation_id, "billing_state": outcome.get("billing_state"),
+        "delivery_status": outcome.get("delivery_status"),
+    }
+
+
+def operation_organization_id(session, user, thread_id=None):
+    """The organization whose work an operation is: the thread's project organization, else the member's
+    context organization (D4: the work's organization pays)."""
+    from sqlalchemy import select
+
+    from .billing_cutover import context_organization_id
+    from .models import UserSession
+
+    if thread_id:
+        organizations = {row for row in session.execute(select(UserSession.organization_id).where(
+            UserSession.session_id == str(thread_id), UserSession.organization_id.isnot(None))).scalars()}
+        if len(organizations) == 1:
+            return organizations.pop()
+    return context_organization_id(session, getattr(user, "id", None))

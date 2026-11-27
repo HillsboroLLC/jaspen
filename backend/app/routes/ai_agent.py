@@ -5825,7 +5825,18 @@ def _max_output_tokens_for_plan(plan_key):
 
 
 def _insufficient_credits_payload(user, required_credits):
-    usage_state = get_usage_meter_state(user, current_app.config)
+    usage_state = None
+    try:
+        from app.billing_cutover import modern_context
+        context = modern_context(db.session, family="readers", user_id=getattr(user, "id", None))
+    except Exception:  # a disabled family answers elsewhere; this payload never decides billing
+        context = None
+    if context is not None:
+        from app.billing_runtime_readers import modern_usage_meter_state
+        usage_state = modern_usage_meter_state(db.session, context=context, user_id=user.id,
+                                               app_config=current_app.config)
+    if usage_state is None:
+        usage_state = get_usage_meter_state(user, current_app.config)
     remaining_tokens = usage_state.get("remaining")
     remaining_credits = tokens_to_credits(remaining_tokens, precision=1)
     reset_at = usage_state.get("reset_at")
@@ -5836,7 +5847,7 @@ def _insufficient_credits_payload(user, required_credits):
         "upgrade_url": "/account?tab=billing",
         "required_credits": tokens_to_credits(int(required_credits or 0), precision=1),
         "credits_remaining": remaining_credits,
-        "plan_key": to_public_plan(user.subscription_plan),
+        "plan_key": usage_state.get("plan_key") if context is not None else to_public_plan(user.subscription_plan),
         "monthly_credit_limit": tokens_to_credits(usage_state.get("monthly_limit"), precision=0),
         "cycle_credit_limit": tokens_to_credits(usage_state.get("cycle_limit"), precision=0),
         "cycle_reset_at": reset_at.isoformat() if reset_at else None,
@@ -15612,6 +15623,18 @@ def _conversation_turn(*, user, user_id, thread_id, session, sessions, model_typ
     (``_TurnOperationEvidence``). It passes every billing call through
     unchanged.
     """
+    from app.billing_cutover import modern_context
+    from app.billing_runtime_ai import operation_organization_id
+    modern = modern_context(
+        db.session, family="ai_reservation",
+        organization_id=(session or {}).get("organization_id")
+        or operation_organization_id(db.session, user, thread_id),
+    )
+    if modern is not None:
+        return _modern_conversation_turn(
+            modern, user=user, user_id=user_id, thread_id=thread_id, session=session, sessions=sessions,
+            model_type=model_type, session_key=session_key,
+        )
     evidence = _TurnOperationEvidence(
         user=user, thread_id=thread_id, session=session, route=route, streaming=streaming,
         idempotency_key=idempotency_key, request_fingerprint=request_fingerprint,
@@ -15636,6 +15659,198 @@ def _conversation_turn(*, user, user_id, thread_id, session, sessions, model_typ
     )
     turn.operation_evidence = evidence
     return turn
+
+
+def _modern_conversation_turn(context, *, user, user_id, thread_id, session, sessions, model_type,
+                              session_key=None):
+    """I4: a modern organization's turn. Phase 12 and the reliable-delivery worker own its money: this
+    binding never reserves, settles or releases in the request (the worker settles after the reply is
+    saved), and the store does not commit while the worker's persist transaction saves the reply."""
+    def save(uid, sessions_to_save, **kwargs):
+        if getattr(turn, "modern_persisting", False):
+            kwargs["commit"] = False
+        return _save_turn_project(uid, sessions_to_save, **kwargs)
+
+    turn = ConversationTurn(
+        user=user, user_id=user_id, thread_id=thread_id, session=session, sessions=sessions,
+        model_type=model_type, session_key=session_key,
+        billing=TurnBilling(
+            reserve=lambda *a, **k: {"ok": True, "reserved": 0},
+            price=lambda *a, **k: 0,
+            settle=lambda *a, **k: {"ok": True, "charged": 0, "remaining": None},
+            release=lambda *a, **k: None,
+            persist_balance=lambda *a, **k: None,
+            insufficient_payload=lambda *a, **k: _insufficient_credits_payload(*a, **k),
+        ),
+        store=TurnStore(save=save),
+    )
+    turn.operation_evidence = None
+    turn.modern = context
+    turn.modern_persisting = False
+    return turn
+
+
+def _rebind_turn_to_this_thread(turn, project=None):
+    """The worker thread reads the customer and project through its own session, never the request's."""
+    from app.models import User
+    worker_user = db.session.get(User, str(turn.user_id))
+    turn.user = worker_user
+    if project is not None:
+        project.user = worker_user
+    return worker_user
+
+
+def _modern_turn_payload_credits(turn, payload, outcome):
+    """After settlement: what was charged (Phase 12) and what remains (the modern meter)."""
+    from app.billing_runtime_readers import modern_usage_meter_state
+    from app.billing_cutover import modern_context
+    charged = int(outcome.get("charged_credits") or 0)
+    remaining = None
+    try:
+        readers = modern_context(db.session, family="readers", organization_id=turn.modern.organization_id)
+        if readers is not None:
+            remaining = modern_usage_meter_state(db.session, context=readers, user_id=turn.user_id,
+                                                 app_config=current_app.config).get("remaining")
+    except Exception:
+        current_app.logger.exception("modern meter read failed after a turn")
+    payload["credits"] = _public_credits_payload(charged=charged, remaining=remaining)
+    if isinstance(payload.get("usage"), dict):
+        payload["usage"]["credits_charged"] = tokens_to_credits(charged, precision=1)
+        payload["usage"]["credits_remaining"] = tokens_to_credits(remaining, precision=1)
+    return payload
+
+
+def _submit_modern_turn(turn, *, produce, finish, streaming, route, request_fingerprint, project=None):
+    """Hand a modern turn's generation and save to the worker; returns ``(operation_id, pending, holder)``.
+
+    ``produce(emit)`` runs on the worker thread and returns ``(value, usage)``; ``finish(value, usage)``
+    runs inside the worker's persist transaction and returns ``(payload, error)``, as the legacy finish
+    paths do."""
+    from app import billing_runtime_ai as modern_ai
+
+    holder = {}
+
+    def generate(emit, should_stop):
+        _rebind_turn_to_this_thread(turn, project)
+        value, usage = produce(emit)
+        return modern_ai._jsonable(value), modern_ai._jsonable(dict(usage or {}))
+
+    def on_persist(persist_session, response):
+        turn.modern_persisting = True
+        try:
+            payload, error = finish(response["value"], response["usage"])
+        finally:
+            turn.modern_persisting = False
+        if error is not None:
+            raise RuntimeError(f"reply_not_saved:{error[1]}")  # nothing is saved; the turn is not charged
+        holder["payload"] = payload
+
+    operation_id, pending = modern_ai.submit_modern_operation(
+        db.session, context=turn.modern, user_id=turn.user_id, operation_type="conversation", generate=generate,
+        max_output_tokens=int(current_app.config.get("AI_AGENT_MAX_OUTPUT_TOKENS") or 4096),
+        config=current_app.config, provider_timeout_seconds=anthropic_provider.request_timeout_seconds(),
+        thread_id=turn.thread_id, route=route, streaming=streaming, request_fingerprint=request_fingerprint,
+        prompt_family="conversation", on_persist=on_persist,
+    )
+    return operation_id, pending, holder
+
+
+def _streamed_reply(events, emit):
+    """Run a reply event stream, forwarding its text; returns the stream state."""
+    state = {}
+    for event in events(state):
+        if isinstance(event, dict) and event.get("type") == "delta":
+            emit(str(event.get("text") or ""))
+    return state
+
+
+def _submit_modern_conversation_turn(turn, req, *, streaming):
+    def produce(emit):
+        if streaming:
+            state = _streamed_reply(lambda st: _stream_assistant_reply_events(
+                req.user_message, req.chat_history, req.readiness, req.model_selection,
+                state=st, **_turn_generation_kwargs(turn, req)), emit)
+            reply = str(state.get("reply") or "").strip()
+            usage = state.get("usage") if isinstance(state.get("usage"), dict) else dict(_NO_USAGE)
+            actions = state.get("actions") if isinstance(state.get("actions"), list) else []
+            mutations = state.get("mutations") if isinstance(state.get("mutations"), list) else []
+            undo = state.get("undo_snapshot") if isinstance(state.get("undo_snapshot"), dict) else None
+        else:
+            reply, usage, actions, mutations, undo = _generate_assistant_reply(
+                req.user_message, req.chat_history, req.readiness, req.model_selection,
+                **_turn_generation_kwargs(turn, req),
+            )
+        return {"reply": reply, "actions": actions or [], "mutations": mutations or [],
+                "undo_snapshot": undo if isinstance(undo, dict) else None}, usage
+
+    def finish(value, usage):
+        return _finish_conversation_turn(
+            turn, req, reply=value["reply"], usage=usage, actions=value["actions"],
+            mutations=value["mutations"], undo_snapshot=value["undo_snapshot"], streaming=streaming,
+        )
+
+    return _submit_modern_turn(turn, produce=produce, finish=finish, streaming=streaming, route=req.route,
+                               request_fingerprint=req.request_fingerprint, project=req.project)
+
+
+def _modern_turn_failure(turn, req, pending, outcome):
+    """No usable reply: nothing was charged (Phase 12 absorbed any provider usage)."""
+    from app.models import User
+    turn.user = db.session.get(User, str(turn.user_id))
+    failure = pending.failure if pending is not None else None
+    if failure is not None and req is not None:
+        handled = _conversation_turn_failed(turn, req, failure)
+        if handled is not None:
+            return handled
+    return {"error": "The reply could not be completed.", "code": outcome.get("outcome") or "not_delivered",
+            "retryable": True}, 502
+
+
+def _run_modern_conversation_turn(turn, req, submission=None):
+    from app import billing_runtime_ai as modern_ai
+    operation_id, pending, holder = submission or _submit_modern_conversation_turn(turn, req, streaming=False)
+    outcome = modern_ai.wait_for_outcome(operation_id=operation_id, context=turn.modern, user_id=turn.user_id,
+                                         timeout_seconds=modern_ai.operation_timeout_seconds(db.session))
+    db.session.expire_all()
+    if not outcome["persisted"] or "payload" not in holder:
+        body, status = _modern_turn_failure(turn, req, pending, outcome)
+        return jsonify(body), status
+    return jsonify(_modern_turn_payload_credits(turn, holder["payload"], outcome)), 200
+
+
+def _stream_modern_conversation_turn(turn, req, submission=None):
+    """Stream a modern turn from durable state. A dropped connection does nothing: the worker keeps going,
+    saves the reply and settles it once (criterion 1)."""
+    import time as _time
+    from app import billing_runtime_ai as modern_ai
+    operation_id, pending, holder = submission or _submit_modern_conversation_turn(turn, req, streaming=True)
+    worker = modern_ai._worker()
+    identity = dict(operation_id=operation_id, organization_id=turn.modern.organization_id,
+                    actor_user_id=str(turn.user_id))
+
+    @stream_with_context
+    def event_stream():
+        cursor = None
+        factory = modern_ai._outcome_session_factory()
+        with factory() as watch:
+            while True:
+                view = worker.read_delivery(watch, after=cursor, **identity)
+                watch.rollback()
+                for chunk in view.chunks:
+                    yield _sse_payload({"type": "delta", "text": chunk.content})
+                cursor = view.cursor
+                if view.finished:
+                    break
+                _time.sleep(worker.STREAM_POLL_SECONDS)
+            outcome = worker.delivery_outcome(watch, **identity)
+        db.session.expire_all()
+        if not outcome["persisted"] or "payload" not in holder:
+            body, _status = _modern_turn_failure(turn, req, pending, outcome)
+            yield _sse_payload({"type": "error", **body})
+            return
+        yield _sse_payload(_modern_turn_payload_credits(turn, holder["payload"], outcome))
+
+    return Response(event_stream(), mimetype="text/event-stream", headers=dict(_SSE_HEADERS))
 
 
 def _turn_operation_id(turn):
@@ -15919,6 +16134,8 @@ def _turn_generation_kwargs(turn, req):
 
 def _stream_conversation_turn(turn, req):
     """Run a reserved start/continue turn as a server-sent event stream."""
+    if getattr(turn, "modern", None) is not None:
+        return _stream_modern_conversation_turn(turn, req)
 
     @stream_with_context
     def event_stream():
@@ -15967,6 +16184,8 @@ def _stream_conversation_turn(turn, req):
 
 def _run_conversation_turn(turn, req):
     """Run a reserved start/continue turn and answer with one JSON response."""
+    if getattr(turn, "modern", None) is not None:
+        return _run_modern_conversation_turn(turn, req)
     try:
         reply, usage, actions, mutations, undo_snapshot = _generate_assistant_reply(
             req.user_message, req.chat_history, req.readiness, req.model_selection,
@@ -18168,6 +18387,27 @@ def conversation_regenerate():
         disable_mutations=True,
         project=turn_project,
     )
+
+    if getattr(turn, "modern", None) is not None:
+        def produce(emit):
+            regen = dict(generation, user=turn.user)
+            if stream_requested:
+                state = _streamed_reply(lambda st: _stream_assistant_reply_events(
+                    user_message, regen_history, readiness, model_selection, state=st, **regen), emit)
+                return ({"reply": str(state.get("reply") or "").strip()},
+                        state.get("usage") if isinstance(state.get("usage"), dict) else dict(_NO_USAGE))
+            reply, usage, _a, _m, _u = _generate_assistant_reply(
+                user_message, regen_history, readiness, model_selection, **regen)
+            return {"reply": reply}, usage
+
+        submission = _submit_modern_turn(
+            turn, produce=produce, finish=lambda value, usage: finish(value["reply"], usage, streaming=stream_requested),
+            streaming=stream_requested, route=request.endpoint, request_fingerprint=request_fingerprint,
+            project=turn_project,
+        )
+        if stream_requested:
+            return _stream_modern_conversation_turn(turn, None, submission)
+        return _run_modern_conversation_turn(turn, None, submission)
 
     if stream_requested:
         @stream_with_context

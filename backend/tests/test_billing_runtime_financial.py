@@ -68,7 +68,7 @@ def test_a_paid_first_invoice_activates_and_funds_the_organization_once(modern):
     assert (subscription.external_subscription_id, subscription.state, subscription.interval) == (sub, "active",
                                                                                                   "month")
     lot = session.query(CreditLot).filter_by(source_type="subscription_recurring").one()
-    assert (lot.billing_account_id, lot.original_amount) == (m["account_id"], 7000)
+    assert (lot.billing_account_id, lot.original_amount) == (m["account_id"], 7_000_000)
     # A second delivery of the same paid invoice under a new event id converges.
     second, _ = s.record(session, m["gateway"], inv, "invoice.paid", created=anchor + timedelta(minutes=2))
     assert _process(m)["processed"] == 1
@@ -130,7 +130,7 @@ def test_a_credit_pack_needs_a_paid_term_and_funds_once(modern):
     second, _ = s.record(session, m["gateway"], intent, "payment_intent.succeeded", created=now)
     assert _process(m)["processed"] == 1, _state(session, second)
     lot = session.query(CreditLot).filter_by(source_type="credit_pack_purchase").one()
-    assert lot.original_amount == 3000
+    assert lot.original_amount == 3_000_000
     # A full refund reverses the unused pack value.
     refund = {"id": f"re_i2{uuid.uuid4().hex[:12]}", "object": "refund", "status": "succeeded", "amount": 1000,
               "payment_intent": intent["id"], "currency": "usd"}

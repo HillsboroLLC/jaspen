@@ -131,13 +131,16 @@ def require_family(config=None):
 # ---------------------------------------------------------------------------
 
 def _whole_credits(tokens, label):
+    """A configured quantity in ledger units: the internal unit (Phase 14 Gate 1, ``jaspen.legacy_internal_unit.v1``;
+    1,000 per displayed credit), the unit Phase 12 pricing converts provider cost into. It must be a whole number
+    of displayed credits."""
     from .billing_config import TOKENS_PER_CREDIT
 
     if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:
         raise FundingRuntimeError(f"{label}: the configured quantity is not a positive integer")
     if tokens % TOKENS_PER_CREDIT:
         raise FundingRuntimeError(f"{label}: the configured quantity is not a whole number of credits")
-    return tokens // TOKENS_PER_CREDIT
+    return tokens
 
 
 def _price_minor(amount, label):

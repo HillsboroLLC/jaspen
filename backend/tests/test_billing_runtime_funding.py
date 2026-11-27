@@ -77,17 +77,17 @@ def test_the_test_catalog_copies_configured_values_and_is_refused_while_the_fami
             "plan.business.annual", "pack.credits_3000"}
         assert not any(key.startswith("plan.enterprise") for key, _v, _s in results)
         free = session.query(EntitlementDefinition).filter_by(key="plan.free").one()
-        assert free.funding_policy_json == {"schema_version": 1, "period_kind": "free", "credit_amount": 300}
+        assert free.funding_policy_json == {"schema_version": 1, "period_kind": "free", "credit_amount": 300_000}
         assert free.capability_json["capabilities"]["pricing_label"] == "test"
         assert free.approval_evidence_reference == "founder-decision-D2-2026-11-26"
         assert free.approved_by_user_id == approver.id
         team = session.query(EntitlementDefinition).filter_by(key="plan.team.annual").one()
         assert team.capability_json["capabilities"]["included_seats"] == 3
         assert team.funding_policy_json["period_kind"] == "annual_monthly"
-        assert team.funding_policy_json["credit_amount"] == 29_000
+        assert team.funding_policy_json["credit_amount"] == 29_000_000
         pack = session.query(EntitlementDefinition).filter_by(key="pack.credits_3000").one()
         assert pack.funding_policy_json["purchase"]["unit_principal_minor"] == 1000
-        assert pack.funding_policy_json["credit_amount"] == 3000
+        assert pack.funding_policy_json["credit_amount"] == 3_000_000
         # Re-running converges; a changed payload is refused rather than silently versioned.
         assert {state for _k, _v, state in _catalog(session, app, approver)} == {"unchanged"}
         free.funding_policy_json = {"schema_version": 1, "period_kind": "free", "credit_amount": 1}
@@ -106,10 +106,10 @@ def test_each_modern_organization_owns_its_monthly_free_lot(db, app, families):
     _catalog(session, app, owner)
     first = funding.allocate_free(session, context)
     session.commit()
-    assert (first.outcome, first.period_index, first.credit_amount) == ("inserted", 0, 300)
+    assert (first.outcome, first.period_index, first.credit_amount) == ("inserted", 0, 300_000)
     lot = session.query(CreditLot).one()
     assert (lot.billing_account_id, lot.source_type, lot.original_amount) == (
-        assignment.billing_account_id, "free_recurring", 300)
+        assignment.billing_account_id, "free_recurring", 300_000)
     instance = session.query(EntitlementInstance).one()
     assert (instance.source_type, instance.state, instance.subscription_id) == ("free", "active", None)
     assert session.query(CreditLedgerEntry).filter_by(lot_id=lot.id, entry_type="grant").count() == 1
