@@ -134,6 +134,81 @@ def seat_policy_for_plan(plan_key):
     return DEFAULT_SEAT_POLICIES.get(canonical, DEFAULT_SEAT_POLICIES["essential"])
 
 
+# --- Modern billing organizations (D18 row 17, readers family, I5) ---------
+#
+# A modern organization's plan, seat limit and billing standing come from its
+# billing records (entitlements, subscriptions, seat commitments), never from
+# the legacy columns on its row (plan_key, max_total_paid_seats,
+# seat_policy_overrides) or its owner's personal plan. Every gate below asks
+# the dispatch contract first: a legacy organization gets None and keeps its
+# existing code path unchanged; a modern one is answered by the readers family
+# (app.billing_runtime_readers), or refused while that family is off.
+
+_UNSET = object()
+
+
+def _app_config():
+    from flask import current_app, has_app_context
+
+    return current_app.config if has_app_context() else {}
+
+
+def modern_org_gates(org):
+    """The readers-family gate facts for a modern organization, else None (legacy). A pure read."""
+    if not isinstance(org, Organization) or not org.id:
+        return None
+    from .billing_cutover import modern_context
+
+    context = modern_context(db.session, family="readers", organization_id=org.id)
+    if context is None:
+        return None
+    from .billing_runtime_readers import modern_org_gates as project_gates
+
+    return project_gates(db.session, context=context, app_config=_app_config())
+
+
+def register_modern_billing_error_handlers(blueprint):
+    """Operational answers for a route whose organization is modern (no fallback to legacy columns).
+
+    The readers family off: 503, nobody answers. A legacy write the I1 boundary refuses: 409, the same
+    body the billing routes return.
+    """
+    from flask import jsonify
+    from .billing_cutover import BillingFamilyDisabledError, BillingModelConflictError
+
+    @blueprint.errorhandler(BillingFamilyDisabledError)
+    def _billing_family_disabled(exc):
+        db.session.rollback()
+        return jsonify({"error": "billing_family_disabled", "msg": str(exc)}), 503
+
+    @blueprint.errorhandler(BillingModelConflictError)
+    def _billing_model_conflict(exc):
+        db.session.rollback()
+        return jsonify({"error": "billing_model_conflict", "msg": str(exc), "codes": list(exc.codes)}), 409
+
+    return blueprint
+
+
+def _gates(org, gates):
+    return modern_org_gates(org) if gates is _UNSET else gates
+
+
+def org_plan_key(org, gates=_UNSET):
+    """The plan key every gate reads: the modern entitlement's plan, else the organization row's."""
+    gates = _gates(org, gates)
+    if gates is not None:
+        return gates["plan_key"]
+    return getattr(org, "plan_key", None)
+
+
+def org_total_paid_seat_limit(org, gates=_UNSET):
+    """The paid-seat limit: a modern organization's seat commitment, else the organization row's."""
+    gates = _gates(org, gates)
+    if gates is not None:
+        return gates["max_total_paid_seats"]
+    return getattr(org, "max_total_paid_seats", None)
+
+
 # --- Collaboration entitlement -------------------------------------------
 #
 # Collaboration (inviting anyone else into an organization, in any role) is a
@@ -173,6 +248,9 @@ def org_collaboration_state(org, app_config=None):
     alone for the dunning grace period. Nothing here removes a member; that is
     intentional and callers must not infer removal from ``can_invite``.
     """
+    gates = modern_org_gates(org)
+    if gates is not None:
+        return _modern_collaboration_state(gates)
     plan_key = normalize_plan_key(getattr(org, "plan_key", None))
     owner_id = getattr(org, "owner_user_id", None)
     owner = User.query.filter_by(id=owner_id).first() if owner_id else None
@@ -185,7 +263,19 @@ def user_collaboration_state(user, app_config=None):
 
     Used when creating an organization, so a plan that cannot collaborate
     cannot mint a Team-plan org and collaborate through it instead.
+
+    When the user's context organization is a modern organization they own,
+    its billing records answer (that organization is the one this request
+    upgrades); a member's personal legacy plan never does.
     """
+    from .billing_cutover import context_organization_id
+
+    context_id = context_organization_id(db.session, getattr(user, "id", None)) if isinstance(user, User) else None
+    context_org = db.session.get(Organization, context_id) if context_id else None
+    if context_org is not None and context_org.owner_user_id == user.id:
+        gates = modern_org_gates(context_org)
+        if gates is not None:
+            return _modern_collaboration_state(gates)
     plan_key = normalize_plan_key(getattr(user, "subscription_plan", None))
     return _collaboration_state(
         plan_key, getattr(user, "subscription_status", None), app_config
@@ -216,6 +306,27 @@ def _collaboration_state(plan_key, subscription_status, app_config=None):
     return {
         "plan_key": plan_key,
         "public_plan_key": to_public_plan(plan_key),
+        "entitled": entitled,
+        "billing_current": billing_current,
+        "can_invite": bool(entitled and billing_current),
+        "reason": reason,
+    }
+
+
+def _modern_collaboration_state(gates):
+    """The collaboration gate from a modern organization's billing records (same keys and reasons)."""
+    plan_key = gates["plan_key"]
+    entitled = bool(plan_key) and plan_allows_collaboration(plan_key)
+    billing_current = bool(gates["billing_current"]) if entitled else True
+    if not entitled:
+        reason = COLLABORATION_DENIED_PLAN
+    elif not billing_current:
+        reason = COLLABORATION_DENIED_BILLING
+    else:
+        reason = None
+    return {
+        "plan_key": plan_key,
+        "public_plan_key": to_public_plan(plan_key) if plan_key else None,
         "entitled": entitled,
         "billing_current": billing_current,
         "can_invite": bool(entitled and billing_current),
@@ -281,14 +392,14 @@ def normalize_mfa_policy(value, default=None):
     return default
 
 
-def mfa_policy_for_org(org):
+def mfa_policy_for_org(org, gates=_UNSET):
     if not isinstance(org, Organization):
         return MFA_POLICY_OPTIONAL
     settings = org.settings if isinstance(org.settings, dict) else {}
     configured = normalize_mfa_policy(settings.get("mfa_policy"))
     if configured:
         return configured
-    return default_mfa_policy_for_plan(org.plan_key)
+    return default_mfa_policy_for_plan(org_plan_key(org, gates))
 
 
 def normalize_seat_limit_value(value):
@@ -308,9 +419,11 @@ def normalize_seat_limit_value(value):
     return parsed
 
 
-def seat_policy_overrides_for_org(org):
+def seat_policy_overrides_for_org(org, gates=_UNSET):
     if not isinstance(org, Organization):
         return {}
+    if _gates(org, gates) is not None:
+        return {}  # a modern organization's seat policy is its plan's; legacy overrides never apply
     raw = org.seat_policy_overrides if isinstance(org.seat_policy_overrides, dict) else {}
     output = {}
     for role in ORG_ROLES:
@@ -325,19 +438,25 @@ def seat_policy_overrides_for_org(org):
     return output
 
 
-def seat_policy_for_org(org):
+def seat_policy_for_org(org, gates=_UNSET):
     if not isinstance(org, Organization):
         return dict(seat_policy_for_plan(org))
 
+    gates = _gates(org, gates)
+    if gates is not None:
+        policy = dict(seat_policy_for_plan(gates["plan_key"]))
+        policy[ORG_ROLE_OWNER] = 1
+        return policy
     policy = dict(seat_policy_for_plan(org.plan_key))
-    for role, limit in seat_policy_overrides_for_org(org).items():
+    for role, limit in seat_policy_overrides_for_org(org, None).items():
         policy[role] = limit
     policy[ORG_ROLE_OWNER] = 1
     return policy
 
 
-def serialize_seat_policy(plan_or_org):
-    policy = seat_policy_for_org(plan_or_org)
+def serialize_seat_policy(plan_or_org, gates=_UNSET):
+    policy = seat_policy_for_org(plan_or_org, gates) if isinstance(plan_or_org, Organization) \
+        else seat_policy_for_org(plan_or_org)
     output = {}
     for role in ORG_ROLES:
         limit = policy.get(role)
@@ -541,9 +660,10 @@ def touch_member_activity(membership):
     db.session.commit()
 
 
-def build_seat_usage(org):
+def build_seat_usage(org, gates=_UNSET):
     if not isinstance(org, Organization):
         return {}
+    gates = _gates(org, gates)
 
     counts_query = (
         db.session.query(OrganizationMember.role, func.count(OrganizationMember.id))
@@ -554,7 +674,7 @@ def build_seat_usage(org):
     role_counts = {normalize_org_role(role): int(count or 0) for role, count in counts_query}
     pending_counts = pending_invitation_counts(org)
 
-    policy = seat_policy_for_org(org)
+    policy = seat_policy_for_org(org, gates)
     usage = {}
     owner_used = int(role_counts.get(ORG_ROLE_OWNER, 0))
     total_paid_used = 0
@@ -581,7 +701,7 @@ def build_seat_usage(org):
         if role in {ORG_ROLE_ADMIN, ORG_ROLE_CREATOR, ORG_ROLE_COLLABORATOR}:
             total_paid_used += used
             total_paid_reserved += reserved
-    total_paid_limit = getattr(org, "max_total_paid_seats", None)
+    total_paid_limit = org_total_paid_seat_limit(org, gates)
     usage["total_paid_used"] = total_paid_used
     usage["total_paid_pending"] = total_paid_reserved - total_paid_used
     usage["total_paid_reserved"] = total_paid_reserved
@@ -594,8 +714,9 @@ def build_seat_usage(org):
 
 def role_has_capacity(org, role, exclude_member_id=None):
     role = normalize_org_role(role)
-    public_plan = to_public_plan(getattr(org, "plan_key", None))
-    policy = seat_policy_for_org(org)
+    gates = modern_org_gates(org)
+    public_plan = to_public_plan(org_plan_key(org, gates)) if gates is None or gates["plan_key"] else None
+    policy = seat_policy_for_org(org, gates)
     limit = policy.get(role)
 
     excluded = None
@@ -607,7 +728,7 @@ def role_has_capacity(org, role, exclude_member_id=None):
         ).first()
 
     if public_plan in {"team", "business"}:
-        usage = build_seat_usage(org)
+        usage = build_seat_usage(org, gates)
         if role == ORG_ROLE_ADMIN:
             # `reserved` counts active members plus outstanding invitations.
             admin_used = int((usage.get(ORG_ROLE_ADMIN) or {}).get("reserved") or 0)
@@ -620,7 +741,7 @@ def role_has_capacity(org, role, exclude_member_id=None):
             paid_used = int(usage.get("total_paid_reserved") or 0)
             if excluded and normalize_org_role(excluded.role) in {ORG_ROLE_OWNER, ORG_ROLE_ADMIN, ORG_ROLE_CREATOR, ORG_ROLE_COLLABORATOR}:
                 paid_used = max(0, paid_used - 1)
-            total_paid_limit = getattr(org, "max_total_paid_seats", None)
+            total_paid_limit = org_total_paid_seat_limit(org, gates)
             if total_paid_limit is not None and paid_used >= int(total_paid_limit):
                 return False
         return True
@@ -701,8 +822,8 @@ def organization_access_payload_for_user(user):
                 status="active",
             ).first()
 
-    membership_plans = (
-        db.session.query(Organization.plan_key)
+    membership_orgs = (
+        db.session.query(Organization)
         .join(OrganizationMember, OrganizationMember.organization_id == Organization.id)
         .filter(
             OrganizationMember.user_id == user.id,
@@ -712,14 +833,19 @@ def organization_access_payload_for_user(user):
     )
     normalized_plans = {
         to_public_plan(plan_key)
-        for (plan_key,) in membership_plans
+        for plan_key in (org_plan_key(org) for org in membership_orgs)
         if str(plan_key or "").strip()
     }
+    active_plan_key = None
+    if active_org:
+        active_gates = modern_org_gates(active_org)
+        active_raw = org_plan_key(active_org, active_gates)
+        active_plan_key = to_public_plan(active_raw) if active_gates is None or active_raw else None
 
     return {
         "active_organization_name": active_org.name if active_org else None,
         "active_organization_role": active_membership.role if active_membership else None,
-        "active_organization_plan_key": to_public_plan(active_org.plan_key) if active_org else None,
+        "active_organization_plan_key": active_plan_key,
         "active_organization_mfa_policy": mfa_policy_for_org(active_org) if active_org else None,
         "can_access_team": bool(normalized_plans.intersection({"team", "business", "enterprise_custom"})),
         "can_access_enterprise_admin": "enterprise_custom" in normalized_plans,
@@ -748,16 +874,18 @@ def invitation_payload(invite):
 def org_payload(org):
     if not isinstance(org, Organization):
         return {}
+    gates = modern_org_gates(org)
+    plan_key = org_plan_key(org, gates)
     return {
         "id": org.id,
         "name": org.name,
         "slug": org.slug,
         "owner_user_id": org.owner_user_id,
-        "plan_key": to_public_plan(org.plan_key),
-        "seat_policy_defaults": serialize_seat_policy(org.plan_key),
-        "seat_policy": serialize_seat_policy(org),
-        "seat_policy_overrides": seat_policy_overrides_for_org(org),
-        "max_total_paid_seats": getattr(org, "max_total_paid_seats", None),
+        "plan_key": to_public_plan(plan_key) if gates is None or plan_key else None,
+        "seat_policy_defaults": serialize_seat_policy(plan_key),
+        "seat_policy": serialize_seat_policy(org, gates),
+        "seat_policy_overrides": seat_policy_overrides_for_org(org, gates),
+        "max_total_paid_seats": org_total_paid_seat_limit(org, gates),
         "settings": org.settings if isinstance(org.settings, dict) else {},
-        "mfa_policy": mfa_policy_for_org(org),
+        "mfa_policy": mfa_policy_for_org(org, gates),
     }
