@@ -269,11 +269,17 @@ same way; only a worker that dies is reclaimed, at most `max_claims` times.
 - Cancel, release or settle on a client disconnect.
 - Write canned chat wording on the worker's behalf. The worker returns
   operational codes only.
+- Reassign or clear `ai_operations.result_json`, or change its identity columns
+  (`organization_id`, `user_id`, `billing_account_id`), on a Phase 12-bound
+  operation. Other keys may be merged alongside `reliable_delivery`. The M3
+  database guard refuses the legacy whole-column writes (`ai_audit.py`
+  `persist_operation`, `ai_runtime.py` clearing the result) for bound operations.
 
 ## 9. Open items for the coordinator
 
-- **M3 recommendation** (database guard for bound operations' envelope and
-  identity): see the I3 report.
+- **M3** is implemented in migration `d7e9b1c3a5f8`: a bound operation's identity
+  is never rewritten to another value, and its saved envelope is immutable except
+  that `settlement` is recorded once.
 - A cancelled turn whose partial text was already streamed is `undelivered`
   with no charge (coordinator: follows the approved Nov 11 billability policy).
 - Running the standalone worker as a service on staging (infrastructure

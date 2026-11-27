@@ -475,6 +475,7 @@ def _row_error(exc):
         return "lock contention; retried by a later sweep"
     if isinstance(exc, (KeyError, TypeError, ValueError)):
         # Malformed data in this row (for example a non-integer delivered attempt in a saved envelope).
+        # A genuine code defect also lands here, as every row blocked: the CLI then exits 3 and alerts.
         return f"malformed row data: {type(exc).__name__}"
     return None
 

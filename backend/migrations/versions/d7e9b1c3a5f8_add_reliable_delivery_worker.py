@@ -292,6 +292,8 @@ def _sqlite_guards():
                "OR (OLD.user_id IS NOT NULL AND NEW.user_id IS NOT NULL AND NEW.user_id <> OLD.user_id) "
                "OR (OLD.billing_account_id IS NOT NULL AND NEW.billing_account_id IS NOT OLD.billing_account_id))",
            ))
+    # SQLite compares the envelope as JSON text, so it relies on writers keeping its key order
+    # (``settle_persisted_response`` copies the dict); PostgreSQL compares jsonb.
     before = "json_extract(OLD.result_json, '$.reliable_delivery')"
     after = "json_extract(NEW.result_json, '$.reliable_delivery')"
     yield ("CREATE TRIGGER trg_i3_bound_operation_envelope BEFORE UPDATE ON ai_operations FOR EACH ROW "
