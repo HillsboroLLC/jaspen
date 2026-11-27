@@ -60,6 +60,8 @@ return stream_response(op_id)               # §3
   and `authorized`, and the identity matches the durable binding;
 - is idempotent: the same operation and the same payload digest return the same
   job; a different payload for the same operation is refused;
+- refuses a payload above `MAX_PAYLOAD_BYTES` (8 MB of canonical JSON: chat
+  history plus attachment references) before any write;
 - writes only the job row. It never calls a provider.
 
 **The executor (I4 writes it).** Register once at import time:
@@ -102,8 +104,16 @@ Executor rules:
 - `ctx.should_stop()` is true after a cancellation, after this worker lost its
   job lease, or once another worker saved the response. The executor stops at
   the next safe point, records the call it was in, and returns or raises.
+- The executor runs with the Flask app context pushed (`current_app` is
+  available). `ctx.operation_id`, `ctx.organization_id`, `ctx.actor_user_id` and
+  `ctx.payload` identify the turn.
 - `on_persist(session, response)` runs **inside the transaction that saves the
-  envelope**, exactly once (never on a replay). I4 uses it to write the
+  envelope**, exactly once (never on a replay). In the runtime mode
+  (`DeliveryWorker(app=...)`, which `start_in_process` and the CLI use) that
+  `session` is the step's own app context's Flask-SQLAlchemy `db.session`, so the
+  conversation store can write through `db.session`; the store write, the
+  envelope and the job state commit or roll back together. The heartbeat always
+  uses a separate session on its own connection. I4 uses it to write the
   assistant message into the conversation store, so the visible history and the
   saved response commit together. It must not commit and must not call a
   provider. If it raises, nothing is saved, and the worker retries persistence
@@ -134,7 +144,10 @@ def stream_response(op_id):
     return Response(events(), mimetype="text/event-stream", headers=...)
 ```
 
-- `read_delivery` is a pure read. It checks the durable organization and an
+- `read_delivery` is a pure read. Once Phase 12 records an outcome it also
+  carries `billing_state`, `delivery_status`, `charged_credits` and
+  `absorbed_credits`; `delivery_outcome(...)` returns the same facts without
+  chunks, for JSON and governed operations. It checks the durable organization and an
   **active** membership of the actor (criterion 8), returns the chunks after the
   cursor, the job state, the saved response once persisted (integrity-checked),
   and the final outcome.
@@ -241,6 +254,13 @@ Guard (M2): the AI runtime settles only through `settle_persisted_response`.
 - the job fast path settles `persisted` jobs and reclaims jobs with lapsed job
   leases before the Phase 12 sweep runs.
 
+**Not resumable.** An executor that cannot rebuild the turn (I4's in-memory
+closure is missing after a reclaim) raises `DeliveryFailed("not_resumable")`.
+The reclaiming worker has already recorded the lost call (unknown usage,
+absorbed); the operation closes undelivered with no charge, and the job is
+finished, so it is never claimed again. Any executor failure closes the job the
+same way; only a worker that dies is reclaimed, at most `max_claims` times.
+
 ## 8. What I4 must not do
 
 - Call a provider in the request thread for a modern turn.
@@ -254,7 +274,7 @@ Guard (M2): the AI runtime settles only through `settle_persisted_response`.
 
 - **M3 recommendation** (database guard for bound operations' envelope and
   identity): see the I3 report.
-- Whether a cancelled turn whose partial text was already streamed is
-  `undelivered` (this design: yes, no charge) needs Lydia's confirmation.
+- A cancelled turn whose partial text was already streamed is `undelivered`
+  with no charge (coordinator: follows the approved Nov 11 billability policy).
 - Running the standalone worker as a service on staging (infrastructure
   approval) and D1.

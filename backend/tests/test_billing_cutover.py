@@ -440,7 +440,8 @@ def test_revision_extends_bi1_and_is_the_single_head():
     from alembic.script import ScriptDirectory
     from tests.test_billing_migration import MIGRATIONS_DIR
     script = ScriptDirectory(str(MIGRATIONS_DIR))
-    assert script.get_heads() == [REVISION]
+    assert script.get_heads() == ["d7e9b1c3a5f8"]  # I3 follows I1
+    assert script.get_revision("d7e9b1c3a5f8").down_revision == REVISION
     assert script.get_revision(REVISION).down_revision == "c8a9989843b5"
 
 
@@ -547,7 +548,7 @@ def _pg_engine():
     engine = sa.create_engine(url)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision != REVISION:
+    if revision not in {REVISION, "d7e9b1c3a5f8"}:
         engine.dispose()
         pytest.fail(f"I1 migrated tests require Alembic head {REVISION}; found {revision!r}")
     return engine

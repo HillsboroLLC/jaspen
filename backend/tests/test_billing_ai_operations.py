@@ -1140,7 +1140,7 @@ def _migrated_engine():
     engine = sa.create_engine(url, pool_size=12, max_overflow=4)
     with engine.connect() as connection:
         revision = connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar_one_or_none()
-    if revision not in {REVISION, "d2f4a6c8e0b3", "f3a5c7e9b1d2", "c8a9989843b5", "a1f3c5e7b9d0"}:
+    if revision not in {REVISION, "d2f4a6c8e0b3", "f3a5c7e9b1d2", "c8a9989843b5", "a1f3c5e7b9d0", "d7e9b1c3a5f8"}:
         engine.dispose()
         pytest.fail(f"Phase 12 migrated tests require Alembic head {REVISION} or Phase 14; found {revision!r}")
     return engine

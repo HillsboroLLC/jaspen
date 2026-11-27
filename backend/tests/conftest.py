@@ -103,6 +103,7 @@ from app.models import (
 )
 from app.models_pm_sync import PmSyncBinding, PmSyncLink
 from app.models_billing_identity import BillingModelAssignment
+from app.models_billing_delivery import AIDeliveryJob, AIDeliveryStreamChunk, AIDeliveryWorkerState
 from app.models_billing_phase14 import (
     BillingMigrationAccountResult,
     BillingMigrationEstablishment,
@@ -354,6 +355,9 @@ def db(app):
             DecisionSignal,
             OptionDecision,
             DecisionRecord,
+            AIDeliveryStreamChunk,
+            AIDeliveryJob,
+            AIDeliveryWorkerState,
             AIProviderAttempt,
             AIOperationCheckpoint,
             AIAbsorbedUsage,

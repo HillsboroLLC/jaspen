@@ -73,7 +73,7 @@ MIGRATIONS_DIR = str(Path(__file__).resolve().parents[1] / "migrations")
 
 def _assert_phase7_model_schema(engine):
     script = ScriptDirectory(MIGRATIONS_DIR)
-    assert script.get_heads() == ["a1f3c5e7b9d0"]  # I1 follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14 without changing Phase 7.
+    assert script.get_heads() == ["d7e9b1c3a5f8"]  # I3 follows I1; I1 follows BI-1; BI-1 extends the Phase 17 guard, which extends Phase 14 without changing Phase 7.
     assert script.get_revision("a7d9e2f4b6c8").down_revision == "f5c8d3e0b2a1"
     inspector = sa.inspect(engine)
     for model in (ScheduledPlanChange, PlanChangeEvent, UpgradeCreditAllocation):
