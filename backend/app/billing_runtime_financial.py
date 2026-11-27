@@ -40,7 +40,7 @@ period, or the event is quarantined rather than guessed.
 from datetime import datetime, timezone
 import uuid
 
-from sqlalchemy import exists, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.exc import DBAPIError
 
 from . import billing_cutover as bc
@@ -1031,3 +1031,158 @@ def process_events(session, *, limit, gateway=None, app_config=None, config=None
         summary["retryable" if decision == "retry" else "quarantined"] += 1
         summary["events"].append({"event_id": event_id, "outcome": decision, "code": code})
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Account commands (the routes' modern handlers; the routes own request and response shapes)
+# ---------------------------------------------------------------------------
+
+class CommandError(Exception):
+    """A modern account command is refused. ``status`` is the HTTP status the route answers with."""
+
+    def __init__(self, message, status=400, **extra):
+        super().__init__(message)
+        self.status = status
+        self.extra = extra
+
+
+def require_billing_authority(session, context, user_id, roles=("billing_owner", "billing_admin")):
+    from .models import BillingRoleGrant
+    from sqlalchemy import or_
+
+    at = bc._database_now(session)
+    grant = session.execute(select(BillingRoleGrant.id).where(
+        BillingRoleGrant.billing_account_id == context.billing_account_id, BillingRoleGrant.user_id == str(user_id),
+        BillingRoleGrant.role.in_(roles), BillingRoleGrant.state == "active", BillingRoleGrant.starts_at <= at,
+        or_(BillingRoleGrant.ends_at.is_(None), BillingRoleGrant.ends_at > at))).first()
+    if grant is None:
+        raise CommandError("Only an organization billing owner can manage billing.", 403)
+
+
+def ensure_processor_customer(session, context, user, stripe_module):
+    """The billing account's processor customer: created once, bound with ``bind_processor_customer``.
+
+    The creation uses a stable processor idempotency key, so a retry after a lost
+    response returns the same customer, and ``billing_account_id`` is in its metadata.
+    """
+    account = session.get(BillingAccount, context.billing_account_id)
+    if account.processor_customer_id:
+        return account.processor_customer_id
+    from .models import Organization
+
+    organization = session.get(Organization, context.organization_id)
+    customer = stripe_module.Customer.create(
+        name=organization.name, email=user.email,
+        metadata={"billing_account_id": account.id, "organization_id": context.organization_id},
+        idempotency_key=f"jaspen-billing-account-customer:{account.id}",
+    )
+    bc.bind_processor_customer(session, billing_account_id=account.id, processor=PROVIDER,
+                               processor_customer_id=customer.id, actor_user_id=str(user.id))
+    session.commit()
+    return customer.id
+
+
+def processor_metadata(context, **values):
+    """Processor metadata for a modern object: the account always, never a legacy ``user_id``."""
+    metadata = {"billing_account_id": context.billing_account_id, "organization_id": context.organization_id}
+    metadata.update({key: str(value) for key, value in values.items()})
+    return metadata
+
+
+def account_subscription(session, context, states=("active", "past_due", "cancel_at_period_end")):
+    return session.execute(select(BillingSubscription).where(
+        BillingSubscription.billing_account_id == context.billing_account_id,
+        BillingSubscription.processor == PROVIDER, BillingSubscription.state.in_(states),
+    ).order_by(BillingSubscription.created_at.desc())).scalars().first()
+
+
+def subscription_plan(session, subscription):
+    definition = session.get(EntitlementDefinition, subscription.current_entitlement_definition_id)
+    capabilities = (definition.capability_json or {}).get("capabilities", {})
+    return definition, capabilities.get("plan_key"), capabilities.get("interval")
+
+
+def require_definition(session, plan_key, interval, at=None):
+    at = at or bc._database_now(session)
+    definition = funding.current_definition(session, funding.plan_definition_key(plan_key, interval), at)
+    if definition is None:
+        raise CommandError(f"No approved {interval} billing definition for '{plan_key}'.", 409)
+    return definition
+
+
+def paid_term_in_force(session, context):
+    subscription = account_subscription(session, context)
+    at = bc._database_now(session)
+    if subscription is None or not (_utc(subscription.term_starts_at) <= at < _utc(subscription.term_ends_at)):
+        return None
+    return subscription
+
+
+def schedule_change(session, context, subscription, *, kind, user_id, target_definition=None):
+    """Phase 7 downgrade or cancellation at the current term end, by an authorized member. Not committed."""
+    from .billing_plan_changes import schedule_plan_change
+
+    require_billing_authority(session, context, user_id)
+    effective = _utc(subscription.term_ends_at)
+    target_id = target_definition.id if target_definition is not None else None
+    active = _active_schedule(session, subscription)
+    if active is not None and (active.kind, active.target_entitlement_definition_id) == (kind, target_id):
+        return active  # the same change is already scheduled: a repeated command changes nothing
+    # One command identity per distinct request: a resumed cancellation can be scheduled again.
+    sequence = session.execute(select(func.count()).select_from(ScheduledPlanChange).where(
+        ScheduledPlanChange.subscription_id == subscription.id)).scalar_one()
+    command = f"{kind}:{subscription.id}:{target_id or 'none'}:{_iso(effective)}:{sequence}"
+    try:
+        change, _state = schedule_plan_change(
+            session, billing_account_id=context.billing_account_id, subscription_id=subscription.id,
+            client_command_id=command, kind=kind, target_entitlement_definition_id=target_id,
+            requested_at=bc._database_now(session), effective_at=effective, compatible_supersede=True,
+            actor_type="user", actor_id=str(user_id),
+            delivery_obligations=funding.placeholder_obligations("plan_change_scheduled"))
+    except PlanChangeError as exc:
+        raise CommandError(str(exc), 409) from exc
+    return change
+
+
+def resume_change(session, context, subscription, *, user_id):
+    from .billing_plan_changes import resume_cancellation
+
+    require_billing_authority(session, context, user_id)
+    schedule = _active_schedule(session, subscription)
+    if schedule is None or schedule.kind != "cancellation":
+        raise CommandError("No scheduled cancellation to resume.", 400)
+    try:
+        resume_cancellation(session, scheduled_change_id=schedule.id, resumed_at=bc._database_now(session),
+                            actor_type="user", actor_id=str(user_id),
+                            delivery_obligations=funding.placeholder_obligations("plan_change_superseded"))
+    except PlanChangeError as exc:
+        raise CommandError(str(exc), 409) from exc
+
+
+def pack_funding_state(session, context, payment_intent_id):
+    """Whether a modern credit-pack payment has been funded (a pure read)."""
+    from .models_billing_phase9 import CreditPurchaseFunding
+
+    source = session.execute(select(FinancialTransaction).where(
+        FinancialTransaction.billing_account_id == context.billing_account_id,
+        FinancialTransaction.object_type == "payment_intent",
+        FinancialTransaction.object_id == payment_intent_id)).scalar_one_or_none()
+    if source is None:
+        return None
+    rows = session.execute(select(CreditPurchaseFunding).join(
+        FinancialLine, FinancialLine.id == CreditPurchaseFunding.financial_line_id
+    ).where(FinancialLine.financial_transaction_id == source.id)).scalars().all()
+    return sum(int(row.credit_amount) for row in rows) if rows else None
+
+
+def seat_state(session, context, subscription):
+    """The commitment and occupancy of a seat plan (pure reads)."""
+    from .billing_seats import included_seats_for_definition, seat_occupancy
+
+    definition = session.get(EntitlementDefinition, subscription.current_entitlement_definition_id)
+    commitment = current_seat_commitment(session, subscription.id)
+    return {
+        "included": included_seats_for_definition(definition),
+        "current": int(commitment.quantity) if commitment is not None else None,
+        "used": seat_occupancy(session, context.organization_id),
+    }

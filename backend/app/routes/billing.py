@@ -51,7 +51,10 @@ billing_bp = Blueprint('billing', __name__)
 
 @billing_bp.before_request
 def _refuse_legacy_billing_writes_for_modern_accounts():
-    """I1 boundary: legacy billing commands never act for a modern-model account (the webhook is not a command)."""
+    """I1 boundary: legacy billing commands never act for a modern-model account (the webhook is not a command).
+
+    I2: the commands in ``_MODERN_ENDPOINTS`` are answered by their modern handler when the
+    context organization is modern and the command's family is enabled."""
     if request.method in ('GET', 'HEAD', 'OPTIONS') or request.endpoint == 'billing.stripe_webhook':
         return None
     from flask_jwt_extended import verify_jwt_in_request
@@ -63,6 +66,14 @@ def _refuse_legacy_billing_writes_for_modern_accounts():
         return None  # the route's own authentication answers
     if not identity:
         return None
+    if request.endpoint in _MODERN_ENDPOINTS:
+        from app.billing_cutover import BillingFamilyDisabledError, modern_context
+        try:
+            if modern_context(db.session, family=_MODERN_ENDPOINTS[request.endpoint],
+                              user_id=str(identity)) is not None:
+                return None  # I2: the route's modern handler answers
+        except BillingFamilyDisabledError:
+            pass  # the family is off: nobody answers, so the refusal below stands
     try:
         assert_legacy_billing_allowed(db.session, user_id=str(identity))
     except BillingModelConflictError as exc:
@@ -991,6 +1002,10 @@ def create_credit_pack_payment_intent():
     if not user:
         return jsonify({'msg': 'User not found'}), 404
 
+    modern = _modern_context_for(user)
+    if modern is not None:
+        return _modern_pack(user, modern, request.get_json() or {}, checkout=False)
+
     data = request.get_json() or {}
     pack_key = normalize_credit_pack_key(data.get('pack_key'))
     if not pack_key:
@@ -1040,6 +1055,10 @@ def confirm_credit_pack_payment():
     if not user:
         return jsonify({'msg': 'User not found'}), 404
 
+    modern = _modern_context_for(user)
+    if modern is not None:
+        return _modern_confirm_pack(user, modern, request.get_json() or {})
+
     data = request.get_json() or {}
     payment_intent_id = str(data.get('payment_intent_id') or '').strip()
     if not payment_intent_id:
@@ -1066,6 +1085,10 @@ def create_checkout_session():
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
+
+    modern = _modern_context_for(user)
+    if modern is not None:
+        return _modern_new_subscription(user, modern, request.get_json() or {}, embedded=False)
 
     data = request.get_json() or {}
     raw_plan_key = data.get('plan_key') or data.get('plan')
@@ -1265,6 +1288,10 @@ def create_subscription_embedded():
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
+
+    modern = _modern_context_for(user)
+    if modern is not None:
+        return _modern_new_subscription(user, modern, request.get_json() or {}, embedded=True)
 
     data = request.get_json() or {}
     raw_plan_key = data.get('plan_key') or data.get('plan')
@@ -1846,6 +1873,10 @@ def sync_embedded_subscription():
     if not user:
         return jsonify({'msg': 'User not found'}), 404
 
+    modern = _modern_context_for(user)
+    if modern is not None:
+        return _modern_sync_subscription(user, modern, request.get_json() or {})
+
     data = request.get_json() or {}
     subscription_id = str(data.get('subscription_id') or '').strip()
     expected_plan = normalize_plan_key(data.get('plan_key')) if data.get('plan_key') else None
@@ -2059,6 +2090,10 @@ def add_billed_seat():
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
+
+    modern = _modern_context_for(user)
+    if modern is not None:
+        return _modern_add_seat(user, modern)
     ctx, error = _seat_billing_context(user)
     if error:
         body, status = error
@@ -2129,6 +2164,9 @@ def modify_subscription():
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
+    modern = _modern_context_for(user)
+    if modern is not None:
+        return _modern_modify_subscription(user, modern, request.get_json() or {})
     if not user.stripe_subscription_id:
         return jsonify({'msg': 'No active subscription to modify'}), 400
 
@@ -2262,6 +2300,10 @@ def _create_credit_pack_checkout_session():
     user = User.query.get(get_jwt_identity())
     if not user:
         return jsonify({'msg': 'User not found'}), 404
+
+    modern = _modern_context_for(user)
+    if modern is not None:
+        return _modern_pack(user, modern, request.get_json() or {}, checkout=True)
 
     data = request.get_json() or {}
     pack_key = normalize_credit_pack_key(data.get('pack_key'))
@@ -2754,6 +2796,9 @@ def stripe_webhook():
 def cancel_subscription():
     """Cancel the logged-in user's active subscription at period end."""
     user = User.query.get(get_jwt_identity())
+    modern = _modern_context_for(user)
+    if modern is not None:
+        return _modern_cancel_or_resume(user, modern, resume=False)
     if not user or not user.stripe_subscription_id:
         return jsonify({'msg': 'No active subscription'}), 400
 
@@ -2778,6 +2823,9 @@ def resume_subscription():
     renews normally at the next billing date instead of lapsing to free.
     """
     user = User.query.get(get_jwt_identity())
+    modern = _modern_context_for(user)
+    if modern is not None:
+        return _modern_cancel_or_resume(user, modern, resume=True)
     if not user or not user.stripe_subscription_id:
         return jsonify({'msg': 'No active subscription'}), 400
 
@@ -2833,3 +2881,394 @@ def clear_scheduled_change():
         }), 200
     except stripe.error.StripeError as e:
         return jsonify({'success': False, 'msg': str(e)}), 400
+
+
+# —— I2: modern account commands (D18 row 17) ————————————————————————————————
+# A modern organization's account commands are answered here, through the
+# dispatch contract, in the same request and response shapes as the legacy
+# handlers. Commands that fund credits need the credit_funding family; the
+# others need financial_events. Every other POST keeps the I1 409 refusal.
+
+_MODERN_ENDPOINTS = {
+    'billing.create_checkout_session': 'credit_funding',
+    'billing.create_subscription_embedded': 'credit_funding',
+    'billing.sync_embedded_subscription': 'financial_events',
+    'billing.modify_subscription': 'credit_funding',
+    'billing.cancel_subscription': 'financial_events',
+    'billing.resume_subscription': 'financial_events',
+    'billing.create_credit_pack_payment_intent': 'credit_funding',
+    'billing.confirm_credit_pack_payment': 'credit_funding',
+    'billing.create_credit_pack_checkout_session': 'credit_funding',
+    'billing.create_overage_checkout_session': 'credit_funding',
+    'billing.add_billed_seat': 'financial_events',
+}
+
+
+def _modern_context_for(user, endpoint=None):
+    """The modern context of this request's command, or ``None`` for a legacy context."""
+    from app.billing_cutover import modern_context
+
+    family = _MODERN_ENDPOINTS.get(endpoint or request.endpoint)
+    if family is None or user is None:
+        return None
+    return modern_context(db.session, family=family, user_id=str(user.id))
+
+
+def _modern_command(handler):
+    """Run a modern handler; refusals answer with their status and operational message."""
+    from app import billing_runtime_financial as modern_financial
+
+    try:
+        return handler(modern_financial)
+    except modern_financial.CommandError as exc:
+        db.session.rollback()
+        return jsonify({'msg': str(exc), **exc.extra}), exc.status
+    except stripe.error.StripeError as exc:
+        db.session.rollback()
+        return jsonify({'msg': str(getattr(exc, 'user_message', None) or 'The payment processor refused the request.')}), 400
+
+
+def _modern_plan_request(data):
+    raw_plan_key = data.get('plan_key') or data.get('plan')
+    plan_key = normalize_plan_key(raw_plan_key)
+    billing_interval = _normalize_billing_interval(data.get('billing_interval'))
+    plan_catalog = get_plan_catalog(current_app.config)
+    if not raw_plan_key:
+        return None, None, None, (jsonify({'msg': 'Missing plan_key'}), 400)
+    if plan_key not in plan_catalog:
+        return None, None, None, (jsonify({'msg': f'Unknown plan_key {raw_plan_key}'}), 400)
+    if is_sales_only_plan(plan_key, current_app.config):
+        return None, None, None, (jsonify({
+            'msg': f'{plan_catalog[plan_key]["label"]} is sales-led. Please contact sales.',
+            'contact_sales': True,
+            'plan_key': plan_key,
+        }), 400)
+    return plan_key, billing_interval, plan_catalog, None
+
+
+def _modern_new_subscription(user, ctx, data, *, embedded):
+    def run(mf):
+        plan_key, billing_interval, plan_catalog, error = _modern_plan_request(data)
+        if error:
+            return error
+        if plan_key == 'free':
+            if mf.account_subscription(db.session, ctx) is not None:
+                return jsonify({'msg': 'Use cancel-subscription to move to free at period end.', 'plan_key': 'free'}), 400
+            if embedded:
+                return jsonify({'msg': 'The Free plan does not require payment.'}), 400
+            return jsonify({'message': 'Moved to Free plan', 'plan_key': 'free'}), 200
+        if mf.account_subscription(db.session, ctx) is not None:
+            raise mf.CommandError('Use modify-subscription to change an existing subscription.', 400)
+        mf.require_billing_authority(db.session, ctx, user.id)
+        mf.require_definition(db.session, plan_key, billing_interval)
+        price_id = _price_id_for_plan(plan_key, billing_interval, current_app.config)
+        if not price_id:
+            return jsonify({'msg': f"No {billing_interval} Stripe price configured for '{plan_key}'."}), 400
+        metadata = mf.processor_metadata(ctx, plan_key=plan_key, billing_interval=billing_interval,
+                                         checkout_type='subscription_embedded' if embedded else 'subscription')
+        if not embedded:
+            try:
+                success_url = _validated_frontend_redirect(
+                    data.get('success_url'), fallback_path='/pricing?session_id={CHECKOUT_SESSION_ID}&status=success')
+                cancel_url = _validated_frontend_redirect(data.get('cancel_url'), fallback_path='/pricing?status=cancel')
+            except ValueError as exc:
+                return jsonify({'msg': str(exc)}), 400
+            customer_id = mf.ensure_processor_customer(db.session, ctx, user, stripe)
+            session = stripe.checkout.Session.create(
+                payment_method_types=['card'], mode='subscription', customer=customer_id,
+                line_items=[{'price': price_id, 'quantity': 1}], metadata=metadata,
+                subscription_data={'metadata': metadata}, success_url=success_url, cancel_url=cancel_url,
+                allow_promotion_codes=True,
+            )
+            return jsonify({'sessionId': session.id, 'url': session.url}), 200
+        discounts = []
+        coupon_code = str(data.get('coupon_code') or '').strip()
+        if coupon_code:
+            matches = stripe.PromotionCode.list(code=coupon_code, active=True, limit=1)
+            promotion = (matches.get('data') or [None])[0]
+            if not promotion:
+                return jsonify({'msg': 'That coupon code was not found or is no longer active.'}), 400
+            discounts = [{'promotion_code': promotion.id}]
+        customer_id = mf.ensure_processor_customer(db.session, ctx, user, stripe)
+        args = {
+            'customer': customer_id, 'items': [{'price': price_id}], 'payment_behavior': 'default_incomplete',
+            'payment_settings': {'save_default_payment_method': 'on_subscription', 'payment_method_types': ['card']},
+            'metadata': metadata,
+        }
+        if discounts:
+            args['discounts'] = discounts
+        subscription = stripe.Subscription.create(**args)
+        client_secret = _subscription_payment_client_secret(subscription)
+        if not client_secret:
+            return jsonify({'msg': 'Could not initialize payment for this plan.'}), 400
+        return jsonify({
+            'subscription_id': subscription.id,
+            'client_secret': client_secret,
+            'plan_key': plan_key,
+            'billing_interval': billing_interval,
+            'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY') or '',
+        }), 200
+    return _modern_command(run)
+
+
+def _modern_sync_subscription(user, ctx, data):
+    def run(mf):
+        subscription_id = str(data.get('subscription_id') or '').strip()
+        if not subscription_id:
+            return jsonify({'msg': 'Missing subscription_id'}), 400
+        from app.models import BillingAccount, BillingSubscription
+        account = db.session.get(BillingAccount, ctx.billing_account_id)
+        try:
+            processor = stripe.Subscription.retrieve(subscription_id)
+        except stripe.error.StripeError:
+            return jsonify({'active': False, 'msg': 'Subscription is not ready yet.'}), 200
+        if str(processor.get('customer') or '') != str(account.processor_customer_id or ''):
+            return jsonify({'msg': 'Subscription does not belong to this account.'}), 403
+        local = BillingSubscription.query.filter_by(processor='stripe', external_subscription_id=subscription_id).first()
+        plan_key = mf.subscription_plan(db.session, local)[1] if local is not None else None
+        status = str(processor.get('status') or '').strip().lower()
+        return jsonify({
+            'active': local is not None and local.state in ('active', 'cancel_at_period_end'),
+            'plan_key': plan_key,
+            'subscription_status': status,
+        }), 200
+    return _modern_command(run)
+
+
+def _modern_modify_subscription(user, ctx, data):
+    def run(mf):
+        subscription = mf.account_subscription(db.session, ctx, states=('active', 'past_due'))
+        if subscription is None:
+            return jsonify({'msg': 'No active subscription to modify'}), 400
+        plan_key, billing_interval, plan_catalog, error = _modern_plan_request(data)
+        if error:
+            return error
+        if plan_key == 'free':
+            return jsonify({'msg': 'Use cancel-subscription to move to free at period end.', 'plan_key': plan_key}), 400
+        current, current_plan, current_interval = mf.subscription_plan(db.session, subscription)
+        if billing_interval != current_interval:
+            raise mf.CommandError('Changing the billing interval is not available for this account.', 400)
+        target = mf.require_definition(db.session, plan_key, billing_interval)
+        if target.id == current.id:
+            raise mf.CommandError('The subscription is already on this plan.', 400)
+        price_id = _price_id_for_plan(plan_key, billing_interval, current_app.config)
+        if not price_id:
+            return jsonify({'msg': f"No {billing_interval} Stripe price configured for '{plan_key}'"}), 400
+        mf.require_billing_authority(db.session, ctx, user.id)
+        processor = stripe.Subscription.retrieve(subscription.external_subscription_id)
+        items = (processor.get('items') or {}).get('data') or []
+        plan_price_ids = set((current_app.config.get('STRIPE_PRICE_IDS') or {}).values()) | set(
+            (current_app.config.get('STRIPE_ANNUAL_PRICE_IDS') or {}).values())
+        item = next((i for i in items if str((i.get('price') or {}).get('id') or '') in plan_price_ids), None)
+        if item is None:
+            return jsonify({'msg': 'Subscription has no modifiable items'}), 400
+        upgrade = int(target.funding_policy_json['credit_amount']) > int(current.funding_policy_json['credit_amount'])
+        if upgrade:
+            # The processor's paid proration invoice is the evidence; the inbox processor applies it.
+            updated = stripe.Subscription.modify(
+                subscription.external_subscription_id, items=[{'id': item.get('id'), 'price': price_id}],
+                proration_behavior='always_invoice', expand=['latest_invoice'])
+            status = str(updated.get('status') or '').strip().lower()
+            latest_invoice = updated.get('latest_invoice')
+            invoice_paid = True
+            if isinstance(latest_invoice, dict):
+                invoice_paid = str(latest_invoice.get('status') or '').strip().lower() in ('', 'paid')
+            if status not in ('active', 'trialing') or not invoice_paid:
+                return jsonify({
+                    'success': False,
+                    'payment_problem': True,
+                    'msg': (
+                        "We couldn't complete the upgrade — the payment on your card "
+                        "on file didn't go through. Update your payment method and try "
+                        "again."
+                    ),
+                    'plan_key': current_plan,
+                    'subscription_status': status,
+                }), 402
+            return jsonify({
+                'success': True,
+                'effective': 'immediate',
+                'plan_key': plan_key,
+                'billing_interval': billing_interval,
+                'plan_label': plan_catalog[plan_key].get('label', plan_key),
+                'subscription_status': status,
+            }), 200
+        mf.schedule_change(db.session, ctx, subscription, kind='downgrade', user_id=user.id, target_definition=target)
+        db.session.flush()
+        updated = stripe.Subscription.modify(
+            subscription.external_subscription_id, items=[{'id': item.get('id'), 'price': price_id}],
+            proration_behavior='none')
+        db.session.commit()
+        period_end = int(mf._utc(subscription.term_ends_at).timestamp())
+        return jsonify({
+            'success': True,
+            'effective': 'period_end',
+            'plan_key': plan_key,
+            'billing_interval': billing_interval,
+            'plan_label': plan_catalog[plan_key].get('label', plan_key),
+            'current_plan_label': plan_catalog.get(current_plan, {}).get('label', current_plan),
+            'current_period_end': period_end,
+            'current_period_end_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(period_end)),
+            'subscription_status': str(updated.get('status') or '').strip().lower(),
+        }), 200
+    return _modern_command(run)
+
+
+def _modern_cancel_or_resume(user, ctx, *, resume):
+    def run(mf):
+        subscription = mf.account_subscription(db.session, ctx)
+        if subscription is None:
+            return jsonify({'msg': 'No active subscription'}), 400
+        if resume:
+            mf.resume_change(db.session, ctx, subscription, user_id=user.id)
+            db.session.flush()
+            processor = stripe.Subscription.modify(subscription.external_subscription_id, cancel_at_period_end=False)
+            db.session.commit()
+            return jsonify({
+                'success': True,
+                'msg': 'Your subscription will continue.',
+                'cancel_at_period_end': bool(processor.get('cancel_at_period_end')),
+                'subscription_status': str(processor.get('status') or '').strip().lower(),
+            }), 200
+        mf.schedule_change(db.session, ctx, subscription, kind='cancellation', user_id=user.id)
+        db.session.flush()
+        stripe.Subscription.modify(subscription.external_subscription_id, cancel_at_period_end=True)
+        db.session.commit()
+        period_end = int(mf._utc(subscription.term_ends_at).timestamp())
+        return jsonify({
+            'msg': 'Will cancel at period end',
+            'current_period_end': period_end,
+            'current_period_end_iso': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(period_end)),
+        }), 200
+    return _modern_command(run)
+
+
+def _modern_pack(user, ctx, data, *, checkout):
+    def run(mf):
+        pack_key = normalize_credit_pack_key(data.get('pack_key'))
+        if not pack_key:
+            return jsonify({'msg': 'Missing pack_key'}), 400
+        pack = get_credit_packs(current_app.config).get(pack_key)
+        if not pack:
+            return jsonify({'msg': f'Unknown pack_key {pack_key}'}), 400
+        from app import billing_runtime_funding as funding
+        definition = funding.current_definition(db.session, funding.pack_definition_key(pack_key),
+                                                mf.bc._database_now(db.session))
+        if definition is None:
+            raise mf.CommandError(f"No approved billing definition for '{pack_key}'.", 409)
+        # Approved policy: a pack is bound to the paid term in force, so it is refused before any charge without one.
+        if mf.paid_term_in_force(db.session, ctx) is None:
+            raise mf.CommandError('Credit packs need an active paid subscription.', 409)
+        mf.require_billing_authority(db.session, ctx, user.id)
+        terms = definition.funding_policy_json['purchase']
+        amount = int(terms['unit_principal_minor']) * int(terms['quantity'])
+        metadata = mf.processor_metadata(ctx, pack_key=pack_key, checkout_type='credit_pack',
+                                         requested_by_user_id=user.id)
+        customer_id = mf.ensure_processor_customer(db.session, ctx, user, stripe)
+        if checkout:
+            price_id = pack.get('stripe_price_id')
+            if not price_id:
+                return jsonify({'msg': f"No Stripe price configured for '{pack_key}'"}), 400
+            try:
+                success_url = _validated_frontend_redirect(data.get('success_url'), fallback_path='/pricing?status=success')
+                cancel_url = _validated_frontend_redirect(data.get('cancel_url'), fallback_path='/pricing?status=cancel')
+            except ValueError as exc:
+                return jsonify({'msg': str(exc)}), 400
+            session = stripe.checkout.Session.create(
+                payment_method_types=['card'], mode='payment', customer=customer_id,
+                line_items=[{'price': price_id, 'quantity': 1}], metadata=metadata,
+                payment_intent_data={'metadata': metadata}, success_url=success_url, cancel_url=cancel_url,
+            )
+            return jsonify({'sessionId': session.id, 'url': session.url}), 200
+        intent = stripe.PaymentIntent.create(
+            amount=amount, currency=terms['currency'], customer=customer_id, payment_method_types=['card'],
+            setup_future_usage='off_session', description=f"Jaspen {pack.get('label') or pack_key}",
+            metadata=metadata,
+        )
+        return jsonify({
+            'client_secret': intent.client_secret,
+            'publishable_key': current_app.config.get('STRIPE_PUBLISHABLE_KEY'),
+            'pack_key': pack_key,
+            'pack_label': pack.get('label') or pack_key,
+            'price_label': f"${pack.get('price_usd')}",
+        }), 200
+    return _modern_command(run)
+
+
+def _modern_confirm_pack(user, ctx, data):
+    def run(mf):
+        payment_intent_id = str(data.get('payment_intent_id') or '').strip()
+        if not payment_intent_id:
+            return jsonify({'msg': 'Missing payment_intent_id'}), 400
+        from app.models import BillingAccount
+        account = db.session.get(BillingAccount, ctx.billing_account_id)
+        intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+        if str(intent.get('customer') or '') != str(account.processor_customer_id or ''):
+            return jsonify({'msg': 'Payment does not belong to this user'}), 403
+        credits = mf.pack_funding_state(db.session, ctx, payment_intent_id)
+        if credits is None:
+            return jsonify({'msg': 'Payment is not ready yet', 'granted': False, 'reason': 'processing'}), 409
+        return jsonify({'success': True, 'granted': True, 'credits': credits}), 200
+    return _modern_command(run)
+
+
+def _modern_add_seat(user, ctx):
+    def run(mf):
+        subscription = mf.account_subscription(db.session, ctx, states=('active', 'past_due'))
+        if subscription is None:
+            return jsonify({'msg': 'No active subscription to add a seat to.'}), 400
+        _definition, plan_key, interval = mf.subscription_plan(db.session, subscription)
+        plan = get_plan_catalog(current_app.config).get(plan_key) or {}
+        if plan_key not in {'team', 'business'}:
+            return jsonify({'msg': 'Seat add-ons are available only on Team and Business.'}), 404
+        mf.require_billing_authority(db.session, ctx, user.id, roles=('billing_owner',))
+        seats = mf.seat_state(db.session, ctx, subscription)
+        if seats['current'] is None:
+            raise mf.CommandError('The seat commitment is not open yet.', 409)
+        mapping = 'STRIPE_ANNUAL_ADDITIONAL_SEAT_PRICE_IDS' if interval == 'annual' else 'STRIPE_ADDITIONAL_SEAT_PRICE_IDS'
+        price_id = (current_app.config.get(mapping) or {}).get(plan_key)
+        if not price_id:
+            return jsonify({'msg': f"{plan.get('label')} seat purchasing is not configured yet."}), 503
+        maximum = int(plan.get('max_total_paid_seats') or seats['included'])
+        target = seats['current'] + 1
+        if target > maximum:
+            upgrade = 'Business' if plan_key == 'team' else 'Enterprise'
+            return jsonify({'msg': f"{plan.get('label')} supports up to {maximum} users. Contact Sales about {upgrade}."}), 400
+        processor = stripe.Subscription.retrieve(subscription.external_subscription_id)
+        items = (processor.get('items') or {}).get('data') or []
+        seat_item = next((i for i in items if str((i.get('price') or {}).get('id') or '') == str(price_id)), None)
+        quantity = target - seats['included']
+        change = {'id': seat_item.get('id'), 'quantity': quantity} if seat_item else {'price': price_id, 'quantity': quantity}
+        import uuid as _uuid
+        updated = stripe.Subscription.modify(
+            subscription.external_subscription_id, items=[change], proration_behavior='always_invoice',
+            metadata={'jaspen_seat_command_id': f'seat-add:{_uuid.uuid4()}', 'jaspen_seat_requested_by': str(user.id),
+                      'jaspen_seat_delta': '1'},
+            expand=['latest_invoice'],
+        )
+        latest_invoice = updated.get('latest_invoice')
+        invoice_status = str(latest_invoice.get('status') or '').lower() if isinstance(latest_invoice, dict) else ''
+        if str(updated.get('status') or '').lower() not in {'active', 'trialing'} or invoice_status not in {'', 'paid'}:
+            return jsonify({
+                'msg': "We couldn't add the seat because the prorated payment did not complete.",
+                'payment_problem': True,
+            }), 402
+        monthly_seat_price = plan.get('additional_seat_price')
+        return jsonify({
+            'available': True,
+            'plan_key': plan_key,
+            'plan_label': plan.get('label', plan_key.title()),
+            'seat_product_label': f"{plan.get('label', plan_key.title())} Seat",
+            'included_seats': seats['included'],
+            'current_seats': target,
+            'additional_seats': quantity,
+            'max_total_seats': maximum,
+            'used_seats': seats['used'],
+            'billing_interval': interval,
+            'additional_seat_price_usd': (monthly_seat_price * 12 if interval == 'annual' and monthly_seat_price is not None
+                                          else monthly_seat_price),
+            'purchase_configured': True,
+            'can_purchase': True,
+            'success': True,
+        }), 200
+    return _modern_command(run)
