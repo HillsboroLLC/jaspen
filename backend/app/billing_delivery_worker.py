@@ -781,7 +781,7 @@ class DeliveryWorker:
         finally:
             signals.stop.set()
             heartbeat.join()
-        return self.settle(claim.operation_id)
+        return self.settle_saved_response(claim.operation_id)
 
     def _record_lost_call(self, claim):
         """A previous worker died during a provider call: record it as failed with unknown usage (absorbed)."""
@@ -816,7 +816,7 @@ class DeliveryWorker:
             now = _clock(session)
         if facts["persisted"]:
             self._mark_persisted(claim.operation_id)
-            return self.settle(claim.operation_id)
+            return self.settle_saved_response(claim.operation_id)
         if facts["state"] != "authorized":
             if facts["delivery_status"] in (None, "unsettled"):
                 return self._close(claim, "undelivered", error_code="reservation_closed")
@@ -877,7 +877,7 @@ class DeliveryWorker:
             session.commit()
         return True
 
-    def settle(self, operation_id):
+    def settle_saved_response(self, operation_id):
         """Settle a saved response through ``settle_persisted_response`` only (M2), with bounded retries.
 
         Returns the outcome, or None when settlement must wait for recovery.
@@ -922,7 +922,7 @@ class DeliveryWorker:
             if facts["persisted"]:
                 session.rollback()
                 self._mark_persisted(claim.operation_id)
-                return self.settle(claim.operation_id)
+                return self.settle_saved_response(claim.operation_id)
             delivery_status = None
             if outcome == "no_billable_usage":
                 try:
@@ -967,7 +967,7 @@ class DeliveryWorker:
                 AIDeliveryJob.state == "persisted",
             ).order_by(AIDeliveryJob.persisted_at, AIDeliveryJob.operation_id).limit(limit)).scalars().all()
         for operation_id in persisted:
-            outcome = self.settle(operation_id)
+            outcome = self.settle_saved_response(operation_id)
             if outcome is not None:
                 report["jobs_settled"].append({"operation_id": operation_id, "outcome": outcome})
 
@@ -1000,7 +1000,7 @@ class DeliveryWorker:
             with self._session() as session:
                 job = _job(session, row["operation_id"])
             if job is not None and job.state == "persisted":
-                self.settle(row["operation_id"])
+                self.settle_saved_response(row["operation_id"])
         return report
 
     def _all_executors(self, operation_id):

@@ -274,7 +274,7 @@ def test_worker_persists_then_settles_once_and_the_route_streams_saved_output(db
     assert _job(session, operation_id).outcome == "delivered"
     # Replays: the job is finished, so nothing claims or charges it again.
     assert sqlite_worker.run_job(operation_id) is None
-    assert sqlite_worker.settle(operation_id) == "delivered"
+    assert sqlite_worker.settle_saved_response(operation_id) == "delivered"
     sqlite_worker.recover()
     assert charged(session, operation_id) == 18
 
@@ -856,7 +856,7 @@ def test_postgres_recovery_retries_settlement_and_concurrent_sweeps_charge_once(
     with pg() as engine:
         ns = _pg_world(engine, credits=5000, member={"max_concurrent": 20}, organization={"max_concurrent": 20})
         operations = [_pg_submit(engine, ns) for _ in range(4)]
-        monkeypatch.setattr(bdw.DeliveryWorker, "settle", lambda self, operation_id: None)  # dies after persisting
+        monkeypatch.setattr(bdw.DeliveryWorker, "settle_saved_response", lambda self, operation_id: None)  # dies after persisting
         for operation_id in operations:
             bdw.DeliveryWorker(_factory(engine)).run_job(operation_id)
         monkeypatch.undo()

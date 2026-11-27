@@ -607,7 +607,7 @@ def recover_reliable_deliveries(session, *, limit=100, scan_limit=1000, cursors=
         envelope_operations.add(billing.operation_id)
         blocked.append(_blocked_candidate(billing.operation_id, reason))
 
-    def settle(billing):
+    def settle_row(billing):
         operation, checked = _bound_rows(session, billing.operation_id)
         if _envelope(operation) is None:
             return False
@@ -626,12 +626,12 @@ def recover_reliable_deliveries(session, *, limit=100, scan_limit=1000, cursors=
 
     settle_cursor = _sweep_pass(
         session, cursor=decode_cursor(cursors.get("settle")), limit=limit, scan_limit=scan_limit,
-        page=settle_page, act=settle, on_blocked=on_blocked,
+        page=settle_page, act=settle_row, on_blocked=on_blocked,
     )
 
     now = _clock(session)
 
-    def expire(billing):
+    def expire_row(billing):
         if billing.operation_id in envelope_operations:
             return False
         operation, _checked_row = _bound_rows(session, billing.operation_id)
@@ -647,7 +647,7 @@ def recover_reliable_deliveries(session, *, limit=100, scan_limit=1000, cursors=
 
     expire_cursor = _sweep_pass(
         session, cursor=decode_cursor(cursors.get("expire")), limit=limit, scan_limit=scan_limit,
-        page=expire_page, act=expire, on_blocked=on_blocked,
+        page=expire_page, act=expire_row, on_blocked=on_blocked,
     )
     return {
         "settled": settled,
