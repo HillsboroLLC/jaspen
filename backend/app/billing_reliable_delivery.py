@@ -435,12 +435,11 @@ def delivery_view(session, *, operation_id, organization_id, actor_user_id):
     }
 
 
-def closed_or_lapsed_operations(session, operation_ids, *, at, limit):
-    """Of the given operation ids (a select), those whose reservation is closed or whose lease lapsed."""
-    return session.execute(select(AIBillingOperation.operation_id).where(
-        AIBillingOperation.operation_id.in_(operation_ids),
+def closed_or_lapsed_filter(operation_id_column, *, at):
+    """A filter on ``operation_id_column``: the operation's reservation is closed or its lease lapsed."""
+    return operation_id_column.in_(select(AIBillingOperation.operation_id).where(
         or_(AIBillingOperation.state != "authorized", AIBillingOperation.expires_at <= at),
-    ).order_by(AIBillingOperation.expires_at, AIBillingOperation.operation_id).limit(limit)).scalars().all()
+    ))
 
 
 # ---------------------------------------------------------------------------

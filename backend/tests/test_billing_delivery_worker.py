@@ -1058,3 +1058,127 @@ def test_the_payload_bound_is_refused_cleanly(db, monkeypatch):
                             actor_user_id=ns.owner, executor="i3-in-process",
                             payload={"history": "x" * (1024 * 1024)}, provider_timeout_seconds=30)
     assert session.get(AIDeliveryJob, authorization.operation_id) is None
+
+
+# ---------------------------------------------------------------------------
+# Audit regressions: lock order (B1), cancel race (S1), recovery isolation (S2),
+# heartbeat renewal failure (S3), sweep wrap-around (N4)
+# ---------------------------------------------------------------------------
+
+def test_s1_a_cancel_committed_before_persistence_is_never_charged(db, sqlite_worker, monkeypatch):
+    session = db.session
+    ns = world(session)
+    operation_id = _submit(session, ns)
+    session.commit()
+    real = bdw.DeliveryWorker._persist
+
+    def cancel_first(self, claim, result):
+        with Session(db.engine) as other:  # the customer presses Stop after the final in-memory check
+            bdw.request_cancellation(other, operation_id=operation_id, organization_id=ns.org,
+                                     actor_user_id=ns.owner)
+            other.commit()
+        return real(self, claim, result)
+
+    monkeypatch.setattr(bdw.DeliveryWorker, "_persist", cancel_first)
+    assert sqlite_worker.run_job(operation_id) == "undelivered"
+    session.expire_all()
+    job = _job(session, operation_id)
+    assert (job.outcome, job.error_code) == ("undelivered", "cancelled")
+    assert session.get(AIOperation, operation_id).result_json is None
+    assert charged(session, operation_id) == 0 and sums(session, ns.account) == (500, 0)
+    assert _reconciled(session, operation_id)
+
+
+def test_n3_a_kept_response_cannot_be_cancelled(db, sqlite_worker):
+    session = db.session
+    ns = world(session)
+    operation_id = _submit(session, ns)
+    session.commit()
+    sqlite_worker.run_job(operation_id)
+    session.expire_all()
+    assert not bdw.request_cancellation(session, operation_id=operation_id, organization_id=ns.org,
+                                        actor_user_id=ns.owner)
+
+
+def test_s2_one_poisoned_abandoned_job_never_stops_recovery(db, monkeypatch):
+    session = db.session
+    ns = world(session, member={"max_concurrent": 20}, organization={"max_concurrent": 20})
+    poisoned = _submit(session, ns)
+    healthy = _submit(session, ns)
+    session.get(AIOperation, poisoned).user_id = None  # identity disagrees with the Phase 12 binding
+    session.commit()
+    after_lapse = rd._clock(session) + timedelta(seconds=int(_billing(session, healthy).lease_seconds) + 5)
+    monkeypatch.setattr("app.billing_ai_operations._clock", lambda _session: after_lapse)
+    monkeypatch.setattr("app.billing_reliable_delivery._clock", lambda _session: after_lapse)
+    with mock.patch.dict(bdw._EXECUTORS, {}, clear=True):
+        worker = bdw.DeliveryWorker(_factory(db.engine), owner="recovery-only")
+        first = worker.recover()
+        second = worker.recover()
+    assert first["jobs_closed"] == [{"operation_id": healthy, "outcome": "undelivered"}]
+    assert poisoned in {row["operation_id"] for row in first["blocked"]}
+    assert poisoned in {row["operation_id"] for row in second["blocked"]}
+    session.expire_all()
+    assert _job(session, poisoned).lease_token is None  # its claim was released, not left to lapse
+    assert charged(session, poisoned) == 0  # fail closed
+
+
+def test_s3_a_failed_reservation_renewal_still_renews_the_job_lease(db, monkeypatch):
+    session = db.session
+    ns = world(session)
+    operation_id = _submit(session, ns, heartbeat=1, job_lease=3)
+    session.commit()
+    worker = bdw.DeliveryWorker(_factory(db.engine), owner="hb")
+    claim = worker.claim(operation_id)
+    before = _job(session, operation_id).lease_expires_at
+    monkeypatch.setattr(rd, "heartbeat_reliable_delivery",
+                        mock.Mock(side_effect=rd.AIBillingError("renewal refused")))
+    time.sleep(0.01)
+    assert bdw._Heartbeat(worker, claim, bdw._Signals()).tick()
+    after = _job(session, operation_id).lease_expires_at
+    assert bdw._utc(after) > bdw._utc(before)
+
+
+def test_n4_the_sweep_wraps_around_to_rows_before_its_cursor(db):
+    session = db.session
+    ns = world(session)
+    saved = _saved(session, ns, step="before-the-cursor")
+    far = rd.encode_cursor((_billing(session, saved).expires_at + timedelta(days=1), "z" * 36))
+    report = rd.recover_reliable_deliveries(session, cursors={"settle": far, "expire": far})
+    assert [row["operation_id"] for row in report["settled"]] == [saved]
+    assert report["cursors"] == {"settle": None, "expire": None}  # a full cycle completed
+
+
+@PG
+def test_postgres_b1_a_heartbeat_during_call_recording_never_deadlocks(monkeypatch):
+    with pg() as engine:
+        ns = _pg_world(engine)
+        operation_id = _pg_submit(engine, ns, heartbeat=1, job_lease=3, timeout=5)
+        worker = bdw.DeliveryWorker(_factory(engine), owner="pg-b1")
+        claim = worker.claim(operation_id)
+        signals = bdw._Signals()
+        context = bdw.DeliveryContext(worker, claim, signals)
+        attempt = context.begin_attempt()
+        context.check_call(attempt_number=attempt, call_index=0, provider=CLAUDE[0], model=CLAUDE[1],
+                           max_input_tokens=1000, max_output_tokens=1000)
+        real = rd.record_delivery_call
+        recording = threading.Event()
+
+        def slow_record(session, **kwargs):
+            result = real(session, **kwargs)  # holds the account and operation locks
+            recording.set()
+            time.sleep(1.0)  # the heartbeat ticks now
+            return result
+
+        monkeypatch.setattr(rd, "record_delivery_call", slow_record)
+        ticks = []
+        heartbeat = threading.Thread(target=lambda: (recording.wait(10), ticks.append(
+            bdw._Heartbeat(worker, claim, signals).tick())))
+        heartbeat.start()
+        context.record_call(attempt_number=attempt, call_index=0, provider=CLAUDE[0], model=CLAUDE[1],
+                            outcome="succeeded", usage_label="reported", input_tokens=1000, output_tokens=1000,
+                            requested_at=context.now(), finished_at=context.now(), provider_request_id="b1")
+        heartbeat.join(20)
+        assert ticks == [True]
+        with migrated_session(engine) as session:
+            assert session.execute(sa.select(sa.func.count()).select_from(AIProviderCallUsage).where(
+                AIProviderCallUsage.operation_id == operation_id)).scalar_one() == 1

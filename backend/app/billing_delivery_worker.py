@@ -188,6 +188,11 @@ def _job(session, operation_id, *, lock=False):
     return job
 
 
+def _lock_job(session, operation_id):
+    """Lock the job row first: every worker transaction takes job, then account, then operation."""
+    return _job(session, operation_id, lock=True)
+
+
 def _job_for(session, operation_id, organization_id, actor_user_id):
     job = _job(session, operation_id)
     if job is None:
@@ -294,7 +299,7 @@ def request_cancellation(session, *, operation_id, organization_id, actor_user_i
     result = session.execute(_job_update().where(
         AIDeliveryJob.operation_id == operation_id,
         AIDeliveryJob.cancel_requested_at.is_(None),
-        AIDeliveryJob.state != "finished",
+        AIDeliveryJob.state.in_(("queued", "running")),  # a kept response can no longer be stopped
     ).values(cancel_requested_at=_clock(session)))
     session.flush()
     return result.rowcount == 1
@@ -486,17 +491,26 @@ class DeliveryContext:
                     duration_ms=None, status_code=None, operational_metadata=None):
         """Record a provider call's usage (Phase 12) and operational attempt (Phase 17) whatever its outcome."""
         self.flush()
-        with self._worker._session() as session:
-            rd.record_delivery_call(
-                session, **self._identity(), attempt_number=attempt_number, call_index=call_index,
-                component=component or _component(attempt_number, call_index), provider=provider, model=model,
-                outcome=outcome, usage_label=usage_label, input_tokens=input_tokens, output_tokens=output_tokens,
-                requested_at=requested_at, finished_at=finished_at, error_category=error_category,
-                provider_request_id=provider_request_id, provider_reported_cost_usd=provider_reported_cost_usd,
-                duration_ms=duration_ms, status_code=status_code, operational_metadata=operational_metadata,
-            )
-            session.execute(_job_update().where(self._owned()).values(inflight_call_json=None))
-            session.commit()
+        facts = dict(
+            attempt_number=attempt_number, call_index=call_index,
+            component=component or _component(attempt_number, call_index), provider=provider, model=model,
+            outcome=outcome, usage_label=usage_label, input_tokens=input_tokens, output_tokens=output_tokens,
+            requested_at=requested_at, finished_at=finished_at, error_category=error_category,
+            provider_request_id=provider_request_id, provider_reported_cost_usd=provider_reported_cost_usd,
+            duration_ms=duration_ms, status_code=status_code, operational_metadata=operational_metadata,
+        )
+        for attempt in range(SETTLE_ATTEMPTS):  # the record is fingerprint-idempotent, so a retry is safe
+            try:
+                with self._worker._session() as session:
+                    _lock_job(session, self.operation_id)  # lock order everywhere: job, then account, then op
+                    rd.record_delivery_call(session, **self._identity(), **facts)
+                    session.execute(_job_update().where(self._owned()).values(inflight_call_json=None))
+                    session.commit()
+                return
+            except Exception as exc:
+                if not (_transient(exc) and attempt + 1 < SETTLE_ATTEMPTS):
+                    raise
+                time.sleep(RETRY_BACKOFF_SECONDS * (2 ** attempt))
 
     def emit(self, attempt_number, text):
         """Buffer streamed text for the browser; written in small batches."""
@@ -595,6 +609,11 @@ class _Heartbeat(threading.Thread):
                         )
                 except rd.ReservationLapsedError:
                     signals.lapsed.set()  # never revived; a late response is delivered without a charge
+                except Exception as exc:  # the job lease renewal above still commits
+                    if not (isinstance(exc, rd.AIBillingError) or _transient(exc)):
+                        raise
+                    log.warning("reservation renewal failed for %s; retried next tick", claim.operation_id,
+                                exc_info=True)
             session.commit()
         return True
 
@@ -778,7 +797,10 @@ class DeliveryWorker:
                 return None
             if signals.cancelled.is_set() and not signals.persisted_elsewhere.is_set():
                 return self._close(claim, "undelivered", error_code="cancelled")
-            if not self._persist(claim, result):
+            persisted = self._persist(claim, result)
+            if persisted == "cancelled":
+                return self._close(claim, "undelivered", error_code="cancelled")
+            if not persisted:
                 if signals.lease_lost.is_set():
                     return None
                 return self._close(claim, "undelivered", error_code="persist_failed")
@@ -841,6 +863,10 @@ class DeliveryWorker:
         for attempt in range(PERSIST_ATTEMPTS):
             try:
                 with self._session() as session:
+                    job = _lock_job(session, claim.operation_id)
+                    if job.cancel_requested_at is not None and job.state == "running":
+                        session.rollback()
+                        return "cancelled"  # the stop was recorded before this response was kept
                     _envelope, replay = rd.persist_successful_response(
                         session, operation_id=claim.operation_id, organization_id=claim.organization_id,
                         actor_user_id=claim.actor_user_id,
@@ -966,35 +992,47 @@ class DeliveryWorker:
         3. close jobs nobody runs any more whose reservation has closed or lapsed.
         """
         report = {"jobs_settled": [], "jobs_closed": [], "settled": [], "expired": [], "blocked": []}
-        with self._session() as session:
-            persisted = session.execute(select(AIDeliveryJob.operation_id).where(
-                AIDeliveryJob.state == "persisted",
-            ).order_by(AIDeliveryJob.persisted_at, AIDeliveryJob.operation_id).limit(limit)).scalars().all()
+        cursors = self._recovery_cursors()
+
+        persisted, cursors["jobs_persisted"] = self._job_page(
+            lambda now: AIDeliveryJob.state == "persisted", cursors.get("jobs_persisted"), limit)
         for operation_id in persisted:
-            outcome = self.settle_saved_response(operation_id)
+            outcome = self.settle_saved_response(operation_id)  # never raises; None waits for a later round
             if outcome is not None:
                 report["jobs_settled"].append({"operation_id": operation_id, "outcome": outcome})
 
         with self._session() as session:
             state = session.get(AIDeliveryWorkerState, RECOVERY_STATE_KEY, with_for_update=True)
             sweep = rd.recover_reliable_deliveries(
-                session, limit=limit, scan_limit=scan_limit, cursors=(state.cursor_json if state else None),
+                session, limit=limit, scan_limit=scan_limit,
+                cursors={key: cursors.get(key) for key in ("settle", "expire")},
             )
-            if state is None:
-                session.add(AIDeliveryWorkerState(key=RECOVERY_STATE_KEY, cursor_json=sweep["cursors"]))
-            else:
-                state.cursor_json = sweep["cursors"]
+            cursors.update(sweep["cursors"])
+            state.cursor_json = dict(cursors)
             session.commit()
         for key in ("settled", "expired", "blocked"):
-            report[key] = sweep[key]
-        report["cursors"] = sweep["cursors"]
+            report[key] = list(sweep[key])
 
-        for operation_id in self._abandoned(limit):
+        abandoned, cursors["jobs_abandoned"] = self._job_page(
+            lambda now: and_(
+                AIDeliveryJob.state.in_(("queued", "running")),
+                or_(AIDeliveryJob.lease_expires_at.is_(None), AIDeliveryJob.lease_expires_at <= now),
+                rd.closed_or_lapsed_filter(AIDeliveryJob.operation_id, at=now),
+            ), cursors.get("jobs_abandoned"), limit)
+        for operation_id in abandoned:
             claim = self.claim(operation_id, executors=self._all_executors(operation_id))
             if claim is None:
                 continue
-            self._record_lost_call(claim)
-            outcome = self._finish_if_decided(claim)
+            try:
+                self._record_lost_call(claim)
+                outcome = self._finish_if_decided(claim)
+            except Exception as exc:  # one row never stops recovery of the others (S2); systemic errors do
+                self._release_claim(claim)
+                reason = rd._row_error(exc)
+                if reason is None:
+                    raise
+                report["blocked"].append({"operation_id": operation_id, "reason": reason})
+                continue
             if outcome is not _UNDECIDED and outcome is not None:
                 report["jobs_closed"].append({"operation_id": operation_id, "outcome": outcome})
             else:
@@ -1005,22 +1043,54 @@ class DeliveryWorker:
                 job = _job(session, row["operation_id"])
             if job is not None and job.state == "persisted":
                 self.settle_saved_response(row["operation_id"])
+        with self._session() as session:
+            state = session.get(AIDeliveryWorkerState, RECOVERY_STATE_KEY, with_for_update=True)
+            state.cursor_json = dict(cursors)
+            session.commit()
+        report["cursors"] = cursors
         return report
+
+    def _recovery_cursors(self):
+        """The durable cursors, creating the state row once even when two workers start together (N1)."""
+        with self._session() as session:
+            try:
+                with session.begin_nested():
+                    session.add(AIDeliveryWorkerState(key=RECOVERY_STATE_KEY, cursor_json={}))
+                    session.flush()
+            except sa_exc.IntegrityError:
+                pass
+            session.commit()
+            state = session.get(AIDeliveryWorkerState, RECOVERY_STATE_KEY)
+            return dict(state.cursor_json or {})
+
+    def _job_page(self, condition, cursor, limit):
+        """Up to ``limit`` matching jobs from ``cursor`` by (created_at, operation_id), wrapping once.
+
+        Returns the ids and the cursor for the next round (None after a full cycle), so
+        jobs that keep failing never starve the ones behind them.
+        """
+        start = None if not cursor else (datetime.fromisoformat(cursor["created_at"]), cursor["operation_id"])
+        key = (AIDeliveryJob.created_at, AIDeliveryJob.operation_id)
+        found = []
+        with self._session() as session:
+            where = condition(_clock(session))
+            for after, until in ([(start, None)] if start is None else [(start, None), (None, start)]):
+                query = select(*key).where(where)
+                if after is not None:
+                    query = query.where(or_(key[0] > after[0], and_(key[0] == after[0], key[1] > after[1])))
+                if until is not None:
+                    query = query.where(or_(key[0] < until[0], and_(key[0] == until[0], key[1] <= until[1])))
+                found += session.execute(query.order_by(*key).limit(limit - len(found))).all()
+                if len(found) >= limit:
+                    last = found[-1]
+                    return [row[1] for row in found], {"created_at": _utc(last[0]).isoformat(),
+                                                       "operation_id": last[1]}
+        return [row[1] for row in found], None
 
     def _all_executors(self, operation_id):
         with self._session() as session:
             return (session.execute(select(AIDeliveryJob.executor).where(
                 AIDeliveryJob.operation_id == operation_id)).scalar_one(),)
-
-    def _abandoned(self, limit):
-        """Unowned jobs (lease lapsed or never claimed) whose reservation is closed or lapsed."""
-        with self._session() as session:
-            now = _clock(session)
-            unowned = select(AIDeliveryJob.operation_id).where(
-                AIDeliveryJob.state.in_(("queued", "running")),
-                or_(AIDeliveryJob.lease_expires_at.is_(None), AIDeliveryJob.lease_expires_at <= now),
-            )
-            return rd.closed_or_lapsed_operations(session, unowned, at=now, limit=limit)
 
     def _release_claim(self, claim):
         with self._session() as session:
