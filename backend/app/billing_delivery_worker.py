@@ -381,6 +381,7 @@ class _Signals:
     lease_lost: threading.Event = field(default_factory=threading.Event)
     cancelled: threading.Event = field(default_factory=threading.Event)
     lapsed: threading.Event = field(default_factory=threading.Event)
+    lapsed_at: list = field(default_factory=list)  # monotonic time the reservation was seen lapsed
     persisted_elsewhere: threading.Event = field(default_factory=threading.Event)
 
 
@@ -578,6 +579,12 @@ class _Heartbeat(threading.Thread):
     def tick(self):
         """One heartbeat transaction; returns False once this worker no longer owns the job."""
         claim, signals = self._claim, self._signals
+        if signals.lapsed_at and time.monotonic() - signals.lapsed_at[0] > (
+                claim.provider_timeout_seconds + claim.heartbeat_interval_seconds):
+            # The reservation lapsed and a healthy executor would have answered within its provider
+            # timeout: stop renewing the job lease, so recovery closes a hung executor's job.
+            signals.lease_lost.set()
+            return False
         with self._worker._heartbeat_session() as session:
             now = _clock(session)
             renewed = session.execute(_job_update().where(
@@ -598,6 +605,9 @@ class _Heartbeat(threading.Thread):
             )
             if facts["persisted"]:
                 signals.persisted_elsewhere.set()
+            if facts["state"] != "authorized" and not signals.lapsed_at:
+                signals.lapsed.set()  # closed or expired by recovery: the same bound applies
+                signals.lapsed_at.append(time.monotonic())
             if facts["state"] == "authorized" and not signals.lapsed.is_set():
                 try:
                     with session.begin_nested():
@@ -609,6 +619,7 @@ class _Heartbeat(threading.Thread):
                         )
                 except rd.ReservationLapsedError:
                     signals.lapsed.set()  # never revived; a late response is delivered without a charge
+                    signals.lapsed_at.append(time.monotonic())
                 except Exception as exc:  # the job lease renewal above still commits
                     if not (isinstance(exc, rd.AIBillingError) or _transient(exc)):
                         raise
@@ -815,6 +826,7 @@ class DeliveryWorker:
         if not isinstance(marker, dict):
             return
         with self._session() as session:
+            _lock_job(session, claim.operation_id)  # job first, like every worker transaction
             try:
                 with session.begin_nested():
                     rd.record_delivery_call(
@@ -990,6 +1002,10 @@ class DeliveryWorker:
         2. the Phase 17 sweep over Phase 12 rows (settle saved responses, expire
            lapsed leases), resuming from its durable cursors;
         3. close jobs nobody runs any more whose reservation has closed or lapsed.
+
+        Each pass resumes from a durable cursor and wraps around. Two concurrent rounds
+        may write their cursors in either order, so a cursor can move back; that only
+        repeats idempotent work, never skips it.
         """
         report = {"jobs_settled": [], "jobs_closed": [], "settled": [], "expired": [], "blocked": []}
         cursors = self._recovery_cursors()
@@ -1020,6 +1036,17 @@ class DeliveryWorker:
                 rd.closed_or_lapsed_filter(AIDeliveryJob.operation_id, at=now),
             ), cursors.get("jobs_abandoned"), limit)
         for operation_id in abandoned:
+            try:  # check the row before claiming it, so a poisoned job's claim count stays put
+                with self._session() as session:
+                    job = _job(session, operation_id)
+                    rd.delivery_billing_state(session, operation_id=operation_id,
+                                              organization_id=job.organization_id, actor_user_id=job.actor_user_id)
+            except Exception as exc:
+                reason = rd._row_error(exc)
+                if reason is None:
+                    raise
+                report["blocked"].append({"operation_id": operation_id, "reason": reason})
+                continue
             claim = self.claim(operation_id, executors=self._all_executors(operation_id))
             if claim is None:
                 continue

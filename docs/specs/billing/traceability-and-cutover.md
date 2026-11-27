@@ -1201,6 +1201,39 @@ accounts in I1. Staging has no AI egress. I4 routes every turn by its
 project's organization, refuses legacy charging in a modern context and charges
 exactly one model.
 
+### Row 17 integration record — I3: reliable-delivery worker (inactive)
+
+Status: **implemented locally on I1 (`7a2aa323`); inactive; independent audit
+ACCEPT.** Migration `d7e9b1c3a5f8` (revises `a1f3c5e7b9d0`; re-chained after I2
+at integration). `app/billing_delivery_worker.py` reaches Phase 12 only through
+the Phase 17 boundary; its only callers are the operator CLI
+`scripts/billing_delivery_worker.py` (refuses a production runtime and runs only
+with the `ai_reservation` family on; no service unit) and, at I4, the
+family-gated AI runtime. The interface is
+`docs/specs/billing/reliable-delivery-worker-interface.md`. Nothing here enables
+charging (OD-1 Option C).
+
+| Gate criterion | Implementation | Evidence (PostgreSQL 18.6 journeys unless noted) |
+|---|---|---|
+| 1. Provider call, persistence and settlement independent of the client | The request only submits a durable job (`ai_delivery_jobs`); a worker claims it by lease (compare-and-set, `SKIP LOCKED`) and runs it to an outcome; the route streams persisted chunks and the saved response by polling; a disconnect does nothing | `test_postgres_a_disconnect_never_stops_delivery_and_the_heartbeat_renews_during_the_call`; `test_in_process_start_has_the_app_context_and_persists_on_the_threads_db_session` |
+| 3. Heartbeat renews the lease independently of the provider call | A heartbeat thread on its own session renews the job lease and calls `heartbeat_reliable_delivery` while the provider call blocks; submission refuses a lease not above provider timeout plus heartbeat; a lapsed lease is never revived; a renewal failure never drops the job lease; a hung executor stops holding its job once the reservation lapsed | the disconnect journey above; `test_submit_fails_closed_on_timing_and_is_idempotent`; `test_s3_a_failed_reservation_renewal_still_renews_the_job_lease`; `test_n3_a_hung_executor_stops_holding_its_job_after_the_reservation_lapsed`; `test_postgres_b1_a_heartbeat_during_call_recording_never_deadlocks` |
+| 5. No duplicate charge from retries, replays, late responses, cancellations, restarts or concurrent workers | Persist (committed, with the runtime's own `on_persist` write) before settle; settlement only through `settle_persisted_response`, enforced statically and by the database for job-managed operations (M2); a reclaiming worker records the lost in-flight call as unknown usage (absorbed); claims are bounded; a cancel committed before persistence is honored; one lock order (job, account, operation) | `test_postgres_concurrent_workers_run_each_job_exactly_once`; `test_postgres_restart_lost_lease_race_and_late_original_worker_charge_once`; `test_postgres_a_crashed_worker_is_recovered_by_another_process`; `test_postgres_cancellation_during_streaming_is_undelivered_and_never_charged`; `test_postgres_a_late_response_after_the_lease_lapsed_is_delivered_never_charged`; `test_postgres_recovery_retries_settlement_and_concurrent_sweeps_charge_once`; `test_s1_a_cancel_committed_before_persistence_is_never_charged`; `test_a_reclaim_without_the_closure_is_not_resumable_and_never_loops` |
+| 4 (sweep, Phase 17 B2/O1/O2) | Bounded sweep: per-pass durable cursors with wrap-around and a scan bound; row errors (identity, state, conflict, guard, malformed data) blocked in a savepoint; systemic errors stop the sweep; worker job passes are cursor-paged and isolated per row | `test_permanently_blocked_rows_never_starve_a_saved_response`; `test_scanning_is_bounded_and_resumes_from_its_cursor`; `test_n4_the_sweep_wraps_around_to_rows_before_its_cursor`; `test_o2_a_row_level_database_refusal_is_isolated`; `test_o1_a_systemic_billing_error_stops_the_sweep`; `test_postgres_o1_the_wrong_isolation_level_stops_recovery`; `test_s2_a_malformed_saved_envelope_is_a_row_block_and_the_sweep_moves_on`; `test_s2_one_poisoned_abandoned_job_never_stops_recovery` |
+| 2, 8 (M3) | Database guards: job identity must equal the Phase 12 binding; jobs never deleted, finished jobs immutable; chunks append-only; a bound operation's identity and saved envelope cannot be rewritten (only `settlement` recorded once); reads require an active member | `test_postgres_migrated_guards_protect_jobs_chunks_and_persist_before_settle`; `test_sqlite_migration_guards_jobs_chunks_and_persist_before_settle` (SQLite); `test_the_route_read_enforces_durable_identity_and_active_membership` |
+
+Static guards: only `billing_ai_operations.py` and `billing_reliable_delivery.py`
+name `settle_delivered_operation`, `record_undelivered_operation` or
+`expire_ai_operation`; the worker has no live caller.
+
+Approved policy applied: a cancelled turn whose partial text was already
+streamed is undelivered with no charge (AI billability policy, 2026-11-11).
+Open: running the standalone worker as a service (infrastructure approval) and
+D1 (in-process start dies with a Gunicorn worker timeout; the standalone worker
+is the reliability path); N2 (a sweep page holds its account locks until
+commit); N5 (stream progress may show a newer attempt than the saved one during
+a lost-lease race; the saved response is authoritative). Local verification is
+not activation.
+
 ## D18 Phase dependency and cutover map
 
 The original 18 phases are the authoritative implementation sequence because

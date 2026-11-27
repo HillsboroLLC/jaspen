@@ -169,6 +169,36 @@ def _mismatched_job(session, ns, actor_user_id):
     session.flush()
 
 
+def _assert_m3_guard(session, ns, *, sqlite):
+    """M3: a bound operation's identity and saved response cannot be rewritten by direct SQL."""
+    operation_id = _saved(session, ns, step=f"m3-{uuid.uuid4().hex[:8]}")
+    rd.settle_persisted_response(session, operation_id=operation_id, organization_id=ns.org,
+                                 actor_user_id=ns.owner)  # the one permitted envelope change
+    session.commit()
+    envelope = session.get(AIOperation, operation_id).result_json["reliable_delivery"]
+
+    def refused(values, message):
+        with pytest.raises(sa.exc.IntegrityError, match=message):
+            with session.begin_nested():
+                session.execute(sa.update(AIOperation).where(AIOperation.id == operation_id).values(**values)
+                                .execution_options(synchronize_session=False))
+        if not sqlite:
+            session.rollback()
+
+    from tests.test_billing_enterprise_contracts import seed_org
+    stranger = seed_org(session)
+    session.commit()
+    refused({"organization_id": stranger.org}, "identity is immutable")
+    refused({"user_id": stranger.owner}, "identity is immutable")
+    refused({"result_json": None}, "response is immutable")
+    refused({"result_json": {"reliable_delivery": {**envelope, "response": {"m": "forged"}}}}, "response is immutable")
+    refused({"result_json": {"reliable_delivery": {**envelope, "settlement": None}}}, "response is immutable")
+    # Other columns stay writable, and the foreign key's SET NULL still applies.
+    session.execute(sa.update(AIOperation).where(AIOperation.id == operation_id).values(
+        status="succeeded", user_id=None).execution_options(synchronize_session=False))
+    session.commit()
+
+
 def _reconciled(session, operation_id):
     return rd.provider_cost_reconciliation(session, operation_id=operation_id)["reconciled"]
 
@@ -183,10 +213,13 @@ def _sources():
             yield path
 
 
-def test_m2_only_the_phase17_boundary_calls_phase12_settlement():
-    """The AI runtime settles only through ``settle_persisted_response`` (M2)."""
-    callers = sorted(str(path.relative_to(BACKEND)) for path in _sources()
-                     if "settle_delivered_operation" in path.read_text())
+@pytest.mark.parametrize("finalizer", [
+    "settle_delivered_operation", "record_undelivered_operation", "expire_ai_operation",
+])
+def test_m2_only_the_phase17_boundary_calls_phase12_finalizers(finalizer):
+    """The AI runtime settles only through ``settle_persisted_response`` (M2) and closes or
+    expires only through the Phase 17 boundary: no other module names a Phase 12 finalizer."""
+    callers = sorted(str(path.relative_to(BACKEND)) for path in _sources() if finalizer in path.read_text())
     assert callers == ["app/billing_ai_operations.py", "app/billing_reliable_delivery.py"]
 
 
@@ -641,6 +674,7 @@ def test_sqlite_migration_guards_jobs_chunks_and_persist_before_settle(tmp_path)
             assert settle_delivered_operation(session, operation_id=plain.operation_id,
                                               delivered_attempt_number=1).charged_credits == 18
             session.commit()
+            _assert_m3_guard(session, ns, sqlite=True)
         with engine.begin() as connection:
             with mock.patch.object(module, "op", Operations(MigrationContext.configure(connection))):
                 with pytest.raises(module.DeliveryJobsNotEmptyError):
@@ -930,6 +964,8 @@ def test_postgres_migrated_guards_protect_jobs_chunks_and_persist_before_settle(
                 settle_delivered_operation(session, operation_id=operation_id, delivered_attempt_number=1)
             session.rollback()
             assert charged(session, operation_id) == 0
+        with migrated_session(engine) as session:
+            _assert_m3_guard(session, ns, sqlite=False)
 
 
 # ---------------------------------------------------------------------------
@@ -1118,7 +1154,7 @@ def test_s2_one_poisoned_abandoned_job_never_stops_recovery(db, monkeypatch):
     assert poisoned in {row["operation_id"] for row in first["blocked"]}
     assert poisoned in {row["operation_id"] for row in second["blocked"]}
     session.expire_all()
-    assert _job(session, poisoned).lease_token is None  # its claim was released, not left to lapse
+    assert _job(session, poisoned).lease_token is None and _job(session, poisoned).claims == 0  # never claimed
     assert charged(session, poisoned) == 0  # fail closed
 
 
@@ -1182,3 +1218,60 @@ def test_postgres_b1_a_heartbeat_during_call_recording_never_deadlocks(monkeypat
         with migrated_session(engine) as session:
             assert session.execute(sa.select(sa.func.count()).select_from(AIProviderCallUsage).where(
                 AIProviderCallUsage.operation_id == operation_id)).scalar_one() == 1
+
+
+def test_s2_a_malformed_saved_envelope_is_a_row_block_and_the_sweep_moves_on(db):
+    session = db.session
+    ns = world(session, member={"max_concurrent": 20}, organization={"max_concurrent": 20})
+    malformed = _saved(session, ns, step="malformed")
+    good = _saved(session, ns, step="good")
+    operation = session.get(AIOperation, malformed)
+    result = dict(operation.result_json)
+    result["reliable_delivery"] = {**result["reliable_delivery"], "delivered_attempt_number": "not-a-number"}
+    operation.result_json = result
+    session.flush()
+    report = rd.recover_reliable_deliveries(session)
+    assert report["blocked"] == [{"operation_id": malformed, "reason": "malformed row data: ValueError"}]
+    assert [row["operation_id"] for row in report["settled"]] == [good]
+
+
+def test_s3_a_failing_runner_pass_is_logged_and_retried_not_fatal(db, app, monkeypatch, capsys, caplog):
+    cli = _cli()
+    monkeypatch.setenv("BILLING_MODERN_FAMILIES", FAMILIES)
+    calls = []
+
+    def flaky(self, **_kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("database went away")
+        return []
+
+    monkeypatch.setattr(bdw.DeliveryWorker, "run_once", flaky)
+    real_recover = bdw.DeliveryWorker.recover
+
+    def slow_recover(self, **kwargs):  # keep the round open long enough for the runner to retry
+        assert _wait(lambda: len(calls) >= 2, timeout=5)
+        return real_recover(self, **kwargs)
+
+    monkeypatch.setattr(bdw.DeliveryWorker, "recover", slow_recover)
+    assert cli.run(["run", "--once", "--idle-seconds", "0.01", "--concurrency", "1",
+                    "--executor-module", "app.billing_delivery_worker"],
+                   app=app, session_factory=_factory(db.engine)) == 0
+    assert len(calls) == 2 and "delivery runner pass failed" in caplog.text
+    assert '"runners_unfinished_at_shutdown": 0' in capsys.readouterr().out
+
+
+def test_n3_a_hung_executor_stops_holding_its_job_after_the_reservation_lapsed(db):
+    session = db.session
+    ns = world(session)
+    operation_id = _submit(session, ns, heartbeat=1, job_lease=3, timeout=5)
+    session.commit()
+    worker = bdw.DeliveryWorker(_factory(db.engine), owner="hung")
+    claim = worker.claim(operation_id)
+    signals = bdw._Signals()
+    signals.lapsed.set()
+    signals.lapsed_at.append(time.monotonic() - (claim.provider_timeout_seconds + claim.heartbeat_interval_seconds + 1))
+    before = _job(session, operation_id).lease_expires_at
+    assert bdw._Heartbeat(worker, claim, signals).tick() is False
+    assert signals.lease_lost.is_set()
+    assert _job(session, operation_id).lease_expires_at == before  # not renewed: recovery takes it back
