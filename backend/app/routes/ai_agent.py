@@ -15834,6 +15834,7 @@ def _stream_modern_conversation_turn(turn, req, submission=None):
     @stream_with_context
     def event_stream():
         cursor = None
+        deadline = _time.monotonic() + modern_ai.operation_timeout_seconds(db.session)
         factory = modern_ai._outcome_session_factory()
         with factory() as watch:
             while True:
@@ -15844,7 +15845,12 @@ def _stream_modern_conversation_turn(turn, req, submission=None):
                 cursor = view.cursor
                 if view.finished:
                     break
-                _time.sleep(worker.STREAM_POLL_SECONDS)
+                remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    yield _sse_payload({"type": "error", "error": "ai_operation_unavailable",
+                                        "code": "delivery_pending", "retryable": True})
+                    return
+                _time.sleep(min(remaining, worker.STREAM_POLL_SECONDS))
             outcome = worker.delivery_outcome(watch, **identity)
         db.session.expire_all()
         if not outcome["persisted"] or "payload" not in holder:

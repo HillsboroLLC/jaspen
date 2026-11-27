@@ -78,3 +78,14 @@ def test_a_modern_claim_is_never_stale_p4_0_evidence(db):
     assert (result["class"], result["in_flight"], result["reason"]) == (
         ai_audit.UNCLOSED_OUTSTANDING, True, "phase12_operation")
     session.rollback()
+
+
+@pytest.mark.parametrize(("runaway_seconds", "wait_seconds"), [(150, 165), (600, 165), (30, 45)])
+def test_modern_operation_wait_stays_below_staging_request_timeout(runaway_seconds, wait_seconds):
+    from unittest.mock import Mock
+
+    session = Mock()
+    session.execute.return_value.scalar_one_or_none.return_value = {
+        "runaway": {"max_operation_seconds": runaway_seconds}
+    }
+    assert rt.operation_timeout_seconds(session) == wait_seconds

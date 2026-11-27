@@ -33,6 +33,9 @@ from .models import AIOperation
 ROUTER_VERSION = "jaspen.ai.modern.v1"
 POLICY_VERSION = "phase12"
 CHARS_PER_TOKEN_BOUND = 2  # a conservative input bound: real prompts run near four characters per token
+# Keep request polling below the approved 180-second staging request timeout.
+MAX_STAGING_WAIT_SECONDS = 165
+SETTLEMENT_MARGIN_SECONDS = 15
 
 
 class ModernOperationRefused(RuntimeError):
@@ -304,7 +307,8 @@ def operation_timeout_seconds(session):
     rules = session.execute(select(CapacityPolicyVersion.rules_json).where(
         CapacityPolicyVersion.state == "effective")).scalar_one_or_none() or {}
     runaway = rules.get("runaway") if isinstance(rules, dict) else {}
-    return int((runaway or {}).get("max_operation_seconds") or 600) + 60
+    bound = int((runaway or {}).get("max_operation_seconds") or 0)
+    return min(MAX_STAGING_WAIT_SECONDS, bound + SETTLEMENT_MARGIN_SECONDS)
 
 
 def _jsonable(value):
