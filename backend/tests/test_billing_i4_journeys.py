@@ -588,3 +588,18 @@ def test_modern_batch_records_one_ordered_provider_attempt(app, db, modern, monk
     calls = db.session.query(AIProviderCallUsage).filter_by(operation_id=settlement["operation_id"]).all()
     assert sorted((call.attempt_number, call.call_index) for call in calls) == [(1, 0), (1, 1), (1, 2)]
     assert _spendable(db.session, modern["account"]) == (before - 994, 0)
+
+
+def test_modern_cache_only_operation_returns_results_and_releases_the_hold(app, db, modern):
+    from app.ai_runtime import execute_customer_operation
+
+    before, _held = _spendable(db.session, modern["account"])
+    user = db.session.get(User, modern["owner"].id)
+    with app.test_request_context():
+        value, usage, settlement = execute_customer_operation(
+            user, generate=lambda: ({"score": 72}, {"provider": "canonical_cache"}),
+            operation_type="score_batch", request_payload={"q": 1}, max_tokens=500, thread_id=modern["thread"],
+        )
+    assert value == {"score": 72} and usage == {"provider": "canonical_cache"}
+    assert settlement["charged_credits"] == 0 and settlement["delivery_status"] == "no_billable_usage"
+    assert _spendable(db.session, modern["account"]) == (before, 0)

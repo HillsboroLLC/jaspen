@@ -145,12 +145,13 @@ _REGISTRY = {}  # operation id -> _Pending, for the process that submitted it
 
 
 class _Pending:
-    __slots__ = ("generate", "prepare_response", "prepare_failure", "failure", "generation_failure", "failure_response")
+    __slots__ = ("generate", "prepare_response", "prepare_failure", "failure",
+                 "generation_failure", "failure_response", "zero_usage_result")
 
     def __init__(self, generate, prepare_response, prepare_failure):
         self.generate, self.prepare_response = generate, prepare_response
         self.prepare_failure = prepare_failure
-        self.failure = self.generation_failure = self.failure_response = None
+        self.failure = self.generation_failure = self.failure_response = self.zero_usage_result = None
 
 
 def _worker():
@@ -234,6 +235,7 @@ def _run_registered(ctx):
     if recorder.delivered_attempt is None:
         if recorder.recorded_calls:
             raise worker.DeliveryFailed("provider_undelivered")
+        pending.zero_usage_result = (value, usage)
         return worker.NoBillableUsage()
     def prepare_response(session, response):
         with worker_organization_scope(ctx.actor_user_id, ctx.organization_id):
@@ -440,8 +442,11 @@ def execute_modern_operation(user, *, context, generate, operation_type, idempot
         if pending is not None:
             if pending.failure is not None:
                 raise pending.failure
-            if pending.generation_failure is not None:
-                value, usage = pending.generation_failure
+            unbilled = pending.generation_failure if outcome["delivery_status"] == "undelivered" else None
+            if outcome["delivery_status"] == "no_billable_usage":
+                unbilled = pending.zero_usage_result or pending.generation_failure
+            if unbilled is not None:
+                value, usage = unbilled
                 return value, dict(usage), _settlement(outcome, operation_id)
         raise ModernOperationRefused(outcome["outcome"] or "not_delivered")
     response = outcome["response"]
