@@ -224,14 +224,28 @@ def test_m2_only_the_phase17_boundary_calls_phase12_finalizers(finalizer):
 
 
 def test_the_worker_has_no_live_caller():
-    """Inactive: only the operator CLI names the worker. I4's family-gated runtime
-    (``app/billing_runtime_ai.py``, family ``ai_reservation``) is the one planned addition."""
-    callers = sorted(str(path.relative_to(BACKEND)) for path in _sources()
-                     if str(path.relative_to(BACKEND)) not in {"app/billing_delivery_worker.py",
-                                                               "app/models_billing_delivery.py"}
-                     and ("billing_delivery_worker" in path.read_text() or "models_billing_delivery" in path.read_text()))
+    """Permit schema registration and the explicitly gated worker entry points."""
+    schema_registration = (
+        "from .models_billing_delivery import AIDeliveryJob, AIDeliveryStreamChunk, "
+        "AIDeliveryWorkerState  # noqa: E402,F401"
+    )
+    callers = []
+    for path in _sources():
+        relative_path = str(path.relative_to(BACKEND))
+        if relative_path in {"app/billing_delivery_worker.py", "app/models_billing_delivery.py"}:
+            continue
+        source = path.read_text()
+        if relative_path == "app/models.py":
+            # Register these three tables for application metadata. Only this
+            # exact line is exempt. Worker and other delivery imports still count.
+            lines = source.splitlines()
+            assert lines.count(schema_registration) == 1
+            lines.remove(schema_registration)
+            source = "\n".join(lines)
+        if "billing_delivery_worker" in source or "models_billing_delivery" in source:
+            callers.append(relative_path)
     # I4: the ai_reservation family runtime, reached only through modern_context(family="ai_reservation").
-    assert callers == ["app/billing_runtime_ai.py", "scripts/billing_delivery_worker.py"]
+    assert sorted(callers) == ["app/billing_runtime_ai.py", "scripts/billing_delivery_worker.py"]
 
 
 def test_worker_migration_follows_i1_and_is_the_single_head():
