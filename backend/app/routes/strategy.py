@@ -3837,6 +3837,9 @@ def _generate_batch_scorecards(
     own a prompt, parser, confidence policy, gate evaluator, or arithmetic path.
     """
     from concurrent.futures import ThreadPoolExecutor
+    from functools import partial
+
+    from ..ai_providers import observer as provider_observer
     from ..decision_facts import option_fact_text
     from ..decision_kits import get_decision_kit
 
@@ -3930,24 +3933,30 @@ def _generate_batch_scorecards(
 
     results = [None] * len(ideas)
     usages = [None] * len(ideas)
-    with ThreadPoolExecutor(max_workers=min(5, len(ideas))) as pool:
-        # copy_context() carries the AI customer scope into worker threads.
-        futures = [pool.submit(contextvars.copy_context().run, score_one, item) for item in ideas]
-        for index, future in enumerate(futures):
-            try:
-                card, usage = future.result()
-                results[index] = card
-                if isinstance(usage, dict):
-                    usages[index] = {
-                        **usage,
-                        'component_index': index,
-                        'option_name': str(ideas[index].get('name') or '').strip(),
-                        'reused': bool(isinstance(card, dict) and card.get('reused_stored_result')),
-                    }
-            except Exception:
-                current_app.logger.exception(
-                    "[_generate_batch_scorecards] option %s failed", index
-                )
+    def collect(index, result):
+        try:
+            card, usage = result()
+            results[index] = card
+            if isinstance(usage, dict):
+                usages[index] = {
+                    **usage,
+                    'component_index': index,
+                    'option_name': str(ideas[index].get('name') or '').strip(),
+                    'reused': bool(isinstance(card, dict) and card.get('reused_stored_result')),
+                }
+        except Exception:
+            current_app.logger.exception("[_generate_batch_scorecards] option %s failed", index)
+
+    if provider_observer.current() is not None:
+        # The Phase 12 worker has one in-flight provider slot per operation.
+        for index, idea in enumerate(ideas):
+            collect(index, partial(score_one, idea))
+    else:
+        with ThreadPoolExecutor(max_workers=min(5, len(ideas))) as pool:
+            # copy_context() carries the AI customer scope into worker threads.
+            futures = [pool.submit(contextvars.copy_context().run, score_one, item) for item in ideas]
+            for index, future in enumerate(futures):
+                collect(index, future.result)
 
     summary = _portfolio_summary_from_cards(ideas, results, rubric=rubric)
     merged_usage = None
@@ -5918,6 +5927,7 @@ Rules:
     usage_attempts = []
     try:
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
+        from ..ai_providers import observer as provider_observer
         app = current_app._get_current_object()
 
         def _merged_usage():
@@ -5994,6 +6004,21 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
                 merged['tasks'] = list(base_plan.get('tasks') or []) + repair_tasks
             return merged
 
+        def _timed_call(attempt_prompt, *, timeout, max_tokens=8000):
+            if provider_observer.current() is not None:
+                # The adapter has its own timeout. Wait for that observed
+                # request to end before starting another on the same operation.
+                return _call_llm(attempt_prompt, max_tokens=max_tokens)
+            pool = ThreadPoolExecutor(max_workers=1)
+            future = pool.submit(contextvars.copy_context().run, _call_llm, attempt_prompt, max_tokens=max_tokens)
+            try:
+                return future.result(timeout=timeout)
+            except _FuturesTimeout:
+                future.cancel()
+                raise
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+
         retry_note = ''
         generation_deadline = time.monotonic() + time_budget_seconds
 
@@ -6013,13 +6038,10 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
                 min(remaining_seconds, attempt_timeout_seconds)
                 if attempt_timeout_seconds else remaining_seconds
             )
-            _pool = ThreadPoolExecutor(max_workers=1)
             attempt_started = time.monotonic()
-            _future = _pool.submit(contextvars.copy_context().run, _call_llm, attempt_prompt)
             try:
-                raw_reply, attempt_usage = _future.result(timeout=attempt_timeout)
+                raw_reply, attempt_usage = _timed_call(attempt_prompt, timeout=attempt_timeout)
             except _FuturesTimeout:
-                _future.cancel()
                 if attempts_remain and attempt_timeout < remaining_seconds:
                     usage_attempts.append({
                         'attempt': attempt_index + 1,
@@ -6042,8 +6064,7 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
                     continue
                 provider_error.jaspen_usage = generation_usage
                 raise
-            finally:
-                _pool.shutdown(wait=False, cancel_futures=True)
+
             if isinstance(attempt_usage, dict):
                 attempt_usage = dict(attempt_usage)
                 attempt_usage.update({
@@ -6110,17 +6131,12 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
                         if isinstance(phase, dict) and str(phase.get('name') or '').strip()
                     ]
                     repair_started = time.monotonic()
-                    _repair_pool = ThreadPoolExecutor(max_workers=1)
-                    _repair_future = _repair_pool.submit(
-                        contextvars.copy_context().run,
-                        _call_llm,
-                        _repair_prompt(missing_sources, valid_task_count, phase_names),
-                        max_tokens=600,
-                    )
                     try:
-                        repair_reply, repair_usage = _repair_future.result(timeout=remaining_seconds)
+                        repair_reply, repair_usage = _timed_call(
+                            _repair_prompt(missing_sources, valid_task_count, phase_names),
+                            timeout=remaining_seconds, max_tokens=600,
+                        )
                     except _FuturesTimeout:
-                        _repair_future.cancel()
                         raise ValueError('wbs_ai_timeout')
                     except Exception as provider_error:
                         failed_usage = dict(getattr(provider_error, 'jaspen_usage', {}) or {})
@@ -6134,8 +6150,6 @@ Add only the minimum task or tasks needed to cover every missing source, and ret
                         generation_usage = _merged_usage()
                         provider_error.jaspen_usage = generation_usage
                         raise
-                    finally:
-                        _repair_pool.shutdown(wait=False, cancel_futures=True)
                     repair_usage = dict(repair_usage or {})
                     repair_usage.update({
                         'attempt': len(usage_attempts) + 1,

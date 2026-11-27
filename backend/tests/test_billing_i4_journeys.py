@@ -554,3 +554,37 @@ def test_modern_plan_settles_only_if_its_existing_delivery_path_succeeds(client,
         assert response.status_code == 500
     else:
         assert response.status_code == 200 and len(response.get_json()["project_wbs"]["tasks"]) == 12
+
+
+def test_modern_batch_records_one_ordered_provider_attempt(app, db, modern, monkeypatch):
+    from threading import get_ident
+
+    from app.ai_runtime import execute_customer_operation
+    from app.models_billing_phase12 import AIProviderCallUsage
+    from app.routes import strategy
+
+    threads = []
+
+    def score(*args, **kwargs):
+        threads.append(get_ident())
+        _, usage, *_ = _provider_reply()
+        return {"jaspen_score": 72, "name": kwargs["option_name"]}, usage
+
+    monkeypatch.setattr(strategy, "_generate_jaspen_scorecard", score)
+    ideas = [{"name": name, "description": name} for name in ("Option A", "Option B", "Option C")]
+    before, _held = _spendable(db.session, modern["account"])
+    user = db.session.get(User, modern["owner"].id)
+
+    def generate():
+        cards, summary, usage = strategy._generate_batch_scorecards(object(), ideas, return_usage=True)
+        return {"cards": cards, "summary": summary}, usage
+
+    with app.test_request_context():
+        result, _, settlement = execute_customer_operation(
+            user, generate=generate, operation_type="score_batch", request_payload={"ideas": ideas},
+            max_tokens=500, thread_id=modern["thread"],
+        )
+    assert len(result["cards"]) == 3 and len(threads) == 3 and len(set(threads)) == 1
+    calls = db.session.query(AIProviderCallUsage).filter_by(operation_id=settlement["operation_id"]).all()
+    assert sorted((call.attempt_number, call.call_index) for call in calls) == [(1, 0), (1, 1), (1, 2)]
+    assert _spendable(db.session, modern["account"]) == (before - 994, 0)
