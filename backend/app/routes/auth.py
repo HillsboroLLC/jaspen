@@ -154,6 +154,13 @@ def _normalize_locked_until(value):
 
 
 def _effective_plan_for_mfa(user, active_org=None):
+    if active_org is not None:
+        from app.billing_cutover import organization_billing_model
+        from app.orgs import org_plan_key
+        if organization_billing_model(db.session, active_org.id) == "modern":
+            # A modern organization's plan is its entitlement. An unrecognized one fails closed: the MFA
+            # rollout applies, as for the most protected plan (I1-I5 integration).
+            return normalize_plan_key(org_plan_key(active_org)) or "enterprise_custom"
     org_plan = normalize_plan_key(getattr(active_org, "plan_key", None))
     if org_plan:
         return org_plan

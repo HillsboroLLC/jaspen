@@ -676,7 +676,16 @@ def create_app():
 
     @app.errorhandler(BillingModelConflictError)
     def handle_billing_model_conflict(e):
+        db.session.rollback()
         return jsonify({'error': 'billing_model_conflict', 'msg': str(e), 'codes': list(e.codes)}), 409
+
+    from .billing_cutover import BillingFamilyDisabledError
+
+    @app.errorhandler(BillingFamilyDisabledError)
+    def handle_billing_family_disabled(e):
+        # A modern organization whose family is off: nobody answers, never a fall back to legacy billing.
+        db.session.rollback()
+        return jsonify({'error': 'billing_family_disabled', 'msg': str(e)}), 503
 
     @app.errorhandler(SessionAccessError)
     def handle_session_access_error(e):

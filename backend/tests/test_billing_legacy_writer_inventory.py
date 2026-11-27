@@ -396,6 +396,7 @@ LEGACY_FIELD_WRITERS = (
 )
 
 LEGACY_MUTATOR_REFERENCES = (
+    ("app/billing_runtime_ai.py", "submit_modern_operation", "claim_modern_operation", "both"),  # I4: Phase 12 operation row
     ("app/ai_runtime.py", "_claim_operation", "_claim_operation", "both"),
     ("app/ai_runtime.py", "execute_customer_operation", "_claim_operation", "both"),
     ("app/ai_runtime.py", "execute_customer_operation", "_release_reserved_credits", "both"),
