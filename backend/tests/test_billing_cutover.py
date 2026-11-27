@@ -718,3 +718,17 @@ def test_postgres_the_guard_lock_never_deadlocks_two_legacy_updates_of_one_organ
         assert results == {"a": "ok", "b": "ok"}
     finally:
         engine.dispose()
+
+
+def test_the_dispatch_contract_names_exactly_one_handler(db):
+    session = db.session
+    owner, org, assignment = _modern(session)
+    legacy = _user(session)
+    _org(session, legacy)
+    session.commit()
+    assert bc.modern_context(session, family="financial_events", user_id=legacy.id, config=ON) is None
+    with pytest.raises(bc.BillingFamilyDisabledError):
+        bc.modern_context(session, family="financial_events", user_id=owner.id, config=ON)
+    both = bc.CutoverConfig(frozenset({"identity", "financial_events"}), ())
+    context = bc.modern_context(session, family="financial_events", organization_id=org.id, config=both)
+    assert context == bc.ModernContext(org.id, assignment.billing_account_id)

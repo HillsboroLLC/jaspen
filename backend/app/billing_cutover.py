@@ -320,6 +320,28 @@ def context_organization_id(session, user_id):
         return session.execute(active.order_by(order, OrganizationMember.created_at.asc()).limit(1)).scalar()
 
 
+@dataclass(frozen=True)
+class ModernContext:
+    organization_id: str
+    billing_account_id: str
+
+
+def modern_context(session, *, family, user_id=None, organization_id=None, config=None):
+    """The shared dispatch contract for I2-I5: ``None`` when the context organization is legacy (the legacy
+    handler answers); a ``ModernContext`` when it is modern and ``family`` is enabled (the modern handler
+    answers); ``BillingFamilyDisabledError`` when it is modern and the family is off (nobody answers: a modern
+    organization never falls back to legacy). ``organization_id`` names the context directly (for example a
+    project's organization for AI work); otherwise the user's context organization is used."""
+    with session.no_autoflush:
+        context = organization_id or context_organization_id(session, user_id)
+        assignment = assignment_for_organization(session, context) if context else None
+        if assignment is None:
+            return None
+        _require_family(family, config)
+        return ModernContext(organization_id=assignment.organization_id,
+                             billing_account_id=assignment.billing_account_id)
+
+
 def assert_legacy_billing_allowed(session, *, user_id=None, organization_id=None):
     """Refuse a legacy billing command or write in a modern organization's context.
 
