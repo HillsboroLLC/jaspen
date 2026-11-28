@@ -519,6 +519,39 @@ def _ensure_owner_membership(org, user_id):
     return member, changed
 
 
+def _establish_new_organization_as_modern(org, user):
+    """With every modern billing family on (staging only; refused in production),
+    a newly created organization starts on the modern model, so it never touches
+    legacy billing. With any family off, nothing changes."""
+    from flask import current_app
+    from app.billing_cutover import (
+        FAMILIES,
+        BillingModelConflictError,
+        cutover_config,
+        establish_modern_billing_identity,
+    )
+
+    config = cutover_config()
+    if not all(config.enabled(family) for family in FAMILIES):
+        return None
+    try:
+        assignment, _state = establish_modern_billing_identity(
+            db.session,
+            organization_id=org.id,
+            actor_user_id=user.id,
+            currency="usd",
+            origin_type="organization_created",
+            origin_id=str(org.id),
+            config=config,
+        )
+    except BillingModelConflictError as exc:
+        # The owner still holds legacy billing state; that account reaches the
+        # modern model only through the D18 migration.
+        current_app.logger.warning("new organization %s kept off the modern model: %s", org.id, exc)
+        return None
+    return assignment
+
+
 def ensure_default_organization_for_user(user):
     """
     Ensure each user has at least one organization and active membership.
@@ -576,6 +609,8 @@ def ensure_default_organization_for_user(user):
             last_active_at=utcnow(),
         )
         db.session.add(membership)
+        db.session.flush()
+        _establish_new_organization_as_modern(org, user)
         changed = True
     else:
         if org.owner_user_id == user.id:
