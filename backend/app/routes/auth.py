@@ -658,6 +658,23 @@ def _verification_required_enabled():
     return bool(get_access_controls(current_app.config).get('require_email_verification'))
 
 
+def _staging_verification_links_enabled():
+    """Staging only: show the verification link instead of emailing it (no mail
+    egress on staging). Off unless STAGING_EMAIL_VERIFICATION_LINKS is true, and
+    always off in a production runtime."""
+    from app.rate_limits import is_production_runtime
+
+    flag = str(os.getenv('STAGING_EMAIL_VERIFICATION_LINKS') or '').strip().lower() in {'1', 'true', 'yes'}
+    return flag and not is_production_runtime()
+
+
+def _staging_verification_url(user, *, url_root=None, next_path=None):
+    if not _staging_verification_links_enabled():
+        return None
+    token = _build_email_verification_token(user, next_path=next_path)
+    return _email_verification_link(token, url_root=url_root)
+
+
 def _access_controls():
     return get_access_controls(current_app.config)
 
@@ -1008,6 +1025,18 @@ def signup():
     if controls.get('require_admin_approval') and user.access_approval_status == APPROVAL_PENDING:
         return jsonify(_approval_pending_payload()), 202
 
+    if _verification_required_enabled() and _staging_verification_links_enabled():
+        return jsonify(
+            message='Staging: open the verification link to finish signing up.',
+            verification_required=True,
+            email_verified=False,
+            payment_pending=False,
+            plan_key='free',
+            detail='Staging shows this link instead of sending email.',
+            staging_verification_url=_staging_verification_url(
+                user, url_root=request.url_root, next_path=next_path),
+        ), 202
+
     if _verification_required_enabled():
         # Send the verification email in a background thread so that SMTP
         # latency or a transient failure never blocks the signup response.
@@ -1136,10 +1165,11 @@ def login():
         return jsonify(message='Invalid credentials'), 401
 
     if _verification_required_enabled() and not bool(user.email_verified):
-        return jsonify(
-            message='Please verify your email before signing in.',
-            verification_required=True,
-        ), 403
+        payload = {'message': 'Please verify your email before signing in.', 'verification_required': True}
+        staging_url = _staging_verification_url(user, url_root=request.url_root)
+        if staging_url:
+            payload['staging_verification_url'] = staging_url
+        return jsonify(payload), 403
 
     changed = False
     if user.failed_login_attempts or user.locked_until is not None:

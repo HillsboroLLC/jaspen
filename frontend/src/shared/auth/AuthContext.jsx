@@ -609,6 +609,12 @@ export function AuthProvider({ children }) {
       });
 
       const data = await res.json().catch(() => ({}));
+      // Staging only (the API sends this field only there): staging sends no
+      // email, so it hands back the verification link and we open it.
+      if (data?.staging_verification_url && /^https:\/\/api-staging\.jaspen\.ai\//.test(data.staging_verification_url)) {
+        window.location.assign(data.staging_verification_url);
+        return { success: false, verificationRequired: true, error: data?.message || '', detail: data?.detail || '' };
+      }
 
       // Accounts with personal, non-shareable credits are limited to one
       // device. Hand the UI what it needs to offer the takeover.
@@ -726,6 +732,12 @@ export function AuthProvider({ children }) {
       });
 
       const data = await res.json().catch(() => ({}));
+      // Staging only (the API sends this field only there): staging sends no
+      // email, so it hands back the verification link and we open it.
+      if (data?.staging_verification_url && /^https:\/\/api-staging\.jaspen\.ai\//.test(data.staging_verification_url)) {
+        window.location.assign(data.staging_verification_url);
+        return { success: false, verificationRequired: true, error: data?.message || '', detail: data?.detail || '' };
+      }
       if (res.ok) {
         clearSignupReferralCode();
         if (res.status === 202 || data?.approval_required || data?.verification_required) {
