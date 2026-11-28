@@ -529,21 +529,27 @@ def _establish_new_organization_as_modern(org, user):
         BillingModelConflictError,
         cutover_config,
         establish_modern_billing_identity,
+        legacy_billing_footprint,
     )
 
     config = cutover_config()
     if not all(config.enabled(family) for family in FAMILIES):
         return None
+    # An owner who still holds legacy billing state reaches the modern model
+    # only through the D18 migration. Check first, so nothing is claimed.
+    if legacy_billing_footprint(db.session, org.id):
+        return None
     try:
-        assignment, _state = establish_modern_billing_identity(
-            db.session,
-            organization_id=org.id,
-            actor_user_id=user.id,
-            currency="usd",
-            origin_type="organization_created",
-            origin_id=str(org.id),
-            config=config,
-        )
+        with db.session.begin_nested():
+            assignment, _state = establish_modern_billing_identity(
+                db.session,
+                organization_id=org.id,
+                actor_user_id=user.id,
+                currency="usd",
+                origin_type="organization_created",
+                origin_id=str(org.id),
+                config=config,
+            )
     except BillingModelConflictError as exc:
         # The owner still holds legacy billing state; that account reaches the
         # modern model only through the D18 migration.
