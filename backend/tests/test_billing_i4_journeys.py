@@ -284,6 +284,14 @@ def test_a_legacy_organization_beside_a_modern_one_keeps_legacy_charging(client,
                   password_hash=generate_password_hash("ValidPass1", method="pbkdf2:sha256"),
                   subscription_plan="free", credits_remaining=1_000_000, seat_limit=1, max_seats=1)
     session.add(legacy)
+    session.flush()
+    # An organization that predates activation: new organizations start modern.
+    legacy_org = Organization(name="Legacy", slug=f"legacy-{uuid.uuid4().hex[:8]}", owner_user_id=legacy.id,
+                              plan_key="free")
+    session.add(legacy_org)
+    session.flush()
+    session.add(OrganizationMember(organization_id=legacy_org.id, user_id=legacy.id, role="owner", status="active"))
+    legacy.active_organization_id = legacy_org.id
     session.commit()
     from flask_jwt_extended import create_access_token
     headers = {"Authorization": f"Bearer {create_access_token(identity=str(legacy.id))}"}

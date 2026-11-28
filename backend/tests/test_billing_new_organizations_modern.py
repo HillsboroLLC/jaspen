@@ -48,3 +48,26 @@ def test_a_user_with_legacy_credits_keeps_a_legacy_organization_and_nothing_is_c
     db.session.commit()
     assert organization_billing_model(db.session, org.id) == "legacy"
     assert db.session.query(BillingModelAssignment).count() == 0
+
+
+def test_a_new_modern_organization_opens_its_free_allowance_at_creation(app, client, db, monkeypatch):
+    """Its first AI turn has an entitlement without waiting for the allocation job."""
+    from datetime import timedelta
+    from app import billing_cutover as bc, billing_runtime_funding as funding
+    from app.models import CreditLot
+
+    monkeypatch.setenv("BILLING_MODERN_FAMILIES", ALL)
+    approver = _signup(client, "approver@example.com")
+    funding.define_test_catalog(db.session, approver_user_id=approver.id, app_config=app.config,
+                                effective_at=bc._database_now(db.session) - timedelta(days=400))
+    db.session.commit()
+    user = _signup(client, "first-turn@example.com")
+    context = bc.modern_context(db.session, family="credit_funding", organization_id=user.active_organization_id)
+    assert context is not None
+    assert db.session.query(CreditLot).filter(CreditLot.billing_account_id == context.billing_account_id).count() == 1
+
+
+def test_signup_still_succeeds_before_the_test_catalog_exists(client, db, monkeypatch):
+    monkeypatch.setenv("BILLING_MODERN_FAMILIES", ALL)
+    user = _signup(client, "no-catalog@example.com")
+    assert organization_billing_model(db.session, user.active_organization_id) == "modern"

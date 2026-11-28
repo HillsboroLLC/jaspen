@@ -527,6 +527,7 @@ def _establish_new_organization_as_modern(org, user):
     from app.billing_cutover import (
         FAMILIES,
         BillingModelConflictError,
+        _database_now,
         cutover_config,
         establish_modern_billing_identity,
         legacy_billing_footprint,
@@ -539,6 +540,10 @@ def _establish_new_organization_as_modern(org, user):
     # only through the D18 migration. Check first, so nothing is claimed.
     if legacy_billing_footprint(db.session, org.id):
         return None
+    # The account anchors at the organization's creation. Use the database's
+    # transaction time, so the first Free lot can open in this same transaction.
+    org.created_at = _database_now(db.session).replace(tzinfo=None)
+    db.session.flush()
     try:
         with db.session.begin_nested():
             assignment, _state = establish_modern_billing_identity(
@@ -555,7 +560,24 @@ def _establish_new_organization_as_modern(org, user):
         # modern model only through the D18 migration.
         current_app.logger.warning("new organization %s kept off the modern model: %s", org.id, exc)
         return None
+    _open_first_free_allowance(org)
     return assignment
+
+
+def _open_first_free_allowance(org):
+    """Open the new organization's Free lot now, so its first AI turn has an
+    entitlement. The hourly allocation job opens it otherwise (idempotent)."""
+    from flask import current_app
+    from app import billing_runtime_funding as funding
+    from app.billing_cutover import modern_context
+
+    try:
+        with db.session.begin_nested():
+            context = modern_context(db.session, family="credit_funding", organization_id=org.id)
+            if context is not None:
+                funding.allocate_free(db.session, context)
+    except funding.FundingRuntimeError as exc:
+        current_app.logger.warning("Free allowance for new organization %s deferred to the job: %s", org.id, exc)
 
 
 def ensure_default_organization_for_user(user):
