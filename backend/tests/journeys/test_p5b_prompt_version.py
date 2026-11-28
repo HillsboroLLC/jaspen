@@ -298,6 +298,7 @@ _NOT_PROMPT_MATERIAL = {
         "app.routes.strategy:_validate_grounded_scorecard_judgment",
     },
     "provider call, model selection or the operation runtime (prompt-free since P5a)": {
+        "app.ai_providers.observer:*",
         "app.ai_runtime:AIOperationPaymentRequired",
         "app.ai_runtime:execute_customer_text_operation",
         "app.ai_runtime:execute_system_text_operation",
