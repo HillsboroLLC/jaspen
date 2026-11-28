@@ -92,13 +92,15 @@ describe('staging browser security policy', () => {
     expect(stagingHeader.value).not.toContain('https://api.jaspen.ai');
   });
 
-  test('staging loads no analytics, ads or Stripe.js, and frames nothing', () => {
-    expect(directive(stagingHeader.value, 'script-src')).toBe("script-src 'self'");
-    expect(directive(stagingHeader.value, 'frame-src')).toBe("frame-src 'none'");
+  test('staging allows Stripe Elements and 3D Secure, with analytics and ads blocked', () => {
+    expect(directive(stagingHeader.value, 'script-src'))
+      .toBe("script-src 'self' https://js.stripe.com https://*.js.stripe.com");
+    expect(directive(stagingHeader.value, 'frame-src'))
+      .toBe('frame-src https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com');
     expect(directive(stagingHeader.value, 'connect-src'))
-      .toBe("connect-src 'self' https://api-staging.jaspen.ai https://*.ingest.sentry.io");
+      .toBe("connect-src 'self' https://api-staging.jaspen.ai https://*.ingest.sentry.io https://api.stripe.com");
     [
-      'stripe.com', 'googletagmanager', 'googlesyndication', 'adservice', 'adtrafficquality',
+      'googletagmanager', 'googlesyndication', 'adservice', 'adtrafficquality',
       'doubleclick', 'google-analytics', 'analytics.google', 'www.google.com', '*.google.com',
     ].forEach((origin) => expect(stagingHeader.value).not.toContain(origin));
   });
@@ -110,12 +112,14 @@ describe('staging browser security policy', () => {
       .forEach((name) => expect(directive(stagingHeader.value, name)).toBe(directive(header.value, name)));
   });
 
-  test('every staging source is also allowed in production, except the staging API', () => {
+  test('every staging source is covered by production origins or is the staging API', () => {
     const sources = (value) => new Set(value.split(';').flatMap((part) => part.trim().split(/\s+/).slice(1)));
     const production = sources(header.value);
     [...sources(stagingHeader.value)]
       .filter((source) => source !== "'none'" && source !== 'https://api-staging.jaspen.ai')
-      .forEach((source) => expect(production.has(source)).toBe(true));
+      .forEach((source) => expect(
+        production.has(source) || (source.endsWith('.stripe.com') && production.has('https://*.stripe.com')),
+      ).toBe(true));
   });
 
   test('every other security header still applies on every host', () => {
