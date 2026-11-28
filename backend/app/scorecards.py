@@ -396,9 +396,9 @@ def delete_thread_scorecards(user_id, thread_id):
     ).delete(synchronize_session=False)
 
 
-def scorecard_limit_for(user, plan_key):
+def scorecard_limit_for(user, plan_key, *, legacy_entitlements=True):
     from .founder_entitlements import has_founder_entitlement
-    if has_founder_entitlement(user):
+    if legacy_entitlements and has_founder_entitlement(user):
         return FOUNDER_VIEW_LIMIT
     return SCORECARD_VIEW_LIMITS.get(str(plan_key or 'free'), SCORECARD_VIEW_LIMITS['free'])
 

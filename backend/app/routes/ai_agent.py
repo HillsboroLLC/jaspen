@@ -9288,9 +9288,10 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
 
     from app.billing_runtime_readers import modern_entitlement_plan_for
 
-    plan_key = modern_entitlement_plan_for(
+    modern_plan = modern_entitlement_plan_for(
         user, organization_id=project.organization_id, app_config=current_app.config,
-    ) or effective_plan_key(user, current_app.config)
+    )
+    plan_key = modern_plan or effective_plan_key(user, current_app.config)
     tool_input = tool_input if isinstance(tool_input, dict) else {}
 
     # The open idea's scorecard id, straight from the view the user is on. This
@@ -10062,7 +10063,7 @@ def _execute_mutation_tool(tool_name, tool_input, *, user, user_id, thread_id, v
                 # never an unscoped index lookup by user and thread id.
                 from ..scorecards import _legacy_scorecards
                 current_peers = list(_legacy_scorecards(session, legacy_thread_data, thread_id))
-            view_limit = scorecard_limit_for(user, plan_key)
+            view_limit = scorecard_limit_for(user, plan_key, legacy_entitlements=modern_plan is None)
             if len(current_peers) >= view_limit:
                 return _tool_error(
                     COMPARISON_SESSION_LIMIT_MESSAGE,

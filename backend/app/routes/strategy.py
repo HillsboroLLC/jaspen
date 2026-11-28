@@ -222,6 +222,12 @@ class ScorecardConflictError(Exception):
         self.payload = payload if isinstance(payload, dict) else {}
 
 
+class AnalysisPersistenceFailed(RuntimeError):
+    def __init__(self, project_name):
+        super().__init__('The scorecard was generated but could not be retained.')
+        self.project_name = project_name
+
+
 class ScoreBatchGenerationFailed(RuntimeError):
     """Raised when a governed batch operation produces no usable scorecard."""
 
@@ -234,6 +240,14 @@ class ScoreBatchGenerationFailed(RuntimeError):
             'operation_failed': True,
             'error_code': 'score_batch_generation_failed',
         }
+
+
+class ScoreBatchPersistenceFailed(RuntimeError):
+    """No generated card could be delivered through the canonical project."""
+
+    def __init__(self, generated, usage):
+        super().__init__('No generated scorecard could be retained.')
+        self.generated, self.usage = generated, usage
 
 
 def _audit_strategy_event(action, *, user=None, user_id=None, details=None):
@@ -2479,11 +2493,13 @@ def _resolve_strategy_thread_state(sessions, all_data, thread_id):
     return None, None, None
 
 
-def _resolve_user_model_selection(user, requested_model_type=None):
+def _resolve_user_model_selection(user, requested_model_type=None, *, organization_id=None):
     from ..billing_runtime_readers import modern_entitlement_plan_for
 
-    plan_key = modern_entitlement_plan_for(user, app_config=current_app.config)
-    plan_key = plan_key or effective_plan_key(user, current_app.config)
+    modern_plan = modern_entitlement_plan_for(
+        user, organization_id=organization_id, app_config=current_app.config,
+    )
+    plan_key = modern_plan or effective_plan_key(user, current_app.config)
     allowed_model_types = get_allowed_model_types(plan_key, current_app.config)
     default_model_type = get_default_model_type(plan_key, current_app.config)
     selected_model_type = normalize_model_type(requested_model_type or default_model_type)
@@ -2504,6 +2520,8 @@ def _resolve_user_model_selection(user, requested_model_type=None):
         'llm_model': model_meta.get('llm_model'),
         'allowed_model_types': allowed_model_types,
         'default_model_type': default_model_type,
+        'plan_key': plan_key,
+        'modern_billing': modern_plan is not None,
     }, None
 
 
@@ -3995,10 +4013,8 @@ def analyze_project():
         user = User.query.get(current_user_id)
         if not user:
             return jsonify({'error': 'User not found'}), 404
-        if bootstrap_legacy_credits(user, current_app.config):
-            db.session.commit()
         active_org, _ = resolve_active_org_for_user(user)
-        active_org_id = active_org.id if active_org else user.active_organization_id
+        organization_id = active_org.id if active_org else user.active_organization_id
 
         thread_id = data.get('thread_id') or request.headers.get('X-Session-ID')
         if thread_id:
@@ -4007,9 +4023,11 @@ def analyze_project():
             # needs the role creation needs. Both are checked before anything
             # is sealed, generated or charged.
             if canonical_row(user, str(thread_id)) is not None:
-                _thread_scope(current_user_id, str(thread_id), require_write=True, pin=True)
+                _, _, project = _thread_scope(current_user_id, str(thread_id), require_write=True, pin=True)
+                if project is not None and project.organization_id:
+                    organization_id = project.organization_id
             else:
-                require_can_create_session(user, active_org_id)
+                require_can_create_session(user, organization_id)
             # Freeze the intake baseline before any analysis touches this
             # thread (docs/DECISION_IMPACT_REPORT_SPEC.md §3.4). Best effort
             # and idempotent — it cannot fail an analysis.
@@ -4067,9 +4085,16 @@ def analyze_project():
         model_selection, model_error = _resolve_user_model_selection(
             user,
             requested_model_type=data.get('model_type'),
+            organization_id=organization_id,
         )
         if model_error:
             return jsonify(model_error), 403
+        if model_selection['modern_billing'] and not thread_id:
+            require_can_create_session(user, organization_id)
+        if model_selection['modern_billing']:
+            pin_active_organization(str(user.id), organization_id)
+        if not model_selection['modern_billing'] and bootstrap_legacy_credits(user, current_app.config):
+            db.session.commit()
 
         client = get_llm_client()
 
@@ -4091,7 +4116,9 @@ def analyze_project():
                 legacy_thread_data=(_thread_scenarios(current_user_id, resolved_capacity_thread_id) or {}).get(resolved_capacity_thread_id) or {},
                 own_rows_only=True,
             )
-            view_limit = scorecard_limit_for(user, effective_plan_key(user, current_app.config))
+            view_limit = scorecard_limit_for(
+                user, model_selection['plan_key'], legacy_entitlements=not model_selection['modern_billing'],
+            )
             if len(existing_peers) >= view_limit:
                 return jsonify({
                     'error': COMPARISON_SESSION_LIMIT_MESSAGE,
@@ -4161,9 +4188,149 @@ def analyze_project():
         ) if requested_name else None
         from ..scorecards import find_scorecard_by_fingerprint, reuse_provenance
         reusable_row = (
-            find_scorecard_by_fingerprint(current_user_id, provisional_fp, organization_id=active_org_id)
+            find_scorecard_by_fingerprint(current_user_id, provisional_fp, organization_id=organization_id)
             if provisional_fp and state_is_reusable(provisional_state) else None
         )
+        def format_analysis(analysis_result, reused_source_id=None):
+            analysis_id = str(uuid.uuid4())
+            generated_at = datetime.utcnow().isoformat()
+            resolved_thread_id = str(thread_id or f"thread_{uuid.uuid4().hex[:12]}")
+
+            # Resolve the final project_name. Priority:
+            #   1. Caller-provided name (request body)
+            #   2. AI-generated `name` in analysis_result (preferred default)
+            #   3. First user message snippet from the transcript
+            #   4. 'Untitled idea' as the absolute last resort
+            # Never default to 'Baseline Analysis' or 'Jaspen Project'.
+            _BANNED_PLACEHOLDER_NAMES = {
+                'baseline analysis', 'baseline', 'jaspen project', 'jaspen analysis',
+                'strategy analysis', 'initiative', 'untitled', 'untitled idea', 'project',
+            }
+
+            def _is_meaningful_name(candidate):
+                s = str(candidate or '').strip()
+                if not s:
+                    return False
+                if s.lower() in _BANNED_PLACEHOLDER_NAMES:
+                    return False
+                return True
+
+            ai_name = None
+            if isinstance(analysis_result, dict):
+                ai_name = (
+                    _clean_scorecard_text(analysis_result.get('name'))
+                    or _clean_scorecard_text(analysis_result.get('project_name'))
+                    or _clean_scorecard_text(analysis_result.get('initiative_name'))
+                )
+
+            if _is_meaningful_name(requested_name):
+                project_name = _compact_scorecard_title(requested_name)
+            elif _is_meaningful_name(ai_name):
+                project_name = _compact_scorecard_title(ai_name)
+            else:
+                # Derive from the first non-trivial user message in the transcript.
+                derived = None
+                for line in str(transcript or '').splitlines():
+                    clean = line.strip()
+                    if not clean:
+                        continue
+                    # Strip leading speaker labels like "User:" or "u:"
+                    if ':' in clean[:8]:
+                        clean = clean.split(':', 1)[1].strip()
+                    if len(clean) >= 12:
+                        derived = clean[:60].rstrip('.,;: ') + ('…' if len(clean) > 60 else '')
+                        break
+                project_name = _compact_scorecard_title(derived or 'Untitled idea')
+
+            prior_meta = analysis_result.get('meta') if isinstance(analysis_result.get('meta'), dict) else {}
+            analysis = {
+                **analysis_result,
+                'id': analysis_id,
+                'analysis_id': analysis_id,
+                'evaluation_id': evaluation_id,
+                'thread_id': resolved_thread_id,
+                'framework_id': framework_id,
+                'project_name': project_name,
+                'project_description': effective_description,
+                'option_key': provisional_option_key,
+                'attributes': legacy_attributes,
+                'timestamp': generated_at,
+                'user_id': current_user_id,
+                'ai_insights': ai_insights,
+                'reuse_provenance': reuse_metadata,
+                'meta': {
+                    **prior_meta,
+                    'thread_id': resolved_thread_id,
+                    'framework_id': framework_id,
+                    'name': project_name,
+                    'conversation_turns': len(conversation_history),
+                    'generated_at': generated_at,
+                    'model_type': model_selection['model_type'],
+                    'reused_source_scorecard_id': reused_source_id,
+                    'reuse_provenance': reuse_metadata,
+                }
+            }
+            analysis_state = canonical_decision_state(
+                option_key=analysis['option_key'], option_name=project_name,
+                attributes=legacy_attributes, rubric=legacy_rubric,
+                objective=strategy_objective, gates=(legacy_rubric or {}).get('criteria') or [],
+                decision_kit=legacy_decision_kit, decision_kit_version=legacy_decision_kit_version,
+                model_tier=model_selection.get('model_type'),
+            )
+            analysis['decision_state'] = analysis_state
+            analysis['decision_fingerprint'] = scoring_fingerprint(
+                option_key=analysis['option_key'], option_name=project_name,
+                attributes=legacy_attributes, rubric=legacy_rubric,
+                objective=strategy_objective, decision_kit=legacy_decision_kit,
+                decision_kit_version=legacy_decision_kit_version,
+                evidence_corpus=legacy_evidence_corpus,
+                model_tier=model_selection.get('model_type'),
+            )
+            analysis['canonical_judgment_id'] = analysis['decision_fingerprint']
+            analysis['decision_state_reusable'] = state_is_reusable(analysis_state)
+
+            return analysis
+
+        def retain_analysis(analysis, *, organization_id, reused=False):
+            upsert_scorecard(
+                analysis_pass=not reused, user_id=current_user_id, thread_id=analysis['thread_id'],
+                payload=analysis, organization_id=organization_id, session_id=analysis['thread_id'],
+                evaluation_id=evaluation_id, source='analyze_reuse' if reused else 'analyze',
+            )
+
+        def prepare_modern_analysis(result, _usage):
+            analysis = format_analysis(result)
+            try:
+                actor = db.session.get(User, str(current_user_id))
+                row = canonical_row(actor, analysis['thread_id'])
+                if row is None:
+                    from .sessions import save_project_session
+
+                    if not save_project_session(current_user_id, analysis['thread_id'], {
+                        'session_id': analysis['thread_id'],
+                        'name': analysis['project_name'], 'document_type': 'strategy',
+                        'model_type': model_selection['model_type'], 'status': 'in_progress',
+                        'organization_id': organization_id,
+                        'user_id': str(current_user_id), 'created_by_user_id': str(current_user_id),
+                        'chat_history': conversation_history, 'visibility': 'private',
+                        'timestamp': analysis['timestamp'], 'created': analysis['timestamp'],
+                    }, commit=False):
+                        raise AnalysisPersistenceFailed(analysis['project_name'])
+                retain_analysis(analysis, organization_id=organization_id)
+                db.session.flush()
+            except Exception:
+                raise AnalysisPersistenceFailed(analysis['project_name']) from None
+            return {'analysis': analysis}
+
+        def analysis_persistence_failure(project_name):
+            return jsonify({
+                'error': 'The scorecard was generated but could not be retained.',
+                'code': 'scorecard_persistence_failed',
+                'generated_project_count': 1,
+                'persisted_project_count': 0,
+                'not_persisted_project_names': [project_name],
+            }), 500
+
         if reusable_row is not None:
             analysis_result = dict(reusable_row.data or {})
             for identity_field in ('id', 'analysis_id', 'evaluation_id', 'thread_id', 'timestamp', 'createdAt', 'meta'):
@@ -4204,106 +4371,25 @@ def analyze_project():
                 model_type=model_selection['model_type'],
                 max_tokens=8000,
                 thread_id=thread_id,
+                prepare_modern_response=prepare_modern_analysis,
                 )
             except AIOperationPaymentRequired as payment_error:
                 return jsonify(payment_error.payload or {'error': 'Thinking Power exhausted'}), 402
+            except AnalysisPersistenceFailed as failure:
+                current_app.logger.exception('Failed to persist analyzed peer scorecard')
+                return analysis_persistence_failure(failure.project_name)
 
-        analysis_id = str(uuid.uuid4())
-        generated_at = datetime.utcnow().isoformat()
-        resolved_thread_id = str(thread_id or f"thread_{uuid.uuid4().hex[:12]}")
-
-        # Resolve the final project_name. Priority:
-        #   1. Caller-provided name (request body)
-        #   2. AI-generated `name` in analysis_result (preferred default)
-        #   3. First user message snippet from the transcript
-        #   4. 'Untitled idea' as the absolute last resort
-        # Never default to 'Baseline Analysis' or 'Jaspen Project'.
-        _BANNED_PLACEHOLDER_NAMES = {
-            'baseline analysis', 'baseline', 'jaspen project', 'jaspen analysis',
-            'strategy analysis', 'initiative', 'untitled', 'untitled idea', 'project',
-        }
-
-        def _is_meaningful_name(candidate):
-            s = str(candidate or '').strip()
-            if not s:
-                return False
-            if s.lower() in _BANNED_PLACEHOLDER_NAMES:
-                return False
-            return True
-
-        ai_name = None
-        if isinstance(analysis_result, dict):
-            ai_name = (
-                _clean_scorecard_text(analysis_result.get('name'))
-                or _clean_scorecard_text(analysis_result.get('project_name'))
-                or _clean_scorecard_text(analysis_result.get('initiative_name'))
-            )
-
-        if _is_meaningful_name(requested_name):
-            project_name = _compact_scorecard_title(requested_name)
-        elif _is_meaningful_name(ai_name):
-            project_name = _compact_scorecard_title(ai_name)
-        else:
-            # Derive from the first non-trivial user message in the transcript.
-            derived = None
-            for line in str(transcript or '').splitlines():
-                clean = line.strip()
-                if not clean:
-                    continue
-                # Strip leading speaker labels like "User:" or "u:"
-                if ':' in clean[:8]:
-                    clean = clean.split(':', 1)[1].strip()
-                if len(clean) >= 12:
-                    derived = clean[:60].rstrip('.,;: ') + ('…' if len(clean) > 60 else '')
-                    break
-            project_name = _compact_scorecard_title(derived or 'Untitled idea')
-
-        prior_meta = analysis_result.get('meta') if isinstance(analysis_result.get('meta'), dict) else {}
-        analysis = {
-            **analysis_result,
-            'id': analysis_id,
-            'analysis_id': analysis_id,
-            'evaluation_id': evaluation_id,
-            'thread_id': resolved_thread_id,
-            'framework_id': framework_id,
-            'project_name': project_name,
-            'project_description': effective_description,
-            'option_key': provisional_option_key,
-            'attributes': legacy_attributes,
-            'timestamp': generated_at,
-            'user_id': current_user_id,
-            'ai_insights': ai_insights,
-            'reuse_provenance': reuse_metadata,
-            'meta': {
-                **prior_meta,
-                'thread_id': resolved_thread_id,
-                'framework_id': framework_id,
-                'name': project_name,
-                'conversation_turns': len(conversation_history),
-                'generated_at': generated_at,
-                'model_type': model_selection['model_type'],
-                'reused_source_scorecard_id': str(reusable_row.id) if reusable_row is not None else None,
-                'reuse_provenance': reuse_metadata,
-            }
-        }
-        analysis_state = canonical_decision_state(
-            option_key=analysis['option_key'], option_name=project_name,
-            attributes=legacy_attributes, rubric=legacy_rubric,
-            objective=strategy_objective, gates=(legacy_rubric or {}).get('criteria') or [],
-            decision_kit=legacy_decision_kit, decision_kit_version=legacy_decision_kit_version,
-            model_tier=model_selection.get('model_type'),
+        prepared = (
+            ai_settlement.get('policy_mode') == 'phase12'
+            and ai_settlement.get('delivery_status') == 'delivered'
         )
-        analysis['decision_state'] = analysis_state
-        analysis['decision_fingerprint'] = scoring_fingerprint(
-            option_key=analysis['option_key'], option_name=project_name,
-            attributes=legacy_attributes, rubric=legacy_rubric,
-            objective=strategy_objective, decision_kit=legacy_decision_kit,
-            decision_kit_version=legacy_decision_kit_version,
-            evidence_corpus=legacy_evidence_corpus,
-            model_tier=model_selection.get('model_type'),
+        analysis = analysis_result['analysis'] if prepared else format_analysis(
+            analysis_result, str(reusable_row.id) if reusable_row is not None else None,
         )
-        analysis['canonical_judgment_id'] = analysis['decision_fingerprint']
-        analysis['decision_state_reusable'] = state_is_reusable(analysis_state)
+        analysis_id = analysis['analysis_id']
+        generated_at = analysis['timestamp']
+        resolved_thread_id = analysis['thread_id']
+        project_name = analysis['project_name']
 
         provider_usage = dict(provider_usage or {})
         provider_usage.setdefault('provider', 'anthropic')
@@ -4325,33 +4411,31 @@ def analyze_project():
 
         db.session.commit()
         analysis['meta']['credits_charged'] = int(ai_settlement.get('charged_credits') or 0)
-        analysis['meta']['credits_remaining'] = user.credits_remaining
-        try:
-            upsert_scorecard(
-                analysis_pass=reusable_row is None,
-                user_id=current_user_id,
-                thread_id=resolved_thread_id,
-                payload=analysis,
-                organization_id=active_org_id,
-                session_id=resolved_thread_id,
-                evaluation_id=evaluation_id,
-                source='analyze_reuse' if reusable_row is not None else 'analyze',
-            )
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            if reusable_row is None:
-                reverse_customer_operation_charge(
-                    user, ai_settlement, error_code='scorecard_persistence_failed',
-                )
-            current_app.logger.exception('Failed to persist analyzed peer scorecard %s', analysis_id)
-            return jsonify({
-                'error': 'The scorecard was generated but could not be retained.',
-                'code': 'scorecard_persistence_failed',
-                'generated_project_count': 1,
-                'persisted_project_count': 0,
-                'not_persisted_project_names': [project_name],
-            }), 500
+        if model_selection['modern_billing']:
+            from ..billing_cutover import cutover_config, modern_context
+            from ..billing_runtime_readers import modern_usage_meter_state
+
+            remaining = None
+            if cutover_config().enabled('readers'):
+                context = modern_context(db.session, family='readers', organization_id=organization_id)
+                remaining = modern_usage_meter_state(
+                    db.session, context=context, user_id=current_user_id, app_config=current_app.config,
+                )['remaining']
+            analysis['meta']['credits_remaining'] = remaining
+        else:
+            analysis['meta']['credits_remaining'] = user.credits_remaining
+        if not prepared:
+            try:
+                retain_analysis(analysis, organization_id=organization_id, reused=reusable_row is not None)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                if reusable_row is None:
+                    reverse_customer_operation_charge(
+                        user, ai_settlement, error_code='scorecard_persistence_failed',
+                    )
+                current_app.logger.exception('Failed to persist analyzed peer scorecard %s', analysis_id)
+                return analysis_persistence_failure(project_name)
 
         # Persist analysis onto the thread/session so Finish & Analyze creates a real thread bundle.
         sessions = _thread_sessions(current_user_id, resolved_thread_id)
@@ -4370,7 +4454,7 @@ def analyze_project():
                 'status': 'in_progress',
                 'user_id': str(current_user_id),
                 'created_by_user_id': str(current_user_id),
-                'organization_id': active_org_id,
+                'organization_id': organization_id,
                 'visibility': 'private',
                 'shared_with_user_ids': [],
                 'active_evaluation_id': evaluation_id,
@@ -4405,7 +4489,7 @@ def analyze_project():
         session['name'] = project_name or session.get('name') or 'Jaspen Intake'
         session['document_type'] = session.get('document_type') or 'strategy'
         session['model_type'] = model_selection['model_type']
-        session['organization_id'] = session.get('organization_id') or active_org_id
+        session['organization_id'] = session.get('organization_id') or organization_id
         session['created_by_user_id'] = session.get('created_by_user_id') or str(current_user_id)
         session['visibility'] = str(session.get('visibility') or 'private').strip().lower() or 'private'
         if not isinstance(session.get('shared_with_user_ids'), list):
@@ -7818,11 +7902,13 @@ def score_batch_queued(thread_id):
                 'done': True,
             })
 
-        model_selection, model_error = _resolve_user_model_selection(user)
+        model_selection, model_error = _resolve_user_model_selection(
+            user, organization_id=_project_row.organization_id if _project_row is not None else None,
+        )
         if model_error:
             return jsonify(model_error), 403
 
-        plan_key = effective_plan_key(user, current_app.config)
+        plan_key = model_selection['plan_key']
         strategy_objective = _normalize_strategy_objective(session.get('strategy_objective'))
         rubric = session.get('scoring_rubric') if isinstance(session.get('scoring_rubric'), dict) else None
         from ..decision_state import rubric_is_scoring_authorized
@@ -7843,7 +7929,9 @@ def score_batch_queued(thread_id):
             legacy_thread_data=thread_data,
             own_rows_only=True,
         )
-        view_limit = scorecard_limit_for(user, plan_key)
+        view_limit = scorecard_limit_for(
+            user, plan_key, legacy_entitlements=not model_selection['modern_billing'],
+        )
         available = max(0, view_limit - len(existing_peers))
         requested_count = len(ideas)
         capacity_skipped = ideas[available:] if available < requested_count else []
@@ -7872,7 +7960,9 @@ def score_batch_queued(thread_id):
         client = get_llm_client()
 
         from ..scorecards import find_scorecard_by_fingerprint, reuse_provenance
-        reuse_organization_id = session.get('organization_id') or getattr(user, 'active_organization_id', None)
+        reuse_organization_id = (
+            _project_row.organization_id if _project_row is not None else None
+        ) or session.get('organization_id') or getattr(user, 'active_organization_id', None)
         def reuse_lookup(fingerprint, state):
             row = find_scorecard_by_fingerprint(
                 user_id,
@@ -7891,108 +7981,7 @@ def score_batch_queued(thread_id):
             payload['reuse_provenance'] = reuse_provenance(row)
             return payload
 
-        try:
-            def generate_score_batch():
-                cards, portfolio_summary, provider_usage = _generate_batch_scorecards(
-                    client, ideas_to_generate, rubric=rubric, strategy_objective=strategy_objective,
-                    model_selection=model_selection, llm_model=model_selection['llm_model'],
-                    return_usage=True,
-                    # What the user actually said, so quotes have somewhere real to
-                    # come from and verification has somewhere real to look.
-                    evidence_corpus=_thread_user_corpus(user_id, thread_id),
-                    decision_kit=decision_kit,
-                    decision_kit_version=decision_kit_version,
-                    kit_context=session.get('kit_context') if isinstance(session.get('kit_context'), dict) else {},
-                    reuse_lookup=reuse_lookup,
-                )
-                if not any(
-                    isinstance(card, dict) and card.get('jaspen_score') is not None
-                    for card in cards
-                ):
-                    raise ScoreBatchGenerationFailed(
-                        'The scoring providers did not produce any scorecards.',
-                        provider_usage,
-                    )
-                return {
-                    'cards': cards,
-                    'portfolio_summary': portfolio_summary,
-                    'evaluation_contexts': evaluation_contexts,
-                }, provider_usage
-
-            generated, provider_usage, ai_settlement = execute_customer_operation(
-                user,
-                generate=generate_score_batch,
-                operation_type='score_batch',
-                prompt_family='scorecard_batch',
-                request_payload={
-                    'thread_id': thread_id,
-                    'ideas': ideas_to_generate,
-                    'rubric': rubric,
-                    'strategy_objective': strategy_objective,
-                    'decision_kit': decision_kit,
-                    'decision_kit_version': decision_kit_version,
-                },
-                model_type=model_selection['model_type'],
-                max_tokens=max(2000, len(ideas_to_generate) * 1800),
-                thread_id=thread_id,
-            )
-        except AIOperationPaymentRequired as payment_error:
-            payload = dict(payment_error.payload or {})
-            payload.update({
-                'requested_project_count': requested_count,
-                'generated_project_count': 0,
-                'persisted_project_count': 0,
-                'not_persisted_project_names': [str(item.get('name') or '').strip() for item in ideas],
-            })
-            return jsonify(payload), 402
-        except ScoreBatchGenerationFailed:
-            return jsonify({
-                'ok': False,
-                'code': 'score_batch_generation_failed',
-                'error': "Jaspen couldn't complete scoring. Your request is saved. Try again.",
-                'failure_state': True,
-                'retryable': True,
-                'action': {'type': 'retry', 'label': 'Retry'},
-                'message_saved': True,
-                'credits': {'charged': 0},
-                'requested_project_count': requested_count,
-                'generated_project_count': 0,
-                'persisted_project_count': 0,
-                'not_persisted_project_names': [str(item.get('name') or '').strip() for item in ideas],
-            }), 503
-
-        generated = generated if isinstance(generated, dict) else {}
-        cards = generated.get('cards') if isinstance(generated.get('cards'), list) else []
-        portfolio_summary = generated.get('portfolio_summary') if isinstance(generated.get('portfolio_summary'), dict) else {}
-        evaluation_contexts = (
-            generated.get('evaluation_contexts')
-            if isinstance(generated.get('evaluation_contexts'), list)
-            else evaluation_contexts
-        )
-        provider_usage = dict(provider_usage or {})
-        provider_usage.setdefault('model', model_selection.get('llm_model'))
-        provider_usage.setdefault('model_type', model_selection.get('model_type'))
-        provider_usage.setdefault('provider', 'anthropic')
-        # Card identities come from the actual generated results rather than
-        # optional provider-usage metadata. This keeps allocation correct for
-        # legacy/mocked usage shapes and ensures an unpersisted generated card
-        # remains in the denominator so Jaspen absorbs its share.
-        generated_component_ids = [
-            evaluation_context['scorecard_id']
-            for payload, evaluation_context in zip(cards, evaluation_contexts)
-            if isinstance(payload, dict) and not payload.get('reused_stored_result')
-        ]
-        persisted_component_ids = []
-
-        scored_out = []
-        persistence_failures = []
-        model_failures = []
-        generated_count = 0
-        for idea, payload, evaluation_context in zip(ideas_to_generate, cards, evaluation_contexts):
-            if not isinstance(payload, dict):
-                model_failures.append(str(idea.get('name') or '').strip())
-                continue
-            generated_count += 1
+        def format_batch_card(idea, payload, evaluation_context):
             name = str(idea.get('name')).strip()
             description = str(idea.get('description') or '').strip() or name
             analysis_id = evaluation_context['scorecard_id']
@@ -8053,25 +8042,177 @@ def score_batch_queued(thread_id):
             )
             scorecard['decision_state_reusable'] = state_is_reusable(scorecard['decision_state'])
 
-            try:
-                upsert_scorecard(
-                    analysis_pass=not bool(payload.get('reused_stored_result')),
-                    user_id=user_id,
-                    thread_id=thread_id,
-                    payload=scorecard,
-                    organization_id=session.get('organization_id') or getattr(user, 'active_organization_id', None),
-                    session_id=session.get('session_id') or thread_id,
-                    evaluation_id=evaluation_id,
-                    source='score_batch_reuse' if payload.get('reused_stored_result') else 'score_batch',
+            return scorecard
+
+        def save_batch_card(scorecard, payload, evaluation_context):
+            evaluation_id = evaluation_context['evaluation_id']
+            upsert_scorecard(
+                analysis_pass=not bool(payload.get('reused_stored_result')),
+                user_id=user_id,
+                thread_id=thread_id,
+                payload=scorecard,
+                organization_id=reuse_organization_id,
+                session_id=session.get('session_id') or thread_id,
+                evaluation_id=evaluation_id,
+                source='score_batch_reuse' if payload.get('reused_stored_result') else 'score_batch',
+            )
+
+
+        def prepare_modern_batch(generated, usage):
+            prepared = {}
+            delivered_provider_result = False
+            for idea, payload, evaluation in zip(
+                ideas_to_generate, generated['cards'], generated['evaluation_contexts'],
+            ):
+                if not isinstance(payload, dict):
+                    continue
+                card_id = evaluation['scorecard_id']
+                try:
+                    with db.session.begin_nested():
+                        scorecard = format_batch_card(idea, payload, evaluation)
+                        save_batch_card(scorecard, payload, evaluation)
+                        db.session.flush()
+                except Exception:
+                    current_app.logger.exception('[score_batch_queued] failed to persist peer scorecard %s', card_id)
+                else:
+                    prepared[card_id] = scorecard
+                    if not payload.get('reused_stored_result'):
+                        delivered_provider_result = True
+            if not delivered_provider_result:
+                # The worker rolls back the staged cards. The caller can still
+                # retain cached cards without settling this provider attempt.
+                raise ScoreBatchPersistenceFailed({**generated, '_prepared_cards': {}}, usage)
+            return {**generated, '_prepared_cards': prepared}
+
+        try:
+            def generate_score_batch():
+                cards, portfolio_summary, provider_usage = _generate_batch_scorecards(
+                    client, ideas_to_generate, rubric=rubric, strategy_objective=strategy_objective,
+                    model_selection=model_selection, llm_model=model_selection['llm_model'],
+                    return_usage=True,
+                    # What the user actually said, so quotes have somewhere real to
+                    # come from and verification has somewhere real to look.
+                    evidence_corpus=_thread_user_corpus(user_id, thread_id),
+                    decision_kit=decision_kit,
+                    decision_kit_version=decision_kit_version,
+                    kit_context=session.get('kit_context') if isinstance(session.get('kit_context'), dict) else {},
+                    reuse_lookup=reuse_lookup,
                 )
-                db.session.commit()
-            except Exception:
-                db.session.rollback()
-                current_app.logger.exception(
-                    '[score_batch_queued] failed to persist peer scorecard %s', analysis_id,
-                )
-                persistence_failures.append(name)
+                if not any(
+                    isinstance(card, dict) and card.get('jaspen_score') is not None
+                    for card in cards
+                ):
+                    raise ScoreBatchGenerationFailed(
+                        'The scoring providers did not produce any scorecards.',
+                        provider_usage,
+                    )
+                return {
+                    'cards': cards,
+                    'portfolio_summary': portfolio_summary,
+                    'evaluation_contexts': evaluation_contexts,
+                }, provider_usage
+
+            generated, provider_usage, ai_settlement = execute_customer_operation(
+                user,
+                generate=generate_score_batch,
+                operation_type='score_batch',
+                prompt_family='scorecard_batch',
+                request_payload={
+                    'thread_id': thread_id,
+                    'ideas': ideas_to_generate,
+                    'rubric': rubric,
+                    'strategy_objective': strategy_objective,
+                    'decision_kit': decision_kit,
+                    'decision_kit_version': decision_kit_version,
+                },
+                model_type=model_selection['model_type'],
+                max_tokens=max(2000, len(ideas_to_generate) * 1800),
+                thread_id=thread_id, prepare_modern_response=prepare_modern_batch,
+            )
+        except AIOperationPaymentRequired as payment_error:
+            payload = dict(payment_error.payload or {})
+            payload.update({
+                'requested_project_count': requested_count,
+                'generated_project_count': 0,
+                'persisted_project_count': 0,
+                'not_persisted_project_names': [str(item.get('name') or '').strip() for item in ideas],
+            })
+            return jsonify(payload), 402
+        except ScoreBatchPersistenceFailed as error:
+            generated, provider_usage = error.generated, error.usage
+            ai_settlement = {'charged_credits': 0, 'reserved_credits': 0, 'policy_mode': 'phase12'}
+        except ScoreBatchGenerationFailed:
+            return jsonify({
+                'ok': False,
+                'code': 'score_batch_generation_failed',
+                'error': "Jaspen couldn't complete scoring. Your request is saved. Try again.",
+                'failure_state': True,
+                'retryable': True,
+                'action': {'type': 'retry', 'label': 'Retry'},
+                'message_saved': True,
+                'credits': {'charged': 0},
+                'requested_project_count': requested_count,
+                'generated_project_count': 0,
+                'persisted_project_count': 0,
+                'not_persisted_project_names': [str(item.get('name') or '').strip() for item in ideas],
+            }), 503
+
+        generated = generated if isinstance(generated, dict) else {}
+        cards = generated.get('cards') if isinstance(generated.get('cards'), list) else []
+        portfolio_summary = generated.get('portfolio_summary') if isinstance(generated.get('portfolio_summary'), dict) else {}
+        evaluation_contexts = (
+            generated.get('evaluation_contexts')
+            if isinstance(generated.get('evaluation_contexts'), list)
+            else evaluation_contexts
+        )
+        provider_usage = dict(provider_usage or {})
+        provider_usage.setdefault('model', model_selection.get('llm_model'))
+        provider_usage.setdefault('model_type', model_selection.get('model_type'))
+        provider_usage.setdefault('provider', 'anthropic')
+        # Legacy allocation needs the generated card IDs, including any cards
+        # that could not be saved. Phase 12 settles the operation as a whole.
+        generated_component_ids = [
+            evaluation_context['scorecard_id']
+            for payload, evaluation_context in zip(cards, evaluation_contexts)
+            if isinstance(payload, dict) and not payload.get('reused_stored_result')
+        ]
+        persisted_component_ids = []
+
+        scored_out = []
+        persistence_failures = []
+        model_failures = []
+        generated_count = 0
+        for idea, payload, evaluation_context in zip(ideas_to_generate, cards, evaluation_contexts):
+            if not isinstance(payload, dict):
+                model_failures.append(str(idea.get('name') or '').strip())
                 continue
+            generated_count += 1
+            name = str(idea.get('name')).strip()
+            analysis_id = evaluation_context['scorecard_id']
+            evaluation_id = evaluation_context['evaluation_id']
+            prepared = generated.get('_prepared_cards')
+            if isinstance(prepared, dict) and (
+                prepared or not payload.get('reused_stored_result')
+            ):
+                scorecard = prepared.get(analysis_id)
+                if scorecard is None:
+                    persistence_failures.append(name)
+                    continue
+            else:
+                scorecard = format_batch_card(idea, payload, evaluation_context)
+                try:
+                    save_batch_card(scorecard, payload, evaluation_context)
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                    current_app.logger.exception(
+                        '[score_batch_queued] failed to persist peer scorecard %s', analysis_id,
+                    )
+                    persistence_failures.append(name)
+                    continue
+            attributes = scorecard['attributes']
+            option_key = scorecard['option_key']
+            generated_at = scorecard['timestamp']
             if not payload.get('reused_stored_result'):
                 persisted_component_ids.append(analysis_id)
 

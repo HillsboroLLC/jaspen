@@ -467,9 +467,13 @@ def operation_organization_id(session, user, thread_id=None):
     """The organization whose work an operation is: the thread's project organization, else the member's
     context organization (D4: the work's organization pays)."""
     from .billing_cutover import context_organization_id
-    from .session_access import canonical_row
+    from .session_access import active_membership_for_user, active_org_id_for_user, canonical_row
 
     project = canonical_row(user, thread_id) if thread_id else None
     if project is not None and project.organization_id:
         return project.organization_id
-    return context_organization_id(session, getattr(user, "id", None))
+    user_id = getattr(user, "id", None)
+    organization_id = active_org_id_for_user(user)
+    if organization_id and active_membership_for_user(organization_id, user_id) is not None:
+        return organization_id
+    return context_organization_id(session, user_id)

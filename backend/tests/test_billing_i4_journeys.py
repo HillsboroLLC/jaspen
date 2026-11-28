@@ -603,3 +603,78 @@ def test_modern_cache_only_operation_returns_results_and_releases_the_hold(app, 
     assert value == {"score": 72} and usage == {"provider": "canonical_cache"}
     assert settlement["charged_credits"] == 0 and settlement["delivery_status"] == "no_billable_usage"
     assert _spendable(db.session, modern["account"]) == (before, 0)
+
+
+@pytest.mark.parametrize("keep_generated, reuse_second", [(True, False), (False, False), (False, True)])
+def test_modern_score_batch_settles_the_operation_only_if_it_delivers_a_result(
+    client, db, modern, monkeypatch, keep_generated, reuse_second,
+):
+    from app.routes import strategy
+
+    def generate(*args, **kwargs):
+        _, usage, *_ = _provider_reply()
+        return [{"jaspen_score": 72}, {"jaspen_score": 73, "reused_stored_result": reuse_second}], {}, usage
+
+    save = strategy.upsert_scorecard
+
+    def accept_first_only(*args, **kwargs):
+        name = kwargs["payload"]["name"]
+        if (keep_generated and name == "Option A") or (reuse_second and name == "Option B"):
+            return save(*args, **kwargs)
+        raise RuntimeError("scorecard store unavailable")
+
+    monkeypatch.setattr(strategy, "_generate_batch_scorecards", generate)
+    monkeypatch.setattr(strategy, "upsert_scorecard", accept_first_only)
+    monkeypatch.setattr(strategy, "get_llm_client", lambda: object())
+    before, _held = _spendable(db.session, modern["account"])
+    response = client.post(
+        f"/api/v1/strategy/threads/{modern['thread']}/score-batch", headers=modern["headers"],
+        json={"ideas": [{"name": "Option A"}, {"name": "Option B"}]},
+    )
+    assert response.status_code == 200
+    result = response.get_json()
+    assert result["persisted_project_count"] == int(keep_generated or reuse_second)
+    assert len(result["not_persisted_project_names"]) == (1 if keep_generated or reuse_second else 2)
+    [operation] = _operations(db.session, modern["org"])
+    assert operation.delivery_status == ("delivered" if keep_generated else "undelivered")
+    assert _spendable(db.session, modern["account"]) == (before - CHARGE if keep_generated else before, 0)
+
+
+@pytest.mark.parametrize("save_fails", [False, True])
+def test_modern_analyze_settles_only_a_retained_scorecard(client, db, modern, monkeypatch, save_fails):
+    from app.models import Scorecard
+    from app.routes import strategy
+
+    def generate(*args, **kwargs):
+        _, usage, *_ = _provider_reply()
+        return {"jaspen_score": 72}, usage
+
+    monkeypatch.setattr(strategy, "get_llm_client", lambda: object())
+    monkeypatch.setattr(strategy, "_generate_jaspen_scorecard", generate)
+    if save_fails:
+        def reject_save(*args, **kwargs):
+            raise RuntimeError("scorecard store unavailable")
+
+        monkeypatch.setattr(strategy, "upsert_scorecard", reject_save)
+
+    before, _ = _spendable(db.session, modern["account"])
+    response = client.post(
+        "/api/v1/strategy/analyze", headers=modern["headers"],
+        json={"description": "Evaluate a supplier contract"},
+    )
+    [operation] = _operations(db.session, modern["org"])
+    expected_remaining = before if save_fails else before - CHARGE
+    assert _spendable(db.session, modern["account"]) == (expected_remaining, 0)
+    if save_fails:
+        assert response.status_code == 500
+        assert response.get_json()["code"] == "scorecard_persistence_failed"
+        assert operation.delivery_status == "undelivered"
+        assert db.session.query(Scorecard).count() == 0
+    else:
+        assert response.status_code == 200
+        analysis = response.get_json()["analysis"]
+        assert analysis["meta"]["credits_remaining"] == expected_remaining
+        assert operation.delivery_status == "delivered"
+        scorecard = db.session.get(Scorecard, analysis["id"])
+        assert scorecard.organization_id == modern["org"].id
+        assert scorecard.thread_id == analysis["thread_id"]

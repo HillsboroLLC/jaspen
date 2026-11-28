@@ -119,7 +119,7 @@ def test_work_organization_uses_the_callers_canonical_project(db):
     session = db.session
     actor = _user(session)
     other = _user(session)
-    work_org = _org(session, actor)
+    work_org = _org(session, actor, members=(other,))
     unrelated = _org(session, other)
     actor.active_organization_id = work_org.id
     session.add_all([
@@ -138,4 +138,5 @@ def test_work_organization_uses_the_callers_canonical_project(db):
         # A worker keeps the organization it obtained before running, even if
         # the same actor's active organization and same-id project differ.
         assert rt.operation_organization_id(session, other, "duplicate") == work_org.id
+        assert rt.operation_organization_id(session, other) == work_org.id
     assert rt.operation_organization_id(session, other, "duplicate") == unrelated.id
