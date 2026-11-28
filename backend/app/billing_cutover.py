@@ -298,9 +298,9 @@ def legacy_billing_footprint(session, organization_id):
     return codes
 
 
-def context_organization_id(session, user_id):
-    """The organization a user's account-level billing commands run in: their active organization, else their
-    first active membership by role (the order ``ensure_default_organization_for_user`` uses). A pure read."""
+def context_organization_id(session, user_id, *, preferred_organization_id=None):
+    """Resolve a confirmed membership for the work's organization, the active organization,
+    or the first active membership by role. Account commands use the default active context."""
     if not user_id:
         return None
     from sqlalchemy import case
@@ -311,9 +311,10 @@ def context_organization_id(session, user_id):
             return None
         active = select(OrganizationMember.organization_id).where(
             OrganizationMember.user_id == user.id, OrganizationMember.status == "active")
-        if user.active_organization_id and session.execute(
-                active.where(OrganizationMember.organization_id == user.active_organization_id)).first():
-            return user.active_organization_id
+        for organization_id in dict.fromkeys((preferred_organization_id, user.active_organization_id)):
+            if organization_id and session.execute(
+                    active.where(OrganizationMember.organization_id == organization_id)).first():
+                return organization_id
         order = case((OrganizationMember.role == "owner", 0), (OrganizationMember.role == "admin", 1),
                      (OrganizationMember.role == "creator", 2), (OrganizationMember.role == "collaborator", 3),
                      (OrganizationMember.role == "viewer", 4), else_=9)

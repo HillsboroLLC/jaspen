@@ -656,6 +656,17 @@ def bootstrap_legacy_credits(user, app_config):
     One-time credit initialization for legacy rows that predate credit enforcement.
     Returns True when credits were updated.
     """
+    from app import db
+    from app.billing_cutover import context_organization_id, organization_billing_model
+    from app.session_access import active_org_id_for_user
+
+    with db.session.no_autoflush:
+        organization_id = context_organization_id(
+            db.session, user.id, preferred_organization_id=active_org_id_for_user(user),
+        )
+        if organization_billing_model(db.session, organization_id) == "modern":
+            return False
+
     plan_key = normalize_plan_key(user.subscription_plan)
     monthly_limit = get_monthly_credit_limit(plan_key, app_config)
     if monthly_limit is None:

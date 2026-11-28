@@ -757,3 +757,27 @@ def test_a_legacy_shared_credit_writer_cannot_use_a_modern_org_pool(db):
         assert consume_credits(member, 1)[0] is True
     assert "thinking_power" in legacy.settings
     assert "thinking_power" not in (modern.settings or {})
+
+
+def test_legacy_login_credit_bootstrap_only_runs_in_the_legacy_organization(db):
+    from flask import current_app
+
+    from app.billing_config import bootstrap_legacy_credits
+
+    session = db.session
+    _owner, modern, _assignment = _modern(session)
+    member = _user(session)
+    legacy = _org(session, member)
+    session.add(OrganizationMember(organization_id=modern.id, user_id=member.id, role="creator", status="active"))
+    member.active_organization_id = modern.id
+    session.commit()
+
+    assert not bootstrap_legacy_credits(member, current_app.config)
+    assert member.credits_remaining == 0
+    assert "thinking_power" not in (member.ui_preferences or {})
+
+    member.active_organization_id = legacy.id
+    session.flush()
+    bootstrap_legacy_credits(member, current_app.config)
+    assert "thinking_power" in member.ui_preferences
+    assert member.credits_remaining > 0

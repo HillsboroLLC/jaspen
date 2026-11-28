@@ -385,7 +385,9 @@ def modern_entitlement_plan_for(user, *, organization_id=None, app_config=None):
     session = db.session
     with session.no_autoflush:
         organization_id = (
-            organization_id or active_org_id_for_user(user) or context_organization_id(session, user.id)
+            organization_id or context_organization_id(
+                session, user.id, preferred_organization_id=active_org_id_for_user(user),
+            )
         )
         config = cutover_config()
         # AI needs entitlement facts during its own D18 activation step, while
