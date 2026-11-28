@@ -272,7 +272,9 @@ def test_at62b_the_scoring_flag_is_set_only_at_genuine_analysis_call_sites():
     agent = (BACKEND / 'app' / 'routes' / 'ai_agent.py').read_text()
     scorecards = (BACKEND / 'app' / 'scorecards.py').read_text()
 
-    assert strategy.count('analysis_pass=reusable_row is None') == 1
+    # analyze: new analysis on every path; reuse of a stored row is not.
+    assert strategy.count('analysis_pass=not reused') == 1
+    assert strategy.count('reused=reusable_row is not None') == 1
     assert strategy.count("analysis_pass=not bool(payload.get('reused_stored_result'))") == 1
     assert agent.count('analysis_pass=not bool(reused_source_id)') == 2
     assert 'analysis_pass=True' not in strategy

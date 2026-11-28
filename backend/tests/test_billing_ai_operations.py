@@ -1048,7 +1048,10 @@ def test_phase12_service_has_no_live_runtime_callers():
                              "billing_runtime_policies.py",
                              # I4: the ai_reservation family runtime, reached only through
                              # modern_context(family="ai_reservation"); legacy contexts never import it.
-                             "billing_runtime_ai.py"}
+                             "billing_runtime_ai.py",
+                             # I4: reads a Phase 12 binding only for an operation already bound to Phase 12
+                             # (modern organizations); legacy operations never reach that branch.
+                             "ai_runtime.py"}
         and ("billing_ai_operations" in path.read_text() or "models_billing_phase12" in path.read_text())
     ]
     assert callers == []

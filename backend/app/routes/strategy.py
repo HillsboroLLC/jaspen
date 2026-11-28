@@ -2544,7 +2544,16 @@ def _require_tool_access(user_id, tool_id, access='read', *, thread_id=None):
 
     from ..billing_runtime_readers import modern_entitlement_plan_for
 
-    project = canonical_row(user, thread_id) if thread_id else None
+    # The project's organization decides the plan (a team project uses the
+    # team's plan), but only for a project this member may read: the access
+    # seam runs before the row is used. Otherwise the caller's own scope check
+    # answers, and the plan comes from the member's own organization.
+    project = None
+    if thread_id:
+        try:
+            project, _membership = resolve_session_for_actor(user, thread_id)
+        except SessionAccessError:
+            project = None
     plan_key = modern_entitlement_plan_for(
         user, organization_id=project.organization_id if project is not None else None,
         app_config=current_app.config,
